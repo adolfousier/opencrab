@@ -1654,6 +1654,40 @@ impl ProviderConfigs {
             .any(|(id, _, _, cfg)| *id == canonical && cfg.is_some())
     }
 
+    /// Whether the named provider is configured, enabled and has the
+    /// credentials to run (#977). Alias resolution mirrors `is_declared`;
+    /// health additionally demands `enabled` and a real API key where one
+    /// is required. `create_provider_by_name` remains the final arbiter —
+    /// this is the cheap pre-filter for resolution ladders.
+    pub fn is_healthy(&self, name: &str) -> bool {
+        // Custom providers: the factory refuses them without a real key
+        // ("requests will fail authentication"), so keyless ≠ healthy.
+        let bare = name.strip_prefix("custom:").unwrap_or(name);
+        if let Some(customs) = self.custom.as_ref()
+            && let Some(cfg) = customs
+                .get(bare)
+                .or_else(|| customs.get(&normalize_toml_key(bare)))
+        {
+            return cfg.enabled
+                && cfg
+                    .api_key
+                    .as_deref()
+                    .is_some_and(|k| !k.is_empty() && k != "__EXISTING_KEY__");
+        }
+        // Known providers: same alias ladder as `is_declared`, plus
+        // enabled + key.
+        let Some(canonical) = crate::utils::providers::find_provider_meta(name).map(|m| m.id)
+        else {
+            return false;
+        };
+        self.provider_registry()
+            .iter()
+            .any(|(id, _, requires_key, cfg)| {
+                *id == canonical
+                    && cfg.is_some_and(|c| c.enabled && (!requires_key || c.api_key.is_some()))
+            })
+    }
+
     pub fn active_provider_and_model(&self) -> (String, String) {
         for (id, _display, requires_api_key, cfg) in self.provider_registry() {
             if let Some(c) = cfg

@@ -642,6 +642,48 @@ fallback to `tool_search` on failure, never assume a tool is unavailable without
 brain rule only names the tool without the search reminder, the agent will guess parameters or skip \
 the tool entirely. Always include the search-then-call pattern.";
 
+/// Resolve the provider RSI cycles run on (#977), in preference order:
+///
+/// 1. `[agent] self_improvement_provider` — explicit override, trusted as-is
+///    (a dead one is caught and demoted at runtime by the #469 fallback).
+/// 2. `[agent] default_provider` — the pair the user declared for their own
+///    sessions, when it is healthy.
+/// 3. The first healthy entry of the `[providers.fallback]` chain, in the
+///    user's configured order.
+/// 4. `active_provider_and_model()` registry walk — last resort.
+///
+/// The old code jumped straight to (4), and that walk starts with xiaomi, so
+/// any install with an enabled keyed xiaomi section ran RSI on that expensive
+/// 1M-window pair regardless of what the user actually chatted on. No
+/// hardcoded provider preference survives this ladder.
+pub(crate) fn resolve_rsi_provider(config: &Config) -> String {
+    if let Some(explicit) = config.agent.self_improvement_provider.as_deref() {
+        return explicit.to_string();
+    }
+    resolve_rsi_provider_default(config)
+}
+
+/// The ladder without the explicit self-improvement override — where a dead
+/// override lands at runtime (#469).
+fn resolve_rsi_provider_default(config: &Config) -> String {
+    if let Some(default) = config.agent.default_provider.as_deref()
+        && config.providers.is_healthy(default)
+    {
+        return default.to_string();
+    }
+    if let Some(fallback) = config.providers.fallback.as_ref()
+        && fallback.enabled
+        && let Some(first) = fallback
+            .providers
+            .iter()
+            .chain(fallback.provider.iter())
+            .find(|p| config.providers.is_healthy(p))
+    {
+        return first.clone();
+    }
+    config.providers.active_provider_and_model().0
+}
+
 /// Run a single autonomous RSI agent cycle.
 ///
 /// Creates a lightweight AgentService with only RSI tools, sends the improvement
@@ -662,13 +704,14 @@ async fn run_rsi_agent_cycle(
     use crate::brain::agent::AgentService;
     use crate::services::{MessageService, ServiceContext, SessionService};
 
-    // Resolve RSI provider: prefer self_improvement_provider, fall back to user's active provider
-    let active_provider = config.providers.active_provider_and_model().0;
-    let provider_name = config
-        .agent
-        .self_improvement_provider
-        .as_deref()
-        .unwrap_or(&active_provider);
+    // Resolve RSI provider (#977): explicit self_improvement_provider, then
+    // the user's declared session default, then the first healthy
+    // fallback-chain provider, then the registry walk as last resort. The
+    // old code started from the registry walk, which prefers xiaomi by
+    // hardcoded order and put RSI on the expensive 1M-window pair.
+    let active_provider = resolve_rsi_provider_default(config);
+    let provider_name_owned = resolve_rsi_provider(config);
+    let provider_name = provider_name_owned.as_str();
 
     // #469 part A: a dead self_improvement_provider (missing key, typo,
     // removed section) must not kill the cycle — fall back to the user's
