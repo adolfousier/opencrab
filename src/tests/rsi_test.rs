@@ -1423,56 +1423,52 @@ mod user_correction_detection {
 // errors verbatim in the TUI because the engine emitted
 // `ImprovementOpportunity` notifications inline, regardless of whether
 // the assembled list had changed. `hash_opportunities` is the dedup
-// anchor — same descriptions → same hex → cycle short-circuits.
+// anchor. Since #977 it hashes stable finding-identity keys (not the
+// description bodies), so counts, samples and top-N ordering can churn
+// without defeating the gate: same findings → same hex → cycle
+// short-circuits.
 #[cfg(test)]
 mod hash_opportunities {
     use crate::brain::rsi::hash_opportunities;
 
     #[test]
-    fn identical_lists_hash_identically() {
+    fn identical_key_sets_hash_identically() {
         let a = vec![
-            "50 user corrections recorded.\n  - session=abc, time=...".to_string(),
-            "20 provider errors recorded.\n  - session=def, time=...".to_string(),
+            "user_corrections".to_string(),
+            "provider_errors".to_string(),
         ];
         let b = a.clone();
         assert_eq!(hash_opportunities(&a), hash_opportunities(&b));
     }
 
     #[test]
-    fn different_lists_hash_differently() {
-        let a = vec!["50 user corrections recorded.".to_string()];
-        let b = vec!["51 user corrections recorded.".to_string()];
+    fn different_findings_hash_differently() {
+        let a = vec!["user_corrections".to_string()];
+        let b = vec!["provider_errors".to_string()];
         assert_ne!(hash_opportunities(&a), hash_opportunities(&b));
     }
 
     #[test]
-    fn reordered_examples_no_longer_change_the_hash() {
-        // CONTRACT REVERSED (#804), deliberately.
-        //
-        // This previously asserted that a shifted top-5 slice must re-enable
-        // emission, so "same count, different events" would never collapse.
-        // That sensitivity is what stopped the gate ever firing: the example
-        // lines carry a session id and timestamp from whatever the latest
-        // events happen to be, so the hash differed on essentially every
-        // cycle even when the finding was word-for-word identical.
-        //
-        // The cost was measured before changing it: "Same data. Stopping."
-        // appeared 46 times in nine days, each a spawned agent and a full
-        // paid turn, reporting that nothing had changed.
-        //
-        // The finding is what matters, not which events illustrate it. A
-        // changed count, a new entry, or a reordering of the FINDINGS
-        // themselves all still change the hash — asserted in
-        // rsi_opportunity_hash_test.
-        let a = vec!["recent:\n  - session=aaa\n  - session=bbb".to_string()];
-        let b = vec!["recent:\n  - session=bbb\n  - session=aaa".to_string()];
+    fn reordered_findings_no_longer_change_the_hash() {
+        // CONTRACT REVERSED (#977), deliberately. v1 asserted a reshuffled
+        // top-5 was a real change; the severity ranking moves every cycle
+        // and that sensitivity was one of the things that kept the gate
+        // from ever firing. The set of findings is what matters.
+        let a = vec![
+            "tool_failure:bash".to_string(),
+            "user_corrections".to_string(),
+        ];
+        let b = vec![
+            "user_corrections".to_string(),
+            "tool_failure:bash".to_string(),
+        ];
         assert_eq!(hash_opportunities(&a), hash_opportunities(&b));
     }
 
     #[test]
     fn merge_vs_two_entries_hash_differently() {
-        // Sentinel-joined hashing must not let two adjacent
-        // descriptions collide with one merged-content description.
+        // Sentinel-joined hashing must not let two adjacent keys collide
+        // with one merged-content key.
         let two = vec!["alpha".to_string(), "beta".to_string()];
         let one_merged = vec!["alphabeta".to_string()];
         assert_ne!(hash_opportunities(&two), hash_opportunities(&one_merged));
@@ -1486,16 +1482,6 @@ mod hash_opportunities {
         let b: Vec<String> = Vec::new();
         assert_eq!(hash_opportunities(&a), hash_opportunities(&b));
         assert!(!hash_opportunities(&a).is_empty());
-    }
-
-    #[test]
-    fn whitespace_change_breaks_dedup() {
-        // A single character delta is enough to trip the hash and
-        // re-enable emission — extra-conservative on the
-        // "don't miss anything" side.
-        let a = vec!["50 user corrections recorded.".to_string()];
-        let b = vec!["50  user corrections recorded.".to_string()];
-        assert_ne!(hash_opportunities(&a), hash_opportunities(&b));
     }
 }
 

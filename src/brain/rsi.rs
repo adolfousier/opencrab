@@ -51,45 +51,36 @@ fn ensure_rsi_dirs() -> std::io::Result<PathBuf> {
     Ok(rsi_dir)
 }
 
-/// SHA-256 hex digest of the joined opportunity descriptions. Used to
+/// SHA-256 hex digest of the cycle's FINDING IDENTITIES (#977). Used to
 /// detect cycle-over-cycle telemetry stability so we don't re-emit the
-/// same top-N corrections / errors / tool-failure block when nothing
+/// same corrections / errors / tool-failure blocks when nothing
 /// meaningful has changed.
 ///
-/// Joining with a sentinel that can't appear inside a single description
-/// (the leading `\n---\n` line marker) prevents two adjacent
-/// descriptions from collapsing into the same hash as one merged one.
-pub(crate) fn hash_opportunities(opps: &[String]) -> String {
+/// v1 hashed the description bodies. #804 stripped the `- session=...`
+/// example lines, but the bodies still carry churning counts ("34%
+/// (12 of 35)", "17 successful invocations", "typed 6 times"), sample
+/// invocations and severity-ordered top-N slices, so the hash still
+/// moved on essentially every busy cycle and the gate never fired.
+///
+/// v2 hashes one stable identity key per finding instead: dimension,
+/// subsystem, request signature, tool sequence. Counts, samples and
+/// ordering are illustration for the agent once it runs — they are not
+/// part of whether the finding is new. Keys are sorted before joining
+/// (top-N reordering is not a change) and flattened to single lines so
+/// no key can contain the join sentinel; joining with `\n---\n` then
+/// keeps two adjacent keys from collapsing into the same hash as one
+/// merged key.
+///
+/// The persisted `rsi/last_opportunities_hash` needs no migration: it
+/// holds an opaque hex string, so the first cycle after upgrade simply
+/// sees a mismatch, runs once, and rewrites it in the new scheme.
+pub(crate) fn hash_opportunities(keys: &[String]) -> String {
     use sha2::{Digest, Sha256};
-    let substance: Vec<String> = opps.iter().map(|o| opportunity_substance(o)).collect();
+    let mut keys: Vec<String> = keys.iter().map(|k| k.replace('\n', " ")).collect();
+    keys.sort();
     let mut hasher = Sha256::new();
-    hasher.update(substance.join("\n---\n").as_bytes());
+    hasher.update(keys.join("\n---\n").as_bytes());
     format!("{:x}", hasher.finalize())
-}
-
-/// Strip the per-event illustration from an opportunity, keeping the finding
-/// (#804).
-///
-/// The hash was computed over the full description INCLUDING the
-/// `- session=…, time=…` example lines. Those carry a fresh session id and
-/// timestamp from whatever the most recent events happened to be, so the hash
-/// differed on essentially every cycle even when the finding was word-for-word
-/// the same. The dedup gate could therefore never fire, and the agent was
-/// spawned hourly to look at identical data and say so: "Same data. Stopping."
-/// appeared 46 times in nine days, each costing a full paid turn.
-///
-/// The gate was written to be sensitive so nothing new was missed, and that
-/// sensitivity is exactly what stopped it ever suppressing a repeat.
-///
-/// What remains is the finding itself: the dimension, the counts, the failing
-/// tool names, the headers. A genuinely new entry, a changed count or a
-/// reordered top-5 all still change the hash.
-fn opportunity_substance(description: &str) -> String {
-    description
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("- session="))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Write the startup digest to `~/.opencrabs/rsi/digest.md`.
@@ -983,6 +974,10 @@ pub fn spawn_rsi_engine(
 
             // Collect actionable opportunities
             let mut opportunities = Vec::new();
+            // Stable finding-identity keys, one per opportunity, hashed by
+            // the dedup gate below (#977). Descriptions carry counts and
+            // samples that churn every busy cycle; the keys don't.
+            let mut opportunity_keys: Vec<String> = Vec::new();
 
             // Tools with >20% failure rate and >5 executions over the
             // last 7 days. Without the window, a tool that broke once
@@ -1068,6 +1063,7 @@ pub fn spawn_rsi_engine(
                     }
                     tracing::info!("RSI opportunity: {}", detail);
                     opportunities.push(detail);
+                    opportunity_keys.push(format!("tool_failure:{}", s.dimension));
                 }
             }
 
@@ -1091,6 +1087,7 @@ pub fn spawn_rsi_engine(
                 }
                 tracing::info!("RSI opportunity: {}", desc);
                 opportunities.push(desc);
+                opportunity_keys.push("user_corrections".to_string());
             }
 
             // Provider errors — surface model/provider info so agent knows which
@@ -1111,6 +1108,7 @@ pub fn spawn_rsi_engine(
                 }
                 tracing::info!("RSI opportunity: {}", desc);
                 opportunities.push(desc);
+                opportunity_keys.push("provider_errors".to_string());
             }
 
             // Successful bash patterns — high-frequency subsystems
@@ -1179,6 +1177,7 @@ pub fn spawn_rsi_engine(
                     );
                     tracing::info!("RSI opportunity: {}", desc);
                     opportunities.push(desc);
+                    opportunity_keys.push(format!("bash_subsystem:{subsystem}"));
                 }
             }
 
@@ -1208,6 +1207,7 @@ pub fn spawn_rsi_engine(
                         );
                         tracing::info!("RSI opportunity: {}", desc);
                         opportunities.push(desc);
+                        opportunity_keys.push(format!("command_pattern:{}", c.signature));
                     }
                 }
             }
@@ -1237,6 +1237,8 @@ pub fn spawn_rsi_engine(
                         );
                         tracing::info!("RSI opportunity: {}", desc);
                         opportunities.push(desc);
+                        opportunity_keys
+                            .push(format!("skill_sequence:{}", c.sequence.join(" -> ")));
                     }
                 }
             }
@@ -1267,10 +1269,11 @@ pub fn spawn_rsi_engine(
                          running binary is the user's decision.",
                         crate::VERSION
                     ));
+                    opportunity_keys.push(format!("upgrade:{latest}"));
                 }
             }
 
-            // 3. Dedup: hash the assembled opportunity descriptions and
+            // 3. Dedup: hash the cycle's stable finding-identity keys and
             // compare against the previous cycle's hash. When identical,
             // the autonomous agent would have nothing new to act on — its
             // own summary on those cycles was literally "Converged. No
@@ -1280,12 +1283,15 @@ pub fn spawn_rsi_engine(
             // notification AND the agent run, keeping only a compact
             // `AgentCycleComplete` so the user sees the cycle happened.
             //
-            // The hash covers the full opportunity-description bodies
-            // (including the per-event session/timestamp lines), so any
-            // change — new entry, reordered top-5, even a single recent
-            // event that shifts the slice — counts as new and re-enables
-            // the full path. `tracing::info!` logs above stay regardless.
-            let current_hash = hash_opportunities(&opportunities);
+            // The hash covers ONLY the identity keys (#977): which tools
+            // fail, which subsystems/prompts/sequences recur, whether an
+            // upgrade is out. Counts, sample events and top-N ordering
+            // churn on every busy cycle and are deliberately NOT part of
+            // the hash — a finding whose numbers moved is the same
+            // finding. A new or disappeared finding changes the key set
+            // and re-enables the full path. `tracing::info!` logs above
+            // stay regardless.
+            let current_hash = hash_opportunities(&opportunity_keys);
             let previous_hash = std::fs::read_to_string(&opportunities_hash_path)
                 .ok()
                 .map(|s| s.trim().to_string());
