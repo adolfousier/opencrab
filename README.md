@@ -2064,19 +2064,12 @@ plan_isolated_execution = true   # default: each started plan task runs in a fre
 subagent_session_ttl_days = 7    # days a spawned sub-agent's session is kept before pruning. Nothing revisits
                                  # them, so they accumulate with their messages, tool rows and plan files. 0 keeps forever
 
-# ── Runaway-reasoning guards ──────────────────────────────────────────────────
-# Both are enforced at their defaults even when absent from this file.
-reasoning_token_budget = 16000   # reasoning tokens ONE TURN may spend before the stream is cut and
-                                 # the "reasoned without answering" nudge takes over. Counted per turn,
-                                 # not per request, so a model that reasons a little under the limit on
-                                 # each of several iterations still trips it. 0 disables.
-                                 # Override per provider with providers.<name>.reasoning_token_budget
-                                 # (works for providers.custom.* too) to tighten only the model family
-                                 # that actually runs away.
+# ── Runaway-reasoning guard ───────────────────────────────────────────────────
 thinking_loop_timeout_secs = 600 # kill a stream that runs this long with zero tool calls, then retry
-                                 # with phantom enforcement. Armed per request and disabled for the rest
-                                 # of a stream once any tool call lands, so treat it as a backstop and
-                                 # let reasoning_token_budget do the real work. 0 disables.
+                                 # with phantom enforcement. Enforced at this default even when absent
+                                 # from this file. Armed per REQUEST, and disabled for the rest of a
+                                 # stream once any tool call lands, so a turn can exceed it in total
+                                 # while no single iteration reaches it. 0 disables.
 
 # ── Provider registry ─────────────────────────────────────────────────────────
 # Optional discovery service that can add providers automatically. Opt-in: the

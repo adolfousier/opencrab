@@ -1034,21 +1034,6 @@ pub struct AgentConfig {
     /// Set to 0 to disable.
     #[serde(default = "default_thinking_loop_timeout_secs")]
     pub thinking_loop_timeout_secs: u64,
-
-    /// Reasoning tokens a single TURN may spend before the stream is cut and
-    /// the "reasoned without answering" nudge takes over (#970).
-    ///
-    /// Scoped to the turn, not the stream: `thinking_loop_timeout_secs` is
-    /// armed per provider request, so a turn could burn far past it in total
-    /// while no single iteration reached the ceiling. Counted in tokens rather
-    /// than seconds because tokens describe the runaway itself and do not
-    /// punish a slow provider doing correct work.
-    ///
-    /// Overridable per provider via `providers.<name>.reasoning_token_budget`,
-    /// which also covers `providers.custom.*`. Default: 16000. Set to 0 to
-    /// disable.
-    #[serde(default = "default_reasoning_token_budget")]
-    pub reasoning_token_budget: usize,
 }
 
 impl AgentConfig {
@@ -1079,13 +1064,6 @@ fn default_debug_logs() -> bool {
 
 fn default_thinking_loop_timeout_secs() -> u64 {
     600
-}
-
-/// 16k reasoning tokens per turn. Real workloads sit far below this; observed
-/// runaways passed 30k. Generous enough that hard problems still think, tight
-/// enough that a loop is cut in minutes rather than never.
-fn default_reasoning_token_budget() -> usize {
-    16_000
 }
 
 fn default_approval_policy() -> String {
@@ -1148,7 +1126,6 @@ impl Default for AgentConfig {
             redact_dm: None,
             debug_logs: default_debug_logs(),
             thinking_loop_timeout_secs: default_thinking_loop_timeout_secs(),
-            reasoning_token_budget: default_reasoning_token_budget(),
         }
     }
 }
@@ -2118,16 +2095,6 @@ pub struct ProviderConfig {
     /// Default: 300 (5 minutes). Only used when cache_enabled is true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_ttl: Option<u32>,
-
-    /// Per-provider override for `agent.reasoning_token_budget` (#970).
-    ///
-    /// `None` inherits the global. Set it on the provider whose models run
-    /// away rather than tightening the budget for every model you use. This
-    /// struct backs both the named providers and every entry under
-    /// `providers.custom`, so one field covers both. 0 disables the budget for
-    /// this provider only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_token_budget: Option<usize>,
 }
 
 fn default_enabled() -> bool {
