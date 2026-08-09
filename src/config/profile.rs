@@ -123,6 +123,14 @@ pub fn active_profile() -> Option<&'static str> {
     ACTIVE_PROFILE.get().and_then(|opt| opt.as_deref())
 }
 
+/// Whether the active profile lock has been written at all (#983).
+/// `active_profile()` cannot distinguish "default profile" from "not yet
+/// initialized": main() writes the lock before logging, and cli::run()
+/// must skip its own set instead of logging a spurious warning.
+pub fn is_profile_set() -> bool {
+    ACTIVE_PROFILE.get().is_some()
+}
+
 /// Resolve the home directory for the active profile.
 ///
 /// - `None` / `"default"` → `~/.opencrabs/`

@@ -12,12 +12,20 @@ async fn main() -> Result<()> {
     #[cfg(feature = "slack")]
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // Parse CLI arguments first to check for debug flag
+    // Parse CLI arguments first to check for debug flag and profile
     let cli_args = cli::Cli::parse();
 
+    // Apply -p/--profile BEFORE logging resolves opencrabs_home(), or the
+    // daily log of a profile startup lands in the default profile's log
+    // directory (#983). tracing is not up yet — stderr for the rare error.
+    if let Err(e) = opencrabs::config::profile::set_active_profile(cli_args.profile.clone()) {
+        eprintln!("Warning: failed to set active profile: {e}");
+    }
+
     // Initialize logging based on --debug flag. Resolve the log directory via
-    // logging::log_dir() (DEBUG_LOGS_LOCATION override, else ~/.opencrabs/logs)
-    // so the writer and the `logs status`/`logs view` readers always agree.
+    // logging::log_dir() (DEBUG_LOGS_LOCATION override, else the active
+    // profile's home/logs) so the writer and the `logs status`/`logs view`
+    // readers always agree.
     let log_config = logging::LogConfig::new()
         .with_debug_mode(cli_args.debug)
         .with_log_dir(logging::log_dir());

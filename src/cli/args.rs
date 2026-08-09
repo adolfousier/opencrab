@@ -422,9 +422,13 @@ pub enum MigrationSource {
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    // Set active profile BEFORE anything touches opencrabs_home()
-    crate::config::profile::set_active_profile(cli.profile.clone())
-        .unwrap_or_else(|e| tracing::warn!("Profile already set: {}", e));
+    // Set active profile BEFORE anything touches opencrabs_home(). main()
+    // already applied it before logging init (#983); skip when the lock is
+    // set so profile startups don't emit a spurious "already set" warning.
+    if !crate::config::profile::is_profile_set() {
+        crate::config::profile::set_active_profile(cli.profile.clone())
+            .unwrap_or_else(|e| tracing::warn!("Profile already set: {}", e));
+    }
 
     // Track profile usage
     if let Some(ref name) = cli.profile
