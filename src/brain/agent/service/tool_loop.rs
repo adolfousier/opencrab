@@ -5028,7 +5028,7 @@ impl AgentService {
                         // alert instead of silence.
                     } else {
                         let mut fb_succeeded = None;
-                        for fallback in &candidates {
+                        'candidates: for fallback in &candidates {
                             let fb_name = fallback.name().to_string();
                             let fb_model = fallback.default_model().to_string();
                             if let Some(ref cb) = progress_callback {
@@ -5048,116 +5048,162 @@ impl AgentService {
                             // continuation of the failed nudge dialogue. Handing it the
                             // scaffolding meant every provider answered a conversation full
                             // of "you did not answer" turns (#979).
-                            let fb_messages =
+                            let mut fb_messages =
                                 super::helpers::fallback_messages(pre_nudge_len, &context.messages);
-                            let mut fb_req = LLMRequest::new(fb_model.clone(), fb_messages)
-                                .with_max_tokens(self.max_tokens);
-                            fb_req.working_directory = Some(
-                                self.get_working_directory_for_session(session_id)
-                                    .to_string_lossy()
-                                    .to_string(),
-                            );
-                            fb_req.session_id = Some(session_id);
-                            if let Some(system) = &context.system_brain {
-                                fb_req = fb_req.with_system(system.clone());
-                            }
-                            if self.tool_registry.count() > 0 {
-                                fb_req =
-                                    fb_req.with_tools(self.tool_schemas_for_session(session_id));
-                            }
+                            // Each fallback gets the same budget the primary had
+                            // (#981). One bare shot meant a provider that would
+                            // have answered after a single nudge was discarded on
+                            // its first silent reply, which is the situation the
+                            // rescue exists for.
+                            let mut fb_attempt: u32 = 0;
+                            loop {
+                                fb_attempt += 1;
+                                let mut fb_req =
+                                    LLMRequest::new(fb_model.clone(), fb_messages.clone())
+                                        .with_max_tokens(self.max_tokens);
+                                fb_req.working_directory = Some(
+                                    self.get_working_directory_for_session(session_id)
+                                        .to_string_lossy()
+                                        .to_string(),
+                                );
+                                fb_req.session_id = Some(session_id);
+                                if let Some(system) = &context.system_brain {
+                                    fb_req = fb_req.with_system(system.clone());
+                                }
+                                if self.tool_registry.count() > 0 {
+                                    fb_req = fb_req
+                                        .with_tools(self.tool_schemas_for_session(session_id));
+                                }
 
-                            let original_provider = self.provider_for_session(session_id);
-                            self.swap_provider_for_session(
-                                session_id,
-                                (*fallback).clone(),
-                                (*fallback)
-                                    .active_subprovider_model()
-                                    .unwrap_or_else(|| (*fallback).default_model().to_string()),
-                            );
-                            let mut restore_guard = FallbackProviderGuard {
-                                service: self,
-                                session_id,
-                                original: Some(original_provider),
-                            };
-                            let fb_result = self
-                                .stream_complete(
+                                let original_provider = self.provider_for_session(session_id);
+                                self.swap_provider_for_session(
                                     session_id,
-                                    fb_req,
-                                    cancel_token.as_ref(),
-                                    progress_callback.as_ref(),
-                                    None,
-                                    None,
-                                    false,
-                                )
-                                .await;
-                            match fb_result {
-                                Ok((fb_resp, _fb_reasoning)) => {
-                                    let has_visible_text = fb_resp.content.iter().any(|b| {
-                                        matches!(
-                                            b,
-                                            crate::brain::provider::ContentBlock::Text {
-                                                text,
-                                            } if !text.trim().is_empty()
-                                        )
-                                    });
-                                    if has_visible_text {
-                                        // Swap sticks for the rest of the session.
-                                        restore_guard.original = None;
-                                        drop(restore_guard);
-                                        if let Some(ref cb) = progress_callback {
-                                            let from_name =
-                                                self.provider_name_for_session(session_id);
-                                            cb(
-                                                session_id,
-                                                ProgressEvent::SelfHealingAlert {
-                                                    message: format!(
-                                                        "Empty-reasoning recovery → switched \
+                                    (*fallback).clone(),
+                                    (*fallback)
+                                        .active_subprovider_model()
+                                        .unwrap_or_else(|| (*fallback).default_model().to_string()),
+                                );
+                                let mut restore_guard = FallbackProviderGuard {
+                                    service: self,
+                                    session_id,
+                                    original: Some(original_provider),
+                                };
+                                let fb_result = self
+                                    .stream_complete(
+                                        session_id,
+                                        fb_req,
+                                        cancel_token.as_ref(),
+                                        progress_callback.as_ref(),
+                                        None,
+                                        None,
+                                        false,
+                                    )
+                                    .await;
+                                match fb_result {
+                                    Ok((fb_resp, _fb_reasoning)) => {
+                                        let has_visible_text = fb_resp.content.iter().any(|b| {
+                                            matches!(
+                                                b,
+                                                crate::brain::provider::ContentBlock::Text {
+                                                    text,
+                                                } if !text.trim().is_empty()
+                                            )
+                                        });
+                                        if has_visible_text {
+                                            // Swap sticks for the rest of the session.
+                                            restore_guard.original = None;
+                                            drop(restore_guard);
+                                            if let Some(ref cb) = progress_callback {
+                                                let from_name =
+                                                    self.provider_name_for_session(session_id);
+                                                cb(
+                                                    session_id,
+                                                    ProgressEvent::SelfHealingAlert {
+                                                        message: format!(
+                                                            "Empty-reasoning recovery → switched \
                                                          to {}/{}",
-                                                        fb_name, fb_model,
-                                                    ),
-                                                },
-                                            );
-                                            cb(
+                                                            fb_name, fb_model,
+                                                        ),
+                                                    },
+                                                );
+                                                cb(
+                                                    session_id,
+                                                    ProgressEvent::ProviderSwitched {
+                                                        from_name,
+                                                        from_model: self
+                                                            .provider_model_for_session(session_id),
+                                                        to_name: fb_name.clone(),
+                                                        to_model: fb_model.clone(),
+                                                        reason: "empty_reasoning".to_string(),
+                                                    },
+                                                );
+                                            }
+                                            self.persist_sticky_pair(
                                                 session_id,
-                                                ProgressEvent::ProviderSwitched {
-                                                    from_name,
-                                                    from_model: self
-                                                        .provider_model_for_session(session_id),
-                                                    to_name: fb_name.clone(),
-                                                    to_model: fb_model.clone(),
-                                                    reason: "empty_reasoning".to_string(),
-                                                },
+                                                fb_name.clone(),
+                                                fb_model.clone(),
                                             );
+                                            fb_succeeded = Some(fb_resp);
+                                            break 'candidates;
+                                        } else {
+                                            drop(restore_guard);
+                                            if fb_attempt < EMPTY_REASONING_MAX_NUDGES {
+                                                tracing::warn!(
+                                                    "Empty-reasoning fallback '{}' returned empty \
+                                                 (attempt {}/{}) — nudging",
+                                                    fb_name,
+                                                    fb_attempt,
+                                                    EMPTY_REASONING_MAX_NUDGES,
+                                                );
+                                                if let Some(ref cb) = progress_callback {
+                                                    cb(
+                                                        session_id,
+                                                        ProgressEvent::SelfHealingAlert {
+                                                            message: format!(
+                                                                "Trying fallback '{}/{}' for \
+                                                             empty-reasoning recovery... \
+                                                             (attempt {}/{})",
+                                                                fb_name,
+                                                                fb_model,
+                                                                fb_attempt + 1,
+                                                                EMPTY_REASONING_MAX_NUDGES,
+                                                            ),
+                                                        },
+                                                    );
+                                                }
+                                                fb_messages.push(Message::user(
+                                                    super::helpers::empty_reasoning_nudge(
+                                                        false, fb_attempt,
+                                                    )
+                                                    .to_string(),
+                                                ));
+                                                continue;
+                                            }
+                                            tracing::warn!(
+                                                "Empty-reasoning fallback '{}' still empty after \
+                                             {} attempts — trying next",
+                                                fb_name,
+                                                fb_attempt,
+                                            );
+                                            break;
                                         }
-                                        self.persist_sticky_pair(
-                                            session_id,
-                                            fb_name.clone(),
-                                            fb_model.clone(),
-                                        );
-                                        fb_succeeded = Some(fb_resp);
-                                        break;
-                                    } else {
-                                        // Also empty — restore and try next candidate.
+                                    }
+                                    Err(fb_err) => {
                                         drop(restore_guard);
                                         tracing::warn!(
-                                            "Empty-reasoning fallback '{}' also returned \
-                                             empty — trying next",
-                                            fb_name,
-                                        );
-                                    }
-                                }
-                                Err(fb_err) => {
-                                    drop(restore_guard);
-                                    tracing::warn!(
-                                        "Empty-reasoning fallback '{}' failed: {} — \
+                                            "Empty-reasoning fallback '{}' failed: {} — \
                                          trying next",
-                                        fb_name,
-                                        fb_err,
-                                    );
-                                    // #952: mark a fallback that dies on a
-                                    // hard quota so future walks skip it.
-                                    if fb_err.is_quota_exhausted() {
-                                        crate::brain::provider::health::mark_exhausted(&fb_name);
+                                            fb_name,
+                                            fb_err,
+                                        );
+                                        // #952: mark a fallback that dies on a
+                                        // hard quota so future walks skip it.
+                                        if fb_err.is_quota_exhausted() {
+                                            crate::brain::provider::health::mark_exhausted(
+                                                &fb_name,
+                                            );
+                                        }
+                                        break;
                                     }
                                 }
                             }
