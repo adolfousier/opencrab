@@ -13,7 +13,6 @@
 
 use crate::brain::agent::{AgentError, format_user_error};
 use crate::brain::provider::ProviderError;
-use anyhow::Context;
 
 // Build a synthetic `AgentError::Provider(ProviderError::ApiError)` that
 // stringifies as `Provider error: API error (NNN) [type]: msg` — the
