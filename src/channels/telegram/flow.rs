@@ -1280,6 +1280,27 @@ pub(crate) async fn append_tool_group(
 /// folded into the collapsed block instead of landing as its own message, so
 /// only the final response stays clean at the bottom. Empty text (e.g. a
 /// react-only intermediate) is ignored.
+/// Stable key for a line that is *progress on one condition* rather than a new
+/// event (#982).
+///
+/// Repeated progress used to stack: five `nudge 1/5 .. 5/5` lines and one line
+/// per fallback attempt, nine messages for two facts. Everything else in this
+/// block already rewrites itself, a tool row flips its icon and the footer
+/// rewrites ctx and tok/s, so these were the exception. Lines sharing a key
+/// supersede each other; ordinary narration returns `None` and always appends.
+pub(crate) fn progress_key(text: &str) -> Option<&'static str> {
+    let t = text.trim_start_matches(|c: char| !c.is_alphanumeric());
+    if t.starts_with("Model reasoned without answering") {
+        Some("empty-answer-nudge")
+    } else if t.starts_with("Trying fallback") {
+        Some("fallback-attempt")
+    } else if t.starts_with("Retry ") {
+        Some("provider-retry")
+    } else {
+        None
+    }
+}
+
 pub(crate) async fn append_intermediate_to_flow(
     bot: &Bot,
     chat: ChatId,
@@ -1292,7 +1313,20 @@ pub(crate) async fn append_intermediate_to_flow(
     }
     let open = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        s.flow_entries.push(FlowEntry::Text(text.to_string()));
+        // Supersede the previous line when this is progress on the same
+        // condition, so a counter advances in place instead of stacking (#982).
+        // Only ever the IMMEDIATELY preceding entry: anything in between means
+        // the context moved on and the new line is genuinely new.
+        let supersede = progress_key(text).is_some_and(|k| {
+            matches!(s.flow_entries.last(), Some(FlowEntry::Text(prev)) if progress_key(prev) == Some(k))
+        });
+        if supersede {
+            if let Some(FlowEntry::Text(slot)) = s.flow_entries.last_mut() {
+                *slot = text.to_string();
+            }
+        } else {
+            s.flow_entries.push(FlowEntry::Text(text.to_string()));
+        }
         s.open_group_msg_id
     };
     if open.is_some() {
