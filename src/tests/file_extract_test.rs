@@ -185,9 +185,18 @@ fn ext_excel_spreadsheet_all_formats() {
         "application/vnd.oasis.opendocument.spreadsheet"
     );
     // case-insensitive
-    assert_eq!(mime_from_ext("data.XLSB"), "application/vnd.ms-excel.sheet.binary.macroEnabled.12");
-    assert_eq!(mime_from_ext("data.XLSM"), "application/vnd.ms-excel.sheet.macroEnabled.12");
-    assert_eq!(mime_from_ext("data.ODS"), "application/vnd.oasis.opendocument.spreadsheet");
+    assert_eq!(
+        mime_from_ext("data.XLSB"),
+        "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+    );
+    assert_eq!(
+        mime_from_ext("data.XLSM"),
+        "application/vnd.ms-excel.sheet.macroEnabled.12"
+    );
+    assert_eq!(
+        mime_from_ext("data.ODS"),
+        "application/vnd.oasis.opendocument.spreadsheet"
+    );
 }
 
 // ── classify_file ───────────────────────────────────────────────
