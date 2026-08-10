@@ -116,10 +116,34 @@ fn render_with_pdfium(
 ) -> Result<Vec<PathBuf>, String> {
     use pdfium_render::prelude::*;
 
-    let pdfium = Pdfium::new(
-        Pdfium::bind_to_system_library()
-            .map_err(|e| format!("Cannot bind pdfium library: {}", e))?,
-    );
+    // pdfium-render may only be initialized ONCE per process: `BINDINGS` is a
+    // process-global `OnceCell` and `Pdfium::new()` asserts it is still empty
+    // (pdfium.rs:180 `assertion failed: BINDINGS.get().is_none()`). The old
+    // code called `Pdfium::new(Pdfium::bind_to_system_library()?)` on EVERY
+    // render, so a second `pdf_to_images` call — or a race between two calls
+    // on parallel tokio workers — panicked the whole process instead of
+    // falling back to pdftoppm. Cache the bindings in a process-global
+    // `OnceLock` so every call reuses the same instance, and catch any init
+    // panic so a once-only violation degrades to the pdftoppm fallback
+    // instead of crashing the bot.
+    static PDFIUM: std::sync::OnceLock<Result<Pdfium, String>> = std::sync::OnceLock::new();
+
+    let pdfium: &Pdfium = match PDFIUM.get_or_init(|| {
+        // AssertUnwindSafe: the init closure runs exactly once; if it panics
+        // we must not take the whole process down — return an Err instead.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Pdfium::bind_to_system_library()
+                .map_err(|e| format!("Cannot bind pdfium library: {e}"))
+                .map(Pdfium::new)
+        })) {
+            Ok(Ok(pdfium)) => Ok(pdfium),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("pdfium library already initialized in this process".to_string()),
+        }
+    }) {
+        Ok(p) => p,
+        Err(e) => return Err(e.to_string()),
+    };
 
     let document = pdfium
         .load_pdf_from_file(pdf_path, None)
