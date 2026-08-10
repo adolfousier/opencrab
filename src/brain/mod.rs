@@ -26,6 +26,7 @@ pub mod rsi_pruned;
 pub mod rsi_skill_sequences;
 pub mod rsi_subsystem;
 pub mod rsi_sync;
+pub mod section_rank;
 pub mod self_update;
 pub mod skills;
 pub mod tokenizer;

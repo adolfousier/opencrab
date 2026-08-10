@@ -15,18 +15,24 @@
 //! good, and it never grows past a couple of short sections.
 
 use crate::brain::brain_sections;
+use crate::brain::section_rank::Ranked;
 
 /// At most this many sections ride along with a user message.
-const RECALL_MAX_SECTIONS: usize = 2;
+pub(crate) const RECALL_MAX_SECTIONS: usize = 2;
 /// Total character budget for injected recall.
-const RECALL_MAX_CHARS: usize = 1200;
-/// A section must match at least this many DISTINCT terms from the message.
+pub(crate) const RECALL_MAX_CHARS: usize = 1200;
+/// Minimum score for a section to ride along: length-normalized BM25 with the
+/// IDF scale removed, so the number means the same thing in any workspace.
 ///
-/// One shared word is noise: on a long message almost every section would
-/// match something. Two terms co-occurring is a signal. This is the main guard
-/// against recall becoming per-turn bloat, which is the failure mode that would
-/// make it worse than the problem it solves.
-const RECALL_MIN_HITS: usize = 2;
+/// Replaces "at least 2 distinct matching terms", which fired on 89.5% of 437
+/// real messages because `the`, `and`, `you` and `can` all count as terms and
+/// two of them co-occurring is true of almost any section.
+///
+/// 0.35 comes from the committed fixture in `src/eval/fixtures`, scored both
+/// ways: it holds recall at 0.917 while cutting the false-positive rate from
+/// 0.417 to 0.250 there, and on a real 156-section MEMORY.md it takes firing on
+/// conversational messages from 89.5% down to 17.4% (#996).
+pub(crate) const RECALL_MIN_SCORE: f64 = 0.35;
 
 /// Recall relevant to `user_message`, formatted for context, or `None`.
 ///
@@ -36,12 +42,11 @@ pub fn recall_from(memory: &str, user_message: &str) -> Option<String> {
     if !worth_reading_for(user_message) {
         return None;
     }
-    render(brain_sections::find_sections_with(
-        memory,
+    render(Ranked::build(memory).find_relevant(
         user_message,
         RECALL_MAX_SECTIONS,
         RECALL_MAX_CHARS,
-        RECALL_MIN_HITS,
+        RECALL_MIN_SCORE,
     ))
 }
 
@@ -66,7 +71,7 @@ struct Cached {
     /// invalidates it. Length is carried too because mtime resolution is
     /// coarse enough that a same-second rewrite can otherwise go unnoticed.
     stamp: (std::time::SystemTime, u64),
-    indexed: brain_sections::Indexed,
+    indexed: Ranked,
 }
 
 static CACHE: std::sync::RwLock<Option<Cached>> = std::sync::RwLock::new(None);
@@ -94,11 +99,11 @@ pub async fn recall_for(user_message: &str) -> Option<String> {
         if let Some(c) = cache.as_ref()
             && c.stamp == stamp
         {
-            return render(c.indexed.find(
+            return render(c.indexed.find_relevant(
                 user_message,
                 RECALL_MAX_SECTIONS,
                 RECALL_MAX_CHARS,
-                RECALL_MIN_HITS,
+                RECALL_MIN_SCORE,
             ));
         }
     }
@@ -107,12 +112,12 @@ pub async fn recall_for(user_message: &str) -> Option<String> {
     // `memory::index` already does this, and a blocking read of a file this
     // size does not belong on an async worker.
     let memory = tokio::fs::read_to_string(&path).await.ok()?;
-    let indexed = brain_sections::Indexed::build(&memory);
-    let matches = indexed.find(
+    let indexed = Ranked::build(&memory);
+    let matches = indexed.find_relevant(
         user_message,
         RECALL_MAX_SECTIONS,
         RECALL_MAX_CHARS,
-        RECALL_MIN_HITS,
+        RECALL_MIN_SCORE,
     );
 
     if let Ok(mut cache) = CACHE.write() {

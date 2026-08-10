@@ -98,17 +98,48 @@ fn an_empty_memory_file_recalls_nothing() {
 #[test]
 fn recall_stays_bounded() {
     // Paid on every turn, so it must not grow with the file.
+    //
+    // Sections are given distinct subject matter on purpose. This used to
+    // repeat one topic 40 times, which BM25 correctly scores at nearly zero
+    // (see `a_corpus_where_everything_matches_equally_recalls_nothing`), so the
+    // bound was being asserted on an empty result.
     let mut big = String::new();
     for i in 0..40 {
         big.push_str(&format!(
-            "## Telegram rule {i}\n\nTelegram owner gate detail number {i}.\n\n"
+            "## Subject {i}\n\nDetail number {i} about widget {i} and gadget {i}, \
+             recorded so the entry has body text of a realistic length.\n\n"
         ));
     }
-    let recall = recall_from(&big, "telegram owner gate").unwrap();
+    big.push_str(
+        "## Telegram owner gate\n\nThe owner gate refuses a non-owner in a group \
+         chat and never leaks the reason.\n\n",
+    );
+    let recall = recall_from(&big, "telegram owner gate refusal").expect("should recall");
     assert!(
         recall.chars().count() < 1600,
         "recall grew to {} chars",
         recall.chars().count()
+    );
+}
+
+/// A known limit, pinned so it is a decision rather than a surprise.
+///
+/// When every section contains the query terms, those terms discriminate
+/// nothing: BM25 gives them near-zero weight and recall stays silent. That is
+/// correct in the sense that picking 2 of 40 equally-matching sections would be
+/// arbitrary, and it is a real limitation for a workspace whose memory is
+/// dominated by one subject. The on-demand tools still reach the file.
+#[test]
+fn a_corpus_where_everything_matches_equally_recalls_nothing() {
+    let mut uniform = String::new();
+    for i in 0..40 {
+        uniform.push_str(&format!(
+            "## Telegram rule {i}\n\nTelegram owner gate detail number {i}.\n\n"
+        ));
+    }
+    assert!(
+        recall_from(&uniform, "telegram owner gate").is_none(),
+        "terms present in every section carry no signal and must not inject"
     );
 }
 

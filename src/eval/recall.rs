@@ -82,10 +82,23 @@ impl QueryMetrics {
 }
 
 /// One labeled query: the relevant document ids for it.
+///
+/// An EMPTY `relevant` list is meaningful, not a missing label: it asserts the
+/// query should return nothing at all. Retrieval that fires on everything
+/// scores perfectly on positives alone, so a dataset without negatives cannot
+/// see the failure mode that matters most for anything running automatically
+/// on every turn (#996).
 #[derive(Debug, Clone, Deserialize)]
 pub struct QueryCase {
     pub query: String,
     pub relevant: Vec<String>,
+}
+
+impl QueryCase {
+    /// Whether this case asserts silence rather than a specific result.
+    pub fn is_negative(&self) -> bool {
+        self.relevant.is_empty()
+    }
 }
 
 /// A labeled recall dataset.
@@ -105,8 +118,36 @@ impl RecallDataset {
 #[derive(Debug, Clone)]
 pub struct RecallReport {
     pub per_query: Vec<(String, QueryMetrics)>,
+    /// Macro-average across POSITIVE cases only.
+    ///
+    /// Negatives are excluded deliberately: a case asserting silence has an
+    /// empty relevant set, and every metric here is 0.0 against an empty set
+    /// whether the retrieval stayed silent or dumped the whole corpus. Folding
+    /// them in would drag the average down by a constant that says nothing
+    /// about quality. They are scored by `false_positive_rate` instead.
     pub aggregate: QueryMetrics,
     pub k: usize,
+    /// Cases asserting the query should return nothing.
+    pub negatives: usize,
+    /// Negative cases that returned something anyway.
+    pub false_positives: usize,
+}
+
+impl RecallReport {
+    /// Share of silence-asserting cases that fired anyway, 0.0 when there are
+    /// no negatives. This is the number that exposes retrieval which fires on
+    /// everything, which positives-only scoring rates as perfect.
+    pub fn false_positive_rate(&self) -> f64 {
+        if self.negatives == 0 {
+            return 0.0;
+        }
+        self.false_positives as f64 / self.negatives as f64
+    }
+
+    /// Positive cases scored, i.e. those naming at least one relevant id.
+    pub fn positives(&self) -> usize {
+        self.per_query.len()
+    }
 }
 
 impl RecallReport {
@@ -115,7 +156,15 @@ impl RecallReport {
     pub fn compute(cases: &[QueryCase], results: &[Vec<String>], k: usize) -> Self {
         let mut per_query = Vec::with_capacity(cases.len());
         let (mut sp, mut sr, mut sm, mut sn) = (0.0, 0.0, 0.0, 0.0);
+        let (mut negatives, mut false_positives) = (0usize, 0usize);
         for (case, ranked) in cases.iter().zip(results.iter()) {
+            if case.is_negative() {
+                negatives += 1;
+                if !ranked.is_empty() {
+                    false_positives += 1;
+                }
+                continue;
+            }
             let relevant: HashSet<String> = case.relevant.iter().cloned().collect();
             let m = QueryMetrics::compute(ranked, &relevant, k);
             sp += m.precision;
@@ -134,19 +183,30 @@ impl RecallReport {
             },
             per_query,
             k,
+            negatives,
+            false_positives,
         }
     }
 
     /// Stable human-readable summary of the aggregate metrics.
     pub fn render(&self) -> String {
-        format!(
-            "recall@{k}: P={:.3} R={:.3} MRR={:.3} nDCG={:.3} ({n} queries)\n",
+        let mut out = format!(
+            "recall@{k}: P={:.3} R={:.3} MRR={:.3} nDCG={:.3} ({n} positive queries)\n",
             self.aggregate.precision,
             self.aggregate.recall,
             self.aggregate.mrr,
             self.aggregate.ndcg,
             k = self.k,
             n = self.per_query.len()
-        )
+        );
+        if self.negatives > 0 {
+            out.push_str(&format!(
+                "silence: {}/{} negative queries fired (FPR={:.3})\n",
+                self.false_positives,
+                self.negatives,
+                self.false_positive_rate()
+            ));
+        }
+        out
     }
 }

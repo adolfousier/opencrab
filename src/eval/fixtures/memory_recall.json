@@ -1,0 +1,30 @@
+{
+  "name": "memory-recall-v1",
+  "cases": [
+    { "query": "which linter command should I run before committing", "relevant": ["Build commands"] },
+    { "query": "how do releases get cut, does pushing to the branch start one", "relevant": ["Release process"] },
+    { "query": "am I allowed to push this to the remote now", "relevant": ["Push approval"] },
+    { "query": "I added a migration file but it never runs at startup", "relevant": ["Database migrations"] },
+    { "query": "should I send the audio or the text first for a voice note", "relevant": ["Voice notes"] },
+    { "query": "which language do I answer in when the group is mixed", "relevant": ["Group chat language"] },
+    { "query": "someone pasted a screenshot, what do I do with it first", "relevant": ["Screenshot handling"] },
+    { "query": "should timestamps be stored local or utc", "relevant": ["Timezone handling"] },
+    { "query": "do we retry an authentication failure with backoff", "relevant": ["Retry and backoff"] },
+    { "query": "is the modification time enough to invalidate a cached parse", "relevant": ["Cache invalidation"] },
+    { "query": "where do new tests go, inline or a separate file", "relevant": ["Test placement"] },
+    { "query": "can I ignore this failed result if we continue anyway", "relevant": ["Error handling"] },
+
+    { "query": "hold on a second", "relevant": [] },
+    { "query": "ok cool that works for me", "relevant": [] },
+    { "query": "that makes no sense at all", "relevant": [] },
+    { "query": "yes go ahead with what you said", "relevant": [] },
+    { "query": "can you check on that and tell me what you find", "relevant": [] },
+    { "query": "I will get back to you on this one later", "relevant": [] },
+    { "query": "no the other one, not that one", "relevant": [] },
+    { "query": "actually you are right, we are good", "relevant": [] },
+    { "query": "wait what happened there", "relevant": [] },
+    { "query": "continue with the next thing please", "relevant": [] },
+    { "query": "it does work now after all, nice", "relevant": [] },
+    { "query": "let me think about it and come back", "relevant": [] }
+  ]
+}
