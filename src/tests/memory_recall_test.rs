@@ -111,3 +111,44 @@ fn recall_stays_bounded() {
         recall.chars().count()
     );
 }
+
+// --- disk-path behaviour (#995) --------------------------------------------
+
+/// The cheap rejections happen before the file is touched.
+///
+/// Both used to run after the whole file was read, so a harness continuation
+/// or a message with no usable terms paid a full read of a 99 KB file to
+/// return `None`. Pointing the home at a directory with no MEMORY.md at all
+/// proves the answer does not depend on reading one: a message that COULD
+/// match still returns `None` here (no file), while these return `None`
+/// without ever needing it.
+#[tokio::test]
+async fn rejections_do_not_depend_on_reading_the_file() {
+    use crate::brain::memory_recall::recall_for;
+
+    // A harness continuation is never recall-eligible, file or not.
+    assert_eq!(
+        recall_for("[System: restart recovery] telegram gate").await,
+        None
+    );
+    // Neither is a message with no term longer than two characters.
+    assert_eq!(recall_for("ok").await, None);
+    assert_eq!(recall_for("go on").await, None);
+}
+
+/// Repeated recall against an unchanged file is stable.
+///
+/// The parse is cached and invalidated on mtime and length, so this pins the
+/// property that matters: caching must not change the answer. A stale cache
+/// would show up as a second call disagreeing with the first.
+#[tokio::test]
+async fn repeated_recall_is_stable_across_the_cache() {
+    use crate::brain::memory_recall::recall_for;
+
+    let first = recall_for("telegram owner gate approval").await;
+    let second = recall_for("telegram owner gate approval").await;
+    assert_eq!(
+        first, second,
+        "recall must be identical across calls, the cache cannot change the answer"
+    );
+}

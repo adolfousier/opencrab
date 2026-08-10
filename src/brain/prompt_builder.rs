@@ -36,10 +36,17 @@ pub(crate) const CONTEXTUAL_BRAIN_FILES: &[(&str, &str)] = &[
 /// SOUL.md intentionally excluded — injected near the end.
 /// AGENTS.md intentionally excluded — injected LAST (owns the brain-file routing model).
 /// TOOLS.md and CODE.md excluded — they're contextual now.
+/// MEMORY.md is deliberately NOT here (#995). It is the one brain file with no
+/// bound on its size: it is append-only and grows for as long as the agent is
+/// used. Inlining it put the entire file in the system prompt of every
+/// full-mode session, roughly 25k tokens on a mature workspace, whether or not
+/// a single line of it was relevant. Every other surface already treated it as
+/// contextual, so full mode was the odd one out. It now reaches all surfaces
+/// the same way: per-turn recall, plus `load_brain_file` and `memory_search`
+/// on demand.
 const BRAIN_FILES: &[(&str, &str)] = &[
     ("USER.md", "user"),
     ("SECURITY.md", "security"),
-    ("MEMORY.md", "memory"),
     ("BOOT.md", "boot"),
     ("HEARTBEAT.md", "heartbeat"),
 ];

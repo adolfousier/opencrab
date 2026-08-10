@@ -15,6 +15,38 @@ impl AgentService {
     /// design prose) gets the Editing rules (`format_editing_reminder`),
     /// and NoPlan gets nothing. Loaded through the shared plan store so
     /// legacy statuses map (and terminal ones resolve) first.
+    /// The user message as the model should see it: the raw text plus the
+    /// per-turn plan reminder and any relevant MEMORY.md recall.
+    ///
+    /// Both additions are context-only. The DB always stores the clean
+    /// `user_message`, so neither can pollute chat history, and neither piles
+    /// up across turns.
+    ///
+    /// Shared because the two message paths had drifted (#995): the tool loop
+    /// appended plan reminder AND recall, `prepare_message_context` appended
+    /// only the reminder, and the two blocks were otherwise identical. Whether
+    /// memory surfaced therefore depended on which code path a session took,
+    /// which is not a property of the memory.
+    pub(super) async fn augment_user_message(session_id: Uuid, user_message: &str) -> String {
+        let mut out = match Self::active_plan_reminder(session_id).await {
+            Some(reminder) => format!("{user_message}\n\n{reminder}"),
+            None => user_message.to_string(),
+        };
+        // Ride relevant memory along with the message (#799). MEMORY.md was
+        // written constantly and read almost never; #800 made reading cheap,
+        // but a cheap read still has to be chosen, and the model cannot decide
+        // to recall a correction it has forgotten exists.
+        if let Some(recall) = crate::brain::memory_recall::recall_for(user_message).await {
+            tracing::info!(
+                "Recalled {} chars from MEMORY.md for session {session_id}",
+                recall.len()
+            );
+            out.push_str("\n\n");
+            out.push_str(&recall);
+        }
+        out
+    }
+
     pub(super) async fn active_plan_reminder(session_id: Uuid) -> Option<String> {
         use crate::utils::plan_files::{self, PlanModeState};
         match plan_files::plan_mode_state(session_id).await {
@@ -100,10 +132,7 @@ impl AgentService {
         // recency window in a long conversation and the model forgets it was
         // mid-plan (discussion #177). Regenerated each turn from the plan file;
         // the DB only ever stores the clean user message, so it never piles up.
-        let context_user_message = match Self::active_plan_reminder(session_id).await {
-            Some(reminder) => format!("{user_message}\n\n{reminder}"),
-            None => user_message.clone(),
-        };
+        let context_user_message = Self::augment_user_message(session_id, &user_message).await;
         let user_msg = Message::user(context_user_message);
         context.add_message(user_msg);
 

@@ -357,10 +357,11 @@ fn test_skills_section_absent_from_full_brain() {
 // ── full brain still works (backwards compat) ─────────────────────────────────
 
 #[test]
-fn test_full_brain_still_injects_all_files() {
+fn test_full_brain_injects_bounded_files_but_never_memory() {
     let dir = TempDir::new().unwrap();
     write(&dir, "SOUL.md", "core soul");
     write(&dir, "USER.md", "Name: Alice");
+    write(&dir, "SECURITY.md", "no exfiltration");
     write(&dir, "MEMORY.md", "long term memory content");
     let brain = loader(&dir).build_system_brain(None);
     assert!(
@@ -368,8 +369,18 @@ fn test_full_brain_still_injects_all_files() {
         "full brain must include USER.md"
     );
     assert!(
-        brain.contains("long term memory content"),
-        "full brain must include MEMORY.md"
+        brain.contains("no exfiltration"),
+        "full brain must include SECURITY.md"
+    );
+    // MEMORY.md is the one brain file with no bound on its size: append-only
+    // and growing for as long as the agent is used. Inlining it meant a mature
+    // workspace carried the whole file (~99 KB, roughly 25k tokens) in every
+    // full-mode system prompt regardless of relevance, while every other
+    // surface already treated it as contextual (#995). It now reaches all
+    // surfaces the same way: per-turn recall plus the on-demand tools.
+    assert!(
+        !brain.contains("long term memory content"),
+        "full brain must NOT inline MEMORY.md, it is unbounded and contextual"
     );
 }
 
@@ -384,6 +395,15 @@ fn test_core_brain_is_smaller_than_full_brain_when_contextual_files_exist() {
     write(&dir, "USER.md", "Name: Alice\n".repeat(100).as_str()); // 1 200 chars
     write(&dir, "MEMORY.md", "project notes\n".repeat(200).as_str()); // 2 800 chars
     write(&dir, "AGENTS.md", "workspace rules\n".repeat(50).as_str());
+    // SECURITY.md and BOOT.md carry the difference now that MEMORY.md is
+    // contextual on every surface (#995). Without them full and core inline
+    // the same set and the comparison stops exercising anything.
+    write(
+        &dir,
+        "SECURITY.md",
+        "no exfiltration\n".repeat(100).as_str(),
+    );
+    write(&dir, "BOOT.md", "startup steps\n".repeat(100).as_str());
 
     let core_len = loader(&dir).build_core_brain(None).len();
     let full_len = loader(&dir).build_system_brain(None).len();

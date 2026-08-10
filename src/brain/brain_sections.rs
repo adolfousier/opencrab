@@ -162,50 +162,111 @@ pub fn find_sections_with(
     max_chars: usize,
     min_hits: usize,
 ) -> Matches {
-    let terms: Vec<String> = query
+    Indexed::build(content).find(query, max_sections, max_chars, min_hits)
+}
+
+/// Match terms extracted from a query, lowercased and deduplicated by position.
+///
+/// `len() > 2` is the only filter, which is why generic words still match. That
+/// is a known precision problem tracked separately; changing it needs an eval
+/// set, not a guess.
+pub(crate) fn query_terms(query: &str) -> Vec<String> {
+    query
         .split_whitespace()
         .map(|t| {
             t.trim_matches(|c: char| !c.is_alphanumeric())
                 .to_lowercase()
         })
         .filter(|t| t.len() > 2)
-        .collect();
+        .collect()
+}
 
-    if terms.is_empty() {
-        return Matches {
-            sections: Vec::new(),
-            omitted: 0,
-        };
+/// Content split into sections once, with each section's word set precomputed.
+///
+/// [`find_sections_with`] pays the split and the per-section tokenization on
+/// every call, which is right for a one-shot read the model asked for and wrong
+/// for automatic recall: that runs on every turn against a file that changes a
+/// few times a day. On a 99 KB file with 158 sections the per-call cost is two
+/// further copies of the content plus roughly 15k string allocations, spent to
+/// return at most 1200 characters.
+///
+/// Building one of these lets a caller cache the parse and pay only the term
+/// lookup per turn. Sections are kept in file order, so ties still break the
+/// same way (#995).
+pub struct Indexed {
+    sections: Vec<(Section, std::collections::HashSet<String>)>,
+}
+
+impl Indexed {
+    /// Split `content` and tokenize every section once.
+    pub fn build(content: &str) -> Self {
+        Self {
+            sections: split_sections(content)
+                .into_iter()
+                .map(|s| {
+                    let words = s.words();
+                    (s, words)
+                })
+                .collect(),
+        }
     }
 
-    let mut scored: Vec<(usize, usize, Section)> = split_sections(content)
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, section)| {
-            let hay = section.words();
-            let hits = terms.iter().filter(|t| hay.contains(t.as_str())).count();
-            (hits >= min_hits.max(1)).then_some((hits, idx, section))
-        })
-        .collect();
-
-    // Best score first; original order breaks ties.
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-
-    let total = scored.len();
-    let mut sections = Vec::new();
-    let mut chars = 0usize;
-    for (_, _, section) in scored {
-        if sections.len() >= max_sections {
-            break;
-        }
-        let len = section.render().chars().count();
-        if chars + len > max_chars && !sections.is_empty() {
-            break;
-        }
-        chars += len;
-        sections.push(section);
+    /// Number of sections held, for cache diagnostics.
+    pub fn len(&self) -> usize {
+        self.sections.len()
     }
 
-    let omitted = total - sections.len();
-    Matches { sections, omitted }
+    /// Whether the indexed content produced no sections at all.
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty()
+    }
+
+    /// Sections matching `query`, under the same bounds as
+    /// [`find_sections_with`] and with identical selection and ordering.
+    pub fn find(
+        &self,
+        query: &str,
+        max_sections: usize,
+        max_chars: usize,
+        min_hits: usize,
+    ) -> Matches {
+        let terms = query_terms(query);
+        if terms.is_empty() {
+            return Matches {
+                sections: Vec::new(),
+                omitted: 0,
+            };
+        }
+
+        let mut scored: Vec<(usize, usize, Section)> = self
+            .sections
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, (section, hay))| {
+                let hits = terms.iter().filter(|t| hay.contains(t.as_str())).count();
+                (hits >= min_hits.max(1)).then(|| (hits, idx, section.clone()))
+            })
+            .collect();
+
+        // Best score first; original order breaks ties.
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+
+        let total = scored.len();
+        let mut sections = Vec::new();
+        let mut chars = 0usize;
+        for (_, _, section) in scored {
+            if sections.len() >= max_sections {
+                break;
+            }
+            let len = section.render().chars().count();
+            if chars + len > max_chars && !sections.is_empty() {
+                break;
+            }
+            chars += len;
+            sections.push(section);
+        }
+
+        let omitted = total - sections.len();
+        Matches { sections, omitted }
+    }
 }

@@ -934,24 +934,7 @@ impl AgentService {
         // still stores the clean `user_message` below (persistence uses it
         // directly), so the reminder is context-only and never piles up (#571
         // follow-up).
-        let mut context_user_message = match Self::active_plan_reminder(session_id).await {
-            Some(reminder) => format!("{user_message}\n\n{reminder}"),
-            None => user_message.clone(),
-        };
-        // Ride relevant memory along with the message (#799). MEMORY.md was
-        // written constantly and read almost never; #800 made reading cheap,
-        // but a cheap read still has to be chosen, and the model cannot decide
-        // to recall a correction it has forgotten exists. Context-only, exactly
-        // like the plan reminder above: never persisted, so recall cannot
-        // pollute chat history or the DB.
-        if let Some(recall) = crate::brain::memory_recall::recall_for(&user_message) {
-            tracing::info!(
-                "Recalled {} chars from MEMORY.md for session {session_id}",
-                recall.len()
-            );
-            context_user_message.push_str("\n\n");
-            context_user_message.push_str(&recall);
-        }
+        let context_user_message = Self::augment_user_message(session_id, &user_message).await;
         let user_msg = Self::build_user_message(&context_user_message);
         context.add_message(user_msg);
 
