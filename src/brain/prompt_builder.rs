@@ -284,7 +284,7 @@ impl BrainLoader {
 
     /// Resolve the brain path: `~/.opencrabs/`
     ///
-    /// Brain files (SOUL.md, IDENTITY.md, etc.) live at the root of the
+    /// Brain files (SOUL.md, AGENTS.md, etc.) live at the root of the
     /// OpenCrabs home directory for simplicity.
     pub fn resolve_path() -> PathBuf {
         crate::config::opencrabs_home()

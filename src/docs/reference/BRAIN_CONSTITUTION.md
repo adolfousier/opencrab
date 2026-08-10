@@ -513,6 +513,7 @@ When the same line appears in multiple files, the lowest-ranked file keeps it an
 |------|--------|--------|
 | `BOOTSTRAP.md` | **Deleted** (commit `a97df0c7`) | Replaced by BOOT.md's first-time setup section. First-time onboarding guidance consolidated into BOOT.md. |
 | `VOICE.md` | **Deleted** (commit `a5eac082`) | Unused template. TTS/STT configuration is handled by the framework, not by a brain file. |
+| `IDENTITY.md` | **Deleted** (predates this ledger) | Folded into `SOUL.md`, which owns identity and voice. Never had a template and is in no brain-file list. Its absence from this table is why stale references to it survived in the setup docs and README long after `VOICE.md` and `BOOTSTRAP.md` were cleaned up (#991). The name still appears in `src/cli/migrate.rs`, correctly: that list describes an Openclaw workspace being migrated FROM, and Openclaw did have one. |
 
 ## 4. Known Gaps (AS IS)
 

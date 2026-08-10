@@ -281,3 +281,64 @@ fn memory_index_excludes_dead_files() {
         );
     }
 }
+
+// ── dead brain files are not promised by user-facing docs (#991) ─────────────
+
+/// Files that were removed from the brain-file set. See the Removed Files
+/// ledger in `src/docs/reference/BRAIN_CONSTITUTION.md`.
+const DEAD_BRAIN_FILES: &[&str] = &["IDENTITY.md", "VOICE.md", "BOOTSTRAP.md"];
+
+/// User-facing docs must not promise a brain file that no longer exists.
+///
+/// `deleted_templates_do_not_exist` above stops the template coming back, but
+/// nothing stopped the docs describing it. The setup guide told users their
+/// workspace is created with a starter `IDENTITY.md` and README diagrammed it
+/// in the workspace tree, so a workspace built by following the docs carried a
+/// file no code path reads, and anything written into it was silently inert.
+///
+/// `BRAIN_CONSTITUTION.md` is deliberately excluded: it is the ledger that
+/// records these deletions, so naming them is its job. CHANGELOG is excluded
+/// for the same reason, it is history.
+#[test]
+fn user_facing_docs_do_not_reference_dead_brain_files() {
+    let mut checked = 0;
+    for path in ["README.md", "src/docs/start", TEMPLATE_DIR] {
+        for file in markdown_files(Path::new(path)) {
+            if file.ends_with("BRAIN_CONSTITUTION.md") {
+                continue;
+            }
+            let content = fs::read_to_string(&file).expect("doc reads");
+            for dead in DEAD_BRAIN_FILES {
+                assert!(
+                    !content.contains(dead),
+                    "{} references {dead}, which was removed from the brain-file set. \
+                     Docs that promise a dead brain file produce workspaces carrying a \
+                     file nothing reads.",
+                    file.display()
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "scanned no docs, the paths must be wrong");
+}
+
+/// Every markdown file at or under `path` (a file yields just itself).
+fn markdown_files(path: &Path) -> Vec<std::path::PathBuf> {
+    if path.is_file() {
+        return vec![path.to_path_buf()];
+    }
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(path) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            out.extend(markdown_files(&p));
+        } else if p.extension().is_some_and(|e| e == "md") {
+            out.push(p);
+        }
+    }
+    out
+}

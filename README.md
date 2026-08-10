@@ -603,7 +603,7 @@ Run multiple isolated OpenCrabs instances from the same installation. Each profi
 
 **Token-lock isolation:** Two profiles cannot use the same bot credential (Telegram token, Discord token, etc.). On startup, each profile acquires a lock on its channel tokens. If another profile already holds the lock, the channel refuses to start — preventing two instances from fighting over the same bot.
 
-**Profile migration:** Use `opencrabs profile migrate --from default --to hermes` to copy all `.md` brain files, `.toml` config files, and `memory/` entries to a new profile. Sessions and database are not copied — the new profile starts clean. Add `--force` to overwrite existing files in the target profile. After migrating, customize the new profile's `SOUL.md`, `IDENTITY.md`, and `config.toml` to give it a different personality and provider setup.
+**Profile migration:** Use `opencrabs profile migrate --from default --to hermes` to copy all `.md` brain files, `.toml` config files, and `memory/` entries to a new profile. Sessions and database are not copied — the new profile starts clean. Add `--force` to overwrite existing files in the target profile. After migrating, customize the new profile's `SOUL.md`, `USER.md`, and `config.toml` to give it a different personality and provider setup.
 
 ### Running OpenCrabs — TUI vs Daemon
 
@@ -1676,7 +1676,7 @@ All TTS outputs are normalised to OGG/Opus via `ensure_opus` before reaching a c
 Two input fields: **About You** (who you are) and **Your OpenCrabs** (how the agent should behave). The LLM uses these plus the 6 workspace template files to generate personalized brain files.
 
 - **First run:** Empty fields, static templates as reference → LLM generates → writes to workspace
-- **Re-run:** Fields pre-populated with truncated preview of existing `USER.md` / `IDENTITY.md` → edit to regenerate or `Esc` to skip
+- **Re-run:** Fields pre-populated with truncated preview of existing `USER.md` / `SOUL.md` → edit to regenerate or `Esc` to skip
 - **Regeneration:** LLM receives the **current workspace files** (not static templates), so any manual edits you made are preserved as context
 - **Overwrite:** Only files with new AI-generated content are overwritten; untouched files keep their current state
 - No extra persistence files — the brain files themselves are the source of truth
@@ -3198,16 +3198,15 @@ The brain reads markdown files from `~/.opencrabs/`:
 
 ```
 ~/.opencrabs/                  # Home — everything lives here
-├── SOUL.md                    # Personality, tone, hard behavioral rules
-├── IDENTITY.md                # Agent name, vibe, style, workspace path
+├── SOUL.md                    # Personality, tone, voice
 ├── USER.md                    # Who the human is, how to work with them
-├── AGENTS.md                  # Workspace rules, memory system, safety policies
+├── AGENTS.md                  # Workspace rules, memory system, enforced hard rules
+├── CODE.md                    # Coding standards, file organization, testing
 ├── TOOLS.md                   # Environment-specific notes (SSH hosts, API accounts)
 ├── MEMORY.md                  # Long-term curated context (never touched by auto-compaction)
 ├── SECURITY.md                # Security policies and access controls
 ├── BOOT.md                    # Startup checklist (optional, runs on launch)
 ├── HEARTBEAT.md               # Periodic task definitions (optional)
-├── BOOTSTRAP.md               # First-run onboarding wizard (deleted after setup)
 ├── config.toml                # App configuration (provider, model, approval policy)
 ├── keys.toml                  # API keys (provider, channel, STT/TTS)
 ├── commands.toml              # User-defined slash commands
