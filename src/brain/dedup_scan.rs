@@ -1,15 +1,25 @@
 //! Periodic brain-file deduplication scanner.
 //!
 //! Reads all brain files (SOUL.md, AGENTS.md, MEMORY.md, etc.) and
-//! identifies exact duplicate lines or near-duplicate blocks. Results
-//! are converted into `BrainDedupProposal` entries for Mission Control
-//! review.
+//! identifies **exact duplicate lines**: two lines that are byte-identical
+//! after trimming. Results are converted into `BrainDedupProposal` entries
+//! for Mission Control review.
 //!
-//! The scanner is conservative: it only flags duplicates that are
-//! clearly redundant (exact line matches, repeated blocks) and skips
-//! structural markdown (headings, blank lines, separators). This
-//! avoids false positives on intentional repetition (e.g., numbered
-//! lists with similar prefixes).
+//! The scanner is conservative by construction. It skips structural markdown
+//! (headings, blank lines, separators, table rows) and fenced code blocks, so
+//! it does not flag intentional repetition like numbered lists with similar
+//! prefixes or `WRONG` / `CORRECT` example pairs.
+//!
+//! **What it does NOT do:** near-duplicate or paraphrase detection. Nothing
+//! here normalizes case, list markers, or emphasis, and nothing scores
+//! similarity. A clean result means "no two lines are byte-identical", NOT
+//! "these files have no redundancy" — the same rule restated in different
+//! words across three files is invisible to this scan, and that is the shape
+//! redundancy usually takes in practice. Measured on a real 8-file workspace:
+//! zero exact duplicates reported while several rules appeared in up to three
+//! files in paraphrase and one file restated its own trigger list twice.
+//! Reading a zero here as an all-clear is the mistake this note exists to
+//! prevent.
 
 use std::collections::HashMap;
 use std::path::Path;

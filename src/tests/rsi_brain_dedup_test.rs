@@ -1,8 +1,12 @@
 //! Regression tests for the brain-file dedup scan and proposal flow.
 //!
-//! Covers: duplicate detection across files, near-duplicate detection,
-//! periodicity gating, proposal format correctness, empty brain files
-//! handled, files under min size skipped.
+//! Covers: exact duplicate detection across files, periodicity gating,
+//! proposal format correctness, empty brain files handled, files under min
+//! size skipped.
+//!
+//! There is no near-duplicate coverage here because there is no
+//! near-duplicate detection to cover (#993). The scan matches byte-identical
+//! trimmed lines and nothing else.
 
 use crate::brain::dedup_scan::{
     DuplicateCluster, canonical_file_rank, cluster_to_proposals, eligible_dedup_lines,

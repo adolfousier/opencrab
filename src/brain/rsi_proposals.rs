@@ -128,9 +128,10 @@ struct SkillProposalsFile {
 
 /// A pending brain-file dedup proposal authored by the autonomous RSI loop.
 ///
-/// When the periodic dedup scan finds duplicate lines or near-duplicate
-/// blocks across brain files (SOUL.md, AGENTS.md, MEMORY.md, etc.), it
-/// files one of these proposals per duplicate cluster. The user reviews
+/// When the periodic dedup scan finds byte-identical lines across brain
+/// files (SOUL.md, AGENTS.md, MEMORY.md, etc.), it files one of these
+/// proposals per duplicate cluster. Paraphrase is not detected, so an empty
+/// proposal list is not evidence the files are free of redundancy. The user reviews
 /// in Mission Control and applies to shrink the file via
 /// `write_opencrabs_file` with `dedup_intent=true`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
