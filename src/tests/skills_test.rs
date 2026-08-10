@@ -226,3 +226,49 @@ async fn profile_skill_is_discovered_under_its_own_profile_only() {
         "profile-declared skill must NOT leak into a different profile"
     );
 }
+
+// --- Built-in registration guard (#990) ------------------------------------
+
+/// Every skill shipped under the templates directory is registered in
+/// `BUILTIN_SKILLS`, and therefore actually reaches users.
+///
+/// `multi-agent` sat in the templates directory for a full release cycle
+/// without a `BUILTIN_SKILLS` entry, so it shipped in the repo and loaded for
+/// nobody. The doc comment above that table already said to add a line when
+/// dropping in a `SKILL.md`; prose is not a gate, so this is the gate.
+///
+/// Note that `load_all_includes_every_builtin` above does not cover this
+/// despite its name: it asserts two skills by name, so a builtin nobody wrote
+/// an assertion for stays invisible.
+///
+/// Asserts against `BUILTIN_SKILLS` directly rather than `load_all_skills()`.
+/// The latter merges built-ins with the user's own `~/.opencrabs/skills/`, so
+/// a developer carrying a user copy of the same skill sees the test pass while
+/// the built-in is still missing. The first version of this test did exactly
+/// that and passed with the fix reverted.
+#[test]
+fn every_shipped_skill_template_is_registered_as_a_builtin() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/docs/reference/templates/skills");
+    let entries = std::fs::read_dir(&dir).expect("templates skills dir reads");
+
+    let names: Vec<&str> = crate::brain::skills::BUILTIN_SKILLS_FOR_TEST
+        .iter()
+        .map(|(n, _)| *n)
+        .collect();
+
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        if !entry.path().join("SKILL.md").exists() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        assert!(
+            names.contains(&dir_name.as_str()),
+            "{dir_name} ships under templates/skills but is not in BUILTIN_SKILLS, \
+             so it reaches no user. BUILTIN_SKILLS: {names:?}"
+        );
+    }
+}

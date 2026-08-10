@@ -77,7 +77,17 @@ const BUILTIN_SKILLS: &[(&str, &str)] = &[
         "github",
         include_str!("../docs/reference/templates/skills/github/SKILL.md"),
     ),
+    (
+        "multi-agent",
+        include_str!("../docs/reference/templates/skills/multi-agent/SKILL.md"),
+    ),
 ];
+
+/// The built-in table, exposed for tests (#990). Asserting through
+/// `load_all_skills` cannot do this job: it merges built-ins with the user's
+/// own `~/.opencrabs/skills/`, so a missing built-in is masked on any machine
+/// that happens to carry a user copy of the same name.
+pub const BUILTIN_SKILLS_FOR_TEST: &[(&str, &str)] = BUILTIN_SKILLS;
 
 /// Where this skill came from. Used by the TUI to badge built-ins
 /// differently from user-installed ones in the autocomplete dropdown.
