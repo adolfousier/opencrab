@@ -113,14 +113,13 @@ impl Tool for ChannelSearchTool {
                         let ts = DateTime::from_timestamp(c.last_message_at, 0)
                             .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                             .unwrap_or_default();
+                        // One id, in one place (#985). This used to print the
+                        // chat id twice, the first time quoted directly after
+                        // the name, where it read as a handle rather than the
+                        // same number again.
                         format!(
-                            "- [{}] {} \"{}\" (id={}) — {} msgs, last: {}",
-                            c.channel,
-                            name,
-                            c.channel_chat_id,
-                            c.channel_chat_id,
-                            c.message_count,
-                            ts
+                            "- [{}] {} (id={}), {} msgs, last: {}",
+                            c.channel, name, c.channel_chat_id, c.message_count, ts
                         )
                     })
                     .collect();
