@@ -307,6 +307,7 @@ pub mod owner_plus_normalization_test;
 pub mod rate_limiter_test;
 pub mod read_empty_file_test;
 pub mod read_media_redirect_test;
+pub mod read_resume_offset_test;
 pub mod rebuild_notify_test;
 pub mod recent_paths_test;
 pub mod redact_scope_test;

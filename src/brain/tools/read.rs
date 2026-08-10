@@ -328,8 +328,8 @@ impl ReadTool {
 
         let warning = if truncated {
             Some(format!(
-                "Output truncated at {} lines. File has {} total lines. Use start_line and line_count for pagination.",
-                MAX_LINES, total_lines
+                "Output truncated at {} lines. File has {} total lines. Resume with start_line={} (0-indexed). Use start_line and line_count for pagination.",
+                MAX_LINES, total_lines, start + lines_read
             ))
         } else if is_large_file && line_count.is_none() {
             Some(format!(
