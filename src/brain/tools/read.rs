@@ -175,6 +175,17 @@ impl Tool for ReadTool {
                 (contents, line_count, None)
             };
 
+        // An empty file must announce itself. Silence is indistinguishable
+        // from a failed read or a wrong path, and the model burns turns
+        // re-reading and guessing path variants. Say it plainly (#987, from
+        // the Command Code read_file audit: silence is the most expensive
+        // thing a tool can return).
+        let output = if output.is_empty() && total_lines == 0 {
+            "(file exists and is empty, 0 bytes)".to_string()
+        } else {
+            output
+        };
+
         // Apply hashline formatting if requested
         let output = if is_hashline {
             let file_start_line = input.start_line.unwrap_or(0) + 1; // convert 0-indexed to 1-indexed
