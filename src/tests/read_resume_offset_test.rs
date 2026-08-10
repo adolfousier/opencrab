@@ -1,8 +1,15 @@
-//! Truncation warnings must carry the exact resume offset. Without it the
-//! model reconstructs where the window ended by counting output lines or
-//! guessing: wrong guesses re-read the same window (paying twice) or skip
-//! content (silently wrong edits). The value is already known at the cut
-//! point (#988, from the Command Code read_file audit).
+//! #988 — truncation warnings must carry the exact resume offset.
+//!
+//! The original warning said "use start_line and line_count for pagination"
+//! without saying FROM WHERE, so the model reconstructed the cut point by
+//! counting output lines (expensive) or guessed, paying twice for re-reads
+//! or skipping content.
+//!
+//! Since #986, a no-range read of a large file stops at the 128 KB output
+//! budget long before the 100k line ceiling, so this test pins the
+//! MAX_LINES truncation path explicitly: `start_line` present, `line_count`
+//! absent. That combination bypasses the byte budget (user-driven window)
+//! while `truncated` still fires at MAX_LINES.
 
 use crate::brain::tools::read::ReadTool;
 use crate::brain::tools::{Tool, ToolExecutionContext};
@@ -11,36 +18,42 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn truncation_warning_names_the_exact_resume_offset() {
-    // 100,005 lines x ~110 bytes = ~11MB: above LARGE_FILE_THRESHOLD so the
-    // buffered path runs, and above MAX_LINES (100,000) so it truncates.
-    let mut f = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
+    // 100_005 lines x ~106 bytes ≈ 10.6 MB: over the 10 MB large-file
+    // threshold (buffered path), over MAX_LINES lines, and over the output
+    // budget — which is exactly why the explicit start_line below matters.
+    let mut f = tempfile::Builder::new().suffix(".log").tempfile().unwrap();
     let total = 100_005usize;
     for i in 0..total {
         writeln!(f, "line {i:0>100}").unwrap();
     }
     f.flush().unwrap();
+    let path = f.path().to_str().unwrap().to_string();
 
     let tool = ReadTool;
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
+    // Explicit start, no line_count: budget bypassed, MAX_LINES is the cap,
+    // and `truncated` still applies. The window is 100_000 lines, so the
+    // first unread line is exactly 100_000.
     let result = tool
-        .execute(
-            serde_json::json!({ "path": f.path().to_str().unwrap() }),
-            &ctx,
-        )
+        .execute(serde_json::json!({ "path": path, "start_line": 0 }), &ctx)
         .await
-        .unwrap();
+        .expect("explicit-start read of large file must succeed");
 
-    assert!(result.success);
+    assert!(result.success, "large-file read must succeed");
     let warning = result
         .metadata
         .get("warning")
-        .expect("a truncated read must carry a warning");
+        .expect("truncated read must carry a warning");
+    assert!(
+        warning.contains("Output truncated at 100000 lines"),
+        "warning must name the MAX_LINES cap: {warning}"
+    );
+    assert!(
+        warning.contains("File has 100005 total lines"),
+        "warning must name the true line total: {warning}"
+    );
     assert!(
         warning.contains("Resume with start_line=100000 (0-indexed)"),
         "warning must name the exact resume offset: {warning}"
-    );
-    assert!(
-        warning.contains("100005 total lines"),
-        "warning must report the true total: {warning}"
     );
 }

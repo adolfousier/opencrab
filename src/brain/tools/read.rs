@@ -20,6 +20,17 @@ const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
 /// Maximum number of lines to read in a single request
 const MAX_LINES: usize = 100_000;
 
+/// Per-line character ceiling (#986). A minified JS/CSS bundle or sourcemap
+/// is one line; without a clamp it lands in context whole. 2,000 matches the
+/// battle-tested default from the Command Code read_file audit.
+const MAX_LINE_CHARS: usize = 2_000;
+
+/// Output byte budget for default (non-ranged) reads (#986). Once emitted
+/// output exceeds this, reading stops with an announced truncation and an
+/// exact resume offset. Explicit start_line/line_count requests bypass the
+/// budget (user-driven window) but never the per-line clamp.
+const OUTPUT_BUDGET: usize = 128 * 1024;
+
 /// Binary media that must NOT be read as text — reading the raw bytes yields
 /// garbage. Returns the tool the agent should call instead, or `None` for a
 /// normal text file. Keyed on extension so it's cheap and needs no file read.
@@ -159,21 +170,66 @@ impl Tool for ReadTool {
         let is_hashline = input.hashline.unwrap_or(false);
 
         // For large files or line-range requests, use buffered streaming
-        let (output, total_lines, warning) =
-            if input.start_line.is_some() || input.line_count.is_some() || is_large_file {
-                self.read_with_buffer(&path, input.start_line, input.line_count, is_large_file)
-                    .await?
+        let (output, total_lines, warning, clamped_lines) = if input.start_line.is_some()
+            || input.line_count.is_some()
+            || is_large_file
+        {
+            self.read_with_buffer(&path, input.start_line, input.line_count, is_large_file)
+                .await?
+        } else {
+            // Small file: read entire contents directly
+            let contents = fs::read_to_string(&path).await.map_err(ToolError::Io)?;
+            let line_count = contents.lines().count();
+            // Remember what this session saw, so a later whole-file write
+            // can tell its own output from another agent's change (#954).
+            // Only whole-file reads qualify: a partial read is not a basis
+            // for replacing the file.
+            super::file_versions::record(context.session_id, &path, &contents);
+            if contents.len() > OUTPUT_BUDGET {
+                // Budget path (#986): emit lines until the 128 KB budget is
+                // exhausted, then stop with an announced truncation and the
+                // exact resume offset.
+                let mut out = String::new();
+                let mut emitted = 0usize;
+                let mut clamped = 0usize;
+                for line in contents.lines() {
+                    let (cl, was_clamped) = clamp_line(line);
+                    if was_clamped.is_some() {
+                        clamped += 1;
+                    }
+                    let add_len = cl.len() + usize::from(!out.is_empty());
+                    if out.len() + add_len > OUTPUT_BUDGET {
+                        break;
+                    }
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
+                    out.push_str(&cl);
+                    emitted += 1;
+                }
+                let warning = format!(
+                    "Output truncated at the {} KB output budget. File has {} total lines. Resume with start_line={} (0-indexed). Use start_line and line_count for pagination.",
+                    OUTPUT_BUDGET / 1024,
+                    line_count,
+                    emitted
+                );
+                (out, line_count, Some(warning), clamped)
             } else {
-                // Small file: read entire contents directly
-                let contents = fs::read_to_string(&path).await.map_err(ToolError::Io)?;
-                let line_count = contents.lines().count();
-                // Remember what this session saw, so a later whole-file write
-                // can tell its own output from another agent's change (#954).
-                // Only whole-file reads qualify: a partial read is not a basis
-                // for replacing the file.
-                super::file_versions::record(context.session_id, &path, &contents);
-                (contents, line_count, None)
-            };
+                let mut clamped = 0usize;
+                let mut out = String::new();
+                for line in contents.lines() {
+                    let (cl, was_clamped) = clamp_line(line);
+                    if was_clamped.is_some() {
+                        clamped += 1;
+                    }
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
+                    out.push_str(&cl);
+                }
+                (out, line_count, None, clamped)
+            }
+        };
 
         // An empty file must announce itself. Silence is indistinguishable
         // from a failed read or a wrong path, and the model burns turns
@@ -250,6 +306,27 @@ impl Tool for ReadTool {
             .with_metadata("bytes".to_string(), output_len.to_string())
             .with_metadata("total_lines".to_string(), total_lines.to_string());
 
+        // Announce clamped lines, then attach the combined warning (#986).
+        let warning = if clamped_lines > 0 {
+            let clamp_note = if is_hashline {
+                format!(
+                    "{} line(s) exceeded {} chars and were truncated; their hashes cover only the visible prefix, so do not hashline_edit those lines.",
+                    clamped_lines, MAX_LINE_CHARS
+                )
+            } else {
+                format!(
+                    "{} line(s) exceeded {} chars and were truncated.",
+                    clamped_lines, MAX_LINE_CHARS
+                )
+            };
+            match warning {
+                Some(w) => Some(format!("{} {}", w, clamp_note)),
+                None => Some(clamp_note),
+            }
+        } else {
+            warning
+        };
+
         // Add warning for large files
         if let Some(warn_msg) = warning {
             result = result.with_metadata("warning".to_string(), warn_msg);
@@ -267,7 +344,7 @@ impl ReadTool {
         start_line: Option<usize>,
         line_count: Option<usize>,
         is_large_file: bool,
-    ) -> Result<(String, usize, Option<String>)> {
+    ) -> Result<(String, usize, Option<String>, usize)> {
         let file = fs::File::open(path).await.map_err(ToolError::Io)?;
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
@@ -280,6 +357,9 @@ impl ReadTool {
         let mut lines_read = 0;
         let mut total_lines = 0;
         let mut truncated = false;
+        let mut clamped_lines = 0usize;
+        let budgeted = start_line.is_none() && line_count.is_none();
+        let mut budget_exceeded = false;
 
         // Skip lines before start
         while current_line < start {
@@ -301,10 +381,24 @@ impl ReadTool {
         while lines_read < max_lines {
             match lines.next_line().await.map_err(ToolError::Io)? {
                 Some(line) => {
+                    let (clamped_line, was_clamped) = clamp_line(&line);
+                    if was_clamped.is_some() {
+                        clamped_lines += 1;
+                    }
+                    let add_len = clamped_line.len() + usize::from(!output.is_empty());
+                    if budgeted && output.len() + add_len > OUTPUT_BUDGET {
+                        // The line was already consumed from the reader above;
+                        // count it so the reported total stays exact, and stop
+                        // before emitting it so the resume offset stays exact
+                        // (#986/#988).
+                        budget_exceeded = true;
+                        total_lines += 1;
+                        break;
+                    }
                     if !output.is_empty() {
                         output.push('\n');
                     }
-                    output.push_str(&line);
+                    output.push_str(&clamped_line);
                     lines_read += 1;
                     total_lines += 1;
                 }
@@ -313,7 +407,7 @@ impl ReadTool {
         }
 
         // Count remaining lines if we haven't read the whole file
-        if line_count.is_none() && lines_read >= MAX_LINES {
+        if budget_exceeded || (line_count.is_none() && lines_read >= MAX_LINES) {
             truncated = true;
             // Count remaining lines without loading them into memory
             while lines.next_line().await.map_err(ToolError::Io)?.is_some() {
@@ -327,9 +421,19 @@ impl ReadTool {
         }
 
         let warning = if truncated {
+            let reason = if budget_exceeded {
+                format!(
+                    "Output truncated at the {} KB output budget.",
+                    OUTPUT_BUDGET / 1024
+                )
+            } else {
+                format!("Output truncated at {} lines.", MAX_LINES)
+            };
             Some(format!(
-                "Output truncated at {} lines. File has {} total lines. Resume with start_line={} (0-indexed). Use start_line and line_count for pagination.",
-                MAX_LINES, total_lines, start + lines_read
+                "{} File has {} total lines. Resume with start_line={} (0-indexed). Use start_line and line_count for pagination.",
+                reason,
+                total_lines,
+                start + lines_read
             ))
         } else if is_large_file && line_count.is_none() {
             Some(format!(
@@ -340,6 +444,34 @@ impl ReadTool {
             None
         };
 
-        Ok((output, total_lines, warning))
+        Ok((output, total_lines, warning, clamped_lines))
     }
+}
+
+/// Clamp one line to [`MAX_LINE_CHARS`] characters (#986). Returns the
+/// (possibly truncated) line plus, when clamped, the original character count
+/// so callers can announce what the model is not seeing.
+fn clamp_line(line: &str) -> (std::borrow::Cow<'_, str>, Option<usize>) {
+    if line.len() <= MAX_LINE_CHARS {
+        // bytes <= cap => chars <= cap, no need to walk the string
+        return (std::borrow::Cow::Borrowed(line), None);
+    }
+    let total_chars = line.chars().count();
+    if total_chars <= MAX_LINE_CHARS {
+        return (std::borrow::Cow::Borrowed(line), None);
+    }
+    let byte_cut = line
+        .char_indices()
+        .nth(MAX_LINE_CHARS)
+        .map(|(i, _)| i)
+        .unwrap_or(line.len());
+    (
+        std::borrow::Cow::Owned(format!(
+            "{}... [line truncated: {} chars total, showing first {}]",
+            &line[..byte_cut],
+            total_chars,
+            MAX_LINE_CHARS
+        )),
+        Some(total_chars),
+    )
 }
