@@ -1,0 +1,39 @@
+{
+  "name": "memory-recall-multilingual-v1",
+  "cases": [
+    { "query": "which linter should I run before committing my changes", "relevant": ["Build commands (en)"] },
+    { "query": "que analizador debo ejecutar antes de confirmar los cambios", "relevant": ["Comandos de compilacion (es)"] },
+    { "query": "qual analisador devo executar antes de confirmar as alteracoes", "relevant": ["Comandos de compilacao (pt)"] },
+    { "query": "quel analyseur dois je lancer avant de valider les modifications", "relevant": ["Commandes de compilation (fr)"] },
+    { "query": "какой статический анализатор запускать перед коммитом", "relevant": ["Команды сборки (ru)"] },
+    { "query": "penganalisis apa yang harus dijalankan sebelum melakukan commit", "relevant": ["Perintah build (id)"] },
+
+    { "query": "does pushing to the default branch start a release", "relevant": ["Release tags (en)"] },
+    { "query": "subir a la rama principal inicia una publicacion", "relevant": ["Etiquetas de publicacion (es)"] },
+    { "query": "enviar para o ramo principal inicia um lancamento", "relevant": ["Etiquetas de lancamento (pt)"] },
+    { "query": "pousser sur la branche principale declenche une publication", "relevant": ["Etiquettes de publication (fr)"] },
+    { "query": "запускает ли отправка в основную ветку сборку релиза", "relevant": ["Теги релиза (ru)"] },
+    { "query": "apakah mengirim ke cabang utama memulai proses rilis", "relevant": ["Tag rilis (id)"] },
+
+    { "query": "should I send the audio or the written reply first", "relevant": ["Voice notes (en)"] },
+    { "query": "debo enviar primero el audio o la respuesta escrita", "relevant": ["Notas de voz (es)"] },
+    { "query": "devo enviar primeiro o audio ou a resposta escrita", "relevant": ["Notas de voz (pt)"] },
+    { "query": "dois je envoyer d abord le fichier audio ou la reponse ecrite", "relevant": ["Notes vocales (fr)"] },
+    { "query": "что отправлять сначала звуковой файл или письменный ответ", "relevant": ["Голосовые сообщения (ru)"] },
+    { "query": "haruskah mengirim berkas audio atau balasan tertulis lebih dulu", "relevant": ["Pesan suara (id)"] },
+
+    { "query": "hold on a second please", "relevant": [] },
+    { "query": "espera un momento por favor", "relevant": [] },
+    { "query": "espera um momento por favor", "relevant": [] },
+    { "query": "attends un instant s il te plait", "relevant": [] },
+    { "query": "подожди минуту пожалуйста", "relevant": [] },
+    { "query": "tunggu sebentar tolong", "relevant": [] },
+
+    { "query": "that makes no sense to me at all", "relevant": [] },
+    { "query": "eso no tiene ningun sentido para mi", "relevant": [] },
+    { "query": "isso nao faz nenhum sentido para mim", "relevant": [] },
+    { "query": "cela n a aucun sens pour moi", "relevant": [] },
+    { "query": "это совершенно не имеет смысла", "relevant": [] },
+    { "query": "itu sama sekali tidak masuk akal bagi saya", "relevant": [] }
+  ]
+}

@@ -210,6 +210,7 @@ pub mod logging_log_files_test;
 pub mod logging_logger_test;
 pub mod markdown_render_test;
 pub mod memory_recall_eval_test;
+pub mod memory_recall_multilingual_test;
 pub mod memory_recall_test;
 pub mod memory_search_test;
 pub mod memory_store_test;

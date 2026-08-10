@@ -34,6 +34,46 @@ const K1: f64 = 1.5;
 /// Length normalization, how much a long section is discounted.
 const B: f64 = 0.75;
 
+/// Fold Latin diacritics so an unaccented query still matches accented text.
+///
+/// Matching was accent-sensitive, which fails quietly and often: `operacion`
+/// did not match `operación`, `configuracao` did not match `configuração`,
+/// `revision` did not match `révision`. People type without accents constantly,
+/// so for Spanish, Portuguese and French this meant the discriminating word in
+/// a question frequently matched nothing at all.
+///
+/// Combining marks are dropped ONLY when the base character is ASCII. That
+/// restriction is the whole care of this function: under NFD the Cyrillic `й`
+/// decomposes to `и` plus a breve, so folding indiscriminately would merge two
+/// distinct Russian letters. Latin `é` decomposes to an ASCII `e` plus an
+/// acute, which is exactly the case worth folding.
+fn fold_diacritics(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    use unicode_normalization::char::is_combining_mark;
+
+    let mut kept: Vec<char> = Vec::with_capacity(text.len());
+    let mut base_was_ascii = false;
+    for c in text.nfd() {
+        if is_combining_mark(c) {
+            // Keep the mark when it belongs to a non-ASCII base, so scripts
+            // that carry meaning in their marks are left intact.
+            if !base_was_ascii {
+                kept.push(c);
+            }
+        } else {
+            base_was_ascii = c.is_ascii_alphanumeric();
+            kept.push(c);
+        }
+    }
+    // Recompose, and this step is load-bearing rather than cosmetic. The
+    // tokenizer splits on anything `is_alphanumeric` rejects, and a combining
+    // mark is a nonspacing mark, not alphabetic. Left decomposed, every mark we
+    // deliberately KEPT would be thrown away by tokenization anyway: Russian
+    // `бой` would tokenize as `бои` and become indistinguishable from it,
+    // which is the exact collision the filter above exists to prevent.
+    kept.into_iter().nfc().collect()
+}
+
 /// Strip a common inflectional suffix, when a substantial stem remains.
 ///
 /// Without this, `committing` does not match `commit` and `commands` does not
@@ -95,7 +135,7 @@ impl Ranked {
         for section in &sections {
             let mut counts: HashMap<String, usize> = HashMap::new();
             let mut len = 0usize;
-            for token in tokens(&section.text()) {
+            for token in tokens(&fold_diacritics(&section.text())) {
                 *counts.entry(stem(&token).to_string()).or_insert(0) += 1;
                 len += 1;
             }
@@ -158,7 +198,8 @@ impl Ranked {
                 // Both tables are keyed by STEM. Looking up idf with the raw
                 // term would miss every time, scoring df=0, which reads as
                 // "unique to one section" and hands every word top weight.
-                let stemmed = stem(term);
+                let folded = fold_diacritics(term);
+                let stemmed = stem(&folded);
                 let f = *self.tf[i].get(stemmed)? as f64;
                 let denom = f + K1 * (1.0 - B + B * dl / self.avg_len);
                 Some(self.idf(stemmed) * (f * (K1 + 1.0)) / denom)

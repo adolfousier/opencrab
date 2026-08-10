@@ -46,3 +46,53 @@ the messages and the memory file that produced them cannot be committed.
   `memory_recall_test`.
 - **Live behaviour.** Everything here is offline scoring. No measurement of
   whether injected sections actually changed an answer for the better.
+
+---
+
+# Multilingual
+
+Dataset: `src/eval/fixtures/memory_recall_multilingual.json`
+Corpus: `src/eval/fixtures/memory_corpus_multilingual.md`, 19 sections
+Scored by: `src/tests/memory_recall_multilingual_test.rs`
+Regenerate: `cargo test --all-features memory_recall_multilingual`
+
+Six languages (en, ru, es, pt, fr, id), three topics stated in all six, so a
+query must be answered by its OWN language's section rather than a translation.
+
+| metric | value |
+|---|---|
+| precision@2 | 1.000 |
+| recall@2 | 1.000 |
+| false-positive rate | 0.000 |
+| per-language recall | 3/3 in every one of the six |
+
+18 positive queries, 12 negatives.
+
+## Two defects this found
+
+**Matching was accent-sensitive.** `operacion` did not reach `operación`,
+`configuracao` did not reach `configuração`, `revision` did not reach
+`révision`. People type without accents constantly, so the discriminating word
+in a Spanish, Portuguese or French question routinely matched nothing. Fixed by
+folding Latin diacritics before tokenizing.
+
+**The first version of that fix silently did nothing for Cyrillic.** It kept
+combining marks whose base was non-ASCII, intending to protect Russian `й` from
+collapsing into `и`. But the tokenizer splits on anything `is_alphanumeric`
+rejects, and a combining mark is a nonspacing mark, so every mark the filter
+carefully kept was discarded a step later: `бой` tokenized as `бои` and the two
+words collided. Caught by `folding_leaves_cyrillic_distinctions_intact`, which
+failed with "matched nothing at all". Fixed by recomposing to NFC after folding.
+
+## Do not over-read these numbers
+
+A perfect score here says less than the English fixture's imperfect one. Six
+languages give each topic a nearly disjoint vocabulary, especially across
+scripts, so telling them apart is an easy discrimination problem. The negatives
+are short conversational phrases that share little with technical prose.
+
+What it does establish: no language is broken, non-Latin scripts tokenize, the
+English-shaped stemmer does not damage the other five, and cross-language bleed
+does not occur at the shipped threshold. What it does not establish is that
+recall is as GOOD in those languages as in English, which would need real
+non-English queries against a real non-English memory file.
