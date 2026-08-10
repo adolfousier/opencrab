@@ -200,7 +200,10 @@ impl SelfUpdater {
         tracing::info!("Building OpenCrabs at {}", self.project_root.display());
 
         let mut child = Command::new("cargo")
-            .args(["build", "--release"])
+            // `pdfium` is NOT a default feature (see Cargo.toml [features]),
+            // yet the shipped binary is built with it — without this flag a
+            // `/rebuild` would silently produce a poppler-only binary.
+            .args(["build", "--release", "--features", "pdfium"])
             .env("RUSTFLAGS", "-C target-cpu=native")
             .current_dir(&self.project_root)
             .stdout(std::process::Stdio::piped())
