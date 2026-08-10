@@ -614,6 +614,7 @@ pub mod telegram_reflow_collapsed_table_test;
 pub mod telegram_rich_json_test;
 pub mod telegram_rich_parse_test;
 pub mod telegram_rich_test;
+pub mod telegram_rich_wrap_p_test;
 pub mod telegram_send_caption_test;
 pub mod telegram_send_input_file_test;
 pub mod telegram_send_thread_id_override_test;

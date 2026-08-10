@@ -41,10 +41,17 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
             // No heading tags in Telegram HTML: bold, and italicize deeper
             // headings (level >= 3) so the hierarchy stays visible.
             let inner = render_inlines(content);
-            if *level >= 3 {
+            let styled = if *level >= 3 {
                 format!("<b><i>{inner}</i></b>")
             } else {
                 format!("<b>{inner}</b>")
+            };
+            // wrap_p: a heading is a block too; without its own <p> two
+            // consecutive headings merge into one line in the rich dialect.
+            if wrap_p {
+                format!("<p>{styled}</p>")
+            } else {
+                styled
             }
         }
         Block::Paragraph(content) => {
@@ -55,7 +62,7 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
                 inner
             }
         }
-        Block::List(list) => render_list(list, 0),
+        Block::List(list) => render_list(list, 0, wrap_p),
         Block::Table(table) => render_table(table),
         Block::Code { lang, text } => match lang {
             Some(l) => format!(
@@ -67,7 +74,7 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
         },
         Block::Quote(inner) => format!(
             "<blockquote>{}</blockquote>",
-            render_html_inner(inner, false)
+            render_html_inner(inner, wrap_p)
         ),
         Block::Math(expr) => format!("<pre>{}</pre>", escape(expr)),
         Block::Divider => "──────────".to_string(),
@@ -92,8 +99,11 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
 }
 
 /// Render a list to single-spaced lines. Nested child blocks (typically a
-/// deeper list) are indented under their item.
-fn render_list(list: &List, depth: usize) -> String {
+/// deeper list) are indented under their item. When `wrap_p` is set (the rich
+/// `sendRichMessage` dialect, where a bare newline is just whitespace), every
+/// line instead gets its own `<p>` so items keep their line breaks, and child
+/// blocks are rendered in the same dialect.
+fn render_list(list: &List, depth: usize, wrap_p: bool) -> String {
     let pad = "  ".repeat(depth);
     let mut lines = Vec::new();
     for (idx, item) in list.items.iter().enumerate() {
@@ -103,15 +113,21 @@ fn render_list(list: &List, depth: usize) -> String {
             None if list.ordered => format!("{}.", idx + 1),
             None => "•".to_string(),
         };
-        lines.push(format!("{pad}{bullet} {}", render_inlines(&item.content)));
+        let line = format!("{pad}{bullet} {}", render_inlines(&item.content));
+        lines.push(if wrap_p {
+            format!("<p>{line}</p>")
+        } else {
+            line
+        });
         for child in &item.children {
             match child {
-                Block::List(inner) => lines.push(render_list(inner, depth + 1)),
+                Block::List(inner) => lines.push(render_list(inner, depth + 1, wrap_p)),
+                other if wrap_p => lines.push(render_block(other, true)),
                 other => lines.push(format!("{pad}  {}", render_block(other, false))),
             }
         }
     }
-    lines.join("\n")
+    lines.join(if wrap_p { "" } else { "\n" })
 }
 
 /// Width (monospace chars) up to which an aligned grid fits a typical phone.
