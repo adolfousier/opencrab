@@ -89,8 +89,38 @@ pub fn engine_if_ready() -> Option<&'static Mutex<EmbeddingEngine>> {
 
 /// Max bytes we'll send to llama.cpp for embedding.  Anything larger causes
 /// a native `abort()` inside ggml_backend_sched_synchronize, which kills the
-/// whole process.  Must match the constant in `backfill_embeddings`.
+/// whole process.
+///
+/// Since #998 this is a backstop rather than the working limit: content is
+/// chunked first, and a chunk is bounded by `CHUNK_SIZE_CHARS`, so nothing in
+/// normal operation approaches it. It stays because a C-level abort cannot be
+/// caught and the cost of being wrong is the process dying.
 const MAX_EMBED_BYTES: usize = 32_000;
+
+/// Split content the way it will be embedded and stored.
+///
+/// One vector per document was wrong twice over (#998). Anything past 32 KB got
+/// a `skipped-too-large` placeholder and no vector at all, which on a real
+/// workspace was a quarter of all rows including MEMORY.md, the one file memory
+/// search exists to search. And everything under that limit collapsed into a
+/// single averaged vector, so a document covering several topics landed as one
+/// meaningless point in embedding space.
+///
+/// `qmd::chunk_document` was always available with a 15% overlap; the call
+/// sites simply passed `seq = 0, pos = 0` and never used it.
+pub(crate) fn chunks_for(body: &str) -> Vec<qmd::Chunk> {
+    qmd::chunk_document(body, CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS)
+}
+
+/// Target chunk size in characters, and the overlap between neighbours.
+///
+/// Mirrors qmd's own defaults (800 tokens at roughly 4 characters per token,
+/// with a 15% overlap) but declared here because qmd does not re-export the
+/// character-based constants, and because these are the two numbers a
+/// retrieval eval would tune. Overlap exists so a passage split across a
+/// boundary is still wholly present in one chunk.
+const CHUNK_SIZE_CHARS: usize = qmd::CHUNK_SIZE_TOKENS * 4;
+const CHUNK_OVERLAP_CHARS: usize = qmd::CHUNK_OVERLAP_TOKENS * 4;
 
 /// Generate and store an embedding for content.
 ///
@@ -107,37 +137,47 @@ pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
     if body.is_empty() {
         return Ok(());
     }
-    if body.len() > MAX_EMBED_BYTES {
-        return Err(format!(
-            "Body too large for embedding ({} bytes, max {MAX_EMBED_BYTES})",
-            body.len()
-        ));
+    let engine_mutex = engine_if_ready().ok_or("Embedding engine not initialized")?;
+    // The title rides with every chunk: a chunk lifted out of the middle of a
+    // document has no other clue what it belongs to.
+    let title = Store::extract_title(body);
+    // Hash of the WHOLE document. It is the foreign key to `content`; the
+    // chunk is identified by `seq` alongside it.
+    let hash = Store::hash_content(body);
+    let now = crate::utils::string::utc_timestamp();
+
+    for (seq, chunk) in chunks_for(body).into_iter().enumerate() {
+        if chunk.text.len() > MAX_EMBED_BYTES {
+            tracing::warn!(
+                "Chunk {seq} still exceeds {MAX_EMBED_BYTES} bytes after chunking; skipping it"
+            );
+            continue;
+        }
+
+        // catch_unwind guards against Rust-side panics from llama-cpp bindings.
+        // A C-level abort() cannot be caught, which is why the size check above
+        // stays even though chunking should make it unreachable.
+        let emb = {
+            let mut engine = engine_mutex
+                .lock()
+                .map_err(|e| format!("Engine lock poisoned: {e}"))?;
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                engine.embed_document(&chunk.text, Some(&title))
+            }))
+            .map_err(|_| "llama.cpp panicked during embedding".to_string())?
+            .map_err(|e| format!("Embedding failed: {e}"))?
+        };
+
+        // Store lock → insert → release, once per chunk so a long document
+        // does not hold the store for the whole batch.
+        store
+            .lock()
+            .map_err(|e| format!("Store lock poisoned: {e}"))?
+            .insert_embedding(&hash, seq, chunk.pos, &emb.embedding, &emb.model, &now)
+            .map_err(|e| format!("Failed to store embedding: {e}"))?;
     }
 
-    let engine_mutex = engine_if_ready().ok_or("Embedding engine not initialized")?;
-    let title = Store::extract_title(body);
-    let hash = Store::hash_content(body);
-
-    // catch_unwind guards against Rust-side panics from llama-cpp bindings.
-    // A C-level abort() cannot be caught, so the size guard above is critical.
-    let emb = {
-        let mut engine = engine_mutex
-            .lock()
-            .map_err(|e| format!("Engine lock poisoned: {e}"))?;
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            engine.embed_document(body, Some(&title))
-        }))
-        .map_err(|_| "llama.cpp panicked during embedding".to_string())?
-        .map_err(|e| format!("Embedding failed: {e}"))?
-    };
-
-    // Store lock → insert → release
-    let now = crate::utils::string::utc_timestamp();
-    store
-        .lock()
-        .map_err(|e| format!("Store lock poisoned: {e}"))?
-        .insert_embedding(&hash, 0, 0, &emb.embedding, &emb.model, &now)
-        .map_err(|e| format!("Failed to store embedding: {e}"))
+    Ok(())
 }
 
 /// Backfill embeddings for all documents that don't have one yet.
@@ -159,6 +199,14 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
             return;
         }
     };
+
+    // Retire placeholders from the pre-chunking embedder first (#998), or the
+    // documents that most need embedding stay permanently excluded below.
+    match super::store::clear_skipped_placeholders() {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("Backfill: reopened {n} previously skipped documents"),
+        Err(e) => tracing::warn!("Backfill: placeholder sweep failed, continuing: {e}"),
+    }
 
     // Store lock: get hashes needing embeddings → release
     let needing = match store.lock() {
@@ -189,48 +237,53 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
             hash
         );
 
-        if body.len() > MAX_EMBED_BYTES {
-            tracing::warn!(
-                "Skipping embedding for '{}' — body too large ({} bytes, max {}). \
-                 Inserting zero-vector placeholder so it won't retry.",
-                path,
-                body.len(),
-                MAX_EMBED_BYTES
-            );
-            // Insert a zero-length placeholder embedding so this doc is no longer
-            // returned by get_hashes_needing_embedding on every startup.
-            if let Ok(s) = store.lock() {
-                let _ = s.insert_embedding(hash, 0, 0, &[], "skipped-too-large", &now);
+        let title = Store::extract_title(body);
+        // No size bail here any more (#998). It used to write a
+        // `skipped-too-large` placeholder for anything past 32 KB, which meant
+        // the largest and usually most valuable documents were the ones with no
+        // vector, permanently, since the placeholder also stopped the retry.
+        let mut chunks_stored = 0usize;
+
+        for (seq, chunk) in chunks_for(body).into_iter().enumerate() {
+            if chunk.text.len() > MAX_EMBED_BYTES {
+                tracing::warn!(
+                    "Chunk {seq} of '{path}' exceeds {MAX_EMBED_BYTES} bytes after chunking; \
+                     skipping that chunk"
+                );
+                continue;
             }
-            continue;
+
+            // Engine lock: embed one chunk → release
+            // catch_unwind guards against panics from llama-cpp bindings.
+            let emb = {
+                let mut engine = match engine_mutex.lock() {
+                    Ok(e) => e,
+                    Err(_) => return,
+                };
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.embed_document(&chunk.text, Some(&title))
+                })) {
+                    Ok(result) => result.ok(),
+                    Err(_) => {
+                        tracing::error!(
+                            "llama.cpp panicked during backfill embed of '{path}' chunk {seq}"
+                        );
+                        continue;
+                    }
+                }
+            };
+
+            // Store lock: insert embedding → release
+            if let Some(emb) = emb
+                && let Ok(s) = store.lock()
+                && s.insert_embedding(hash, seq, chunk.pos, &emb.embedding, &emb.model, &now)
+                    .is_ok()
+            {
+                chunks_stored += 1;
+            }
         }
 
-        let title = Store::extract_title(body);
-
-        // Engine lock: embed single document → release
-        // catch_unwind guards against panics from llama-cpp bindings.
-        let emb = {
-            let mut engine = match engine_mutex.lock() {
-                Ok(e) => e,
-                Err(_) => return,
-            };
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                engine.embed_document(body, Some(&title))
-            })) {
-                Ok(result) => result.ok(),
-                Err(_) => {
-                    tracing::error!("llama.cpp panicked during backfill embed of '{path}'");
-                    continue;
-                }
-            }
-        };
-
-        // Store lock: insert embedding → release
-        if let Some(emb) = emb
-            && let Ok(s) = store.lock()
-            && s.insert_embedding(hash, 0, 0, &emb.embedding, &emb.model, &now)
-                .is_ok()
-        {
+        if chunks_stored > 0 {
             stored += 1;
         }
     }
@@ -318,26 +371,25 @@ pub async fn embed_content_api(store: &'static Mutex<Store>, body: &str) -> Resu
     if body.is_empty() {
         return Ok(());
     }
-    if body.len() > MAX_EMBED_BYTES {
-        return Err(format!(
-            "Body too large for embedding ({} bytes, max {MAX_EMBED_BYTES})",
-            body.len()
-        ));
-    }
-
-    let embedding = embed_via_api(body).await?;
-
     let hash = Store::hash_content(body);
     let model_name = super::embedding_api_config()
         .and_then(|c| c.model)
         .unwrap_or_else(|| "api-embedding".to_string());
     let now = crate::utils::string::utc_timestamp();
 
-    store
-        .lock()
-        .map_err(|e| format!("Store lock poisoned: {e}"))?
-        .insert_embedding(&hash, 0, 0, &embedding, &model_name, &now)
-        .map_err(|e| format!("Failed to store API embedding: {e}"))
+    // Chunked like the local path (#998). The size bail is gone: a remote API
+    // has no llama.cpp abort to guard against, and refusing large documents
+    // outright was the reason the biggest ones had no vector at all.
+    for (seq, chunk) in chunks_for(body).into_iter().enumerate() {
+        let embedding = embed_via_api(&chunk.text).await?;
+        store
+            .lock()
+            .map_err(|e| format!("Store lock poisoned: {e}"))?
+            .insert_embedding(&hash, seq, chunk.pos, &embedding, &model_name, &now)
+            .map_err(|e| format!("Failed to store API embedding: {e}"))?;
+    }
+
+    Ok(())
 }
 
 /// Embed a query via the API for vector search.

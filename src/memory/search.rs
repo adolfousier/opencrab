@@ -60,11 +60,16 @@ pub async fn search(
 
         // Hybrid path: combine FTS + vector results via Reciprocal Rank Fusion
         if let Some(ref query_emb) = query_embedding {
-            let vec_results = store.search_vec(query_emb, n, None).unwrap_or_default();
+            // Chunk-aware (#998). qmd's own `search_vec` joins on `hash || '_0'`
+            // and therefore only ever sees a document's first chunk, which would
+            // make chunked embeddings write-only.
+            let db_path = super::store::memory_dir().join("memory.db");
+            let vec_hits = super::vector_search::search_chunks(&db_path, query_emb, n, None)
+                .unwrap_or_default();
 
-            if !vec_results.is_empty() {
+            if !vec_hits.is_empty() {
                 let fts_tuples = results_to_tuples(&store, &home, &fts_results);
-                let vec_tuples = results_to_tuples(&store, &home, &vec_results);
+                let vec_tuples = chunk_hits_to_tuples(&store, &home, &vec_hits);
                 let rrf = hybrid_search_rrf(fts_tuples, vec_tuples, 60);
 
                 return Ok(rrf
@@ -148,6 +153,31 @@ pub async fn search_brain(
     })
     .await
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+/// Convert chunk hits to RRF tuple format: (file_path, display_path, title, body).
+///
+/// The BODY is the whole document, not the matching chunk. The chunk decided
+/// WHICH document is relevant; the caller still snippets the full text, and
+/// handing back only the chunk would lose the surrounding context that makes a
+/// snippet readable.
+fn chunk_hits_to_tuples(
+    store: &Store,
+    home: &Path,
+    hits: &[super::vector_search::ChunkHit],
+) -> Vec<(String, String, String, String)> {
+    hits.iter()
+        .map(|h| {
+            let file_path = resolve_path(home, &h.collection, &h.path);
+            let body = store
+                .get_document(&h.collection, &h.path)
+                .ok()
+                .flatten()
+                .and_then(|d| d.body)
+                .unwrap_or_default();
+            (file_path.clone(), file_path, h.title.clone(), body)
+        })
+        .collect()
 }
 
 /// Convert SearchResults to RRF tuple format: (file_path, display_path, title, body).

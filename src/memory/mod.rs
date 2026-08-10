@@ -7,7 +7,7 @@
 //! When `config.memory.vector_enabled` is false, all vector/embedding code
 //! is skipped — no model download, no llama.cpp init, FTS5-only search.
 
-mod embedding;
+pub(crate) mod embedding;
 mod index;
 pub(crate) mod search;
 pub(crate) mod store;
@@ -15,6 +15,8 @@ pub(crate) mod store;
 pub use embedding::{
     embed_content, embed_content_api, embed_query_api, embed_via_api, engine_if_ready, get_engine,
 };
+pub mod vector_search;
+
 pub use index::{BRAIN_FILES, index_file, reindex};
 pub use search::{search, search_brain};
 pub use store::get_store;
