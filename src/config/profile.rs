@@ -380,6 +380,10 @@ pub(crate) fn seed_brain_templates(profile_dir: &Path) {
             "BOOT.md",
             include_str!("../docs/reference/templates/BOOT.md"),
         ),
+        (
+            "HEARTBEAT.md",
+            include_str!("../docs/reference/templates/HEARTBEAT.md"),
+        ),
     ];
 
     for (filename, content) in TEMPLATES {

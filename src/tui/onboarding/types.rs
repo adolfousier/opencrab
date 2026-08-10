@@ -396,6 +396,10 @@ pub const TEMPLATE_FILES: &[(&str, &str)] = &[
         "BOOT.md",
         include_str!("../../docs/reference/templates/BOOT.md"),
     ),
+    (
+        "HEARTBEAT.md",
+        include_str!("../../docs/reference/templates/HEARTBEAT.md"),
+    ),
 ];
 
 /// Current step in the onboarding wizard
