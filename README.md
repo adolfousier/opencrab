@@ -391,6 +391,7 @@ Telegram groups can have their own member list, so a user can be allowed in **on
 - `bot_owner` — the **owner**: always allowed everywhere.
 - `[channels.telegram.groups.<chat_id>].allowed_users` — allowed in **that group only**. These users are refused in DMs unless they are also an admin or the owner, which closes the "DM the bot privately to escape group oversight" bypass.
 - `[channels.telegram.groups.<chat_id>].open` — **per-group blanket allow** (default `false`). When `true`, *any* member of that group passes the group ACL without being individually listed, and joining members / members who `/start` are auto-registered into `allowed_users` so there's a visible roster. DMs and every other group stay locked. This is the ONLY switch that relaxes group access — it is **per-group, never global**, and defaults off so the bot is secure by default. There is no global `open`.
+- `[channels.telegram.groups.<chat_id>].name` — the group's title, **recorded automatically** so config is readable rather than a wall of chat ids. Written on the group's next message and refreshed when the group is renamed; only for groups that already have a section, so the bot never adds one for a room you didn't configure. Purely a label: the ACL keys off the chat id and never reads it. Safe to edit or delete by hand (it comes back on the next message).
 
 DMs are gated to admins + owner. If neither `allowed_users` nor `bot_owner` is set, the bot refuses all interactions (deny-by-default). Set at least one to unlock access. Each group can also override `respond_to` just for itself.
 
@@ -400,6 +401,7 @@ allowed_users = ["111"]                  # admins: DM + any chat
 respond_to = "mention"                   # global default
 
 [channels.telegram.groups.-1001234567890]
+name = "Release Crew"                    # recorded from Telegram; a label, never part of the ACL
 allowed_users = ["222", "333"]           # allowed in this group only, never via DM
 respond_to = "all"                       # per-group override of the global respond_to
 open = true                              # any member of THIS group is allowed (blanket, per-group)

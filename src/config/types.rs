@@ -339,6 +339,33 @@ where
     })
 }
 
+/// Deserialize an optional free-text value from whatever scalar TOML holds.
+///
+/// A group title that happens to read as a number or a bool (`2026`, `true`)
+/// is a perfectly ordinary group name, and a hand-edited config will carry it
+/// unquoted. Without this, one such line fails the whole config load over a
+/// field that is pure display metadata.
+fn deser_opt_text_compat<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Scalar {
+        Str(String),
+        Int(i64),
+        Float(f64),
+        Bool(bool),
+    }
+    Ok(Option::<Scalar>::deserialize(d)?.map(|s| match s {
+        Scalar::Str(s) => s,
+        Scalar::Int(n) => n.to_string(),
+        Scalar::Float(f) => f.to_string(),
+        Scalar::Bool(b) => b.to_string(),
+    }))
+}
+
 /// Telegram channel configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelegramConfig {
@@ -399,6 +426,16 @@ pub struct TelegramConfig {
 /// Lives under `[channels.telegram.groups.<chat_id>]`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelegramGroupConfig {
+    /// The group's human-readable title, recorded from Telegram so config is
+    /// readable by a person or an agent inspecting it (#984). Sections are
+    /// keyed by chat id, which on its own says nothing about which group it is.
+    ///
+    /// Display metadata ONLY. Access control keys off the chat id and never
+    /// reads this: a group title is set by whoever administers the group, so
+    /// it is untrusted text. Refreshed when the observed title changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deser_opt_text_compat")]
+    pub name: Option<String>,
     /// Users allowed to interact ONLY within this group. They are NOT granted
     /// DM access (that needs the global `allowed_users` or owner). Accepts int
     /// or string arrays, same as `allowed_users`.

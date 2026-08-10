@@ -904,10 +904,63 @@ impl Config {
     /// `key` is the field name inside that section.
     /// `value` is the TOML-serialisable value.
     pub fn write_key(section: &str, key: &str, value: &str) -> Result<()> {
-        use toml_edit::DocumentMut;
-
         // Sanitize: trim whitespace/newlines that may leak from TUI input
         let value = value.trim();
+
+        // Parse the value — try JSON array, integer, float, bool, then fall back to string
+        let parsed: toml_edit::Item = if value.starts_with('[') && value.ends_with(']') {
+            // Try parsing as JSON array → TOML array
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(value) {
+                let mut toml_arr = toml_edit::Array::new();
+                for v in arr {
+                    match v {
+                        serde_json::Value::String(s) => {
+                            toml_arr.push(s);
+                        }
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                toml_arr.push(i);
+                            } else if let Some(f) = n.as_f64() {
+                                toml_arr.push(f);
+                            }
+                        }
+                        serde_json::Value::Bool(b) => {
+                            toml_arr.push(b);
+                        }
+                        _ => {}
+                    }
+                }
+                toml_edit::value(toml_arr)
+            } else {
+                toml_edit::value(value)
+            }
+        } else if let Ok(v) = value.parse::<i64>() {
+            toml_edit::value(v)
+        } else if let Ok(v) = value.parse::<f64>() {
+            toml_edit::value(v)
+        } else if let Ok(v) = value.parse::<bool>() {
+            toml_edit::value(v)
+        } else {
+            toml_edit::value(value)
+        };
+
+        Self::write_item(section, key, parsed)
+    }
+
+    /// Write a config key as a TOML string, whatever the text looks like.
+    ///
+    /// [`Self::write_key`] infers the type, which is right for settings the
+    /// user types but wrong for captured free text: a group named `2026` would
+    /// land as an integer and no longer deserialize into a `String` field.
+    pub fn write_key_string(section: &str, key: &str, value: &str) -> Result<()> {
+        Self::write_item(section, key, toml_edit::value(value.trim()))
+    }
+
+    /// Shared read-modify-write behind [`Self::write_key`] and
+    /// [`Self::write_key_string`]: navigate to the section, insert the
+    /// already-typed item, and re-validate before touching the file.
+    fn write_item(section: &str, key: &str, parsed: toml_edit::Item) -> Result<()> {
+        use toml_edit::DocumentMut;
 
         // Hold lock for entire read-modify-write to prevent races between
         // concurrent write_key calls (e.g. fallback provider switching fires
@@ -950,43 +1003,6 @@ impl Config {
                 .as_table_mut()
                 .with_context(|| format!("'{}' is not a table", part))?;
         }
-
-        // Parse the value — try JSON array, integer, float, bool, then fall back to string
-        let parsed: toml_edit::Item = if value.starts_with('[') && value.ends_with(']') {
-            // Try parsing as JSON array → TOML array
-            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(value) {
-                let mut toml_arr = toml_edit::Array::new();
-                for v in arr {
-                    match v {
-                        serde_json::Value::String(s) => {
-                            toml_arr.push(s);
-                        }
-                        serde_json::Value::Number(n) => {
-                            if let Some(i) = n.as_i64() {
-                                toml_arr.push(i);
-                            } else if let Some(f) = n.as_f64() {
-                                toml_arr.push(f);
-                            }
-                        }
-                        serde_json::Value::Bool(b) => {
-                            toml_arr.push(b);
-                        }
-                        _ => {}
-                    }
-                }
-                toml_edit::value(toml_arr)
-            } else {
-                toml_edit::value(value)
-            }
-        } else if let Ok(v) = value.parse::<i64>() {
-            toml_edit::value(v)
-        } else if let Ok(v) = value.parse::<f64>() {
-            toml_edit::value(v)
-        } else if let Ok(v) = value.parse::<bool>() {
-            toml_edit::value(v)
-        } else {
-            toml_edit::value(value)
-        };
 
         current.insert(key, parsed);
 

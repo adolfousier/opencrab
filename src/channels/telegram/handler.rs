@@ -799,6 +799,26 @@ pub(crate) async fn handle_message(
     // knows to ask the owner for access.
     let mut acl_passed = tg_cfg.user_allowed(&user_id.to_string(), &chat_id_str, is_dm);
 
+    // Keep the group's config section labelled with its title (#984). Config is
+    // keyed by chat id, so without this the only place a name exists is the
+    // live message prefix for the room we happen to be in.
+    //
+    // Runs on every group message but costs a map lookup and a string compare:
+    // `record` writes only when the name is missing or the group was renamed,
+    // and skips groups with no config section entirely. Deliberately ahead of
+    // the ACL drop below, since who is talking says nothing about what the
+    // group is called.
+    if !is_dm {
+        match super::group_name::record(tg_cfg, &chat_id_str, msg.chat.title()) {
+            Ok(true) => tracing::info!(
+                "Telegram: recorded name for group {} in config",
+                chat_id_str
+            ),
+            Ok(false) => {}
+            Err(e) => tracing::warn!("Telegram: {}", e),
+        }
+    }
+
     // Lazy registration: users in cowork groups are recorded on first message.
     // This catches existing members who were in the group before the bot joined
     // (new_chat_members doesn't fire for them).
