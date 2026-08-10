@@ -342,3 +342,77 @@ fn markdown_files(path: &Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+// ── operating rules reach users as syncable sections (#992) ──────────────────
+
+/// Operating rules that must exist in SOUL.md as their own `## ` sections.
+const SOUL_RULE_SECTIONS: &[&str] = &[
+    "## Your Role",
+    "## Operating Rules",
+    "## Epistemic Honesty",
+    "## Never Assume, Verify",
+    "## Fix, Don't Narrate",
+];
+
+/// Each operating rule is a TOP-LEVEL `## ` section, not prose folded into an
+/// existing one.
+///
+/// This is a delivery constraint, not a style preference. `rsi_sync` merges
+/// brain files by section: `extract_new_sections` appends only `## ` sections
+/// the local copy lacks and never rewrites existing prose. Fold these rules
+/// into `## Core Truths` and sync sees a section that already exists locally,
+/// skips it, and every existing install receives nothing. Only brand-new
+/// profiles would ever get them.
+#[test]
+fn soul_operating_rules_are_their_own_sections() {
+    let soul = read_template("SOUL.md");
+    for heading in SOUL_RULE_SECTIONS {
+        assert!(
+            soul.lines().any(|l| l.trim_end() == *heading),
+            "SOUL.md must carry `{heading}` as a top-level section on its own line. \
+             Folded into another section, rsi_sync will never deliver it to an \
+             existing install."
+        );
+    }
+}
+
+/// SOUL owns the posture, AGENTS owns the mechanism, neither restates the other.
+#[test]
+fn epistemic_posture_and_protocol_do_not_duplicate() {
+    let soul = read_template("SOUL.md");
+    let agents = read_template("AGENTS.md");
+
+    // The distinctive posture line belongs to SOUL alone.
+    const SNAPSHOT: &str = "snapshots go stale";
+    assert!(
+        soul.contains(SNAPSHOT),
+        "SOUL.md must own the Never Assume, Verify posture"
+    );
+    assert!(
+        !agents.contains(SNAPSHOT),
+        "AGENTS.md must not duplicate the posture text, it owns the protocol"
+    );
+
+    // The tracking mechanism belongs to AGENTS alone.
+    assert!(
+        agents.contains("## Epistemic Protocol") && agents.contains("Decay:"),
+        "AGENTS.md must own the epistemic tracking protocol"
+    );
+    assert!(
+        !soul.contains("Decay:"),
+        "SOUL.md must not duplicate the protocol, it points at the posture only"
+    );
+}
+
+/// SOUL says what the agent is FOR, not only how it sounds.
+#[test]
+fn soul_defines_a_role_not_only_a_voice() {
+    let soul = read_template("SOUL.md");
+    assert!(
+        soul.contains("protect the production environment")
+            && soul.contains("plan before executing"),
+        "SOUL.md must state the operating posture (protect production, plan first), \
+         not just the voice. A template that defines a tone with no job ships \
+         personality without judgement."
+    );
+}
