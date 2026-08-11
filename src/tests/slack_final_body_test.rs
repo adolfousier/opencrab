@@ -1,16 +1,39 @@
 //! The final Slack message must not repeat what the step group already shows
 //! (#1010).
 //!
-//! Since #943 narration folds into the collapsible step group. The final
-//! `response.content` still carried it, and the completion path only reconciled
-//! standalone intermediate POSTS by hash — folded narration is neither a
-//! standalone post nor equal to the final body, so nothing removed it. A
-//! ten-step turn delivered ten "let me check X" lines ahead of the answer, in
-//! call order, as one message.
+//! Narration folds into the step group (#943) and ALSO stays in the final
+//! `response.content`. The completion path compared hashes of whole messages,
+//! so a body containing every note plus the answer matched nothing and shipped
+//! entire.
+//!
+//! The first attempt at this compared whole paragraphs and was a no-op on real
+//! data: narration and final body are split at STREAM offsets, so the same
+//! sentence is cut mid-word between them and no paragraph on one side equals a
+//! paragraph on the other. Matching therefore runs over non-whitespace
+//! characters, which is what these tests pin.
 
 use crate::channels::slack::final_body::{folded_paragraphs, strip_folded_notes};
 
-/// The reported failure: every note the group folded, prepended to the answer.
+/// The shape that defeated the paragraph version, observed live.
+///
+/// The group folded a note ending mid-word ("the s") and the final body
+/// continued it ("harper"). Nothing is equal on either side except the
+/// non-whitespace stream.
+#[test]
+fn a_note_cut_mid_word_is_still_matched() {
+    let folded = folded_paragraphs(Some("You're right, and it's the s".to_string()));
+    let body = "You're right, and it's the s\n\nharper version of the point.\n\n\
+                I knew the delivery mechanism was a read-only bind mount.";
+
+    let out = strip_folded_notes(body, &folded);
+    assert!(
+        out.starts_with("harper version of the point."),
+        "mid-word split was not consumed: {out:?}"
+    );
+    assert!(!out.contains("You're right"), "narration survived: {out:?}");
+}
+
+/// The reported failure: every folded note, in order, ahead of the answer.
 #[test]
 fn narration_the_group_already_shows_is_dropped() {
     let folded = folded_paragraphs(Some(
@@ -24,17 +47,23 @@ fn narration_the_group_already_shows_is_dropped() {
     let body = "Let me verify each claim against the host.\n\n\
                 Two discrepancies already. Let me dig before drawing conclusions.\n\n\
                 Root cause confirmed. Let me measure the blast radius.\n\n\
-                The service is in a restart loop. The config is missing a socket \
-                declaration, so the entrypoint waits for a file that never appears.";
+                The service is in a restart loop.";
 
     let out = strip_folded_notes(body, &folded);
-    assert!(!out.contains("Let me verify"), "narration survived: {out}");
-    assert!(!out.contains("Let me dig"), "narration survived: {out}");
-    assert!(!out.contains("Let me measure"), "narration survived: {out}");
-    assert!(out.starts_with("The service is in a restart loop"));
+    assert_eq!(out, "The service is in a restart loop.");
 }
 
-/// A turn with no narration must come through byte-identical.
+/// Formatting drift between the fold and the final must not defeat the match.
+///
+/// This is the normalization Telegram already had and Slack lacked.
+#[test]
+fn whitespace_differences_do_not_defeat_the_match() {
+    let folded = folded_paragraphs(Some("Checking   the\nsocket now.".to_string()));
+    let body = "Checking the socket now.\n\nThe socket is absent.";
+    assert_eq!(strip_folded_notes(body, &folded), "The socket is absent.");
+}
+
+/// A turn with no narration comes through byte-identical.
 #[test]
 fn a_body_with_no_folded_notes_is_untouched() {
     let body = "Done. The socket line is added and the loop has stopped.";
@@ -42,10 +71,46 @@ fn a_body_with_no_folded_notes_is_untouched() {
     assert_eq!(strip_folded_notes(body, &folded_paragraphs(None)), body);
 }
 
-/// Only text the group actually folded is removed, never a lookalike.
+/// A final that is a fresh answer, not a continuation, is left whole.
+#[test]
+fn a_body_that_does_not_start_with_the_narration_is_untouched() {
+    let folded = folded_paragraphs(Some("Checking the scan log.".to_string()));
+    let body = "The log holds zero verdicts since boot.";
+    assert_eq!(strip_folded_notes(body, &folded), body);
+}
+
+/// Consumption stops at the first note that diverges.
 ///
-/// The strip is structural. Prose that merely reads like narration but was
-/// never folded is the model's answer and must survive.
+/// Everything from the divergence onward is the answer and must survive, even
+/// though a later note would also have matched.
+#[test]
+fn consumption_stops_at_the_first_divergence() {
+    let folded = vec![
+        "First note.".to_string(),
+        "A note the final never repeats.".to_string(),
+        "Third note.".to_string(),
+    ];
+    let body = "First note.\n\nThird note.\n\nThe answer.";
+
+    let out = strip_folded_notes(body, &folded);
+    assert_eq!(
+        out, "Third note.\n\nThe answer.",
+        "divergence must halt consumption rather than skip ahead"
+    );
+}
+
+/// A body that is narration and nothing else yields nothing.
+///
+/// The caller's empty-final guard then treats the folded narration as the
+/// answer, which is the correct outcome: it is already on screen in the group.
+#[test]
+fn a_body_that_is_entirely_narration_yields_empty() {
+    let folded = folded_paragraphs(Some("Checking.\n\nStill checking.".to_string()));
+    let body = "Checking.\n\nStill checking.";
+    assert!(strip_folded_notes(body, &folded).trim().is_empty());
+}
+
+/// Prose the group never folded always survives.
 #[test]
 fn prose_the_group_never_folded_survives() {
     let folded = folded_paragraphs(Some("Checking the socket now.".to_string()));
@@ -53,42 +118,8 @@ fn prose_the_group_never_folded_survives() {
                 Let me be clear about what I did not verify: the staging box.";
 
     let out = strip_folded_notes(body, &folded);
-    assert!(!out.contains("Checking the socket now."));
-    assert!(
-        out.contains("Let me be clear about what I did not verify"),
-        "unfolded prose was dropped: {out}"
-    );
-}
-
-/// A rewritten note is not a match, and is deliberately left alone.
-#[test]
-fn a_reworded_note_is_not_stripped() {
-    let folded = folded_paragraphs(Some("Let me check the scan log.".to_string()));
-    let body = "Let me check the scan log now.\n\nThe log holds zero verdicts.";
-
-    let out = strip_folded_notes(body, &folded);
-    assert!(
-        out.contains("Let me check the scan log now."),
-        "a near-match was stripped, which is the classification this avoids: {out}"
-    );
-}
-
-/// Whitespace differences around a paragraph must not defeat the match.
-#[test]
-fn surrounding_whitespace_does_not_defeat_the_match() {
-    let folded = folded_paragraphs(Some("  Verifying the mount.  ".to_string()));
-    let body = "Verifying the mount.\n\nThe mount is read-only.";
-    assert_eq!(strip_folded_notes(body, &folded), "The mount is read-only.");
-}
-
-/// A folded note repeated verbatim inside the answer is removed once per
-/// paragraph, leaving no blank gap behind.
-#[test]
-fn stripping_leaves_no_empty_paragraph_behind() {
-    let folded = folded_paragraphs(Some("Checking.".to_string()));
-    let body = "Checking.\n\nFirst finding.\n\nChecking.\n\nSecond finding.";
     assert_eq!(
-        strip_folded_notes(body, &folded),
-        "First finding.\n\nSecond finding."
+        out,
+        "Let me be clear about what I did not verify: the staging box."
     );
 }
