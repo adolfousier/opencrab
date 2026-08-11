@@ -371,7 +371,9 @@ pub fn with_chain_summary(err: ProviderError, summary: String) -> ProviderError 
         ProviderError::RateLimitExceeded(m) => {
             ProviderError::RateLimitExceeded(format!("{m}\n{summary}"))
         }
-        ProviderError::InvalidRequest(m) => ProviderError::InvalidRequest(format!("{m}\n{summary}")),
+        ProviderError::InvalidRequest(m) => {
+            ProviderError::InvalidRequest(format!("{m}\n{summary}"))
+        }
         ProviderError::ModelNotFound(m) => ProviderError::ModelNotFound(format!("{m}\n{summary}")),
         ProviderError::StreamError(m) => ProviderError::StreamError(format!("{m}\n{summary}")),
         ProviderError::Internal(m) => ProviderError::Internal(format!("{m}\n{summary}")),

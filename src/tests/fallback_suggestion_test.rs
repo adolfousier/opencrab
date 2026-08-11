@@ -48,12 +48,18 @@ fn note_describes_the_full_guided_flow() {
         SUGGESTION_NOTE.contains("Yes let's setup a fallback provider now"),
         "must offer the tappable accept phrase"
     );
-    assert!(SUGGESTION_NOTE.contains("/v1/models"), "must fetch models live");
+    assert!(
+        SUGGESTION_NOTE.contains("/v1/models"),
+        "must fetch models live"
+    );
     assert!(
         SUGGESTION_NOTE.contains("[providers.fallback]"),
         "must name the config block"
     );
-    assert!(SUGGESTION_NOTE.contains("keys.toml"), "must say where the key goes");
+    assert!(
+        SUGGESTION_NOTE.contains("keys.toml"),
+        "must say where the key goes"
+    );
     assert!(
         SUGGESTION_NOTE.contains("ONE step per message"),
         "must pace the guided flow"

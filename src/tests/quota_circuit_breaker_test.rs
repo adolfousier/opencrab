@@ -249,7 +249,6 @@ fn chain_summary_without_skipped_omits_section() {
     assert!(summary.contains("/models"));
 }
 
-
 // ---------------------------------------------------------------------------
 // 4. No-chain setup guidance (#1006) and chain-summary attachment (#1007)
 // ---------------------------------------------------------------------------
@@ -260,7 +259,10 @@ fn no_chain_guidance_points_at_the_exact_fix() {
     // nothing. The guidance must name the config block, its shape, the
     // keys requirement, and /restart, or it is useless.
     let g = crate::brain::provider::error::no_chain_setup_guidance();
-    assert!(g.contains("[providers.fallback]"), "must name the config block");
+    assert!(
+        g.contains("[providers.fallback]"),
+        "must name the config block"
+    );
     assert!(g.contains("enabled = true"), "must show the enable switch");
     assert!(g.contains("keys.toml"), "must mention the keys requirement");
     assert!(g.contains("/restart"), "must say how to pick it up");
@@ -279,7 +281,10 @@ fn with_chain_summary_keeps_variant_and_appends_ledger() {
     match e {
         ProviderError::RateLimitExceeded(m) => {
             assert!(m.starts_with("rate limited"), "original message must lead");
-            assert!(m.contains("fallback chain failed"), "ledger must be attached");
+            assert!(
+                m.contains("fallback chain failed"),
+                "ledger must be attached"
+            );
         }
         other => panic!("variant must survive wrapping, got {other:?}"),
     }
@@ -293,7 +298,11 @@ fn with_chain_summary_keeps_variant_and_appends_ledger() {
         summary.clone(),
     );
     match e {
-        ProviderError::ApiError { status, message, error_type } => {
+        ProviderError::ApiError {
+            status,
+            message,
+            error_type,
+        } => {
             assert_eq!(status, 400);
             assert!(message.contains("invalid_parameter_value"));
             assert!(message.contains("fallback chain failed"));
@@ -303,9 +312,6 @@ fn with_chain_summary_keeps_variant_and_appends_ledger() {
     }
 
     // Variants without a message slot pass through untouched.
-    let e = crate::brain::provider::error::with_chain_summary(
-        ProviderError::Timeout(1),
-        summary,
-    );
+    let e = crate::brain::provider::error::with_chain_summary(ProviderError::Timeout(1), summary);
     assert!(matches!(e, ProviderError::Timeout(_)));
 }
