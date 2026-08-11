@@ -459,6 +459,7 @@ pub mod session_provider_restore_test;
 pub mod session_working_dir_isolation_test;
 pub mod session_working_dir_test;
 pub mod slack_blocks_test;
+pub mod slack_final_body_test;
 pub mod slack_fmt_test;
 pub mod startup_checks_test;
 pub mod stream_loop_test;
