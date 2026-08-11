@@ -14,8 +14,57 @@ use async_trait::async_trait;
 use futures::stream::StreamExt;
 use serde::Deserialize;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
+
+/// Classify codex CLI failure text (a turn.failed message or captured
+/// stderr) into a ProviderError that participates in the self-healing
+/// stack. Rate / quota / overload signatures become RateLimitExceeded
+/// (circuit breaker + fallback walk), context-length signatures become
+/// ContextLengthExceeded, and everything else becomes a retryable 500
+/// ApiError. Both the turn.failed path and the exit-without-output path
+/// route through this, so neither bypasses retries or the fallback
+/// chain (#1004).
+pub(crate) fn classify_codex_failure(msg: &str, error_type: &str) -> ProviderError {
+    let lower = msg.to_lowercase();
+    if lower.contains("rate limit")
+        || lower.contains("quota")
+        || lower.contains("429")
+        || lower.contains("overloaded")
+        || lower.contains("capacity")
+    {
+        ProviderError::RateLimitExceeded(msg.to_string())
+    } else if lower.contains("context length")
+        || lower.contains("too many tokens")
+        || lower.contains("prompt is too long")
+    {
+        ProviderError::ContextLengthExceeded(0)
+    } else {
+        ProviderError::ApiError {
+            status: 500,
+            message: msg.to_string(),
+            error_type: Some(error_type.to_string()),
+        }
+    }
+}
+
+/// Failure for a codex CLI that exited non-zero before producing any
+/// output. If stderr captured signal text, classify it like a turn
+/// failure; with no signal at all, treat the silent exit as a transient
+/// transport failure so it still reaches the retry budget and the
+/// fallback chain instead of dropping raw (#1004).
+pub(crate) fn codex_exit_failure(status: &str, stderr_text: &str) -> ProviderError {
+    let trimmed = stderr_text.trim();
+    if trimmed.is_empty() {
+        ProviderError::StreamError(format!(
+            "codex CLI exited with {} before producing any output",
+            status
+        ))
+    } else {
+        classify_codex_failure(trimmed, "codex_cli_exit")
+    }
+}
 
 /// Codex CLI provider — talks directly to the `codex` binary.
 #[derive(Clone)]
@@ -351,7 +400,11 @@ impl Provider for CodexCliProvider {
             .ok_or_else(|| ProviderError::Internal("failed to capture stderr".to_string()))?;
 
         // Surface stderr — codex prints onboarding hints, auth errors, and
-        // version banners there.
+        // version banners there. Keep a bounded tail: if the CLI exits
+        // non-zero without producing output, the tail carries the signal
+        // text the failure is classified with (#1004).
+        let stderr_tail: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        let stderr_tail_log = stderr_tail.clone();
         tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stderr);
             let mut lines = reader.lines();
@@ -359,10 +412,25 @@ impl Provider for CodexCliProvider {
                 let line = line.trim().to_string();
                 if !line.is_empty() {
                     tracing::warn!("codex CLI stderr: {}", line);
+                    if let Ok(mut buf) = stderr_tail_log.lock() {
+                        if !buf.is_empty() {
+                            buf.push('\n');
+                        }
+                        buf.push_str(&line);
+                        if buf.len() > 8192 {
+                            let cut = buf.len() - 8192;
+                            let mut start = cut;
+                            while start < buf.len() && !buf.is_char_boundary(start) {
+                                start += 1;
+                            }
+                            *buf = buf[start..].to_string();
+                        }
+                    }
                 }
             }
         });
 
+        let stderr_tail_exit = stderr_tail.clone();
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<StreamEvent>>(64);
         let model_for_task = model.clone();
 
@@ -647,30 +715,9 @@ impl Provider for CodexCliProvider {
             // If turn.failed fired without a turn.completed, surface the
             // error so the fallback layer can swap providers.
             if let Some(msg) = turn_failed.as_ref() {
-                let lower = msg.to_lowercase();
-                if lower.contains("rate limit")
-                    || lower.contains("quota")
-                    || lower.contains("429")
-                    || lower.contains("overloaded")
-                    || lower.contains("capacity")
-                {
-                    let _ = tx
-                        .send(Err(ProviderError::RateLimitExceeded(msg.clone())))
-                        .await;
-                } else if lower.contains("context length")
-                    || lower.contains("too many tokens")
-                    || lower.contains("prompt is too long")
-                {
-                    let _ = tx.send(Err(ProviderError::ContextLengthExceeded(0))).await;
-                } else {
-                    let _ = tx
-                        .send(Err(ProviderError::ApiError {
-                            status: 500,
-                            message: msg.clone(),
-                            error_type: Some("codex_turn_failed".to_string()),
-                        }))
-                        .await;
-                }
+                let _ = tx
+                    .send(Err(classify_codex_failure(msg, "codex_turn_failed")))
+                    .await;
             }
 
             let exit_status = child.wait().await;
@@ -678,11 +725,12 @@ impl Provider for CodexCliProvider {
                 Ok(status) if !status.success() => {
                     tracing::warn!("codex CLI exited with status: {}", status);
                     if !started && turn_failed.is_none() {
+                        let stderr_text = stderr_tail_exit
+                            .lock()
+                            .map(|g| g.clone())
+                            .unwrap_or_default();
                         let _ = tx
-                            .send(Err(ProviderError::Internal(format!(
-                                "codex CLI exited with {} before producing any output",
-                                status
-                            ))))
+                            .send(Err(codex_exit_failure(&status.to_string(), &stderr_text)))
                             .await;
                     }
                 }
