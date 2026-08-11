@@ -3605,7 +3605,10 @@ impl Provider for OpenAIProvider {
         // is consumed, so extract alongside cache_status. Logged when present
         // so incident forensics can match provider-side records.
         if let Some(rid) = provider_request_id(response.headers()) {
-            tracing::info!("{} streaming response header request_id: {rid}", self.name());
+            tracing::info!(
+                "{} streaming response header request_id: {rid}",
+                self.name()
+            );
         }
 
         if let Some(ref status) = cache_status {
