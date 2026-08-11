@@ -5,6 +5,7 @@
 
 mod agent;
 pub(crate) mod blocks;
+pub(crate) mod final_body;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod reactions;
