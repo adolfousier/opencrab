@@ -217,3 +217,73 @@ fn no_chunk_approaches_the_embed_size_guard() {
         );
     }
 }
+
+// --- lexical chunk refinement (#1000) ---------------------------------------
+
+/// A document hit narrows to the passage that matched, not the whole file.
+///
+/// `search_fts` matches whole documents, so before this the lexical half told
+/// you a 99 KB file was relevant and left the caller to snippet around the
+/// first occurrence of a query term, which need not be the passage that
+/// answers the question.
+#[test]
+fn a_document_narrows_to_its_best_chunk() {
+    use crate::memory::chunk_fts::best_chunk;
+
+    // The answer sits deep in a long document, well past the first chunk.
+    let filler = "Unrelated background prose about scheduling and formatting. ".repeat(120);
+    let body =
+        format!("{filler}\n\nThe quota breaker trips after five consecutive refusals.\n\n{filler}");
+
+    let (pos, chunk) = best_chunk(&body, "quota breaker consecutive refusals").expect("a chunk");
+    assert!(
+        chunk.contains("quota breaker trips"),
+        "the returned chunk must contain the answer, got: {}",
+        &chunk[..chunk.len().min(120)]
+    );
+    assert!(
+        chunk.len() < body.len() / 2,
+        "narrowing must actually narrow: chunk {} vs body {}",
+        chunk.len(),
+        body.len()
+    );
+    assert!(pos > 0, "the answer was past the first chunk, so pos > 0");
+}
+
+/// A short document has nothing to narrow, and says so.
+///
+/// `None` means "use the whole body", not "irrelevant". FTS already judged
+/// relevance; this only decides where.
+#[test]
+fn a_single_chunk_document_needs_no_narrowing() {
+    use crate::memory::chunk_fts::best_chunk;
+    assert!(best_chunk("A short note about quotas.", "quotas").is_none());
+}
+
+/// Empty content cannot be narrowed.
+#[test]
+fn empty_content_yields_no_chunk() {
+    use crate::memory::chunk_fts::best_chunk;
+    assert!(best_chunk("", "anything").is_none());
+    assert!(best_chunk("   \n\n  ", "anything").is_none());
+}
+
+/// Chunk-level lexical matching inherits diacritic folding.
+///
+/// This is why refinement reuses `section_rank` instead of growing its own
+/// scorer: an unaccented query has to reach accented text here exactly as it
+/// does in brain-file recall.
+#[test]
+fn chunk_refinement_folds_accents_like_the_rest_of_retrieval() {
+    use crate::memory::chunk_fts::best_chunk;
+
+    let filler = "Texto de relleno sobre otros temas del sistema. ".repeat(120);
+    let body =
+        format!("{filler}\n\nLa configuración del entorno se revisa cada semana.\n\n{filler}");
+
+    let (_, chunk) = best_chunk(&body, "configuracion del entorno").expect("a chunk");
+    assert!(
+        chunk.contains("configuración del entorno"),
+        "an unaccented query must reach the accented passage"
+    );
+}

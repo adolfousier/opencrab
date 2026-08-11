@@ -125,9 +125,20 @@ pub struct Ranked {
 }
 
 impl Ranked {
-    /// Split `content` and compute the ranking statistics.
+    /// Split `content` on markdown headings and compute the ranking statistics.
     pub fn build(content: &str) -> Self {
-        let sections = split_sections(content);
+        Self::from_sections(split_sections(content))
+    }
+
+    /// Rank over pieces that were already split by something else.
+    ///
+    /// Markdown headings are the right unit for a brain file, where a section
+    /// is a rule. They are the wrong unit for content chunked for embedding,
+    /// where the boundaries come from the chunker and both retrieval halves
+    /// have to agree on what a unit is (#1000). Same scoring either way, so
+    /// chunk-level lexical search inherits the stemming and diacritic folding
+    /// rather than growing a second, subtly different implementation.
+    pub fn from_sections(sections: Vec<Section>) -> Self {
         let mut tf = Vec::with_capacity(sections.len());
         let mut df: HashMap<String, usize> = HashMap::new();
         let mut lens = Vec::with_capacity(sections.len());

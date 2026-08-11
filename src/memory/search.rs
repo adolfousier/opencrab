@@ -68,7 +68,8 @@ pub async fn search(
                 .unwrap_or_default();
 
             if !vec_hits.is_empty() {
-                let fts_tuples = results_to_tuples(&store, &home, &fts_results);
+                let fts_tuples =
+                    results_to_tuples_for(&store, &home, &fts_results, Some(&fts_query));
                 let vec_tuples = chunk_hits_to_tuples(&store, &home, &vec_hits);
                 let rrf = hybrid_search_rrf(fts_tuples, vec_tuples, 60);
 
@@ -180,22 +181,35 @@ fn chunk_hits_to_tuples(
         .collect()
 }
 
-/// Convert SearchResults to RRF tuple format: (file_path, display_path, title, body).
-fn results_to_tuples(
+/// Convert SearchResults to RRF tuple format: (file_path, display_path, title,
+/// body), narrowing each hit to its best matching chunk when a query is given
+/// (#1000).
+///
+/// `search_fts` matches whole documents, so without this the lexical half of
+/// hybrid search ranks files while the vector half ranks chunks, and RRF fuses
+/// two lists describing different units. Passing the query narrows the body to
+/// the passage that earned the hit, which is also what the snippet should be
+/// cut from.
+fn results_to_tuples_for(
     store: &Store,
     home: &Path,
     results: &[SearchResult],
+    query: Option<&str>,
 ) -> Vec<(String, String, String, String)> {
     results
         .iter()
         .map(|r| {
             let file_path = resolve_path(home, &r.doc.collection_name, &r.doc.path);
-            let body = store
+            let full = store
                 .get_document(&r.doc.collection_name, &r.doc.path)
                 .ok()
                 .flatten()
                 .and_then(|d| d.body)
                 .unwrap_or_default();
+            let body = match query.and_then(|q| super::chunk_fts::best_chunk(&full, q)) {
+                Some((_, chunk)) => chunk,
+                None => full,
+            };
             (
                 file_path,
                 r.doc.display_path.clone(),
