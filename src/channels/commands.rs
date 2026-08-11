@@ -658,7 +658,7 @@ pub async fn handle_command(
             }
         }
         _ if trimmed.starts_with('/') && !crate::utils::string::looks_like_file_path(trimmed) => {
-            match_user_command(trimmed)
+            match_user_command(trimmed, is_owner)
         }
         _ => ChannelCommand::NotACommand,
     };
@@ -773,12 +773,41 @@ fn norm_command_key(s: &str) -> String {
     s.trim_start_matches('/').to_lowercase().replace('-', "_")
 }
 
-fn match_user_command(text: &str) -> ChannelCommand {
+fn match_user_command(text: &str, is_owner: bool) -> ChannelCommand {
     let brain_path = crate::brain::BrainLoader::resolve_path();
     let loader = crate::brain::CommandLoader::from_brain_path(&brain_path);
     let commands = loader.load();
     let skills = crate::brain::skills::load_all_skills();
-    match_user_command_inner(text, &commands, &skills)
+    gate_user_command(match_user_command_inner(text, &commands, &skills), is_owner)
+}
+
+/// Refuse a matched user command or skill for a non-owner (#975).
+///
+/// User-defined commands and skills drive the agent, and with
+/// `action="system"` even canned UI text, on channels where many non-owner
+/// users are allowlisted. Every built-in command is individually owner-gated;
+/// the catch-all arm that reaches `commands.toml` and skill slugs was not, so
+/// any allowlisted group member could invoke any installed skill and have its
+/// body executed under the session's approval policy.
+///
+/// Gates AFTER matching, never before. An unmatched slash keeps the ordinary
+/// "Unknown command" reply, so the refusal itself never reveals which commands
+/// or skills exist. The refusal string is the one the built-ins use, so a
+/// non-owner cannot distinguish a gated user command from a gated built-in.
+///
+/// Split out from [`match_user_command`], which loads from disk and cannot be
+/// exercised in a test — the reason this path shipped with the gate missing and
+/// stayed untested afterwards.
+pub(crate) fn gate_user_command(matched: ChannelCommand, is_owner: bool) -> ChannelCommand {
+    if !is_owner
+        && matches!(
+            matched,
+            ChannelCommand::UserPrompt(_) | ChannelCommand::UserSystem(_)
+        )
+    {
+        return ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string());
+    }
+    matched
 }
 
 pub(crate) fn match_user_command_inner(

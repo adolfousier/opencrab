@@ -126,6 +126,7 @@ pub mod channel_command_media_marker_test;
 pub mod channel_command_owner_gate_test;
 pub mod channel_search_test;
 pub mod channel_session_resolve_test;
+pub mod channel_user_command_owner_gate_test;
 #[cfg(feature = "telegram")]
 pub mod channels_telegram_cowork_test;
 #[cfg(feature = "telegram")]
