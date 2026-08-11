@@ -231,6 +231,28 @@ pub async fn reindex(store: &'static Mutex<Store>) -> Result<usize, String> {
         let home = crate::config::opencrabs_home();
         tokio::spawn(async move {
             let store_ref = store;
+            // Retire pre-chunking placeholders before listing what needs work
+            // (#998). This was wired only into the local backfill at first,
+            // which meant an install configured for an embedding API — where
+            // THIS path runs and the local one never does — kept its
+            // placeholders forever and never re-embedded a single document.
+            match super::store::clear_skipped_placeholders() {
+                Ok(0) => {}
+                Ok(n) => tracing::info!("API backfill: reopened {n} previously skipped documents"),
+                Err(e) => tracing::warn!("API backfill: placeholder sweep failed, continuing: {e}"),
+            }
+
+            // Retire pre-chunking placeholders before listing what needs work
+            // (#1001). The sweep was wired only into the LOCAL backfill, which
+            // meant an install configured for an embedding API — where THIS
+            // path runs and the local one never does — kept its placeholders
+            // forever and re-embedded nothing.
+            match super::store::clear_skipped_placeholders() {
+                Ok(0) => {}
+                Ok(n) => tracing::info!("API backfill: reopened {n} previously skipped documents"),
+                Err(e) => tracing::warn!("API backfill: placeholder sweep failed, continuing: {e}"),
+            }
+
             // Get hashes needing embedding
             let needing = tokio::task::spawn_blocking(move || {
                 store_ref
@@ -251,31 +273,43 @@ pub async fn reindex(store: &'static Mutex<Store>) -> Result<usize, String> {
             let mut stored = 0usize;
 
             for (hash, path, body) in &needing {
-                if body.len() > 32_000 {
-                    tracing::warn!("Skipping embedding for '{path}' — body too large");
-                    let now = crate::utils::string::utc_timestamp();
-                    if let Ok(s) = store_ref.lock() {
-                        let _ = s.insert_embedding(hash, 0, 0, &[], "skipped-too-large", &now);
-                    }
-                    continue;
-                }
+                // Chunked like every other embed path (#998). This one was
+                // missed in the first pass: it is a second API backfill living
+                // in the indexer rather than in `embedding.rs`, and it kept
+                // writing `skipped-too-large` placeholders for anything past
+                // 32 KB, which is exactly what made those documents
+                // permanently unembeddable.
+                let model_name = embedding_api_config()
+                    .and_then(|c| c.model)
+                    .unwrap_or_else(|| "api-embedding".to_string());
+                let mut chunks_stored = 0usize;
 
-                match embed_via_api(body).await {
-                    Ok(embedding) => {
-                        let now = crate::utils::string::utc_timestamp();
-                        let model_name = embedding_api_config()
-                            .and_then(|c| c.model)
-                            .unwrap_or_else(|| "api-embedding".to_string());
-                        if let Ok(s) = store_ref.lock()
-                            && s.insert_embedding(hash, 0, 0, &embedding, &model_name, &now)
+                for (seq, chunk) in super::embedding::chunks_for(body).into_iter().enumerate() {
+                    match embed_via_api(&chunk.text).await {
+                        Ok(embedding) => {
+                            let now = crate::utils::string::utc_timestamp();
+                            if let Ok(s) = store_ref.lock()
+                                && s.insert_embedding(
+                                    hash,
+                                    seq,
+                                    chunk.pos,
+                                    &embedding,
+                                    &model_name,
+                                    &now,
+                                )
                                 .is_ok()
-                        {
-                            stored += 1;
+                            {
+                                chunks_stored += 1;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("API embed failed for '{path}' chunk {seq}: {e}");
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("API embed failed for '{path}': {e}");
-                    }
+                }
+
+                if chunks_stored > 0 {
+                    stored += 1;
                 }
             }
             tracing::info!("API backfilled {stored}/{count} embeddings");

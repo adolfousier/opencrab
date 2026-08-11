@@ -287,3 +287,59 @@ fn chunk_refinement_folds_accents_like_the_rest_of_retrieval() {
         "an unaccented query must reach the accented passage"
     );
 }
+
+// --- no path may reintroduce the placeholder (#1001) -------------------------
+
+/// No production code writes a `skipped-too-large` placeholder.
+///
+/// #998 fixed three embed sites in `embedding.rs` and missed a fourth in
+/// `index.rs`, because the issue said "all three call sites" and the fix
+/// trusted that wording instead of grepping. The miss was invisible in review
+/// and only surfaced when a live store kept ADDING placeholders after the
+/// supposedly fixed binary shipped.
+///
+/// A placeholder is not a harmless marker: it exists specifically to stop a
+/// document retrying, so writing one makes that document permanently
+/// unembeddable. Reading and deleting them is fine, which is what the sweep and
+/// the vector-search exclusion do; writing one is not.
+#[test]
+fn no_production_path_writes_a_skipped_placeholder() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+
+    fn walk(dir: &std::path::Path, offenders: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Tests and benches legitimately construct placeholders to
+                // prove they are handled.
+                let name = entry.file_name();
+                if name == "tests" || name == "benches" {
+                    continue;
+                }
+                walk(&path, offenders);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                for (i, line) in text.lines().enumerate() {
+                    // A write is an insert_embedding call carrying the marker.
+                    if line.contains("insert_embedding") && line.contains("skipped-too-large") {
+                        offenders.push(format!("{}:{}", path.display(), i + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    walk(&src, &mut offenders);
+    assert!(
+        offenders.is_empty(),
+        "these write a skipped-too-large placeholder, which permanently excludes \
+         a document from embedding:\n  {}",
+        offenders.join("\n  ")
+    );
+}
