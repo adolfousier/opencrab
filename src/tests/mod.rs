@@ -611,6 +611,7 @@ pub mod telegram_photo_batching_test;
 pub mod telegram_plan_render_test;
 pub mod telegram_pre_tool_rolling_test;
 pub mod telegram_quote_reply_test;
+pub mod telegram_react_delivery_test;
 pub mod telegram_reaction_prompt_test;
 pub mod telegram_reaction_queue_test;
 pub mod telegram_reflow_collapsed_table_test;

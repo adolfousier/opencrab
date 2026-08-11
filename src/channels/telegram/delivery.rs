@@ -21,6 +21,23 @@ use teloxide::prelude::*;
 use teloxide::types::{InputFile, MessageId, ParseMode};
 use uuid::Uuid;
 
+/// Whether a turn carrying a `<<react:…>>` directive is react-ONLY, given the
+/// text that remains once the directive is stripped.
+///
+/// The prompt teaches the model two shapes (see `handler.rs`, "Reaction
+/// directive"): output ONLY the directive to react-only, or put the directive
+/// at the START and answer after it to react AND respond. Emptiness of the
+/// remaining text is therefore the whole question, and the answer is on the
+/// wire rather than inferred.
+///
+/// Deliberately takes no other input. #928 also consulted whether the turn ran
+/// tools and suppressed the text when it had not, which destroyed completions
+/// that simply needed no tools (#1009). Tool state does not tell you what the
+/// content channel holds, so it is not a parameter here.
+pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
+    text_after_directive.trim().is_empty()
+}
+
 /// Drain all pending intermediate texts from the streaming state's display
 /// queue and send them immediately. Called by the follow-up-question callback
 /// BEFORE posting the question message, so the user sees contextual text
@@ -204,30 +221,32 @@ pub(crate) async fn deliver_final_response(
                     }
                     return Ok(false);
                 }
-                // A react directive with no tool work is react-only by contract:
-                // the prompt tells the model to output ONLY the directive in
-                // that case. Prose alongside it is a contract violation, and in
-                // practice it is the model's own reasoning spilled into the
-                // content channel (#928) — a turn meant to produce no text has
-                // nothing else in there, which is why the leak is total rather
-                // than an answer with reasoning appended.
+                // React-only means exactly what the prompt says it means: ONLY
+                // the directive, nothing after it. The contract taught to the
+                // model (handler.rs, "Reaction directive") states both shapes:
                 //
-                // Decided from the directive and the tool state, never by
-                // inspecting whether the prose reads like reasoning: the leaked
-                // text carries no markers, so classifying it would eventually
-                // suppress a real answer.
+                //   react-only        -> output ONLY the directive
+                //   react AND respond -> directive at the START, then the text
                 //
-                // The tools-ran case is untouched above (#439), so a work turn
-                // that both summarises and reacts still delivers its summary.
-                let leaked_prose = !text_only.trim().is_empty();
-                if !leaked_prose || !turn_ran_tools {
-                    if leaked_prose {
-                        tracing::warn!(
-                            "Telegram: react-only turn carried {} chars of prose alongside the \
-                             directive — suppressing it as leaked reasoning (#928)",
-                            text_only.trim().len()
-                        );
-                    }
+                // so text after the directive IS the documented second shape,
+                // and delivering it is the contract being honoured rather than
+                // violated.
+                //
+                // #928 suppressed that text whenever the turn ran no tools, on
+                // the theory that a react turn has no answer in it and anything
+                // present must be reasoning spilled into the content channel.
+                // The tool state was standing in for "is this reasoning", and
+                // it does not answer that question: a turn that answers from
+                // analysis alone runs no tools, which is the ordinary shape of
+                // an explanation or a follow-up. #1009 is four consecutive
+                // completions destroyed that way, none of which contained any
+                // reasoning at all.
+                //
+                // Reasoning that reaches the content channel is a provider-side
+                // defect (#760) and belongs where it originates. Delivery must
+                // not delete a completion on suspicion, because that failure is
+                // silent and total while a leak is merely ugly.
+                if is_react_only(&text_only) {
                     // Never-silent guard (#353): a reaction-only turn whose
                     // reaction FAILED must degrade to text, not to nothing.
                     if react_result.is_err() {
@@ -254,12 +273,13 @@ pub(crate) async fn deliver_final_response(
                             let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                             s.turn_started_at.elapsed()
                         };
-                        // Leaked prose is proof the model reasoned its way to a
-                        // deliberate react-only, so #546's dropped-request
-                        // notice would be wrong here: the turn was not
-                        // abandoned, its reasoning simply landed in the content
-                        // channel. Suppress the warning, not the reaction.
-                        if elapsed >= std::time::Duration::from_secs(60) && !leaked_prose {
+                        // This branch is now reached only with an empty content
+                        // channel, so the turn produced a reaction and nothing
+                        // else. #928's carve-out for prose landing here is gone
+                        // with the suppression it guarded (#1009): prose no
+                        // longer routes into this branch at all, it is
+                        // delivered.
+                        if elapsed >= std::time::Duration::from_secs(60) {
                             tracing::warn!(
                                 "Telegram: react-only after {}s with no tools and no text — \
                                  surfacing as an incomplete turn, not a silent drop (#546)",
