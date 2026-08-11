@@ -725,6 +725,118 @@ pub(crate) fn criteria_verdict(
     }
 }
 
+// ── Receipt binding: commit claims need a receipt (#1011) ───────────
+//
+// The verification gate above runs commands keyed by task TYPE, so a type
+// with no configured commands downgrades to Uncertain without anyone
+// checking the factual claims inside the completion output. On 2026-08-11
+// 04:14 a completion claimed "Committed 7c1856c9" on a type-'Edit' task;
+// the sha never existed in the repo and the gate let it through as an
+// Uncertain belief. A commit claim has a trivial mechanical receipt — the
+// object exists or it does not — so this check runs whatever the type.
+
+/// Words that turn a nearby hex token into a commit claim.
+const SHA_CLAIM_KEYWORDS: [&str; 5] = ["committed", "commit", "pushed", "push", "sha"];
+
+/// How far back (in bytes) a keyword may sit from a hex token and still
+/// count as its claim context.
+const SHA_CLAIM_WINDOW: usize = 32;
+
+/// Extract git-sha claims from free text (#1011).
+///
+/// A claim is a maximal alphanumeric run consisting only of hex digits,
+/// 7..=40 chars long (git's abbrev floor through a full sha; the cap also
+/// excludes sha256/sha512 digests), preceded within `SHA_CLAIM_WINDOW`
+/// bytes by a commit-ish keyword. Pure so the extraction matrix is
+/// unit-testable without a repo on disk.
+pub(crate) fn extract_sha_claims(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let bytes = text.as_bytes();
+    let mut claims: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_alphanumeric() {
+            i += 1;
+            continue;
+        }
+        // Maximal alphanumeric run: a sha candidate must not be a slice of
+        // a longer identifier (call ids, tokens, base64-ish blobs).
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
+            i += 1;
+        }
+        let run = &text[start..i];
+        let is_hex = run.bytes().all(|b| b.is_ascii_hexdigit());
+        if is_hex && (7..=40).contains(&run.len()) {
+            // Back up at most SHA_CLAIM_WINDOW bytes for the keyword
+            // context, then realign to a char boundary: start-32 can land
+            // inside a multi-byte character, and slicing there panics. A
+            // gate that panics on the output it checks is worse than none.
+            let mut window_start = start.saturating_sub(SHA_CLAIM_WINDOW);
+            while window_start > 0 && !lower.is_char_boundary(window_start) {
+                window_start += 1;
+            }
+            let before = &lower[window_start..start];
+            // File-hash context ("sha256 <digest>") is not a commit claim.
+            let file_hash_ctx = before.contains("sha256") || before.contains("sha512");
+            let claimed = SHA_CLAIM_KEYWORDS.iter().any(|k| before.contains(k));
+            if claimed && !file_hash_ctx && !claims.iter().any(|c| c.eq_ignore_ascii_case(run)) {
+                claims.push(run.to_string());
+            }
+        }
+    }
+    claims
+}
+
+/// Verify commit claims in a completion output against the repo at
+/// `working_dir` (#1011).
+///
+/// `Ok(())` when there are no claims or every claimed sha exists in the
+/// object store; `Err(evidence)` names each claimed sha that does not
+/// exist. A directory that is not a git repo (or a missing git binary)
+/// skips the check: there is no receipt to demand, and completions in
+/// non-git projects must keep working exactly as before.
+pub(crate) fn verify_sha_receipts(
+    output: &str,
+    working_dir: &Path,
+) -> std::result::Result<(), String> {
+    let claims = extract_sha_claims(output);
+    if claims.is_empty() {
+        return Ok(());
+    }
+    // Not a git repo -> nothing to verify against.
+    let probe = std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(working_dir)
+        .output();
+    match probe {
+        Ok(out) if out.status.success() => {}
+        _ => return Ok(()),
+    }
+    let mut missing: Vec<String> = Vec::new();
+    for sha in &claims {
+        let out = std::process::Command::new("git")
+            .args(["cat-file", "-e", sha])
+            .current_dir(working_dir)
+            .output();
+        let exists = matches!(out, Ok(o) if o.status.success());
+        if !exists {
+            missing.push(sha.clone());
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "The completion claims commit(s) {} but they do not exist in the git object store \
+         at {} (`git cat-file -e` failed for each; an ambiguous prefix also fails). \
+         Receipt binding (#1011): a commit claim is only accepted when the commit exists. \
+         If the work is done, actually commit it (or fix the sha), then complete again.",
+        missing.join(", "),
+        working_dir.display()
+    ))
+}
+
 /// Validate string input
 pub(crate) fn validate_string(s: &str, max_len: usize, field_name: &str) -> Result<()> {
     if s.is_empty() || s.trim().is_empty() {
@@ -1705,6 +1817,22 @@ impl Tool for PlanTool {
                                 CriteriaVerdict::Accept => {}
                             }
                         }
+                    }
+
+                    // Receipt binding (#1011): a commit claimed in the output
+                    // must exist in the repo, whatever the task type. The
+                    // type-keyed commands above cannot see claims inside the
+                    // output. Part of the verification gate, so it only runs
+                    // when the gate is active.
+                    let gate_active = ralph_loop_config(&context.working_dir())
+                        .is_some_and(|c| c.verification.enabled);
+                    if gate_active
+                        && let Err(receipt_msg) =
+                            verify_sha_receipts(&output, &context.working_dir())
+                    {
+                        return Ok(ToolResult::error(format!(
+                            "🔒 Ralph Loop receipt binding REJECTED task #{task_order}.\n\n{receipt_msg}"
+                        )));
                     }
                 }
 
