@@ -145,15 +145,45 @@ fn upgrade_procedure_lives_in_boot_md() {
     );
 }
 
+/// Memory-save triggers live in the ALWAYS-LOADED file, with BOOT.md pointing
+/// at it (#1003).
+///
+/// This assertion used to run the other way, and the other way was wrong.
+/// Ownership had been assigned by topic (BOOT.md owns runtime
+/// self-maintenance) while loading was assigned by cost (BOOT.md is
+/// contextual), and nobody reconciled the two. A save trigger fires
+/// MID-SESSION, on an arbitrary turn, when the user corrects you. BOOT.md is
+/// not in context at that moment unless something loaded it.
+///
+/// Automatic recall cannot cover the gap either: a correction is short and
+/// conversational, which is exactly the message shape BM25 recall stays silent
+/// on by design (#996). Same reasoning that keeps enforced gates in AGENTS.md
+/// instead of behind retrieval.
+///
+/// The symptom was a live AGENTS.md that restated the whole trigger list inline
+/// while also carrying a pointer calling BOOT.md the single source of truth.
+/// That "duplication" was load-bearing: it was the only copy ever in context.
 #[test]
-fn memory_save_triggers_consolidated_in_boot_with_agents_pointer() {
+fn memory_save_triggers_live_in_the_always_loaded_file() {
+    let agents = read_template("AGENTS.md");
+    let boot = read_template("BOOT.md");
+
     assert!(
-        read_template("BOOT.md").contains("Auto-Save Important Memories"),
-        "BOOT.md must own the memory-save triggers (Auto-Save section)"
+        agents.contains("What triggers a save to"),
+        "AGENTS.md must own the memory-save triggers: it is the always-loaded \
+         file, and a trigger that fires mid-session has to be in context then"
     );
     assert!(
-        read_template("AGENTS.md").contains("BOOT.md → Auto-Save"),
-        "AGENTS.md must point at BOOT.md for the memory-save triggers"
+        boot.contains("AGENTS.md") && boot.contains("Auto-Save Important Memories"),
+        "BOOT.md must point at AGENTS.md for the triggers rather than restate them"
+    );
+    assert!(
+        !boot.contains("What triggers a save to"),
+        "BOOT.md must not keep a second copy of the trigger list"
+    );
+    assert!(
+        !boot.contains("The single home for \"when to save memory\""),
+        "BOOT.md's ownership header must stop claiming the memory triggers"
     );
 }
 

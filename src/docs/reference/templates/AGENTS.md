@@ -44,7 +44,44 @@ Compaction triggers automatically at 80% context usage. The system generates a c
 
 ### 🔥 When to write to memory
 
-→ See **BOOT.md → Auto-Save Important Memories** for the full trigger list (the single source of truth). Short version: when the user corrects you, states a preference/workflow rule, you make an avoidable mistake, or durable context is shared — append it **before you reply**, as a one-liner. "Mental notes" don't survive a restart; files do. **Text > Brain** 📝
+Owned here, not in BOOT.md, because a save trigger fires MID-SESSION on an
+arbitrary turn. BOOT.md is contextual and would not be in context when a
+correction arrives, and automatic recall cannot rescue it either: a
+correction is short and conversational, which is exactly the message shape
+retrieval stays silent on (#1003).
+
+**Save to `~/.opencrabs/memory/` as things happen:**
+
+### What triggers a save to `memory/YYYY-MM-DD.md`:
+- New integration connected or configured
+- Server/infra changes (containers, nginx, DNS, certs)
+- Bug found and fixed (document symptoms + fix)
+- New tool installed or configured
+- Credentials rotated or updated
+- Decision made about architecture, stack, or direction
+- Anything the user says "remember this" about
+- Errors that took >5 min to debug (save the fix!)
+
+### What triggers an update to `MEMORY.md`:
+- New integration goes live (add to Integrations section)
+- New troubleshooting pattern discovered (add to Troubleshooting)
+- New lesson learned (add to Lessons Learned)
+- User/company info changes
+- Security policy changes
+
+### Rules:
+- **Write BEFORE you respond.** When a trigger fires (a correction, a stated preference, a mistake worth avoiding), append to memory FIRST, then reply. Saying "noted" or "got it" without writing it down means you'll forget it next session.
+- **Don't wait until end of session** — save as things happen
+- **Don't ask permission** — just write it
+- **One-liner rules, not paragraphs.** `- NEVER push without explicit approval — violated twice` beats a paragraph.
+- **Daily file format:** `memory/YYYY-MM-DD.md` with timestamps and short entries
+- **MEMORY.md:** Only distilled, long-term valuable info — not raw logs
+- **If unsure whether to save it: save it.** Disk is cheap, lost context isn't.
+
+### What does NOT go in memory:
+- Commit hashes, file lists, release notes — that's git history
+- Architecture docs, design decisions — those go in dedicated docs
+- Sensitive data (credentials, tokens) — never persist these
 
 ## Safety
 

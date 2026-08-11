@@ -1,6 +1,6 @@
 # BOOT.md — OpenCrabs Startup
 
-> **Owns:** startup + runtime self-maintenance — boot steps, memory-save triggers, upgrade/evolve, running as a service. The single home for "when to save memory" and "how to run/upgrade".
+> **Owns:** startup + runtime self-maintenance — boot steps, upgrade/evolve, running as a service. The single home for "how to run/upgrade". Memory-save triggers live in AGENTS.md, which is always-loaded (#1003).
 
 On every fresh start, do this:
 
@@ -29,40 +29,13 @@ On every fresh start, do this:
 
 ## Auto-Save Important Memories
 
-**Every session, automatically save to `~/.opencrabs/memory/`:**
+→ **AGENTS.md → When to write to memory** owns the trigger list.
 
-### What triggers a save to `memory/YYYY-MM-DD.md`:
-- New integration connected or configured
-- Server/infra changes (containers, nginx, DNS, certs)
-- Bug found and fixed (document symptoms + fix)
-- New tool installed or configured
-- Credentials rotated or updated
-- Decision made about architecture, stack, or direction
-- Anything the user says "remember this" about
-- Errors that took >5 min to debug (save the fix!)
-
-### What triggers an update to `MEMORY.md`:
-- New integration goes live (add to Integrations section)
-- New troubleshooting pattern discovered (add to Troubleshooting)
-- New lesson learned (add to Lessons Learned)
-- User/company info changes
-- Security policy changes
-
-### Rules:
-- **Write BEFORE you respond.** When a trigger fires (a correction, a stated preference, a mistake worth avoiding), append to memory FIRST, then reply. Saying "noted" or "got it" without writing it down means you'll forget it next session.
-- **Don't wait until end of session** — save as things happen
-- **Don't ask permission** — just write it
-- **One-liner rules, not paragraphs.** `- NEVER push without explicit approval — violated twice` beats a paragraph.
-- **Daily file format:** `memory/YYYY-MM-DD.md` with timestamps and short entries
-- **MEMORY.md:** Only distilled, long-term valuable info — not raw logs
-- **If unsure whether to save it: save it.** Disk is cheap, lost context isn't.
-
-### What does NOT go in memory:
-- Commit hashes, file lists, release notes — that's git history
-- Architecture docs, design decisions — those go in dedicated docs
-- Sensitive data (credentials, tokens) — never persist these
-
-> This is the single home for "when to save memory" (AGENTS.md points here).
+It lives there rather than here because a save trigger fires MID-SESSION, on
+an arbitrary turn, when the user corrects you. This file is contextual: it is
+only in context when something loads it, which is not the moment a correction
+arrives. AGENTS.md is always-loaded, so a rule that must fire on any turn
+belongs there (#1003).
 
 ## Self-Improving: Learn From Experience
 
