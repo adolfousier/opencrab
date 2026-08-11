@@ -2087,7 +2087,13 @@ impl AgentService {
                             )
                         };
                         let message = if self.fallback_providers.is_empty() {
-                            format!("{} — no fallback providers configured.", prefix)
+                            // #1006: a bare status teaches nobody anything —
+                            // point at the exact config block that fixes it.
+                            format!(
+                                "{} — {}",
+                                prefix,
+                                crate::brain::provider::error::no_chain_setup_guidance()
+                            )
                         } else {
                             format!("{} — walking fallback chain...", prefix)
                         };
@@ -2120,7 +2126,13 @@ impl AgentService {
                     if candidates.is_empty() {
                         // #952: every fallback was breaker-skipped — tell
                         // the user WHY instead of dying with a bare error.
-                        if let Some(ref cb) = progress_callback {
+                        // #1006: with NO chain configured there is nothing to
+                        // summarise, and "all providers in the chain failed"
+                        // would be a lie — the alert above already carried
+                        // the setup guidance, so skip the summary entirely.
+                        if !self.fallback_providers.is_empty()
+                            && let Some(ref cb) = progress_callback
+                        {
                             let reason = crate::brain::provider::error::short_error_reason(&e);
                             cb(
                                 session_id,

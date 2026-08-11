@@ -213,6 +213,27 @@ impl FallbackProvider {
             _ => false,
         }
     }
+
+    /// Final error when every chain entry failed: log the ledger and attach
+    /// the chain-exhaustion summary to the last error so the user sees what
+    /// was tried instead of one provider's raw failure (#1007).
+    fn exhausted(
+        last_err: Option<ProviderError>,
+        primary_name: &str,
+        tried: &[String],
+    ) -> ProviderError {
+        let err = last_err.unwrap_or_else(|| {
+            ProviderError::Internal("FallbackProvider: all providers exhausted".into())
+        });
+        let summary = super::error::chain_exhausted_summary(
+            primary_name,
+            &super::error::short_error_reason(&err),
+            tried,
+            &[],
+        );
+        tracing::error!("Fallback chain exhausted: {summary}");
+        super::error::with_chain_summary(err, summary)
+    }
 }
 
 #[async_trait]
@@ -220,6 +241,7 @@ impl Provider for FallbackProvider {
     async fn complete(&self, request: LLMRequest) -> Result<LLMResponse> {
         let start_idx = self.active.load(Ordering::Acquire);
         let mut last_err: Option<ProviderError>;
+        let mut tried: Vec<String> = Vec::new();
 
         // Try the currently-active provider first.
         // Always remap — after a restart the sticky index resets to 0 but
@@ -236,6 +258,7 @@ impl Provider for FallbackProvider {
                     self.provenance_label(),
                     e
                 );
+                tried.push(self.provenance_label());
                 last_err = Some(e);
             }
         }
@@ -267,19 +290,19 @@ impl Provider for FallbackProvider {
                         fb.name(),
                         e
                     );
+                    tried.push(fb.name().to_string());
                     last_err = Some(e);
                 }
             }
         }
 
-        Err(last_err.unwrap_or_else(|| {
-            ProviderError::Internal("FallbackProvider: all providers exhausted".into())
-        }))
+        Err(Self::exhausted(last_err, self.primary.name(), &tried))
     }
 
     async fn stream(&self, request: LLMRequest) -> Result<ProviderStream> {
         let start_idx = self.active.load(Ordering::Acquire);
         let mut last_err: Option<ProviderError>;
+        let mut tried: Vec<String> = Vec::new();
 
         // Try the currently-active provider first.
         // Always remap — see complete() comment.
@@ -294,6 +317,7 @@ impl Provider for FallbackProvider {
                     self.provenance_label(),
                     e
                 );
+                tried.push(self.provenance_label());
                 last_err = Some(e);
             }
         }
@@ -324,14 +348,13 @@ impl Provider for FallbackProvider {
                         fb.name(),
                         e
                     );
+                    tried.push(fb.name().to_string());
                     last_err = Some(e);
                 }
             }
         }
 
-        Err(last_err.unwrap_or_else(|| {
-            ProviderError::Internal("FallbackProvider: all providers exhausted".into())
-        }))
+        Err(Self::exhausted(last_err, self.primary.name(), &tried))
     }
 
     fn supports_streaming(&self) -> bool {

@@ -132,18 +132,32 @@ pub fn format_user_error(err: &AgentError) -> String {
                 );
             }
             _ => {
+                // #1007: if a fallback chain walked and died, the ledger is
+                // appended to the raw error — lead with it instead of
+                // burying it inside a truncated details blob.
+                if let Some(idx) = raw.find("All providers in the fallback chain failed") {
+                    let summary: String = raw[idx..].chars().take(600).collect();
+                    return format!("Provider returned HTTP {status}. {summary}");
+                }
                 // Truncate raw error to avoid dumping hundreds of bytes
-                // of HTML from provider error pages into the TUI.
-                let display_raw = if raw.len() > 200 {
-                    format!("{}...", &raw[..200])
+                // of HTML from provider error pages into the TUI. Char-based
+                // so a multibyte boundary can't panic the slice.
+                let display_raw: String = if raw.chars().count() > 200 {
+                    format!("{}...", raw.chars().take(200).collect::<String>())
                 } else {
                     raw.clone()
                 };
-                return format!(
-                    "Provider returned HTTP {status}. \
-                     Try again, or switch provider via `/models`. \
-                     Details: {display_raw}"
-                );
+                let advice = if (400u16..500).contains(&status) {
+                    // #1007: retrying a 4xx repeats the same invalid request
+                    // — point at failover setup instead of "try again".
+                    "Retrying won't help — the request is invalid for this \
+                     provider. Switch provider via `/models`, or set up a \
+                     fallback chain ([providers.fallback] in config.toml) so \
+                     OpenCrabs fails over automatically."
+                } else {
+                    "Try again, or switch provider via `/models`."
+                };
+                return format!("Provider returned HTTP {status}. {advice} Details: {display_raw}");
             }
         }
     }

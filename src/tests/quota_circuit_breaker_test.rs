@@ -248,3 +248,64 @@ fn chain_summary_without_skipped_omits_section() {
     );
     assert!(summary.contains("/models"));
 }
+
+
+// ---------------------------------------------------------------------------
+// 4. No-chain setup guidance (#1006) and chain-summary attachment (#1007)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_chain_guidance_points_at_the_exact_fix() {
+    // The bare "no fallback providers configured" status taught users
+    // nothing. The guidance must name the config block, its shape, the
+    // keys requirement, and /restart, or it is useless.
+    let g = crate::brain::provider::error::no_chain_setup_guidance();
+    assert!(g.contains("[providers.fallback]"), "must name the config block");
+    assert!(g.contains("enabled = true"), "must show the enable switch");
+    assert!(g.contains("keys.toml"), "must mention the keys requirement");
+    assert!(g.contains("/restart"), "must say how to pick it up");
+}
+
+#[test]
+fn with_chain_summary_keeps_variant_and_appends_ledger() {
+    // #1007: the provider-layer walk must surface the tried ledger without
+    // losing the error variant, so upstream classification keeps working.
+    let summary = "All providers in the fallback chain failed. x: y.".to_string();
+
+    let e = crate::brain::provider::error::with_chain_summary(
+        ProviderError::RateLimitExceeded("rate limited".to_string()),
+        summary.clone(),
+    );
+    match e {
+        ProviderError::RateLimitExceeded(m) => {
+            assert!(m.starts_with("rate limited"), "original message must lead");
+            assert!(m.contains("fallback chain failed"), "ledger must be attached");
+        }
+        other => panic!("variant must survive wrapping, got {other:?}"),
+    }
+
+    let e = crate::brain::provider::error::with_chain_summary(
+        ProviderError::ApiError {
+            status: 400,
+            message: "invalid_parameter_value".to_string(),
+            error_type: Some("http_400".to_string()),
+        },
+        summary.clone(),
+    );
+    match e {
+        ProviderError::ApiError { status, message, error_type } => {
+            assert_eq!(status, 400);
+            assert!(message.contains("invalid_parameter_value"));
+            assert!(message.contains("fallback chain failed"));
+            assert_eq!(error_type.as_deref(), Some("http_400"));
+        }
+        other => panic!("variant must survive wrapping, got {other:?}"),
+    }
+
+    // Variants without a message slot pass through untouched.
+    let e = crate::brain::provider::error::with_chain_summary(
+        ProviderError::Timeout(1),
+        summary,
+    );
+    assert!(matches!(e, ProviderError::Timeout(_)));
+}

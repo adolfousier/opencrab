@@ -350,6 +350,44 @@ pub fn chain_exhausted_summary(
     lines.join("\n")
 }
 
+/// Actionable setup guidance shown when self-healing has nothing to fall
+/// back to because no fallback chain is configured (#1006, #1007). The
+/// runtime never pointed users at `[providers.fallback]` before, so most
+/// recoverable failures died raw instead of failing over.
+pub fn no_chain_setup_guidance() -> &'static str {
+    "no fallback chain configured. To set one up: add [providers.fallback] \
+     to config.toml with enabled = true and providers = [\"first\", \
+     \"second\"] (tried in order, at least two recommended; each provider \
+     must already have its keys in keys.toml), then /restart. OpenCrabs \
+     will then fail over automatically when a provider fails."
+}
+
+/// Attach a chain-exhaustion summary to the last provider error without
+/// losing its variant, so upstream classification keeps working while the
+/// message carries the full tried-provider ledger (#1007). Variants without
+/// a message slot pass through unchanged.
+pub fn with_chain_summary(err: ProviderError, summary: String) -> ProviderError {
+    match err {
+        ProviderError::RateLimitExceeded(m) => {
+            ProviderError::RateLimitExceeded(format!("{m}\n{summary}"))
+        }
+        ProviderError::InvalidRequest(m) => ProviderError::InvalidRequest(format!("{m}\n{summary}")),
+        ProviderError::ModelNotFound(m) => ProviderError::ModelNotFound(format!("{m}\n{summary}")),
+        ProviderError::StreamError(m) => ProviderError::StreamError(format!("{m}\n{summary}")),
+        ProviderError::Internal(m) => ProviderError::Internal(format!("{m}\n{summary}")),
+        ProviderError::ApiError {
+            status,
+            message,
+            error_type,
+        } => ProviderError::ApiError {
+            status,
+            message: format!("{message}\n{summary}"),
+            error_type,
+        },
+        other => other,
+    }
+}
+
 /// True when a provider error body describes a transient overload/capacity
 /// condition. Matches on overload-ish error types and on a bounded vocabulary
 /// of "temporarily unavailable / at capacity / try again" phrases, while
