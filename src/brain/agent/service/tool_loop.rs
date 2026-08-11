@@ -413,6 +413,16 @@ impl AgentService {
         channel_chat_id: Option<&str>,
         track_pending: bool,
     ) -> Result<AgentResponse> {
+        // #1008: one-shot proactive fallback-chain setup suggestion. Rides
+        // the first REAL user turn (never a [System: resume / background
+        // note) so it lands on whichever channel the user is talking on;
+        // a marker file in the profile home keeps it strictly one-shot.
+        let user_message = super::fallback_suggest::maybe_inject(
+            &crate::config::profile::resolve_profile_home(),
+            !self.fallback_providers.is_empty(),
+            user_message,
+        );
+
         // Track this request for restart recovery. Resume turns pass
         // `track_pending == false`: a resume is a one-shot best-effort recovery,
         // so it must NOT re-insert its own pending row. Otherwise an interrupted

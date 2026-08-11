@@ -46,6 +46,7 @@ pub mod background_session_test;
 pub mod background_task_persistence_test;
 pub mod background_task_route_test;
 pub mod background_tasks_test;
+pub mod fallback_suggestion_test;
 pub mod baseline_merge_test;
 pub mod bash_blocklist_test;
 pub mod bash_feedback_enrichment_test;
