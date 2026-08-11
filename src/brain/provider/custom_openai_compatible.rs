@@ -3282,6 +3282,11 @@ impl Provider for OpenAIProvider {
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string());
 
+                // Provider request/trace ID (#1013) for incident correlation.
+                // Extracted before consumption: headers vanish once the body
+                // is read.
+                let request_id = provider_request_id(response.headers());
+
                 let openai_response: OpenAIResponse = response.json().await?;
                 let llm_response = self.from_openai_response(openai_response);
 
@@ -3295,10 +3300,15 @@ impl Provider for OpenAIProvider {
                 }
 
                 tracing::info!(
-                    "OpenAI API response: input_tokens={}, output_tokens={}, stop_reason={:?}",
+                    "OpenAI API response: input_tokens={}, output_tokens={}, stop_reason={:?}, response_id={}{}",
                     llm_response.usage.input_tokens,
                     llm_response.usage.output_tokens,
-                    llm_response.stop_reason
+                    llm_response.stop_reason,
+                    llm_response.id,
+                    request_id
+                        .as_deref()
+                        .map(|r| format!(", request_id={r}"))
+                        .unwrap_or_default()
                 );
 
                 Ok(llm_response)
@@ -3590,6 +3600,14 @@ impl Provider for OpenAIProvider {
             .get("x-openrouter-cache-status")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
+
+        // Provider request/trace ID (#1013): headers vanish once the stream
+        // is consumed, so extract alongside cache_status. Logged when present
+        // so incident forensics can match provider-side records.
+        if let Some(rid) = provider_request_id(response.headers()) {
+            tracing::info!("{} streaming response header request_id: {rid}", self.name());
+        }
+
         if let Some(ref status) = cache_status {
             if status == "HIT" {
                 tracing::info!("OpenRouter cache HIT (stream) — zero tokens billed");
@@ -3872,7 +3890,20 @@ impl Provider for OpenAIProvider {
                                         // Emit MessageStart on first chunk with id
                                         if !st.emitted_message_start && !chunk.id.is_empty() {
                                             st.emitted_message_start = true;
+                                            // Response id from the first SSE chunk (#1013):
+                                            // correlate with provider-side logs. Logged
+                                            // before chunk.id moves into StreamMessage.
+                                            tracing::info!(
+                                                "OpenAI-compat streaming response id (first chunk): {}",
+                                                chunk.id
+                                            );
                                             let model = chunk.model.clone().unwrap_or_default();
+                                            // Response id for provider-side correlation (#1013):
+                                            // logged before chunk.id is moved into StreamMessage.
+                                            tracing::info!(
+                                                "OpenAI-compat streaming response id: {} model='{model}'",
+                                                chunk.id
+                                            );
                                             events.push(Ok(StreamEvent::MessageStart {
                                                 message: crate::brain::provider::types::StreamMessage {
                                                     id: chunk.id,
@@ -4766,6 +4797,21 @@ struct OpenAIFunction {
     name: String,
     description: String,
     parameters: serde_json::Value,
+}
+
+/// Provider request/trace ID from response headers (#1013). DashScope-family
+/// providers (ModelScope) send `x-request-id`; others vary. First present,
+/// non-empty value wins. Logged when present, silent when absent.
+pub(crate) fn provider_request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    ["x-request-id", "request-id", "x-trace-id"]
+        .into_iter()
+        .find_map(|name| {
+            headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
 }
 
 #[derive(Debug, Clone, Deserialize)]
