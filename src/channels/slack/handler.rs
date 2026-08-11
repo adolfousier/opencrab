@@ -1938,18 +1938,6 @@ async fn handle_message(
             }
             let text_only = redact_secrets(&text_only);
 
-            // Drop narration the step group already shows (#1010). The final
-            // body carries every folded note as well, and the completion path
-            // below only reconciles standalone intermediate POSTS, so without
-            // this the whole turn's commentary ships ahead of the answer.
-            // Structural: only strings the group actually folded are removed.
-            let text_only = {
-                let folded = super::final_body::folded_paragraphs(super::tool_group::notes_text(
-                    &steps_final.lock().await,
-                ));
-                super::final_body::strip_folded_notes(&text_only, &folded)
-            };
-
             let text_only = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_only);
 
             let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
