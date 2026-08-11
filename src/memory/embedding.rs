@@ -106,10 +106,11 @@ const MAX_EMBED_BYTES: usize = 32_000;
 /// single averaged vector, so a document covering several topics landed as one
 /// meaningless point in embedding space.
 ///
-/// `qmd::chunk_document` was always available with a 15% overlap; the call
-/// sites simply passed `seq = 0, pos = 0` and never used it.
-pub(crate) fn chunks_for(body: &str) -> Vec<qmd::Chunk> {
-    qmd::chunk_document(body, CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS)
+/// Chunking itself is ours rather than qmd's: `qmd::chunk_document` slices by
+/// byte index with no boundary check and panics on any multi-byte character
+/// near a chunk edge (#1002), which an em dash is enough to trigger.
+pub(crate) fn chunks_for(body: &str) -> Vec<super::chunker::Chunk> {
+    super::chunker::chunk_document(body, CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS)
 }
 
 /// Target chunk size in characters, and the overlap between neighbours.

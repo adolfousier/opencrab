@@ -16,6 +16,7 @@ pub use embedding::{
     embed_content, embed_content_api, embed_query_api, embed_via_api, engine_if_ready, get_engine,
 };
 pub(crate) mod chunk_fts;
+pub(crate) mod chunker;
 pub mod vector_search;
 
 pub use index::{BRAIN_FILES, index_file, reindex};
