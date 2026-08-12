@@ -27,10 +27,48 @@ pub fn parse_timezone(tz: &str) -> Option<Tz> {
     tz.parse::<Tz>().ok()
 }
 
+/// Rewrite Unix day-of-week `0` (Sunday) as `7`, which is what the `cron`
+/// crate accepts (#1024).
+///
+/// Unix cron numbers days 0-6 with Sunday at 0; the `cron` crate numbers them
+/// 1-7 with Sunday at 7. An expression written the way every crontab on earth
+/// writes it — `0 4 * * 0` for Sunday at 04:00 — therefore fails to parse
+/// entirely. The built-in dedup-scan job shipped with exactly that expression
+/// and never ran once, logging a parse failure every minute instead.
+///
+/// Only whole tokens are rewritten, so `10` in a minute field is untouched and
+/// step/range syntax (`0-3`, `*/2`, `0,3`) keeps working.
+pub(crate) fn normalize_day_of_week(field: &str) -> String {
+    field
+        .split(',')
+        .map(|part| {
+            part.split('/')
+                .map(|step| {
+                    step.split('-')
+                        .map(|tok| if tok.trim() == "0" { "7" } else { tok })
+                        .collect::<Vec<_>>()
+                        .join("-")
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Parse a 5-field cron expression, prepending the seconds field the `cron`
 /// crate requires. `None` if the expression is malformed.
 fn parse_schedule(cron_expr: &str) -> Option<Schedule> {
-    Schedule::from_str(&format!("0 {cron_expr}")).ok()
+    let fields: Vec<&str> = cron_expr.split_whitespace().collect();
+    let normalized = if fields.len() == 5 {
+        let mut f = fields.clone();
+        let dow = normalize_day_of_week(fields[4]);
+        f[4] = dow.as_str();
+        f.join(" ")
+    } else {
+        cron_expr.to_string()
+    };
+    Schedule::from_str(&format!("0 {normalized}")).ok()
 }
 
 /// The next `n` fire times for a 5-field cron expression, interpreted in

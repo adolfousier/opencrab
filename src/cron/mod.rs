@@ -5,7 +5,7 @@
 //! follows the user, falls back to initial session. Results are optionally
 //! delivered to a configured channel (Telegram, Discord, Slack).
 
-mod schedule_util;
+pub(crate) mod schedule_util;
 mod scheduler;
 
 pub use schedule_util::{format_upcoming, next_run_utc, parse_timezone, upcoming_in_tz};
