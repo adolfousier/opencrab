@@ -96,9 +96,20 @@ pub fn format_user_error(err: &AgentError) -> String {
             .to_string();
     }
     if raw.contains("Repetition detected") {
-        return "Provider got stuck repeating itself. The stream was \
-                terminated automatically. Try rephrasing your request \
-                or switching models via `/models`."
+        // Name what actually ended the turn (#1023). This is OUR loop
+        // detector, not the provider: the model kept announcing an action
+        // without emitting the call, and the turn was stopped rather than
+        // left to spin. Blaming the provider sent users looking for
+        // provider-side causes, and `/models` "worked" often enough to
+        // teach the wrong mental model — a different model usually DOES
+        // emit the call, which is why the suggestion stays, now with the
+        // real reason attached.
+        return "I stopped the turn: I kept announcing the same action \
+                without actually running it, and the loop detector ended \
+                it rather than let it spin. This is usually the model \
+                struggling to emit a tool call it has described — \
+                rephrasing the request, or switching models via `/models`, \
+                normally clears it."
             .to_string();
     }
     if let AgentError::ContextTooLarge { current, limit } = err {
