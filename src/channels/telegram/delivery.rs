@@ -602,8 +602,19 @@ pub(crate) async fn deliver_final_response(
                                         "Telegram: edit retry failed ({e}), falling back to delete+send"
                                     );
                                     let _ = bot.delete_message(chat_id, mid).await;
-                                    let _ = send_html_or_plain(bot, chat_id, thread_id, &chunks[0])
-                                        .await;
+                                    // Never silent (#1019): this is the LAST fallback.
+                                    // The edit already failed and was logged; if the
+                                    // resend fails too the message is gone entirely,
+                                    // so the recovery path must not be the quiet one.
+                                    if let Err(e) =
+                                        send_html_or_plain(bot, chat_id, thread_id, &chunks[0])
+                                            .await
+                                    {
+                                        tracing::error!(
+                                            "Telegram: delete+send fallback failed in chat {chat_id}, \
+                                             the reply was lost: {e}"
+                                        );
+                                    }
                                 }
                             }
                             Err(e) => {

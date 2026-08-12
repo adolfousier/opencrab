@@ -469,7 +469,15 @@ pub(crate) async fn handle_message(
                     })
                     .collect();
                 let builder = CreateMessage::new().content(&resp.text).components(rows);
-                let _ = msg.channel_id.send_message(&ctx.http, builder).await;
+                // Never silent (#1019): this IS the reply. A swallowed failure
+                // here is indistinguishable from the agent choosing not to
+                // answer, and the user has no way to tell or report it.
+                if let Err(e) = msg.channel_id.send_message(&ctx.http, builder).await {
+                    tracing::error!(
+                        "Discord: reply with components failed in channel {}: {e}",
+                        msg.channel_id
+                    );
+                }
                 return;
             }
             ChannelCommand::NewSession => {
@@ -579,7 +587,15 @@ pub(crate) async fn handle_message(
                     })
                     .collect();
                 let builder = CreateMessage::new().content(&resp.text).components(rows);
-                let _ = msg.channel_id.send_message(&ctx.http, builder).await;
+                // Never silent (#1019): this IS the reply. A swallowed failure
+                // here is indistinguishable from the agent choosing not to
+                // answer, and the user has no way to tell or report it.
+                if let Err(e) = msg.channel_id.send_message(&ctx.http, builder).await {
+                    tracing::error!(
+                        "Discord: reply with components failed in channel {}: {e}",
+                        msg.channel_id
+                    );
+                }
                 return;
             }
             ChannelCommand::Stop => {
