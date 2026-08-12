@@ -218,6 +218,7 @@ pub mod memory_collection_routing_test;
 pub mod memory_recall_eval_test;
 pub mod memory_recall_multilingual_test;
 pub mod memory_recall_test;
+pub mod memory_search_scope_test;
 pub mod memory_search_test;
 pub mod memory_store_profile_test;
 pub mod memory_store_test;

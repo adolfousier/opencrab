@@ -209,10 +209,13 @@ impl Tool for WriteOpenCrabsFileTool {
          approval and is NOT available in autonomous RSI operations. \
          \
          **Check before you append a rule or lesson.** Search first, then decide: \
-         `load_brain_file` with a `query` on the target file — it reads from DISK, so it \
-         cannot miss a rule written moments ago — plus `memory_search` to catch the \
-         same rule stated in another file. Do NOT reach for `grep`: it resolves \
-         against the working directory and cannot see your home directory at all. Per-turn recall does NOT cover this: it surfaces a slice of \
+         `memory_search` with `scope=\"brain\"` — it ranks across every brain file, so it \
+         finds the rule wherever it lives, and costs a fraction of reading one. If it \
+         hits, read the full section with `load_brain_file` + `query` before deciding \
+         whether to sharpen it. Do NOT search the default \"memory\" scope for this: \
+         daily notes outnumber brain files and will bury the rule. Do NOT reach for \
+         `grep` either — it resolves against the working directory and cannot see your \
+         home directory at all. Per-turn recall does NOT cover this: it surfaces a slice of \
          MEMORY.md chosen for the USER's message, not for the rule you are about to \
          write, so finding nothing similar in context is not evidence there is nothing. \
          Three outcomes: nothing similar exists, append it; a similar rule exists, \

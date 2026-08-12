@@ -18,9 +18,25 @@ impl Tool for MemorySearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search past conversation memory logs for relevant context. \
-         Use this when you need to recall decisions, files, errors, or context \
-         from previous sessions. Returns matching excerpts from daily memory logs."
+        "Search your memory. Returns ranked excerpts, cheap enough to run before \
+         you write anything. \
+         \
+         `scope` picks the corpus, and picking wrong is the usual reason a search \
+         comes back with nothing useful: \
+         - \"memory\" (default) — daily logs. History: what happened, when, what was \
+           decided in a past session. \
+         - \"brain\" — your brain files (SOUL, USER, AGENTS, TOOLS, CODE, SECURITY, \
+           MEMORY, BOOT, HEARTBEAT). Rules and policy: does a rule about this ALREADY \
+           exist, and which file owns it. Use this before appending a rule. \
+         - \"all\" — both, for \"have I ever written about this anywhere\". \
+         \
+         Searching \"memory\" for a rule usually fails: there are far more daily notes \
+         than brain files, and they reuse the same words for unrelated things, so \
+         history outranks policy and you get three confident irrelevant hits. \
+         \
+         Once a hit tells you WHICH file holds a rule, use `load_brain_file` with a \
+         `query` to read the whole section — this returns snippets, which are enough \
+         to locate a rule but not always to judge it."
     }
 
     fn input_schema(&self) -> Value {
@@ -35,6 +51,12 @@ impl Tool for MemorySearchTool {
                     "type": "integer",
                     "description": "Number of results to return (default: 5)",
                     "default": 5
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["memory", "brain", "all"],
+                    "description": "Which corpus to search: \"memory\" (daily logs, the default) for history, \"brain\" for rules and policy in your brain files, \"all\" for both.",
+                    "default": "memory"
                 }
             },
             "required": ["query"]
@@ -61,6 +83,11 @@ impl Tool for MemorySearchTool {
         }
 
         let n = input.get("n").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+        // Default stays "memory" so existing callers are unaffected (#1020).
+        let scope = input
+            .get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("memory");
 
         // Get memory qmd store
         let store = match crate::memory::get_store() {
@@ -75,10 +102,32 @@ impl Tool for MemorySearchTool {
             }
         };
 
-        match crate::memory::search(store, &query, n).await {
-            Ok(results) if results.is_empty() => Ok(ToolResult::success(
-                "No matching memories found.".to_string(),
-            )),
+        let searched = match scope {
+            "brain" => crate::memory::search_brain(store, &query, n).await,
+            "all" => match crate::memory::search_brain(store, &query, n).await {
+                Ok(mut brain) => match crate::memory::search(store, &query, n).await {
+                    // Brain hits lead: a rule outranks a note mentioning it.
+                    Ok(mem) => {
+                        brain.extend(mem);
+                        Ok(brain)
+                    }
+                    Err(e) => Err(e),
+                },
+                Err(e) => Err(e),
+            },
+            _ => crate::memory::search(store, &query, n).await,
+        };
+
+        match searched {
+            Ok(results) if results.is_empty() => Ok(ToolResult::success(format!(
+                "No matches in scope \"{scope}\".{}",
+                if scope == "memory" {
+                    " If you were checking whether a RULE already exists, search again \
+                     with scope=\"brain\" — rules live in brain files, not daily logs."
+                } else {
+                    ""
+                }
+            ))),
             Ok(results) => {
                 let mut output = String::new();
                 for (i, r) in results.iter().enumerate() {
