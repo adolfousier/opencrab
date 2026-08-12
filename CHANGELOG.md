@@ -7,6 +7,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.80] - 2026-08-12
+
+96 commits since v0.3.79. 191 files changed, +12,486 / -1,472 lines.
+
+### ⚠️ Upgrade Notes
+
+- **Brain-file templates changed**: the AGENTS.md, BOOT.md, and SOUL.md templates were updated in this release (#1003, #992). Seeding and template sync NEVER overwrite existing files, so nothing propagates automatically: diff your files against `src/docs/reference/templates/` and merge by hand if you want the new defaults.
+- **Qwen 3.8 Max users**: this model can sit in long internal reasoning before acting. If turns stall in thinking loops, set `agent.thinking_loop_timeout_secs = 120` in config.toml (tune up toward the 600s default if you prefer more patience). The loop guard kills the stalled stream and retries with tool-call enforcement, which makes Qwen behave noticeably better. 0 disables the guard entirely.
+
+### ✨ Features
+
+- `98831de2` **Deployment isolation rule**: the preamble now says where a deployment goes — a VPS or a container, never installed into the OpenCrabs environment without explicit owner approval (#1026)
+
+- `c6bdeaa8` **Browser inventory mode for browser_find** (#1022)
+- `ac8113ac` **memory_search gets a scope**: the agent can search its own rules, daily logs, or both (#1020)
+- `d07668c4` **Slack renders tables and headings in its own shape** (#1016)
+- `15c4c881` **Proactive one-shot fallback chain setup suggestion** (#1008)
+- `2d1d9b9c` **Template SOUL.md gets an operating posture, not just a voice** (#992)
+- `e0f0db99` **Telegram records each configured group's name in its config section** (#984)
+- `3fc4f6a6` **Per-call fallback provenance in streaming logs** (#969)
+- `6fc05944` **cron_manage update action**: patch jobs in place (#966)
+- `ca72b428` **Spoken stop honoured**, not just the bare word (channels, tui)
+- `513d3f8d` **VBA macro source extraction** from macro-enabled workbooks (doc_parser)
+- `7f9906d2` **Repo-sharing guidance**: prompt tells agents how to share a repo with other sessions
+- `c4de2488` **Cross-turn announcement loop guard** + Luna fixture (#957)
+- `26156b48` **Bash near-match loop guard** in the tool loop (#957)
+- `a744daf3` **xlsm/xlsb/ods via calamine, legacy .doc via rwml** (doc_parser, #955)
+
+### 🔧 Fixes
+
+- `dd0cb602` **Loop-detector kill reaches the fallback chain**: raised as a provider-attributable error so a turn the announcement-loop detector ends can try another provider instead of surfacing (#1023)
+
+- `a03da3fb` **Owner-gate user commands and skills on the channel catch-all arm** (#975)
+- `ea0f33b6` **tool_search results are activated**: a found tool is callable (#1025)
+- `bf0850a8` **Loop-detector kill no longer reported as a provider fault** (#1023)
+- `bca2d93c` **Spent thinking-loop budget routed into the fallback chain** (#1021)
+- `05d546a5` **Memory freshness churn stopped, embedding kept off the search path** (#1021)
+- `8c0eabeb` **Brain files indexed into the brain collection, not memory** (#1018)
+- `5463c3ef` **Three channel delivery failures that were dropped entirely are now logged** (#1019)
+- `a33e2188` **Memory indexes on write**: memory_search stops being a boot-time snapshot (#1018)
+- `1ab6ae91` **Provider response IDs persisted in logs for request correlation** (#1013)
+- `7817a09b` **Slack folded narration matched on the character stream**, not paragraphs
+- `252adfc5` **Slack final message no longer repeats step-group narration** (#1010, corrected reapply)
+- `cc475248` **Plan receipt binding for commit claims in completions** (#1011)
+- `566cd1f3` **Codex CLI failures route into retry and fallback** (#1004, #1005)
+- `169ee0d9` **HTTP 400 failover guidance and chain-exhaustion ledger** (#1006, #1007)
+- `782901c2` **Telegram no longer deletes a completion because the turn ran no tools** (#1009)
+- `b7d23c71` **Memory chunker owns qmd's panics on multi-byte characters** (#1002)
+- `9877fc95` **API backfill chunked too, placeholders swept on that path** (#1001)
+- `6136cdb8` **Lexical hits narrowed to the matching chunk** (#1000)
+- `d3f91e24` **Memory store resolved per profile instead of cached globally** (#999)
+- `faa6f4fe` **Documents chunked before embedding, later chunks searchable** (#998)
+- `1cd1b228` **Telegram wrap_p threaded through lists, quotes, headings in rich HTML** (#997)
+- `6e9adf3f` **Brain recall folds Latin diacritics**, multilingual eval added
+- `2a9c82f7` **MEMORY.md recall ranked with BM25**, not shared-word counts (#996)
+- `58e83faf` **multi-agent skill registered as a built-in** (#990)
+- `18742529` **HEARTBEAT.md seeded into new profiles** (#989)
+- `465fb053` **read_file per-line clamp and output byte budget** (#986)
+- `85eb7ca3` **read_file truncation warning carries the exact resume offset** (#988)
+- `061e45c6` **read_file announces empty files instead of returning silence** (#987)
+- `4bfcfd49` **list_chats prints each chat id once** (#985)
+- `fd4006f8` **Fallback providers get the same nudge budget as the primary**
+- `faaff5ce` **-p/--profile applied before logging resolves the home** (#983)
+- `a5bb3fed` **RSI cycle provider resolved from user config, not registry order** (#977)
+- `68eacd3b` **RSI cycle interval backs off on zero-improvement streaks** (#977)
+- `32af2135` **Config example name corrected from a2a to gateway**
+- `b8d6f08a` **RSI agent runs paused on convergence self-reports** (#977)
+- `62ed0892` **RSI findings hashed by stable identity**, no description churn (#977)
+- `a8b7197b` **Telegram nudges and fallbacks counted in place**, no stacked lines
+- `52402fc6` **RSI cycles gated on actionable feedback deltas** (#977)
+- `bbba22fe` **Session history sealed with a compaction marker each RSI cycle** (#977)
+- `ab93f598` **xlsb/xlsm/ods support for channel ingestion** (file_extract, #959, #962)
+- `f02cf14e` **Collapsed tables reflowed in the intermediate rich-report gate** (#980)
+- `1d14137c` **Nudge escalation no longer poisons the context it hands on**
+- `cdada3fe` **Empty answer nudged even when the model reasoned nothing**
+- `5c71da30` **anyhow cause chain preserved in AgentError::Database** (#974)
+- `e28fbc5c` **context_window honoured on the CLI providers**
+- `1f9b9935` **provider_registry opt-in instead of on by default**
+- `5ff573c1` **Turn duration kept after the turn settles**
+- `6374b1d4` **Homebrew installs upgrade via Homebrew** (evolve)
+- `c38cc66e` **Reworded announcement loops caught mid-turn** (#961)
+- `fd0f8d72` **Near-match loop guard generalized to all tools** (#961)
+- `5aa3eef3` **Truncated answer no longer delivered as if it were finished**
+
+### 📖 Documentation
+
+- `679db659` eval: record the memory-retrieval before/after, and what was not measured
+- `eb5fea12` changelog: reconstruct the v0.3.79 release notes
+- `2bf08f7d` templates: move memory-save triggers to the always-loaded file (#1003)
+- `54a2ff99` eval: record what chunked embeddings changed, and what was not measured
+- `93bde4df` brain: dedup_scan documents exact matching, not paraphrase (#993)
+- `84d67bb5` brain: drop stale IDENTITY.md references, SOUL.md owns identity (#991)
+- `33314a74` readme: document the seven config options that had no entry
+- `dcb69445` readme: scope self_improvement_provider/model to the built-in RSI engine (#968)
+- `72c073f0` readme: clarify provider enabled=false does not block by-name usage (#967)
+- `c5acf86d` near-match loop guards for all tools, mid-turn announcement checks (#961)
+- `9aff80b9` near-match loop guards in README and changelog (#957)
+- `cd412efa` readme: document legacy .doc and xlsm/xlsb/ods parsing (#955)
+- `eec57371` readme: document parse_document stack and out-of-scope formats
+
+### 🧹 Miscellaneous
+
+- `7d49a59c` ci(release): add workflow_dispatch so a release can be re-triggered from the API
+- `6006e01d` fix(cron): Unix day-of-week 0 acceptance, reverted below before release (not shipped)
+- `a78f1a26` revert: cron day-of-week 0 fix pulled before release
+- `75e6228e` fix(slack): first narration fix, superseded by the reapply above (#1010)
+- `dd381010` revert: undo the first slack narration fix before the corrected reapply (#1010)
+- `2fc589e6` feat(agent): reasoning token budget, reverted below before release (not shipped)
+- `b5caa4d4` revert: reasoning token budget feat pulled before release
+- `6793510c` style: cargo fmt the response-id log line (#1013)
+- `19bce549` style: cargo fmt the self-healing additions (#1004, #1006, #1007, #1008)
+- `1b7a83ac` perf(brain): stop re-reading MEMORY.md every turn, make both paths agree (#995)
+- `c368de88` style: rustfmt the restored channel-ingestion commit [skip ci]
+- `9c290b5c` test(errors): drop unused anyhow::Context import
+- `56015b2b` test: drop reporter and group names from loop-guard fixtures
+- `37405faf` test(fixture): strip reporter handle from Luna fixture (#957)
+- `161d7d9a` chore(release): retire the Homebrew tap, homebrew-core autobumps now (#958)
+- `b2ffc621` test(doc_parser): regression tests for legacy .doc and spreadsheet routing (#955)
+
+### 📊 Stats
+
+- 96 commits since v0.3.79
+- 191 files changed, +12,486 / -1,472 lines
+- 6,399 tests (6,373 passed, 0 failed, 25 ignored)
+
 > This section accumulates changes between releases.
 
 ## [0.3.79] - 2026-08-06
@@ -7533,3 +7658,4 @@ fixes.
 [0.3.77]: https://github.com/adolfousier/opencrabs/compare/v0.3.75...v0.3.77
 [0.3.78]: https://github.com/adolfousier/opencrabs/compare/v0.3.77...v0.3.78
 [0.3.79]: https://github.com/adolfousier/opencrabs/compare/v0.3.78...v0.3.79
+[0.3.80]: https://github.com/adolfousier/opencrabs/compare/v0.3.79...v0.3.80
