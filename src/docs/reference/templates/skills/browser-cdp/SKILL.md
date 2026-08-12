@@ -18,7 +18,7 @@ Built-in browser control via Chrome DevTools Protocol — no Node.js, no Playwri
 | `browser_eval` | `script` | — | Execute JavaScript |
 | `browser_content` | — | `selector`, `text_only` | Extract text/HTML |
 | `browser_wait` | — | `selector`, `timeout_secs`, `delay_secs` | Wait for element or delay |
-| `browser_find` | `pattern` | `mode`, `limit` | Find elements on page |
+| `browser_find` | — | `pattern`, `mode`, `limit` | Inventory (no `pattern`) or find elements |
 
 ## Headless vs Headed
 
@@ -27,7 +27,11 @@ Built-in browser control via Chrome DevTools Protocol — no Node.js, no Playwri
 
 ## Usage Tips
 
-- Compose workflows: navigate → wait → click → type → screenshot
+- Compose workflows: navigate → inventory/find → click → type → screenshot
+- **Inventory mode:** call `browser_find` with NO `pattern` to get every visible
+  interactive element on the page, each with a stable `[data-opencrabs-match="N"]`
+  selector. Prefer this over `browser_screenshot` when you have just landed and do
+  not yet know what to click — text beats pixels for deciding where to act.
 - Screenshots return file paths. Use `<<IMG:path>>` to send to channels.
 - JavaScript evaluation for complex DOM manipulation and SPAs.
 - No credentials stored. Navigate to login page and use click/type for auth (with user approval).

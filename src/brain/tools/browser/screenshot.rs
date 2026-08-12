@@ -141,9 +141,10 @@ impl Tool for BrowserScreenshotTool {
                 return Ok(ToolResult::error(
                     "Page is identical to your last screenshot. The previous action \
                      (or no action) produced no visible change. Do not screenshot again — \
-                     take a different action: `browser_click` something, `browser_type` \
-                     into a field, `browser_navigate` to a new URL, or `browser_find` to \
-                     locate an element you can interact with."
+                     call `browser_find` with NO pattern to get an indexed inventory of \
+                     every visible interactive element you can click/type, then act on one \
+                     of those `[data-opencrabs-match=\"N\"]` selectors. Or `browser_navigate` \
+                     to a new URL."
                         .to_string(),
                 ));
             }

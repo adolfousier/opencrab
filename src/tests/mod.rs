@@ -112,6 +112,7 @@ pub mod browser_e2e_test;
 pub mod browser_eval_cap_test;
 pub mod browser_find_test;
 pub mod browser_health_test;
+pub mod browser_inventory_test;
 pub mod browser_locks_test;
 pub mod browser_profile_wait_test;
 pub mod browser_screenshot_surface_test;

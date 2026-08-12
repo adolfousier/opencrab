@@ -27,6 +27,11 @@ pub(crate) use eval::cap_eval_output;
 // (src/tests/browser_find_test.rs).
 #[cfg(test)]
 pub(crate) use find::build_find_js;
+
+// Inventory-mode JS builder — re-exported only for test fixtures
+// (src/tests/browser_inventory_test.rs).
+#[cfg(test)]
+pub(crate) use find::build_inventory_js;
 pub use manager::{BrowserManager, CloseOutcome};
 pub use navigate::BrowserNavigateTool;
 pub use screenshot::BrowserScreenshotTool;

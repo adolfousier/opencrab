@@ -1,6 +1,19 @@
-//! `browser_find` — find multiple matching elements and return their
-//! stable selectors + text + tag + visibility so the agent can pick
-//! one and call `browser_click` against a selector it KNOWS is unique.
+//! `browser_find` — find matching elements OR inventory all interactive
+//! elements on the current page, returning each with a stable
+//! `data-opencrabs-match` selector + text + tag + visibility so the
+//! agent can pick one and call `browser_click` against a selector it
+//! KNOWS is unique.
+//!
+//! Two modes share one serialization path:
+//! - **Search** (`pattern` supplied): enum matches for css / xpath /
+//!   text / aria, as before.
+//! - **Inventory** (`pattern` omitted): enumerate ALL visible
+//!   interactive elements (button, a[href], input, select, textarea,
+//!   [role=button/link/...], [tabindex], summary, contenteditable).
+//!   This exists so the agent has a text handle to click the moment it
+//!   lands on a page, instead of screenshotting to discover what is
+//!   clickable — the screenshot-discovery pattern that produced the
+//!   40 "Page is identical" loop failures on Aug 9 alone (#1022).
 //!
 //! Previously the agent had to compose `browser_eval` with hand-rolled
 //! JS (`Array.from(querySelectorAll...).map(...)`) then parse the
@@ -34,12 +47,13 @@ impl Tool for BrowserFindTool {
     }
 
     fn description(&self) -> &str {
-        "Find elements on the current page matching a pattern. Returns a list of \
-         matches with stable `selector` values that can be passed back to \
-         `browser_click` / `browser_type` without ambiguity. Supports four modes: \
-         `css` (CSS selectors, default), `xpath` (XPath expressions), `text` \
-         (visible text substring, case-insensitive), `aria` (matches aria-label \
-         substring)."
+        "Find elements on the current page. With a `pattern`, returns matching \
+         elements (modes: `css` default, `xpath`, `text` substring, `aria`). \
+         WITHOUT a `pattern`, returns an inventory of ALL visible interactive \
+         elements on the page (buttons, links, inputs, etc.), each with a \
+         stable indexed selector ready for `browser_click`. Use the no-pattern \
+         inventory when you have just landed and do not yet know what to \
+         click — prefer it over `browser_screenshot` for discovery."
     }
 
     fn input_schema(&self) -> Value {
@@ -48,7 +62,9 @@ impl Tool for BrowserFindTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "The selector / xpath / text / aria-label to match"
+                    "description": "Optional. Omit to inventory ALL visible interactive \
+                                    elements on the page. With a value, matches that \
+                                    selector / xpath / text / aria-label."
                 },
                 "mode": {
                     "type": "string",
@@ -61,8 +77,7 @@ impl Tool for BrowserFindTool {
                     "minimum": 1,
                     "maximum": 200
                 }
-            },
-            "required": ["pattern"]
+            }
         })
     }
 
@@ -75,15 +90,17 @@ impl Tool for BrowserFindTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
-        let pattern = match input["pattern"].as_str() {
-            Some(p) if !p.is_empty() => p.to_string(),
-            _ => return Ok(ToolResult::error("'pattern' is required".into())),
-        };
+        // `pattern` is now optional: absent (or empty) means "inventory all
+        // visible interactive elements". A non-empty value keeps the original
+        // css/xpath/text/aria search behavior.
+        let pattern = input["pattern"].as_str().filter(|p| !p.is_empty());
         let mode = input["mode"].as_str().unwrap_or("css");
+        // Inventory benefits from a larger default cap (more elements are
+        // interesting when you have no pattern), search keeps the old 20.
         let limit = input["limit"]
             .as_u64()
             .map(|l| l.clamp(1, 200) as usize)
-            .unwrap_or(20);
+            .unwrap_or(if pattern.is_some() { 20 } else { 50 });
 
         let page = match self
             .manager
@@ -94,36 +111,107 @@ impl Tool for BrowserFindTool {
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
 
-        // All four modes run server-side JS that enumerates matches
-        // and assigns each a `data-opencrabs-match` attribute so the
+        // All enumeration runs server-side JS that collects a node array,
+        // then assigns each a `data-opencrabs-match` attribute so the
         // returned selector (`[data-opencrabs-match="N"]`) is stable
         // and unique for the next click/type turn. The attribute is
-        // cleared first to avoid leaking state across calls.
-        let enumerate_js = build_find_js(mode, &pattern, limit);
+        // cleared first to avoid leaking state across calls. Both the
+        // search and inventory scripts share that serialization step
+        // (`wrap_with_index`); only the node-collection expression differs.
+        let enumerate_js = match pattern {
+            Some(p) => build_find_js(mode, p, limit),
+            None => build_inventory_js(limit),
+        };
+        let label = match pattern {
+            Some(p) => format!("{mode}:{p}"),
+            None => "interactive inventory".to_string(),
+        };
         let raw = match page.evaluate(enumerate_js.as_str()).await {
             Ok(r) => r.value().cloned().unwrap_or(Value::Null),
-            Err(e) => return Ok(ToolResult::error(format!("browser_find failed: {e}"))),
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "browser_find failed ({label}): {e}"
+                )));
+            }
         };
 
         let matches = raw.as_array().cloned().unwrap_or_default();
         if matches.is_empty() {
-            return Ok(ToolResult::success(format!(
-                "No elements matched {mode}:{pattern}"
-            )));
+            return Ok(ToolResult::success(match pattern {
+                Some(p) => format!("No elements matched {mode}:{p}"),
+                None => "No visible interactive elements found on this page.".to_string(),
+            }));
         }
 
         let formatted = format_matches(&matches);
-        Ok(ToolResult::success(format!(
-            "Found {} match{} for {}:{pattern}\n\n{formatted}",
-            matches.len(),
-            if matches.len() == 1 { "" } else { "es" },
-            mode
-        )))
+        let count = matches.len();
+        Ok(ToolResult::success(match pattern {
+            Some(p) => format!(
+                "Found {count} match{} for {mode}:{p}\n\n{formatted}",
+                if count == 1 { "" } else { "es" },
+            ),
+            None => {
+                let body = format!(
+                    "{count} visible interactive element{} on this page \
+                     (indexed — pass the `[data-opencrabs-match=\"N\"]` selector to \
+                     `browser_click`):\n\n{formatted}",
+                    if count == 1 { "" } else { "s" },
+                );
+                // If we hit the cap there may be more elements we did not
+                // show. Tell the model explicitly so it does not assume the
+                // list is exhaustive (mirrors the read_file truncation note).
+                if count >= limit {
+                    format!(
+                        "{body}\n\n(Inventory capped at {limit} visible elements. \
+                         Narrow with a `pattern`/`mode` to see beyond this list.)"
+                    )
+                } else {
+                    body
+                }
+            }
+        }))
     }
 }
 
-/// Build the enumeration script for a given mode. Each script ends by
-/// evaluating to an array of `{selector, text, tag, visible}` objects.
+/// Wrap a node-collection expression (an IIFE returning an array of
+/// Elements) with the shared "clear stale match attributes, stamp a
+/// stable per-index `data-opencrabs-match`, serialize to
+/// `{selector, text, tag, visible}`" step. Both `build_find_js` and
+/// `build_inventory_js` route through here so the selectors the model
+/// passes back to `browser_click` are deterministic and identical in
+/// shape regardless of how the nodes were collected.
+fn wrap_with_index(nodes_expr: &str) -> String {
+    format!(
+        r#"
+        (() => {{
+            document.querySelectorAll('[data-opencrabs-match]').forEach(
+                el => el.removeAttribute('data-opencrabs-match'));
+            const nodes = {nodes_expr};
+            const out = [];
+            for (let i = 0; i < nodes.length; i++) {{
+                const el = nodes[i];
+                if (!el || !(el instanceof Element)) continue;
+                el.setAttribute('data-opencrabs-match', String(i));
+                const rect = el.getBoundingClientRect();
+                const visible = rect.width > 0 && rect.height > 0
+                    && getComputedStyle(el).visibility !== 'hidden'
+                    && getComputedStyle(el).display !== 'none';
+                out.push({{
+                    selector: '[data-opencrabs-match="' + i + '"]',
+                    text: (el.innerText || el.textContent || '').trim().slice(0, 200),
+                    tag: el.tagName.toLowerCase(),
+                    visible: visible,
+                }});
+            }}
+            return out;
+        }})()
+        "#
+    )
+}
+
+/// Build the enumeration script for a given search mode. Each script ends by
+/// evaluating to an array of Elements, which `wrap_with_index` then indexes
+/// and serializes.
 ///
 /// `pub(crate)` so tests can pin the generated JS shape.
 pub(crate) fn build_find_js(mode: &str, pattern: &str, limit: usize) -> String {
@@ -177,34 +265,42 @@ pub(crate) fn build_find_js(mode: &str, pattern: &str, limit: usize) -> String {
         ),
     };
 
-    // Wrap with the "assign stable data-opencrabs-match and serialise"
-    // step, shared across all modes.
-    format!(
-        r#"
-        (() => {{
-            document.querySelectorAll('[data-opencrabs-match]').forEach(
-                el => el.removeAttribute('data-opencrabs-match'));
-            const nodes = {walker};
-            const out = [];
-            for (let i = 0; i < nodes.length; i++) {{
-                const el = nodes[i];
-                if (!el || !(el instanceof Element)) continue;
-                el.setAttribute('data-opencrabs-match', String(i));
+    wrap_with_index(&walker)
+}
+
+/// Build an inventory script that enumerates every VISIBLE interactive
+/// element on the page (up to `limit`), indexed and serialized exactly
+/// like a search result. Used when the agent has no `pattern` — the
+/// "I just landed, what can I click?" case that otherwise drives the
+/// screenshot-discovery loop (#1022).
+///
+/// The selector union is a fixed string (no user input), so it needs no
+/// escaping. We pre-filter to visible elements inside the collection so
+/// the index is not wasted on off-screen / `display:none` nodes.
+///
+/// `pub(crate)` so tests can pin the generated JS shape.
+pub(crate) fn build_inventory_js(limit: usize) -> String {
+    let nodes_expr = format!(
+        r#"(() => {{
+            const sel = 'a[href], button, input:not([type="hidden"]), select, \
+textarea, summary, [role="button"], [role="link"], [role="checkbox"], \
+[role="tab"], [role="menuitem"], [role="option"], [contenteditable=""], \
+[contenteditable="true"], [tabindex]:not([tabindex="-1"])';
+            const all = Array.from(document.querySelectorAll(sel));
+            const visible = [];
+            for (const el of all) {{
+                if (visible.length >= {limit}) break;
                 const rect = el.getBoundingClientRect();
-                const visible = rect.width > 0 && rect.height > 0
+                if (rect.width > 0 && rect.height > 0
                     && getComputedStyle(el).visibility !== 'hidden'
-                    && getComputedStyle(el).display !== 'none';
-                out.push({{
-                    selector: '[data-opencrabs-match="' + i + '"]',
-                    text: (el.innerText || el.textContent || '').trim().slice(0, 200),
-                    tag: el.tagName.toLowerCase(),
-                    visible: visible,
-                }});
+                    && getComputedStyle(el).display !== 'none') {{
+                    visible.push(el);
+                }}
             }}
-            return out;
-        }})()
-        "#
-    )
+            return visible;
+        }})()"#
+    );
+    wrap_with_index(&nodes_expr)
 }
 
 fn format_matches(matches: &[Value]) -> String {
