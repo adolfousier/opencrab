@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual escape hatch: if GitHub stops delivering push events (as it did for
+  # the v0.3.80 attempt on 2026-08-12), trigger the release from the API instead:
+  #   gh workflow run release.yml --ref v<version>
+  workflow_dispatch:
 
 permissions:
   contents: read
