@@ -77,6 +77,7 @@ retrieval stays silent on (#1003).
 - **Daily file format:** `memory/YYYY-MM-DD.md` with timestamps and short entries
 - **MEMORY.md:** Only distilled, long-term valuable info — not raw logs
 - **If unsure whether to save it: save it.** Disk is cheap, lost context isn't.
+- **Check before you write a rule or lesson.** Search first: `load_brain_file` with a `query` on the target file (it reads from disk, so it can't miss a rule written moments ago), plus `memory_search` to catch the same rule living in another file. Not `grep` — it resolves against the working directory and can't see your home directory. Then pick one of three — nothing similar exists, append it; something similar exists, REPLACE that line in place so the rule gets sharper; it's already covered, write nothing. Restating a rule in different words doesn't reinforce it, it splits it, and the next reader finds two half-rules with no way to tell which is current. Per-turn recall doesn't do this for you: it surfaces a slice of MEMORY.md chosen for the user's message, not for the line you're about to add.
 
 ### What does NOT go in memory:
 - Commit hashes, file lists, release notes — that's git history

@@ -206,7 +206,20 @@ impl Tool for WriteOpenCrabsFileTool {
          \
          Protected brain files are append-only by default. To shrink/clean up a brain file \
          (remove outdated content), set cleanup_intent=true — this requires explicit user \
-         approval and is NOT available in autonomous RSI operations."
+         approval and is NOT available in autonomous RSI operations. \
+         \
+         **Check before you append a rule or lesson.** Search first, then decide: \
+         `load_brain_file` with a `query` on the target file — it reads from DISK, so it \
+         cannot miss a rule written moments ago — plus `memory_search` to catch the \
+         same rule stated in another file. Do NOT reach for `grep`: it resolves \
+         against the working directory and cannot see your home directory at all. Per-turn recall does NOT cover this: it surfaces a slice of \
+         MEMORY.md chosen for the USER's message, not for the rule you are about to \
+         write, so finding nothing similar in context is not evidence there is nothing. \
+         Three outcomes: nothing similar exists, append it; a similar rule exists, \
+         REPLACE that line in place so it is sharpened rather than repeated; it is \
+         already covered, write nothing. Restating a rule in different words does not \
+         reinforce it, it splits it — the next reader finds two half-rules and cannot \
+         tell which is current."
     }
 
     fn input_schema(&self) -> Value {
@@ -439,6 +452,27 @@ impl Tool for WriteOpenCrabsFileTool {
                                     tracing::info!(
                                         "write_opencrabs_file: cross-file scan filed {filed} dedup proposal(s) after append to {path_str}"
                                     );
+                                }
+                                // Index what we just wrote (#1018). The index was
+                                // refreshed only at startup, so a rule appended here
+                                // stayed unsearchable until the next restart — the
+                                // window where a duplicate check silently passes.
+                                // Writes are the mechanism; the search-side stat
+                                // check is only the net for edits made outside this
+                                // tool.
+                                match crate::memory::get_store() {
+                                    Ok(store) => {
+                                        if let Err(e) =
+                                            crate::memory::index_file(store, &full_path).await
+                                        {
+                                            tracing::warn!(
+                                                "write_opencrabs_file: failed to index {path_str} after append: {e}"
+                                            );
+                                        }
+                                    }
+                                    Err(e) => tracing::warn!(
+                                        "write_opencrabs_file: store unavailable, {path_str} not indexed: {e}"
+                                    ),
                                 }
                             }
                             Ok(ToolResult::success(format!(

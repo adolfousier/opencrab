@@ -446,3 +446,39 @@ fn soul_defines_a_role_not_only_a_voice() {
          personality without judgement."
     );
 }
+
+/// The duplicate check must exist in BOTH places, and say the same thing.
+///
+/// The rule has to fire at the moment of the write. `write_opencrabs_file`'s
+/// description is the only text guaranteed to be in context then, so it owns
+/// the operative instruction; AGENTS.md is always-loaded and carries the same
+/// rule for the agent reasoning about memory before it reaches for the tool.
+///
+/// Guarded because they drifted before: the live workspace had the rule (added
+/// by hand) while the shipped template had none, so every new install wrote
+/// duplicates by default (#1017).
+#[test]
+fn the_duplicate_check_is_stated_in_both_the_tool_and_the_template() {
+    let agents = fs::read_to_string(Path::new(TEMPLATE_DIR).join("AGENTS.md"))
+        .expect("AGENTS.md template must exist");
+    let tool = fs::read_to_string("src/brain/tools/write_opencrabs_file.rs")
+        .expect("write_opencrabs_file.rs must exist");
+
+    for (name, text) in [("AGENTS.md template", &agents), ("tool description", &tool)] {
+        assert!(
+            text.contains("memory_search"),
+            "{name} must name the tool that searches, since the agent cannot \
+             tell by looking"
+        );
+        assert!(
+            text.to_lowercase().contains("replace"),
+            "{name} must offer the update-in-place outcome, or the only choices \
+             are append and drop"
+        );
+        assert!(
+            text.contains("recall"),
+            "{name} must say per-turn recall does not substitute for the search: \
+             recall is keyed to the user's message, not to the line being written"
+        );
+    }
+}

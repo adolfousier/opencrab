@@ -607,8 +607,13 @@ impl AgentService {
             .join("memory")
             .join(format!("{}.md", chrono::Local::now().format("%Y-%m-%d")));
         tokio::spawn(async move {
-            if let Ok(store) = crate::memory::get_store() {
-                let _ = crate::memory::index_file(store, &memory_path).await;
+            match crate::memory::get_store() {
+                Ok(store) => {
+                    if let Err(e) = crate::memory::index_file(store, &memory_path).await {
+                        tracing::warn!("Failed to index daily note after compaction: {e}");
+                    }
+                }
+                Err(e) => tracing::warn!("Memory store unavailable, daily note not indexed: {e}"),
             }
         });
 

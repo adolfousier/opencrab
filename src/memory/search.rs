@@ -16,6 +16,12 @@ pub async fn search(
     query: &str,
     n: usize,
 ) -> Result<Vec<MemoryResult>, String> {
+    // Refresh brain files whose mtime moved since indexing (#1018). The index
+    // was a boot-time snapshot, so a rule written mid-session was invisible
+    // here until the next restart — precisely when a duplicate check needs it.
+    // Stat-only for unchanged files, single-flight guarded, never fatal.
+    super::freshness::refresh_stale_brain_files().await;
+
     let fts_query = sanitize_fts_query(query);
     if fts_query.is_empty() {
         return Ok(vec![]);
@@ -119,6 +125,12 @@ pub async fn search_brain(
     query: &str,
     n: usize,
 ) -> Result<Vec<MemoryResult>, String> {
+    // Refresh brain files whose mtime moved since indexing (#1018). The index
+    // was a boot-time snapshot, so a rule written mid-session was invisible
+    // here until the next restart — precisely when a duplicate check needs it.
+    // Stat-only for unchanged files, single-flight guarded, never fatal.
+    super::freshness::refresh_stale_brain_files().await;
+
     let fts_query = sanitize_fts_query(query);
     if fts_query.is_empty() {
         return Ok(vec![]);
