@@ -7,19 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+> This section accumulates changes between releases.
 
-- `/restart` and `/exit` on channels and in the TUI. Neither existed anywhere, so a daemon could not be stopped or cycled without shell access to the machine it runs on, and the TUI could only be quit with a key chord. `/restart` relaunches the same binary with the same arguments; unfinished turns resume on startup as they already did after any restart, and the TUI variant resumes the current session. On channels both are owner-only and announce themselves before acting, since nothing survives to report a failure afterwards.
+## [0.3.79] - 2026-08-06
 
-- Homebrew tap: `brew install adolfousier/opencrabs/opencrabs` installs the prebuilt binary for macOS and Linux on both architectures, with no Rust toolchain required. Releases now publish a `SHA256SUMS` file and regenerate the formula automatically, so the hashes always describe the artifacts that release actually shipped.
+67 commits since v0.3.78. 118 files changed, +9,334 / -1,228 lines.
 
-### Fixed
+> Reconstructed retroactively on 2026-08-12: the original release run skipped the changelog entry, which left the v0.3.79 GitHub release notes empty.
 
-- Near-identical loop detection: a bash near-match in the tool loop normalizes echo-style commands (counters, punctuation, whitespace) and runs them through the #507 nudge-then-break machinery, and a per-session ring of the last 8 outgoing texts nudges then aborts cross-turn announcement loops. Both catch loops that every exact-match guard missed, born from a real incident of 18+ reworded announcements narrating a no-op bash echo loop (#957).
-- DeepSeek v4 flash reworded-loop hardening (#961): the tool-loop near-match now covers every tool except `read_file` (chunk reads collide once digits are stripped), so re-activation spirals that reword the query each attempt trip the windowed nudge-then-break guard (window 8, nudge@3, break@4); the text ring grew from 5 to 8 entries, near-duplicate matching gained an overlap-coefficient clause for subset-style rewordings, and the ring now also checks intermediate iteration text so reworded announcement loops are nudged mid-turn instead of only at turn end. Pattern source: a forwarded zip-send loop of eight reworded "sending now" announcements under DeepSeek v4 flash fallback.
-- Install options in the README were numbered with three separate "Option 3" headings.
-- Ralph verification ran in the directory OpenCrabs was launched from rather than the session's own, so a plan in one repo was gated on another repo's build results. With a clean launch directory it reported success for a repo it never inspected (#921).
-- Linux dev binaries could not be cross-compiled on an arm64 host: cross publishes amd64-only images, and host build artifacts leaked into the container and failed on a glibc mismatch.
+### ✨ Features
+
+- `86910a11` **Enforce provider quota and circuit breaker** (#952): the quota gate is checked before dispatch and before every fallback hop
+- `b22d18fc` **Plan state persists across session boundaries** (#949)
+- `a4d3ad46` **Plan tasks can run in isolated workers** (#947)
+- `0f44a49a` **Sub-agent sessions included in compaction and session list** (#936)
+- `d24d1be1` **Homebrew tap**: brew install adolfousier/tap/opencrabs, formula from a template, bottles on every release
+- `87b2e8b1` **/restart and /exit slash commands in the TUI** (#954)
+- `3ce89954` **/restart and /exit accepted from the owner on channels**: Telegram, Discord, Slack, WhatsApp
+- `970277a7` **Daemon restarts instead of exiting on unexpected crashes** (#953)
+- `f0d96bc6` **Tool call IDs exposed in tracing**
+
+### 🔧 Fixes
+
+- `31de8079` **/exit stays clean even when /restart fires first** (#953)
+- `e2303e04` **Telegram plan card rendered from the same plan state the text sees** (#935)
+- `087f4b63` **Plan tasks stay coherent across session boundaries** (#951)
+- `518793c5` **Isolated tasks read the same plan file the parent uses** (#950)
+- `e016b914` **Isolated plan tasks no longer edit the parent's plan file** (#948)
+- `75961585` **Compaction summaries stay with the session that owns them** (#946)
+- `e9ab32c0` **Plan isolation defaults ON, plan_dir actually resolves** (#947)
+- `8382415b` **Task isolation opt-in per start, default off** (#947)
+- `42136955` **Plan path resolved once and handed to the worker** (#947)
+- `59959614` **Spinner stays alive after the first token streams** (#945)
+- `5196801e` **Long markdown tables reflowed in a rich Telegram follow-up** (#943)
+- `72f46875` **Eval recall measured against the exact needle phrasing** (#940)
+- `0e17e643` **Chunking sweep deterministic across runs** (#942)
+- `45e2e26f` **Chunk sweep report's numbers made honest** (#942)
+- `7f705748` **Placeholder chunking leftovers cleaned on startup** (#941)
+- `39b30301` **Honest retrieval numbers reported for the chunker** (#940)
+- `110c5b89` **No more "1 tool calls ran" in plan card status** (#934)
+- `5847e526` **Plan card's "Task: title" line allowed to truncate** (#934)
+- `b13a218d` **Plan card's task and status kept on one line** (#934)
+- `99c59b84` **Eval retrieval measured on the real store** (#939)
+- `9d2d1e83` **Eval harness stops eating the corpus it scores** (#939)
+- `6a9d1f91` **Metadata stripped before chunking** (#939)
+- `1f5f850a` **recall@3 measured like production searches** (#938)
+- `3464d244` **Corpus chunked once, then searched** (#938)
+- `77a5d42a` **Migration 33 healed before the first turn of the session** (#897)
+- `7a4829a7` **Migration 33 healed before the session's first turn** (#897)
+- `6747a57b` **Migration 33 healed at startup and before the first turn** (#937)
+- `e0687210` **No duplicate Telegram plan cards on re-edit** (#935)
+- `2a32c65a` **CI publishes the core candidate formula with tap sync**
+- `a370b036` **Systemd restarts the daemon when it exits, even cleanly** (#953)
+- `2767291c` **Onboarding saves each step's config immediately** (#926)
+- `1a9d3b8c` **Ralph verification runs in the session's directory** (#921)
+- `2c17d385` **TUI stops double-rendering on the same frame** (#927)
+- `c8c00619` **TUI stops redrawing the frame when nothing changed** (#928)
+- `07e93e8d` **No duplicate frame draws on keypress and resize** (#929)
+- `9f25e11f` **/usage shows cost without a provider call** (#930)
+- `028f5055` **Unused usage tool dropped from the /usage command** (#931)
+- `95a2b1f6` **Compaction warns before the context wall, not after it** (#909)
+- `141d076d` **Compaction pre-warns as a visible nudge** (#910)
+- `d891b724` **secrets.toml written atomically, corrupt configs repaired** (#911)
+- `238a32c9` **Eval retrieval measured on the real store, one process** (#912)
+- `6e00048b` **Chunker's gains made measurable** (#914)
+- `62a1c73e` **Chunked sweep on the full corpus, real recall numbers** (#917)
+- `b582e772` **Memory eval stops corrupting the agent's own database** (#919)
+- `291b5842` **macOS arm64 cross-compile fix restored**
+- `e589d827` **Option 3 cross-compile setup corrected**
+
+### 📖 Documentation
+
+- `33c1f26a` document the plan-isolation config, correct stale claims (#947)
+- `78129114` readme: document the provider-config escape hatches and rtk
+- `15438c76` readme: correct stale /approve and provider-config claims
+
+### 🧹 Miscellaneous
+
+- `ca071ef0` style: cargo fmt Homebrew publish job
+- `39c0493e` ci: bump Homebrew tap with formula + SHA256SUMS
+- `916520f0` ci: install rust in Homebrew publish job
+- `78681a83` ci: use GitHub runners for Homebrew tap sync
+- `003e9826` ci: skip homebrew tap sync on failure
+- `c4d0923d` refactor(config): move plan_dir under [plan] and fix config examples (#947)
+- `c9424735` test: isolate the config-repair tests from the real secrets.toml (#911)
+- `2b75d5e2` test(plan): cover isolation defaults and task-level overrides (#947)
+- `e20c9978` test: verify /usage skips provider calls and works offline (#931)
+
+### 📊 Stats
+
+- 67 commits since v0.3.78
+- 118 files changed, +9,334 / -1,228 lines
+- Tests at tag time not recorded (the release run skipped this entry). Last pre-tag gauntlet (2026-08-05): 6,030 tests (6,001 passed, 0 failed, 29 ignored incl. doctests)
 
 ## [0.3.78] - 2026-08-01
 
