@@ -6,7 +6,7 @@
 //! delivered to a configured channel (Telegram, Discord, Slack).
 
 mod schedule_util;
-mod scheduler;
+pub(crate) mod scheduler;
 
 pub use schedule_util::{format_upcoming, next_run_utc, parse_timezone, upcoming_in_tz};
 pub use scheduler::{

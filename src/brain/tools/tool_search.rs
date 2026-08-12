@@ -64,7 +64,7 @@ impl Tool for ToolSearchTool {
         vec![]
     }
 
-    async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
+    async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
         let query = input
             .get("query")
             .and_then(|v| v.as_str())
@@ -86,13 +86,34 @@ impl Tool for ToolSearchTool {
         }
 
         // Hand back the full schemas as text so the model can call the ONE it
-        // needs immediately with correct params. We deliberately do NOT
-        // pre-activate all matches (#604): activation happens on actual use via
-        // the JIT-on-execute path, so only the tool the model really calls gets
-        // its structured schema injected — a search for "send a photo" no longer
-        // balloons the request with 8 unused schemas.
+        // needs immediately with correct params.
         let names: std::collections::HashSet<String> =
             matches.iter().map(|(n, ..)| n.clone()).collect();
+
+        // ...and ACTIVATE them, so their schemas ride on the next request
+        // (#1025).
+        //
+        // #604 withheld activation to keep a search for "send a photo" from
+        // ballooning the request with eight unused schemas, leaving activation
+        // to the JIT-on-execute path. That path only fires when a non-core tool
+        // is actually USED, which is circular: a model that will not emit a
+        // call for a function absent from its tool list can never trigger the
+        // activation that would list it.
+        //
+        // Capable models escape by calling from the text schema above. Weaker
+        // ones substitute whatever IS active — observed as a model searching
+        // for spawn_agent, reporting "Spawn tool active", then emitting
+        // `bash(echo "spawning subagent")` and `read_file` instead, across 30
+        // tool calls in two runs, until the announcement-loop detector killed
+        // both turns. Removing the spawn from the task made it complete
+        // immediately.
+        //
+        // #604's concern is still handled, by the caps that already exist:
+        // matches are capped per search (MAX_RESULTS) and `activate_tools`
+        // evicts LRU past MAX_ACTIVE_EXTENDED. The request cannot balloon
+        // without bound; it just stops lying about what is callable.
+        self.registry
+            .activate_tools(context.session_id, names.iter().cloned());
         let defs = self.registry.definitions_for(&names);
 
         let mut out = format!(

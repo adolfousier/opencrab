@@ -169,6 +169,7 @@ pub mod core_tool_names_test;
 pub mod corrupted_tool_call_test;
 #[cfg(feature = "telegram")]
 pub mod cowork_connect_test;
+pub mod cron_dedup_scan_schedule_test;
 pub mod cron_profile_isolation_test;
 pub mod cron_schedule_util_test;
 pub mod cron_scheduler_lock_test;
@@ -637,6 +638,7 @@ pub mod telegram_tool_group_test;
 pub mod telegram_topic_listing_test;
 pub mod text_complete_test;
 pub mod thinking_loop_fallback_test;
+pub mod tool_search_activation_test;
 pub mod tui_tool_stack_test;
 pub mod turn_duration_test;
 pub mod turn_ranges_test;

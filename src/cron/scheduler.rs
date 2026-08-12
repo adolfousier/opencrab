@@ -42,6 +42,20 @@ pub const REBUILD_JOB_NAME: &str = "__opencrabs_rebuild__";
 /// manual edits, preamble changes). Report-only: files proposals, never applies.
 pub const DEDUP_SCAN_JOB_NAME: &str = "__opencrabs_dedup_scan__";
 
+/// Weekly dedup scan: Sunday 04:00 UTC (quiet window).
+///
+/// Weekday is 1 = Sunday in the `cron` crate, NOT the Unix 0 (see
+/// `cron_schedule_util_test::numeric_dow_is_sunday_first`). This job shipped
+/// as `0 4 * * 0`, which the crate rejects outright, so it never ran once and
+/// logged a parse failure every minute for its whole lifetime — the cross-file
+/// dedup scan that catches the same rule written into two brain files was dead
+/// the entire time (#1024).
+///
+/// Do NOT "fix" a Unix-style 0 by translating it to 7: 7 is Saturday under this
+/// numbering, so the job would run on the wrong day, silently — worse than not
+/// running. Rejecting 0 is deliberate (`cron_schedule_util_test::dow_zero_is_rejected`).
+pub(crate) const DEDUP_SCAN_CRON: &str = "0 4 * * 1";
+
 /// Schedule a one-shot background rebuild for `session_id`. Returns once the
 /// job is queued — the build runs out-of-band on the scheduler's next tick
 /// (within ~60s), so the calling session is never blocked. `deliver_to` (if
@@ -99,8 +113,7 @@ async fn ensure_weekly_dedup_scan_job(repo: &CronJobRepository) -> anyhow::Resul
     }
     let job = CronJob::new(
         DEDUP_SCAN_JOB_NAME.to_string(),
-        // Weekly: Sunday 04:00 UTC (quiet window). Cron weekday 0 = Sunday.
-        "0 4 * * 0".to_string(),
+        DEDUP_SCAN_CRON.to_string(),
         "UTC".to_string(),
         // Reserved job — the prompt is never run as an agent turn; kept as a
         // human-readable descriptor only.
@@ -1205,7 +1218,10 @@ mod tests {
         );
 
         let job = dedup_jobs[0];
-        assert_eq!(job.cron_expr, "0 4 * * 0", "weekly Sunday 04:00 UTC");
+        assert_eq!(
+            job.cron_expr, "0 4 * * 1",
+            "weekly Sunday 04:00 UTC (1 = Sunday)"
+        );
         assert!(job.enabled, "safety-net job must be enabled");
     }
 }
