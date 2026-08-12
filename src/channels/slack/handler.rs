@@ -1545,9 +1545,8 @@ async fn handle_message(
     // channel id so the agent can target THIS channel for cron reports /
     // cross-surface sends without guessing (#533, mirror of upstream #510).
     let agent_input = format!(
-        "[Channel: Slack (channel_id: {channel_id}) — your text response is automatically sent to this channel. \
-         Do NOT call slack_send to deliver your answer. Only use slack_send for: \
-         sending to a different channel, threads, blocks, reactions, files, or moderation.]\n{image_hint}{agent_input}"
+        "{}{image_hint}{agent_input}",
+        super::formatting_prompt::slack_preamble(&channel_id)
     );
 
     // Register channel for approval routing, then send with approval callback
@@ -1949,6 +1948,12 @@ async fn handle_message(
                 ));
                 super::final_body::strip_folded_notes(&text_only, &folded)
             };
+
+            // Slack renders neither tables nor headings, so rewrite them
+            // into its own shape before mrkdwn conversion (#1016). Raw pipes
+            // in a proportional font align with nothing, and a bare `##`
+            // renders as two literal hashes.
+            let text_only = super::table_convert::structure_to_slack(&text_only);
 
             let text_only = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_only);
 

@@ -7,10 +7,12 @@ mod agent;
 pub(crate) mod blocks;
 pub(crate) mod final_body;
 pub(crate) mod follow_up_question;
+pub(crate) mod formatting_prompt;
 pub(crate) mod handler;
 pub(crate) mod reactions;
 pub(crate) mod resume;
 pub(crate) mod suggest_followups;
+pub(crate) mod table_convert;
 pub(crate) mod tool_group;
 pub(crate) mod upload;
 
