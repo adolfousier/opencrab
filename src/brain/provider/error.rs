@@ -69,6 +69,17 @@ pub enum ProviderError {
     #[error("Thinking loop timeout: {0}s with no tool call emitted")]
     ThinkingLoopTimeout(u64),
 
+    /// The model kept announcing an action without emitting the call, and the
+    /// announcement-loop detector ended the turn (#1023).
+    ///
+    /// Ours by origin, the model's by nature — which is what matters for
+    /// routing. It was raised as `AgentError::Internal`, a type the fallback
+    /// walk does not match on, so a turn killed this way could never try
+    /// another provider even though a different model usually emits the call
+    /// immediately.
+    #[error("Repetition detected: {0}")]
+    AnnouncementLoop(String),
+
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),

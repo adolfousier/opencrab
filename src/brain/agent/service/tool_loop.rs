@@ -1974,6 +1974,14 @@ impl AgentService {
                         || matches!(
                             &e,
                             crate::brain::provider::ProviderError::ThinkingLoopTimeout(_)
+                        )
+                        // #1023: the loop detector already nudged and the model
+                        // still would not emit the call. Same reasoning as the
+                        // thinking-loop case above — in-place retry repeats the
+                        // loop, another provider usually does not.
+                        || matches!(
+                            &e,
+                            crate::brain::provider::ProviderError::AnnouncementLoop(_)
                         ) =>
                 {
                     // 401/403 auth failures and missing-key errors are
@@ -6607,10 +6615,13 @@ impl AgentService {
                             "⚠️ Within-turn announcement loop persisted after nudge — ending \
                              turn (#961)"
                         );
-                        return Err(AgentError::Internal(
-                            "Repetition detected: near-identical announcements repeated within \
-                             the turn"
-                                .to_string(),
+                        // Provider-attributable so it can reach the fallback
+                        // walk (#1023): the nudge already failed against this
+                        // model, and a different one usually emits the call.
+                        return Err(AgentError::Provider(
+                            crate::brain::provider::ProviderError::AnnouncementLoop(
+                                "near-identical announcements repeated within the turn".to_string(),
+                            ),
                         ));
                     }
                     super::announcement_loop::TextLoopAction::Nudge => {
@@ -6893,9 +6904,10 @@ impl AgentService {
                         "⚠️ Cross-turn announcement loop persisted after nudge — aborting turn \
                          (#957)"
                     );
-                    return Err(AgentError::Internal(
-                        "Repetition detected: near-identical announcements repeated across turns"
-                            .to_string(),
+                    return Err(AgentError::Provider(
+                        crate::brain::provider::ProviderError::AnnouncementLoop(
+                            "near-identical announcements repeated across turns".to_string(),
+                        ),
                     ));
                 }
                 Some(super::announcement_loop::TextLoopAction::Nudge) => {
