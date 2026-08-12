@@ -2744,7 +2744,7 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `brave_search` | Web search via Brave Search (set key in `keys.toml` — free $5/mo credits at brave.com/search/api) |
 | `http_request` | Make HTTP requests |
 | `web_scrape` | Native URL-to-markdown scraping (zero AI, zero API cost). Fetches a URL, extracts clean markdown, keeps images as `![alt](url)` tags so the agent can vision only what it needs. Includes SSRF protection, sitemap crawling, and profile/project-aware markdown export. Surfaced via `tool_search` (deferred, not in core set) |
-| `memory_search` | Hybrid semantic search across past memory logs — FTS5 keyword + vector embeddings combined via RRF. Local GGUF, OpenAI-compatible API, or FTS5-only mode |
+| `memory_search` | Hybrid semantic search — FTS5 keyword + vector embeddings combined via RRF. `scope` picks the corpus: `memory` (daily logs, the default) for history, `brain` for rules and policy in your brain files, `all` for both. Local GGUF, OpenAI-compatible API, or FTS5-only mode |
 | `session_search` | Hybrid FTS5 + vector search across every past session's message history. Same backends as `memory_search` |
 
 #### Image & Video
@@ -3224,7 +3224,7 @@ Brain files are re-read **every turn** — edit them between messages and the ag
 |------|----------|---------|------------|
 | **1. Brain MEMORY.md** | `~/.opencrabs/MEMORY.md` | Durable, curated knowledge loaded into system brain every turn | You (the user) |
 | **2. Daily Memory Logs** | `~/.opencrabs/memory/YYYY-MM-DD.md` | Auto-compaction summaries with structured breakdowns of each session | Auto (on compaction) |
-| **3. Hybrid Memory Search** | `memory_search` tool (FTS5 + vector) | Hybrid semantic search — BM25 keyword + vector embeddings combined via Reciprocal Rank Fusion. Local GGUF, OpenAI-compatible API, or FTS5-only mode | Agent (via tool call) |
+| **3. Hybrid Memory Search** | `memory_search` tool (FTS5 + vector) | Hybrid semantic search — BM25 keyword + vector embeddings combined via Reciprocal Rank Fusion, over daily logs (`scope="memory"`), brain files (`scope="brain"`), or both. Local GGUF, OpenAI-compatible API, or FTS5-only mode | Agent (via tool call) |
 
 **How it works:**
 1. When context hits 70%, auto-compaction summarizes the conversation into a structured breakdown (current task, decisions, files modified, errors, next steps)
@@ -3368,6 +3368,10 @@ The agent writes important knowledge to `~/.opencrabs/` brain files as it works:
 
 **3. Cross-session recall — hybrid search**
 The `memory_search` and `session_search` tools use hybrid FTS5 + vector semantic search (Reciprocal Rank Fusion) to find relevant context from past sessions and memory files. Supports local embeddings (embeddinggemma-300M), OpenAI-compatible API embeddings, or FTS5-only mode.
+
+`memory_search` takes a `scope`, and choosing it matters more than the query wording. `memory` (the default) searches the daily logs — history: what happened, when, what was decided. `brain` searches the brain files — rules and policy: whether a rule about something already exists and which file owns it. `all` searches both, brain hits first. A rule question sent to the default scope tends to return confident but irrelevant daily notes, because there are far more of them and they reuse the same words for unrelated things.
+
+Brain files are indexed on write and re-checked when a search runs, so a rule written mid-session is searchable immediately rather than after the next restart.
 
 ### RSI Engine
 
@@ -4104,7 +4108,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (5,071 tests across 453 test modules; 25 slower tests are
+# Run tests (6,373 tests across 600 test modules; 25 slower tests are
 # #[ignore]d to keep the default run fast — profile tests that touch
 # ~/.opencrabs, browser end-to-end tests, and opencode provider tests.
 # Opt in with `cargo test --all-features -- --ignored` when needed)
