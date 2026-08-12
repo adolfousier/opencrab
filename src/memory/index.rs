@@ -38,7 +38,13 @@ pub async fn index_file(store: &'static Mutex<Store>, path: &Path) -> Result<(),
             let s = store
                 .lock()
                 .map_err(|e| format!("Store lock poisoned: {e}"))?;
-            index_file_sync(&s, COLLECTION_MEMORY, &path, &body)?
+            // Brain files live in their own collection, and `search_brain`
+            // only looks there. Filing one under COLLECTION_MEMORY created a
+            // second row that the next reindex deactivated, while the brain
+            // row it should have updated went untouched — so an incremental
+            // index of a brain file silently did nothing for brain search
+            // (#1018 follow-up).
+            index_file_sync(&s, collection_for(&path), &path, &body)?
         };
         Ok::<bool, String>(indexed)
     })
@@ -65,6 +71,21 @@ pub async fn index_file(store: &'static Mutex<Store>, path: &Path) -> Result<(),
     }
 
     Ok(())
+}
+
+/// Which collection a path belongs to.
+///
+/// `reindex` has always split these — daily notes into `COLLECTION_MEMORY`,
+/// brain files into `COLLECTION_BRAIN` — but `index_file`, the incremental
+/// path, hardcoded memory. Brain files therefore landed in the wrong
+/// collection, and `search_brain` never saw them.
+pub(crate) fn collection_for(path: &Path) -> &'static str {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if super::BRAIN_FILES.contains(&name) {
+        COLLECTION_BRAIN
+    } else {
+        COLLECTION_MEMORY
+    }
 }
 
 /// Synchronous inner implementation for indexing a single file into a given collection.

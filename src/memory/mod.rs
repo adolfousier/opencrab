@@ -8,7 +8,7 @@
 //! is skipped — no model download, no llama.cpp init, FTS5-only search.
 
 pub(crate) mod embedding;
-mod index;
+pub mod index;
 pub(crate) mod search;
 pub(crate) mod store;
 
@@ -81,6 +81,6 @@ pub struct MemoryResult {
 }
 
 /// Collection name for daily compaction logs.
-const COLLECTION_MEMORY: &str = "memory";
+pub(crate) const COLLECTION_MEMORY: &str = "memory";
 /// Collection name for workspace brain files (SOUL.md, MEMORY.md, etc.).
-const COLLECTION_BRAIN: &str = "brain";
+pub(crate) const COLLECTION_BRAIN: &str = "brain";
