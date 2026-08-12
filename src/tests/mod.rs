@@ -636,6 +636,7 @@ pub mod telegram_thread_id_lookup_test;
 pub mod telegram_tool_group_test;
 pub mod telegram_topic_listing_test;
 pub mod text_complete_test;
+pub mod thinking_loop_fallback_test;
 pub mod tui_tool_stack_test;
 pub mod turn_duration_test;
 pub mod turn_ranges_test;

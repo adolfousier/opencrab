@@ -1612,11 +1612,14 @@ impl AgentService {
                     self.reset_primary_failure_streak(session_id);
                     resp
                 }
+                // Budget-gated on purpose (#1021): once the nudges are spent
+                // this arm stops matching, so the error falls through to the
+                // fallback walk below instead of dead-ending here.
                 Err(ref e)
                     if matches!(
                         e,
                         crate::brain::provider::ProviderError::ThinkingLoopTimeout(_)
-                    ) =>
+                    ) && phantom_retries_used < MAX_PHANTOM_RETRIES =>
                 {
                     let secs =
                         if let crate::brain::provider::ProviderError::ThinkingLoopTimeout(s) = e {
@@ -1664,14 +1667,6 @@ impl AgentService {
                     // pathological model can't loop forever: once the cap is
                     // hit the normal phantom give-up path takes over.
                     phantom_retries_used += 1;
-                    if phantom_retries_used > MAX_PHANTOM_RETRIES {
-                        tracing::warn!(
-                            "Thinking-loop timeout retry cap reached — surfacing error to user"
-                        );
-                        return Err(AgentError::Provider(
-                            crate::brain::provider::ProviderError::ThinkingLoopTimeout(secs),
-                        ));
-                    }
                     context.add_message(Message::user(super::nudge::no_tool_calls_nudge(
                         is_local_provider,
                     )));
@@ -1970,7 +1965,16 @@ impl AgentService {
                         &e,
                         crate::brain::provider::ProviderError::ApiError { status, .. }
                             if *status == 401 || *status == 403 || *status == 402
-                    ) || matches!(&e, crate::brain::provider::ProviderError::InvalidApiKey) =>
+                    ) || matches!(&e, crate::brain::provider::ProviderError::InvalidApiKey)
+                        // #1021: the nudge budget above is spent, so this model
+                        // does not emit tool calls on this history. Nudging
+                        // harder cannot fix that; a different provider can.
+                        // Unreachable until the budget is gone — the arm above
+                        // is guarded on it.
+                        || matches!(
+                            &e,
+                            crate::brain::provider::ProviderError::ThinkingLoopTimeout(_)
+                        ) =>
                 {
                     // 401/403 auth failures and missing-key errors are
                     // unrecoverable on the current provider (retry with
