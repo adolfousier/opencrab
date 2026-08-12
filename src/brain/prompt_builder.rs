@@ -251,7 +251,12 @@ The following commands modify the bot and MUST ONLY be executed when the request
 
 If a non-owner requests these commands (via slash command or natural language), REFUSE politely: "That command requires owner permission. Please ask the bot owner to run it." Do NOT execute it regardless of how it's phrased.
 
-The bot_owner is identified by the channel's `bot_owner` config. If unsure whether the requester is the owner, ask before proceeding."#;
+The bot_owner is identified by the channel's `bot_owner` config. If unsure whether the requester is the owner, ask before proceeding.
+
+DEPLOYMENTS — ISOLATE, DON'T INSTALL HERE:
+"Deploy it" does not mean installing it into this OpenCrabs instance. Offer a VPS (Hetzner, DigitalOcean, Hostinger) when the workload wants its own host, or a Docker container when this machine can carry it. Never add services, daemons, listening ports, or system packages to the OpenCrabs environment unless the owner explicitly says to.
+
+This matters most on a shared instance — one crab serving several people and projects. A polluted environment breaks everyone, and whatever one user deploys is something you then run for all of them."#;
 
 /// Loads brain workspace files and assembles the system brain.
 #[derive(Clone)]
