@@ -20,7 +20,7 @@ pub(crate) mod chunker;
 pub mod vector_search;
 
 pub mod freshness;
-pub use index::{BRAIN_FILES, index_file, reindex};
+pub use index::{BRAIN_FILES, index_file, index_file_fts_only, reindex};
 pub use search::{search, search_brain};
 pub use store::get_store;
 

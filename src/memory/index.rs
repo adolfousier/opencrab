@@ -24,6 +24,33 @@ pub const BRAIN_FILES: &[&str] = &[
 ///
 /// Skips re-indexing if the file's SHA-256 hash hasn't changed.
 /// Generates an embedding when the engine is already initialized.
+/// FTS-only index of one file: no embedding, no GPU.
+///
+/// The freshness check on the search path must not enter the embedding
+/// backend. llama.cpp's Metal device asserts at process teardown when a
+/// resource set is still outstanding, so every extra place that can be
+/// embedding when the process exits is another way to abort on shutdown
+/// (#1021). Embedding still happens where it always did — startup reindex and
+/// the write path — which are bounded and not driven by user input.
+///
+/// FTS is what ranks a brain search, so refreshing it alone keeps the result
+/// correct; a vector row that lags by one restart does not.
+pub async fn index_file_fts_only(store: &'static Mutex<Store>, path: &Path) -> Result<(), String> {
+    let body = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let s = store
+            .lock()
+            .map_err(|e| format!("Store lock poisoned: {e}"))?;
+        index_file_sync(&s, collection_for(&path), &path, &body)?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
 pub async fn index_file(store: &'static Mutex<Store>, path: &Path) -> Result<(), String> {
     let body = tokio::fs::read_to_string(path)
         .await

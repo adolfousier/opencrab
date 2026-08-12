@@ -38,7 +38,22 @@
 //! finish, and a search served against a one-call-old index is a far smaller
 //! problem than the crash.
 
+use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::SystemTime;
+
+/// mtime of each brain file the last time THIS process indexed it.
+///
+/// `documents.modified_at` is not bumped when a document's content is updated,
+/// so comparing against it was permanently true: the check reported the same
+/// files stale on every single search and reindexed them forever (#1021,
+/// observed as repeated "reindexed 2 stale brain file(s)" in a live log).
+///
+/// Tracking what this process actually indexed makes the comparison honest. A
+/// restart re-checks everything once, which is correct — the startup reindex
+/// runs then anyway.
+static LAST_INDEXED: StdMutex<Option<HashMap<String, SystemTime>>> = StdMutex::new(None);
 
 /// Set while a refresh is running, so a concurrent search skips instead of
 /// entering embedding alongside it.
@@ -75,19 +90,22 @@ async fn refresh_inner() -> usize {
             Err(_) => continue,
         };
 
-        let indexed_at = match indexed_mtime(name) {
-            Some(t) => t,
-            // Never indexed: index it, that is the same gap by another name.
-            None => {
-                if index_one(&path, name).await {
-                    refreshed += 1;
-                }
-                continue;
-            }
+        let seen = {
+            let guard = LAST_INDEXED.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_ref().and_then(|m| m.get(name).copied())
+        };
+        let changed = match seen {
+            Some(t) => disk_mtime > t,
+            // Not yet seen by this process: check it once.
+            None => true,
         };
 
-        if disk_mtime > indexed_at && index_one(&path, name).await {
+        if changed && index_one(&path, name).await {
             refreshed += 1;
+            let mut guard = LAST_INDEXED.lock().unwrap_or_else(|e| e.into_inner());
+            guard
+                .get_or_insert_with(HashMap::new)
+                .insert(name.to_string(), disk_mtime);
         }
     }
 
@@ -106,41 +124,11 @@ async fn index_one(path: &std::path::Path, name: &str) -> bool {
             return false;
         }
     };
-    match super::index_file(store, path).await {
+    match super::index_file_fts_only(store, path).await {
         Ok(()) => true,
         Err(e) => {
             tracing::warn!("Memory freshness: failed to reindex {name}: {e}");
             false
         }
     }
-}
-
-/// The `modified_at` the index recorded for `name`, as a system time.
-///
-/// Read through its own read-only connection rather than the shared `Store`,
-/// which is qmd's type and exposes no such query. WAL mode makes a concurrent
-/// reader safe alongside the writer, the same arrangement `vector_search` uses.
-///
-/// A missing row, an unparseable timestamp, or an unopenable database all
-/// return `None`, which the caller treats as "index it" — the conservative
-/// direction, since a needless reindex costs a hash check and a stale index
-/// costs a missed duplicate.
-fn indexed_mtime(name: &str) -> Option<std::time::SystemTime> {
-    let db_path = super::store::memory_dir().join("memory.db");
-    let conn = rusqlite::Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .ok()?;
-
-    let raw: String = conn
-        .query_row(
-            "SELECT modified_at FROM documents WHERE path = ?1 AND active = 1 LIMIT 1",
-            [name],
-            |row| row.get(0),
-        )
-        .ok()?;
-
-    let parsed = chrono::DateTime::parse_from_rfc3339(&raw).ok()?;
-    Some(std::time::SystemTime::from(parsed))
 }
