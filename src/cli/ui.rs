@@ -964,6 +964,18 @@ async fn cmd_chat_inner(
             });
         });
 
+    // Sub-agents die with the process but their status files do not, so every
+    // file still mid-flight belongs to an agent that no longer exists. Move
+    // them to Interrupted before anything reads them as live, and sweep the
+    // ones that have aged out (#1038).
+    let orphaned = crate::brain::tools::subagent::reconcile::reconcile_orphaned_agents();
+    if !orphaned.is_empty() {
+        tracing::info!(
+            "Marked {} sub-agent(s) interrupted by restart",
+            orphaned.len()
+        );
+    }
+
     // Anything still recorded as running belonged to a process that is gone, so
     // its child died with it. Report each into its session as an interruption
     // instead of leaving the session waiting on a resume that can never arrive

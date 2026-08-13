@@ -372,14 +372,30 @@ impl Tool for SpawnAgentTool {
                     }
                     Err(e) => {
                         tracing::error!("Sub-agent {} failed: {}", agent_id_clone, e);
-                        let _ = status.mark_failed(e.to_string());
+                        // A dropped write here loses the record of a failure
+                        // that already happened, and leaves the file reading
+                        // `Running` forever. Proceed either way, but say so.
+                        if let Err(write_err) = status.mark_failed(e.to_string()) {
+                            tracing::error!(
+                                "Sub-agent {} failed and its failure status could not be written, \
+                                 so it will keep reading as running: {write_err}",
+                                agent_id_clone
+                            );
+                        }
                         manager.mark_failed(&agent_id_clone, e.to_string());
                         return;
                     }
                 }
             };
 
-            let _ = status.mark_completed(final_output.chars().take(200).collect());
+            if let Err(write_err) = status.mark_completed(final_output.chars().take(200).collect())
+            {
+                tracing::error!(
+                    "Sub-agent {} completed but its status could not be written, so it will keep \
+                     reading as running: {write_err}",
+                    agent_id_clone
+                );
+            }
             manager.mark_completed(&agent_id_clone, final_output);
         });
 

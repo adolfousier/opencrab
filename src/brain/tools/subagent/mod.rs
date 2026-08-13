@@ -10,6 +10,7 @@
 pub mod agent_type;
 mod close;
 pub mod manager;
+pub mod reconcile;
 mod resume;
 mod send_input;
 pub mod spawn;

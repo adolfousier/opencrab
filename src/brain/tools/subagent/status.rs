@@ -63,6 +63,21 @@ pub enum AgentState {
     Running,
     Completed,
     Failed,
+    /// The process that owned this agent died before it reached a terminal
+    /// state. Distinct from `Failed`: the work did not fail, it never
+    /// finished, and nothing knows how far it got. Callers must not read it
+    /// as either success or failure.
+    Interrupted,
+}
+
+impl AgentState {
+    /// Whether this state means the agent is no longer doing anything.
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            AgentState::Completed | AgentState::Failed | AgentState::Interrupted
+        )
+    }
 }
 
 /// Snapshot of the latest tool-use event in a running sub-agent.
@@ -158,6 +173,22 @@ impl AgentStatus {
         self.state = AgentState::Failed;
         self.completed_at = Some(now_rfc3339());
         self.error = Some(error);
+        self.write()
+    }
+
+    /// Mark the agent as interrupted by a restart.
+    ///
+    /// `completed_at` is stamped so [`cleanup_stale`] can age the file out on
+    /// the same schedule as any other terminal state. `error` carries the
+    /// reason rather than being left empty, so anything reading the file can
+    /// tell a restart apart from a genuine failure.
+    pub fn mark_interrupted(&mut self) -> std::io::Result<()> {
+        self.state = AgentState::Interrupted;
+        self.completed_at = Some(now_rfc3339());
+        self.error = Some(
+            "OpenCrabs restarted while this agent was running, so it was killed before finishing"
+                .to_string(),
+        );
         self.write()
     }
 
