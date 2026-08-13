@@ -35,7 +35,12 @@ pub fn register_session_route(session_id: Uuid, enqueue: MessageEnqueueCallback)
         Ok(mut guard) => {
             guard
                 .get_or_insert_with(HashMap::new)
-                .insert(session_id, enqueue);
+                .insert(session_id, enqueue.clone());
+            // Startup recovery runs before any channel connects, so this
+            // session may already have reports waiting for someone to claim
+            // it. Hand them over now that there is somewhere to send them
+            // (#1037). Done after the insert so the route is live first.
+            super::restart_recovery::claim_session(session_id, &enqueue);
         }
         Err(e) => {
             // Worth saying out loud: without the route this session's next
@@ -61,7 +66,7 @@ pub fn resolve_route(
 }
 
 /// The surface that owns `session_id`'s completions, if one claimed it.
-fn session_route(session_id: Uuid) -> Option<MessageEnqueueCallback> {
+pub(crate) fn session_route(session_id: Uuid) -> Option<MessageEnqueueCallback> {
     match SESSION_ROUTES.lock() {
         Ok(guard) => guard.as_ref()?.get(&session_id).cloned(),
         Err(e) => {
@@ -240,7 +245,7 @@ fn task_repo() -> Option<crate::db::BackgroundTaskRepository> {
 /// Each one is reported into its session as an interruption so the agent can
 /// decide whether to re-run it, rather than waiting forever on a resume that
 /// can never arrive (#763). Returns how many were reported.
-pub async fn report_interrupted(enqueue: &MessageEnqueueCallback) -> usize {
+pub async fn report_interrupted() -> usize {
     let Some(repo) = task_repo() else {
         return 0;
     };
@@ -254,7 +259,7 @@ pub async fn report_interrupted(enqueue: &MessageEnqueueCallback) -> usize {
     if rows.is_empty() {
         return 0;
     }
-    let count = rows.len();
+    let mut count = 0usize;
     for row in rows {
         tracing::warn!(
             target: "background_task",
@@ -262,15 +267,27 @@ pub async fn report_interrupted(enqueue: &MessageEnqueueCallback) -> usize {
             row.label,
             row.session_id
         );
-        enqueue(row.session_id, interrupted_message(&row));
-    }
-    if let Err(e) = repo.clear_all().await {
-        // Leaving rows behind would re-report the same interruption on the
-        // next start, so this is loud even though the reports already landed.
-        tracing::error!(
-            target: "background_task",
-            "Failed to clear background tasks after reporting: {e:#}"
-        );
+        // By session, never by whoever booted. This path used to take the
+        // caller's callback directly, so a channel session's interruption
+        // landed on the local surface — the shape #940 fixed for completions
+        // and left standing here. Startup runs before channels register, so
+        // an unclaimed session parks rather than mis-delivers (#1037).
+        super::restart_recovery::deliver_or_park(row.session_id, interrupted_message(&row));
+        count += 1;
+
+        // Clear per row, only after it is accounted for. clear_all() used to
+        // run regardless, so a row whose report never got produced was
+        // dropped from the table anyway and its session never heard anything.
+        if let Err(e) = repo.clear(row.id).await {
+            // A surviving row re-reports the same interruption next start,
+            // which is noisy but recoverable; the report itself already
+            // landed, so this is not fatal.
+            tracing::error!(
+                target: "background_task",
+                "Failed to clear background task '{}' after reporting it: {e:#}",
+                row.label
+            );
+        }
     }
     count
 }

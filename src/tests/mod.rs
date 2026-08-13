@@ -603,6 +603,7 @@ pub mod pdf_smart_routing_test;
 pub mod pdf_to_images_test;
 pub mod pdf_vision_test;
 pub mod repetition_error_message_test;
+pub mod restart_recovery_test;
 pub mod slack_handler_test;
 mod telegram_acl_test;
 mod telegram_attachment_tmp_name_test;
