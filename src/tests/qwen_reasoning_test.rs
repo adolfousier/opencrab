@@ -65,12 +65,26 @@ fn an_explicit_disable_is_translated_for_the_tiered_family() {
 }
 
 #[test]
-fn the_tiered_family_sends_nothing_when_unconfigured() {
-    // Thinking is mandatory on this family, so an absent tier still thinks.
-    // Inventing a default tier here would override the model's own choice.
+fn the_tiered_family_defaults_to_the_recommended_tier() {
+    // An unconfigured install should get the vendor's recommended setting for
+    // this family rather than whatever the endpoint falls back to.
     let knobs = resolve("qwen3.8-max", None, None);
-    assert_eq!(knobs.reasoning_effort, None);
+    assert_eq!(knobs.reasoning_effort.as_deref(), Some("xhigh"));
     assert_eq!(knobs.enable_thinking, None);
+}
+
+#[test]
+fn a_configured_tier_beats_the_default() {
+    let knobs = resolve("qwen3.8-max", Some("low"), None);
+    assert_eq!(knobs.reasoning_effort.as_deref(), Some("low"));
+}
+
+#[test]
+fn the_default_tier_does_not_leak_to_hybrids() {
+    // Hybrids read the on/off switch; a tier is opaque there, so defaulting
+    // one in would put an inert field on every request.
+    let knobs = resolve("qwen3.7-plus", None, None);
+    assert_eq!(knobs.reasoning_effort, None);
 }
 
 #[test]

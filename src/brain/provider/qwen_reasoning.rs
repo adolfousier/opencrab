@@ -44,6 +44,12 @@ const TIERED_EFFORT_PREFIX: &str = "qwen3.8-max";
 /// user's explicit "off" would silently become "server default".
 const EFFORT_DISABLED: &str = "none";
 
+/// Effort tier applied to the tiered family when nothing is configured. The
+/// top of the ladder is the vendor's recommended setting for this family, so
+/// an unconfigured install gets it rather than whatever the endpoint happens
+/// to fall back to. An explicit `reasoning_effort` in config still wins.
+const DEFAULT_TIERED_EFFORT: &str = "xhigh";
+
 /// Classify a model id, or `None` when it is not a qwen model at all.
 pub(crate) fn family(model: &str) -> Option<QwenFamily> {
     let m = model.to_ascii_lowercase();
@@ -75,9 +81,9 @@ pub(crate) struct QwenThinkingKnobs {
 ///
 /// - **Tiered family** — the effort tier ships alone. A co-present
 ///   `enable_thinking` is dropped, except that an explicit `false` becomes
-///   `reasoning_effort = "none"`. With nothing configured, nothing is sent
-///   and the model's own default applies; thinking is mandatory on this
-///   family, so an absent tier still thinks.
+///   `reasoning_effort = "none"`. With nothing configured the tier defaults
+///   to [`DEFAULT_TIERED_EFFORT`] rather than being omitted, so an
+///   unconfigured install still gets the vendor's recommended setting.
 /// - **Hybrid family** — `enable_thinking` ships, defaulting to on (every
 ///   Model Studio catalogue entry for these declares thinking enabled). A
 ///   configured effort still passes through untouched: the model does not
@@ -98,7 +104,11 @@ pub(crate) fn resolve(
                 };
             }
             QwenThinkingKnobs {
-                reasoning_effort: configured_effort.map(str::to_string),
+                reasoning_effort: Some(
+                    configured_effort
+                        .unwrap_or(DEFAULT_TIERED_EFFORT)
+                        .to_string(),
+                ),
                 enable_thinking: None,
             }
         }
