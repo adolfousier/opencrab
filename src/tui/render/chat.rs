@@ -1607,11 +1607,6 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Clear, area);
     f.render_widget(chat, area);
 
-    // Make URLs and absolute paths clickable (#1031). Runs AFTER the widget so
-    // it can read the wrapped text back out of the buffer — escapes cannot ride
-    // inside a Span without being chopped per grapheme and eating columns.
-    crate::tui::hyperlink::linkify(f.buffer_mut(), area);
-
     // Drag-selection highlight overlay: invert fg/bg for cells inside the
     // selection rectangle (reading-order), clipped to the chat area.
     if let (Some(a), Some(b)) = (app.drag_anchor, app.drag_current) {

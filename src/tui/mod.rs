@@ -15,7 +15,6 @@ pub mod runner;
 
 // Enhanced rendering modules
 pub mod highlight;
-pub(crate) mod hyperlink;
 pub mod markdown;
 
 pub mod components;
