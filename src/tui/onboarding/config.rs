@@ -1008,22 +1008,28 @@ impl OnboardingWizard {
         // (GitHub Copilot OAuth token is saved directly via the device flow handler)
 
         // Save STT/TTS keys to keys.toml
+        // Every write below is gated on `is_new_secret`, never on emptiness.
+        // The inputs are seeded with EXISTING_KEY_SENTINEL when a key is
+        // already stored, so an emptiness check treats "unchanged" as a value
+        // and persists the literal marker over a working key (#1039).
         if write_voice {
+            use super::key_field::is_new_secret;
+
             if let Some(ref groq_key) = groq_key
+                && is_new_secret(groq_key)
                 && let Err(e) =
                     crate::config::write_secret_key("providers.stt.groq", "api_key", groq_key)
             {
                 tracing::warn!("Failed to save Groq key to keys.toml: {}", e);
             }
-            if self.tts_enabled
-                && let Some(ref groq_key) = groq_key
-                && let Err(e) =
-                    crate::config::write_secret_key("providers.tts.openai", "api_key", groq_key)
-            {
-                tracing::warn!("Failed to save TTS key to keys.toml: {}", e);
-            }
-            // OpenAI-compatible STT key
-            if !self.stt_openai_compat_key_input.is_empty()
+            // providers.tts.openai is deliberately NOT written here. It used to
+            // receive `groq_key`, which is a different provider's credential:
+            // that section is real OpenAI (no base_url), so a Groq key there
+            // only ever produced a 401. The dialog has no OpenAI TTS key input
+            // to put in its place, so set it with
+            // `/onboard:voice tts openai <key>` rather than writing something
+            // that cannot work.
+            if is_new_secret(&self.stt_openai_compat_key_input)
                 && let Err(e) = crate::config::write_secret_key(
                     "providers.stt.openai_compatible",
                     "api_key",
@@ -1032,8 +1038,7 @@ impl OnboardingWizard {
             {
                 tracing::warn!("Failed to save OpenAI-compatible STT key: {}", e);
             }
-            // OpenAI-compatible TTS key
-            if !self.tts_openai_compat_key_input.is_empty()
+            if is_new_secret(&self.tts_openai_compat_key_input)
                 && let Err(e) = crate::config::write_secret_key(
                     "providers.tts.openai_compatible",
                     "api_key",

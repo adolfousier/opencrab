@@ -686,8 +686,10 @@ fn render_stt_openai_compat_fields(lines: &mut Vec<Line<'static>>, wizard: &Onbo
     );
 
     let key_focused = wizard.voice_field == VoiceField::SttOpenaiCompatKey;
-    let has_key = !wizard.stt_openai_compat_key_input.is_empty()
-        && wizard.stt_openai_compat_key_input != super::types::EXISTING_KEY_SENTINEL;
+    // The sentinel means a key IS stored, just not shown. Reading it as
+    // "absent" is what made a configured provider render as unconfigured
+    // (#1039).
+    let has_key = super::key_field::is_configured(&wizard.stt_openai_compat_key_input);
     render_text_field(
         lines,
         "  API Key: ",
@@ -861,8 +863,7 @@ fn render_tts_openai_compat_fields(lines: &mut Vec<Line<'static>>, wizard: &Onbo
     );
 
     let key_focused = wizard.voice_field == VoiceField::TtsOpenaiCompatKey;
-    let has_key = !wizard.tts_openai_compat_key_input.is_empty()
-        && wizard.tts_openai_compat_key_input != super::types::EXISTING_KEY_SENTINEL;
+    let has_key = super::key_field::is_configured(&wizard.tts_openai_compat_key_input);
     render_text_field(
         lines,
         "  API Key: ",
@@ -943,11 +944,7 @@ fn render_radio(lines: &mut Vec<Line<'static>>, focused: bool, selected: bool, l
 }
 
 fn mask_if_not_empty(s: &str) -> String {
-    if s.is_empty() || s == super::types::EXISTING_KEY_SENTINEL {
-        String::new()
-    } else {
-        "*".repeat(s.len().min(20))
-    }
+    super::key_field::masked(s)
 }
 
 fn render_text_field(

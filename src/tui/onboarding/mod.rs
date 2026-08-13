@@ -10,6 +10,7 @@ mod config;
 mod fetch;
 pub(crate) mod helpers;
 mod input;
+pub(crate) mod key_field;
 mod keys;
 mod models;
 mod navigation;
