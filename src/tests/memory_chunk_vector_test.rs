@@ -6,9 +6,9 @@
 //!    one averaged vector, and anything past 32 KB got a `skipped-too-large`
 //!    placeholder and no vector at all. On a real workspace that was 25% of all
 //!    vector rows, including the long-term memory file.
-//! 2. Chunks past the first must be searchable. `qmd::Store::search_vec` joins
-//!    on `hash || '_0'`, so writing chunk 1..N through qmd's own search would
-//!    store data nothing ever queries.
+//! 2. Chunks past the first must be searchable. The old store's vector search
+//!    joined on `hash || '_0'`, so writing chunk 1..N through it would store
+//!    data nothing ever queries.
 //!
 //! These tests use the store schema directly rather than the embedding engine,
 //! which needs a ~300 MB model download and AVX. What is under test is the
@@ -67,10 +67,10 @@ fn store_with_chunks(dir: &TempDir, n_chunks: usize, distinct_at: usize) -> std:
 
 /// The regression: a match in a chunk other than the first must be found.
 ///
-/// This is the whole reason the search was reimplemented. Under qmd's
-/// `search_vec` the join is `hash || '_0'`, so this document would score on
-/// chunk 0 (which points away from the query) and the real answer at chunk 4
-/// would be invisible.
+/// This is the whole reason the search was reimplemented. Under the old
+/// store's `search_vec` the join is `hash || '_0'`, so this document would
+/// score on chunk 0 (which points away from the query) and the real answer at
+/// chunk 4 would be invisible.
 #[test]
 fn a_match_in_a_later_chunk_is_found() {
     use crate::memory::vector_search::search_chunks;

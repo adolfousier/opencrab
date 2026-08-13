@@ -1,24 +1,23 @@
 //! Chunk-aware vector search over the memory store (#998).
 //!
-//! `qmd::Store::search_vec` joins `vectors_vec` on `d.hash || '_0'`, so it can
-//! only ever see a document's FIRST chunk. Once documents are chunked, every
+//! A vector search that joins `vectors_vec` on `d.hash || '_0'` can only
+//! ever see a document's FIRST chunk. Once documents are chunked, every
 //! chunk past the first would be embedded, stored, and then never queried,
 //! which is the worst of both worlds: the cost of chunking with none of the
-//! benefit.
+//! benefit. This was written as a shim around that bug in the then-qmd
+//! store and became the real implementation when qmd was dropped (#1028).
 //!
-//! qmd is a third-party crate and 0.3.2 is its latest release, so this reads
-//! the same tables directly rather than waiting on an upstream change. It is
-//! deliberately a read-only, additive shim:
+//! It reads on its own connection rather than through `Store`:
 //!
-//! - Its own SQLite connection, opened read-only. The database runs in WAL
-//!   mode, so a reader never blocks qmd's writer and vice versa.
-//! - No schema of its own. It queries what qmd already writes, so nothing here
-//!   has to be migrated if qmd's search gains chunk support later and this is
-//!   deleted.
+//! - The connection is opened read-only. The database runs in WAL mode, so
+//!   this reader never blocks the store's writer and vice versa, and the
+//!   search path can run it while holding the store lock.
+//! - No schema of its own. It queries what `db.rs` writes.
 //!
-//! Scoring matches qmd's: cosine similarity computed in Rust over f32 vectors
-//! stored as little-endian bytes. `vectors_vec` is a plain table, not a
-//! vector-index extension, so this is the same linear scan qmd performs.
+//! Scoring: cosine similarity computed in Rust over f32 vectors stored as
+//! little-endian bytes. `vectors_vec` is a plain table, not a vector-index
+//! extension, so this is a linear scan — the right trade at memory-index
+//! scale (hundreds to low thousands of chunks).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -47,12 +46,30 @@ pub struct ChunkHit {
 /// result slot.
 const SKIPPED_MODEL: &str = "skipped-too-large";
 
-/// Decode a little-endian f32 blob, the encoding qmd writes.
+/// Decode a little-endian f32 blob, the encoding `db.rs` writes.
 fn decode_embedding(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
+}
+
+/// Cosine similarity between two f32 vectors. 0.0 on length mismatch or
+/// zero norms (a degenerate vector must not score).
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+
+    dot / (norm_a * norm_b)
 }
 
 /// Best-scoring chunk per document, ranked, for `query_embedding`.
@@ -125,7 +142,7 @@ pub fn search_chunks(
             continue;
         }
 
-        let score = qmd::cosine_similarity(query_embedding, &embedding);
+        let score = cosine_similarity(query_embedding, &embedding);
         let key = (collection.clone(), path.clone());
         let better = best.get(&key).is_none_or(|prev| score > prev.score);
         if better {

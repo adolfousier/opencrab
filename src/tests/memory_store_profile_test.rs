@@ -69,7 +69,7 @@ async fn content_written_under_one_profile_is_invisible_from_another() {
         let store = get_store().expect("store A");
         let guard = store.lock().expect("lock A");
         let body = format!("# Note\n\nThis body contains {marker} exactly once.\n");
-        let hash = qmd::Store::hash_content(&body);
+        let hash = crate::memory::db::Store::hash_content(&body);
         let now = crate::utils::string::utc_timestamp();
         guard.insert_content(&hash, &body, &now).expect("content");
         guard

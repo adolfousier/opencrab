@@ -1,4 +1,4 @@
-//! Store — per-profile qmd Stores for the memory database.
+//! Store — per-profile memory Stores for the memory database.
 //!
 //! Keyed by resolved database path, NOT a single global (#999). This was one
 //! `OnceCell` that captured `opencrabs_home()` on the first call and cached the
@@ -12,7 +12,7 @@
 //! Profiles are the isolation boundary in this codebase, so the component
 //! holding indexed content has to respect it.
 
-use qmd::Store;
+use super::db::Store;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -25,7 +25,7 @@ use std::sync::{LazyLock, Mutex};
 static STORES: LazyLock<Mutex<HashMap<PathBuf, &'static Mutex<Store>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Get (or create) the memory qmd Store for the ACTIVE profile.
+/// Get (or create) the memory Store for the ACTIVE profile.
 ///
 /// The database lives at `<profile home>/memory/memory.db`, resolved on every
 /// call so a profile switch reaches the right file. First use of a given path
@@ -82,7 +82,7 @@ fn build_store(db_path: &Path) -> Result<Store, String> {
         }
 
         tracing::info!(
-            "Memory qmd store ready at {} (vector: {})",
+            "Memory store ready at {} (vector: {})",
             db_path.display(),
             if super::vector_enabled() {
                 "enabled"
@@ -111,7 +111,7 @@ pub(crate) fn memory_dir() -> PathBuf {
 /// invisible to backfill forever.
 ///
 /// Idempotent: deletes nothing once the sweep has run. Uses its own read-write
-/// connection because `qmd::Store` exposes no raw statement access; WAL plus a
+/// connection because `Store` exposes no raw statement access; WAL plus a
 /// busy timeout makes that safe alongside the store's own connection.
 pub(crate) fn clear_skipped_placeholders() -> Result<usize, String> {
     let db_path = memory_dir().join("memory.db");

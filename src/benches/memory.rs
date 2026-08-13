@@ -1,4 +1,4 @@
-//! QMD Memory Store Benchmarks
+//! Memory Store Benchmarks
 //!
 //! Benchmarks for core memory operations:
 //! - Store open (cold start)
@@ -10,7 +10,7 @@
 #![allow(clippy::all)]
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use qmd::Store;
+use opencrabs::memory::Store;
 use tempfile::TempDir;
 
 /// Sample memory log content resembling real compaction summaries.
@@ -19,7 +19,7 @@ const SAMPLE_ENTRIES: &[&str] = &[
     "# Session Summary\n\nRefactored database connection pooling. Replaced manual connection management with sqlx pool. Added retry logic for transient connection failures.\n\n## Key Decisions\n- Using sqlx instead of diesel for async support\n- Pool size set to 10 connections\n- Retry up to 3 times with exponential backoff",
     "# Session Summary\n\nImplemented Discord bot integration. Added message handling, slash commands, and channel management. The bot uses serenity framework with gateway intents for message content.\n\n## Architecture\n- Event handler pattern for incoming messages\n- Command registry for slash commands\n- Rate limiting per user per channel",
     "# Session Summary\n\nDebugged memory leak in TUI rendering. The issue was caused by accumulating terminal buffers that were never freed. Fixed by implementing proper cleanup in the render loop.\n\n## Root Cause\n- Crossterm alternate screen buffers not being dropped\n- Fixed by adding explicit flush and cleanup on exit",
-    "# Session Summary\n\nAdded vector search capability using qmd crate. The FTS5 engine provides BM25 ranking for full-text search. Integrated as a library dependency replacing the CLI subprocess approach.\n\n## Performance\n- Sub-millisecond search latency\n- SHA-256 content hashing for dedup\n- Background reindex on startup",
+    "# Session Summary\n\nAdded vector search capability using the built-in memory store. The FTS5 engine provides BM25 ranking for full-text search. Integrated as an owned module replacing the CLI subprocess approach.\n\n## Performance\n- Sub-millisecond search latency\n- SHA-256 content hashing for dedup\n- Background reindex on startup",
     "# Session Summary\n\nOptimized context compaction algorithm. Reduced token usage by 40% through smarter summarization prompts. The compaction now preserves code snippets and error messages while condensing narrative.\n\n## Changes\n- New compaction prompt template\n- Preserve code blocks during summarization\n- Track token savings metrics",
     "# Session Summary\n\nImplemented Slack integration with OAuth2 flow. Added workspace installation, event subscriptions, and interactive message components. Uses slack-morphism crate.\n\n## Features\n- Slash command /opencrabs for invoking the agent\n- Thread-based conversations\n- File upload support for code review",
     "# Session Summary\n\nFixed CI pipeline failures. Updated GitHub Actions workflow to use latest Rust nightly for portable_simd. Added caching for Cargo dependencies to speed up builds.\n\n## Issues Resolved\n- nightly-2025-12 broke portable_simd API\n- Added wacore-binary patch for compatibility\n- Build time reduced from 12min to 4min",
@@ -282,13 +282,23 @@ fn bench_search_vec(c: &mut Criterion) {
             BenchmarkId::from_parameter(corpus_size),
             &corpus_size,
             |b, &n| {
-                let (store, _dir) = setup_store_with_embeddings(n);
+                let (store, dir) = setup_store_with_embeddings(n);
+                let db_path = dir.path().join("bench.db");
                 let mut query = vec![0.0f32; 768];
                 query[0] = 0.9;
                 query[1] = 0.5;
                 b.iter(|| {
-                    black_box(store.search_vec(&query, 5, Some("memory")).unwrap());
+                    black_box(
+                        opencrabs::memory::vector_search::search_chunks(
+                            &db_path,
+                            &query,
+                            5,
+                            Some("memory"),
+                        )
+                        .unwrap(),
+                    );
                 });
+                drop(store);
             },
         );
     }
@@ -298,9 +308,10 @@ fn bench_search_vec(c: &mut Criterion) {
 
 /// Benchmark: Hybrid search (FTS + vector → RRF) on a corpus with embeddings.
 fn bench_hybrid_rrf(c: &mut Criterion) {
-    use qmd::hybrid_search_rrf;
+    use opencrabs::memory::hybrid_search_rrf;
 
-    let (store, _dir) = setup_store_with_embeddings(50);
+    let (store, dir) = setup_store_with_embeddings(50);
+    let db_path = dir.path().join("bench.db");
     let mut query_emb = vec![0.0f32; 768];
     query_emb[0] = 0.9;
     query_emb[1] = 0.5;
@@ -310,7 +321,13 @@ fn bench_hybrid_rrf(c: &mut Criterion) {
             let fts = store
                 .search_fts("\"authentication\" \"database\"", 10, Some("memory"))
                 .unwrap();
-            let vec = store.search_vec(&query_emb, 10, Some("memory")).unwrap();
+            let vec = opencrabs::memory::vector_search::search_chunks(
+                &db_path,
+                &query_emb,
+                10,
+                Some("memory"),
+            )
+            .unwrap();
 
             let fts_tuples: Vec<_> = fts
                 .iter()
@@ -327,9 +344,9 @@ fn bench_hybrid_rrf(c: &mut Criterion) {
                 .iter()
                 .map(|r| {
                     (
-                        r.doc.path.clone(),
-                        r.doc.path.clone(),
-                        r.doc.title.clone(),
+                        r.path.clone(),
+                        r.path.clone(),
+                        r.title.clone(),
                         String::new(),
                     )
                 })
@@ -338,6 +355,7 @@ fn bench_hybrid_rrf(c: &mut Criterion) {
             black_box(hybrid_search_rrf(fts_tuples, vec_tuples, 60));
         });
     });
+    drop(store);
 }
 
 /// Benchmark: Insert embedding for a single document.

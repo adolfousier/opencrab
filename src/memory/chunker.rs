@@ -1,15 +1,16 @@
 //! Split a document into overlapping chunks without ever cutting a character
 //! (#1002).
 //!
-//! Replaces `qmd::chunk_document`, which slices by byte index with no boundary
-//! check and panics on any multi-byte character landing near a chunk edge:
+//! The third-party chunker this replaced (qmd, dropped in #1028) sliced by
+//! byte index with no boundary check and panicked on any multi-byte character
+//! landing near a chunk edge:
 //!
 //! ```text
 //! start byte index 2240 is not a char boundary; it is inside '—'
 //! ```
 //!
-//! It applies `max_chars` to `content.len()`, which is bytes, then uses the
-//! result as a string index directly. Its break-point search does the same
+//! It applied `max_chars` to `content.len()`, which is bytes, then used the
+//! result as a string index directly, and its break-point search did the same
 //! with `slice.len() * 7 / 10`. An em dash, an accented letter, Cyrillic or an
 //! emoji anywhere near those offsets is enough, which describes most real
 //! content. The panic surfaced inside a tokio worker during backfill and took
