@@ -204,7 +204,7 @@ cargo test --all-features
 | Tests — Logging Logger | 5 | `src/tests/logging_logger_test.rs` |
 | Tests — Markdown Render | 10 | `src/tests/markdown_render_test.rs` |
 | Tests — Memory Chunk Vector | 13 | `src/tests/memory_chunk_vector_test.rs` |
-| Tests — Memory Chunker | 9 | `src/tests/memory_chunker_test.rs` |
+| Tests — Memory Chunker | 8 | `src/tests/memory_chunker_test.rs` |
 | Tests — Memory Collection Routing | 4 | `src/tests/memory_collection_routing_test.rs` |
 | Tests — Memory Recall Eval | 5 | `src/tests/memory_recall_eval_test.rs` |
 | Tests — Memory Recall Multilingual | 6 | `src/tests/memory_recall_multilingual_test.rs` |
@@ -610,7 +610,7 @@ cargo test --all-features
 | Tests — Whatsapp Qr Replay | 4 | `src/tests/whatsapp_qr_replay_test.rs` |
 | Tests — Whatsapp Store | 15 | `src/tests/whatsapp_store_test.rs` |
 | Tests — Word Delete Keybinding | 7 | `src/tests/word_delete_keybinding_test.rs` |
-| **Total** | **6,373** | Authoritative count from `cargo test --all-features` (lib test binary): 6,373 run by default + 25 `#[ignore]`d. The 600 per-module rows above are regenerated from `src/tests/`; re-run `cargo test` for the live number. |
+| **Total** | **6,383** | Authoritative count from `cargo test --all-features` (lib test binary): 6,383 run by default + 25 `#[ignore]`d. The 600 per-module rows above are regenerated from `src/tests/`; re-run `cargo test` for the live number. |
 
 ---
 

@@ -4024,7 +4024,7 @@ Integration Layer (LLM Providers, LSP)
 | Markdown | pulldown-cmark |
 | LSP Client | Tower-LSP |
 | Provider Registry | Built-in HTTP client |
-| Memory Search | qmd (FTS5 + vector embeddings) |
+| Memory Search | in-tree store (SQLite FTS5 + vector embeddings) |
 | Error Handling | anyhow + thiserror |
 | Logging | tracing + tracing-subscriber |
 | Security | zeroize |
@@ -4067,7 +4067,7 @@ opencrabs/
 │   ├── rtk/              # Rust Token Killer — compresses bash output to save context tokens
 │   ├── eval/             # Offline evaluation harness (context/memory quality; feature-gated)
 │   ├── services/         # Business logic (Session, Message, File, Plan)
-│   ├── memory/           # Memory search (FTS5 + vector embeddings via qmd)
+│   ├── memory/           # Memory search (SQLite FTS5 + vector embeddings, in-tree)
 │   ├── tui/              # Terminal UI (Ratatui)
 │   │   ├── onboarding.rs     # 8-step onboarding wizard (state + logic)
 │   │   ├── onboarding_render.rs  # Wizard rendering
@@ -4108,7 +4108,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (6,373 tests across 600 test modules; 25 slower tests are
+# Run tests (6,383 tests across 600 test modules; 25 slower tests are
 # #[ignore]d to keep the default run fast — profile tests that touch
 # ~/.opencrabs, browser end-to-end tests, and opencode provider tests.
 # Opt in with `cargo test --all-features -- --ignored` when needed)
@@ -4175,7 +4175,7 @@ The chain becomes a **majority-vote judge panel** (variance reduction + cross-mo
 | Database ops | < 10 ms (session), < 5 ms (message) |
 | Embedding engine | embeddinggemma-300M (~300 MB, local GGUF, auto-downloaded) or any OpenAI-compatible `/v1/embeddings` API |
 
-#### Memory Search (qmd — FTS5 + Vector Embeddings)
+#### Memory Search (in-tree store — FTS5 + Vector Embeddings)
 
 Hybrid semantic search: FTS5 BM25 keyword matching + vector embeddings combined via Reciprocal Rank Fusion. Three modes: local GGUF (default, no API key), OpenAI-compatible API, or FTS5-only (VPS-friendly).
 
