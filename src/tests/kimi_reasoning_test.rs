@@ -292,13 +292,36 @@ fn qwen_passes_configured_reasoning_effort_through() {
 
 #[test]
 fn provider_without_reasoning_setting_sends_none() {
+    // A model with no family-specific handling: nothing configured means
+    // nothing on the wire. Deliberately not a qwen id, since the tiered qwen
+    // family now carries its own default (see the test below).
+    let provider = OpenAIProvider::with_base_url("k".into(), "https://x/v1".into()).with_name("x");
+    let req = LLMRequest::new("gpt-5".to_string(), vec![Message::user("hi".to_string())]);
+    let body = serde_json::to_value(provider.to_openai_request(req)).unwrap();
+    assert!(body.get("reasoning_effort").is_none_or(|v| v.is_null()));
+}
+
+#[test]
+fn an_unconfigured_tiered_qwen_still_gets_its_default_tier() {
+    // #1034: the tiered family defaults to the recommended tier rather than
+    // leaving the endpoint to pick. This holds on any remote host, not just
+    // Alibaba's (#1040).
     let provider = OpenAIProvider::with_base_url("k".into(), "https://x/v1".into()).with_name("x");
     let req = LLMRequest::new(
         "qwen3.8-max-preview".to_string(),
         vec![Message::user("hi".to_string())],
     );
     let body = serde_json::to_value(provider.to_openai_request(req)).unwrap();
-    assert!(body.get("reasoning_effort").is_none_or(|v| v.is_null()));
+    assert_eq!(body["reasoning_effort"].as_str(), Some("xhigh"));
+    assert!(
+        body.get("enable_thinking").is_none(),
+        "the tier ships alone; the switch is inert on this family"
+    );
+    assert_eq!(
+        body["preserve_thinking"].as_bool(),
+        Some(true),
+        "a remote qwen target carries preserve_thinking"
+    );
 }
 
 #[test]

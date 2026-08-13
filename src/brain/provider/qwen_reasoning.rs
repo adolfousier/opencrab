@@ -15,9 +15,14 @@
 //! knob the model actually reads goes unset, so thinking silently runs at the
 //! server default instead of what the user configured.
 //!
-//! Separately, every DashScope request carries `preserve_thinking: true` so
+//! Separately, every remote qwen request carries `preserve_thinking: true` so
 //! reasoning carries across turns instead of being re-derived from scratch
 //! each time. See [`preserve_thinking_for`].
+//!
+//! None of this is Alibaba-specific. The same models are served by ModelScope,
+//! NVIDIA NIM, OpenRouter and other OpenAI-compatible gateways, often under a
+//! namespaced id like `Vendor/Qwen3.8-Max`, so both the host check and the
+//! model check are written to reach those too (#1040).
 //!
 //! Mirrors `DashScopeOpenAICompatibleProvider.buildQwenEffortConfig` /
 //! `dropConflictingThinkingKnobs` in qwen-code. Same shape as
@@ -51,8 +56,16 @@ const EFFORT_DISABLED: &str = "none";
 const DEFAULT_TIERED_EFFORT: &str = "xhigh";
 
 /// Classify a model id, or `None` when it is not a qwen model at all.
+///
+/// Classified on the vendor-stripped, lowercased id (see
+/// [`super::qwen::bare_model_id`]). Matching the raw id meant a namespaced
+/// tiered-effort model failed the tiered prefix, fell through to the `qwen`
+/// arm, and was silently classified as a hybrid: it received the switch it
+/// does not read while the effort tier went unset. Silent misclassification
+/// rather than a clean miss, since the vendor segment often begins with
+/// `qwen` too (#1040).
 pub(crate) fn family(model: &str) -> Option<QwenFamily> {
-    let m = model.to_ascii_lowercase();
+    let m = super::qwen::bare_model_id(model);
     if m.starts_with(TIERED_EFFORT_PREFIX) {
         Some(QwenFamily::TieredEffort)
     } else if m.starts_with("qwen") {
@@ -121,14 +134,15 @@ pub(crate) fn resolve(
 
 /// Whether this request should carry `preserve_thinking: true`.
 ///
-/// True for any DashScope-hosted target. Reasoning models there need the flag
-/// for multi-turn reasoning continuity: without it the model re-derives its
-/// reasoning every turn instead of carrying it forward, which shows up as
-/// drifting and invented intermediate steps on long sessions.
+/// True for a qwen model on any remote host, not just Alibaba's. Reasoning
+/// models need the flag for multi-turn reasoning continuity: without it the
+/// model re-derives its reasoning every turn instead of carrying it forward,
+/// which shows up as drifting and invented intermediate steps on long
+/// sessions.
 ///
-/// Gated on the host rather than the model name so a locally served qwen GGUF
-/// (llama.cpp, LM Studio, Ollama) is untouched — those take thinking through
-/// `chat_template_kwargs`, not through DashScope request fields.
-pub(crate) fn preserve_thinking_for(base_url: &str) -> bool {
-    super::qwen::is_dashscope_host(base_url)
+/// A locally served qwen GGUF (llama.cpp, LM Studio, Ollama) is excluded:
+/// those take thinking through `chat_template_kwargs`, so this would be a
+/// second, inert mechanism there.
+pub(crate) fn preserve_thinking_for(base_url: &str, model: &str) -> bool {
+    super::qwen::serves_qwen_remotely(base_url, model)
 }

@@ -2906,7 +2906,7 @@ impl OpenAIProvider {
         // `reasoning_effort` resolved above rather than have it overwritten
         // with the empty qwen resolution.
         let mut enable_thinking = None;
-        if super::qwen::is_dashscope_host(&self.base_url)
+        if super::qwen::serves_qwen_remotely(&self.base_url, &request.model)
             && super::qwen_reasoning::family(&request.model).is_some()
         {
             let knobs = super::qwen_reasoning::resolve(
@@ -2920,11 +2920,12 @@ impl OpenAIProvider {
 
         // Carry reasoning across turns instead of re-deriving it each turn
         // (#1033). Sent on every DashScope request, ungated by family.
-        let preserve_thinking = if super::qwen_reasoning::preserve_thinking_for(&self.base_url) {
-            Some(true)
-        } else {
-            None
-        };
+        let preserve_thinking =
+            if super::qwen_reasoning::preserve_thinking_for(&self.base_url, &request.model) {
+                Some(true)
+            } else {
+                None
+            };
 
         // MiniMax M3: send reasoning_split=true so reasoning goes to
         // reasoning_content field instead of being embedded in content

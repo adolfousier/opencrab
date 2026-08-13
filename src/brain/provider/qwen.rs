@@ -142,24 +142,55 @@ fn normalize_content_to_array(content: &serde_json::Value) -> Vec<serde_json::Va
 /// silently ignore unknown JSON fields per the chat-completions spec.
 /// Worst case: ~30 bytes of wasted JSON per request.
 pub fn looks_like_qwen_target(base_url: &str, model: &str) -> bool {
-    let model_match = model.to_ascii_lowercase().starts_with("qwen");
-    is_dashscope_host(base_url) || model_match
+    is_alibaba_host(base_url) || bare_model_id(model).starts_with("qwen")
 }
 
-/// Strict host-only form of [`looks_like_qwen_target`]: is this base_url a
-/// DashScope / Alibaba Model Studio endpoint?
+/// The model id with any vendor namespace stripped, lowercased.
 ///
-/// Used for request fields that are DashScope-specific wire contracts
-/// (`preserve_thinking`, the family-gated thinking knobs) rather than the
-/// benign `cache_control` markers. A locally served qwen GGUF matches on
-/// model name but is not a DashScope endpoint, and must not receive them.
-pub fn is_dashscope_host(base_url: &str) -> bool {
+/// Hosts other than DashScope namespace their catalogue
+/// (`Qwen-Ambassador/Qwen3.8-Max`, `Qwen/Qwen3.5-397B-A17B`), and case is not
+/// consistent between them. Matching the raw id made every qwen check depend
+/// on the vendor segment happening to start with `qwen` too, which is luck
+/// rather than a rule: a vendor named anything else fails the check outright
+/// (#1040). Lowercasing here is what makes every caller case-insensitive.
+pub fn bare_model_id(model: &str) -> String {
+    model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase()
+}
+
+/// An official Alibaba-operated host. Only used to recognise a qwen target
+/// when the model id itself does not say so; it is deliberately NOT what
+/// gates the thinking knobs, since the same models are served elsewhere.
+fn is_alibaba_host(base_url: &str) -> bool {
     let url = base_url.to_ascii_lowercase();
     url.contains("dashscope")
         || url.contains("aliyun")
         || url.contains("aliyuncs")
         || url.contains("bailian")
         || url.contains("dialagram")
+}
+
+/// Is this a qwen model served by a remote endpoint?
+///
+/// Gates the qwen thinking knobs (`preserve_thinking`, the family-resolved
+/// effort tier or switch). Those are qwen wire contracts, not Alibaba ones:
+/// the same models are served by ModelScope, NVIDIA NIM, OpenRouter and any
+/// OpenAI-compatible gateway, and an Alibaba-host allowlist left every one of
+/// those unconfigured (#1040).
+///
+/// Local servers stay excluded on purpose. A locally served qwen GGUF matches
+/// on model name but takes thinking through `chat_template_kwargs`, so the
+/// DashScope request fields would be a second, inert mechanism there.
+///
+/// A remote host that does not read these fields simply ignores them, per the
+/// chat-completions spec — the same reasoning [`looks_like_qwen_target`]
+/// already documents for its `cache_control` markers, at a comparable cost of
+/// a few bytes per request.
+pub fn serves_qwen_remotely(base_url: &str, model: &str) -> bool {
+    looks_like_qwen_target(base_url, model) && !super::factory::is_local_base_url(base_url)
 }
 
 /// Apply `cache_control: {type: "ephemeral"}` to the LAST part of the
