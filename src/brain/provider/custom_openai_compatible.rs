@@ -2200,6 +2200,11 @@ pub struct OpenAIProvider {
     /// Kimi reasoning setting (e.g. `max`, `on`, `off`). Applied to each
     /// request when the active model accepts it; see `kimi_reasoning`.
     reasoning_setting: Option<String>,
+    /// Configured `enable_thinking`. Only consumed on DashScope targets, where
+    /// `qwen_reasoning` decides per family whether the switch is the knob the
+    /// model reads. Local servers take thinking through `chat_template_kwargs`
+    /// instead and never reach this field.
+    enable_thinking_setting: Option<bool>,
     /// Buffer of `(attempt, max, reason)` retry notices recorded during the
     /// most recent stream/complete call. Drained by the agent service via
     /// `take_retry_notices()` to surface "⏳ Retry N/M" to the user. Shared
@@ -2275,6 +2280,7 @@ impl OpenAIProvider {
             cache_enabled: false,
             cache_ttl: None,
             reasoning_setting: None,
+            enable_thinking_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -2310,6 +2316,7 @@ impl OpenAIProvider {
             cache_enabled: false,
             cache_ttl: None,
             reasoning_setting: None,
+            enable_thinking_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -2345,6 +2352,7 @@ impl OpenAIProvider {
             cache_enabled: false,
             cache_ttl: None,
             reasoning_setting: None,
+            enable_thinking_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -2385,6 +2393,14 @@ impl OpenAIProvider {
     /// request only when the active model accepts it; see `kimi_reasoning`.
     pub fn with_reasoning(mut self, setting: String) -> Self {
         self.reasoning_setting = Some(setting);
+        self
+    }
+
+    /// Set the configured `enable_thinking`. Consumed per request by
+    /// `qwen_reasoning` on DashScope targets only, which decides whether this
+    /// family reads the switch at all.
+    pub fn with_enable_thinking(mut self, enable: bool) -> Self {
+        self.enable_thinking_setting = Some(enable);
         self
     }
 
@@ -2871,13 +2887,36 @@ impl OpenAIProvider {
         // OTHER custom-provider model, pass the configured value straight through
         // as the request's `reasoning_effort` field — otherwise it was silently
         // dropped and e.g. modelstudio/DashScope qwen never got `xhigh` (#691).
-        let (reasoning_effort, thinking) = match self.reasoning_setting.as_deref() {
+        let (mut reasoning_effort, thinking) = match self.reasoning_setting.as_deref() {
             None => (None, None),
             Some(s) if super::kimi_reasoning::is_kimi_model(&request.model) => {
                 super::kimi_reasoning::resolve_fields(&request.model, s)
             }
             Some(s) => (Some(s.to_string()), None),
         };
+
+        // DashScope thinking knobs. Each qwen family reads exactly one of
+        // `reasoning_effort` / `enable_thinking`, so resolve which one applies
+        // and drop the inert other rather than shipping both (#1034). Gated on
+        // the host: a locally served qwen takes thinking through
+        // `chat_template_kwargs` and must not receive DashScope fields.
+        //
+        // Both gates are load-bearing. Model Studio also serves glm and
+        // deepseek: those are not qwen, read neither knob, and must keep the
+        // `reasoning_effort` resolved above rather than have it overwritten
+        // with the empty qwen resolution.
+        let mut enable_thinking = None;
+        if super::qwen::is_dashscope_host(&self.base_url)
+            && super::qwen_reasoning::family(&request.model).is_some()
+        {
+            let knobs = super::qwen_reasoning::resolve(
+                &request.model,
+                reasoning_effort.as_deref(),
+                self.enable_thinking_setting,
+            );
+            reasoning_effort = knobs.reasoning_effort;
+            enable_thinking = knobs.enable_thinking;
+        }
 
         // Carry reasoning across turns instead of re-deriving it each turn
         // (#1033). Sent on every DashScope request, ungated by family.
@@ -2910,6 +2949,7 @@ impl OpenAIProvider {
             thinking,
             reasoning_split,
             preserve_thinking,
+            enable_thinking,
         }
     }
 
@@ -4745,6 +4785,11 @@ pub(crate) struct OpenAIRequest {
     /// turn. Sent on every Model Studio request (#1033).
     #[serde(skip_serializing_if = "Option::is_none")]
     preserve_thinking: Option<bool>,
+    /// DashScope qwen hybrid families: the on/off thinking switch. Never sent
+    /// to the tiered-effort family, which reads `reasoning_effort` instead
+    /// (#1034); see `qwen_reasoning`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_thinking: Option<bool>,
 }
 
 impl OpenAIRequest {

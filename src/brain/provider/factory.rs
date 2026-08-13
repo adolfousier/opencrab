@@ -1218,22 +1218,15 @@ async fn try_create_qwen(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
 
     let qwen_limiter = Arc::clone(&super::rate_limiter::QWEN_OAUTH_LIMITER);
 
-    let enable_thinking = qwen_config.enable_thinking;
+    // `enable_thinking` is NOT injected here. The switch is only the knob some
+    // qwen families read, and a body transform cannot tell which family the
+    // request targets — it never sees the model. Resolution happens per request
+    // in `qwen_reasoning` instead, reached via `configure_openai_compatible`
+    // below (#1034).
     let builder = OpenAIProvider::with_base_url(api_key.clone(), base_url)
         .with_name("qwen")
         .with_extra_headers(qwen_extra_headers())
-        .with_body_transform(Arc::new(move |body| {
-            let mut body = qwen_body_transform(body);
-            if let Some(enable) = enable_thinking
-                && let Some(obj) = body.as_object_mut()
-            {
-                obj.insert(
-                    "enable_thinking".to_string(),
-                    serde_json::Value::Bool(enable),
-                );
-            }
-            body
-        }))
+        .with_body_transform(Arc::new(qwen_body_transform))
         .with_rate_limiter(qwen_limiter);
 
     let provider = configure_openai_compatible(builder, qwen_config);
@@ -1626,6 +1619,11 @@ fn configure_openai_compatible(
     if let Some(reasoning) = &config.reasoning_effort {
         tracing::info!("Kimi reasoning setting configured: {}", reasoning);
         provider = provider.with_reasoning(reasoning.clone());
+    }
+    if let Some(enable) = config.enable_thinking {
+        // Only DashScope targets consume this at request time; local servers
+        // take thinking through `chat_template_kwargs` and ignore it.
+        provider = provider.with_enable_thinking(enable);
     }
     if !config.models.is_empty() {
         tracing::debug!(

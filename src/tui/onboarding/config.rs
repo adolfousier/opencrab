@@ -618,7 +618,11 @@ impl OnboardingWizard {
             {
                 try_write_array!(write_errors, section, "models", &models_to_write);
             }
-            // Write enable_thinking for Qwen (thinking mode on by default)
+            // Persist the Qwen thinking default so it is visible and editable
+            // in config.toml. It is a preference, not the wire shape: which
+            // knob actually ships is resolved per model by `qwen_reasoning`,
+            // which drops the switch on families that read `reasoning_effort`
+            // instead (#1034).
             if self.ps.provider_id() == "qwen" {
                 try_write!(write_errors, section, "enable_thinking", "true");
             }
