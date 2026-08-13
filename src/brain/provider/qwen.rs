@@ -142,14 +142,24 @@ fn normalize_content_to_array(content: &serde_json::Value) -> Vec<serde_json::Va
 /// silently ignore unknown JSON fields per the chat-completions spec.
 /// Worst case: ~30 bytes of wasted JSON per request.
 pub fn looks_like_qwen_target(base_url: &str, model: &str) -> bool {
+    let model_match = model.to_ascii_lowercase().starts_with("qwen");
+    is_dashscope_host(base_url) || model_match
+}
+
+/// Strict host-only form of [`looks_like_qwen_target`]: is this base_url a
+/// DashScope / Alibaba Model Studio endpoint?
+///
+/// Used for request fields that are DashScope-specific wire contracts
+/// (`preserve_thinking`, the family-gated thinking knobs) rather than the
+/// benign `cache_control` markers. A locally served qwen GGUF matches on
+/// model name but is not a DashScope endpoint, and must not receive them.
+pub fn is_dashscope_host(base_url: &str) -> bool {
     let url = base_url.to_ascii_lowercase();
-    let model_lower = model.to_ascii_lowercase();
-    let url_match = url.contains("dashscope")
+    url.contains("dashscope")
         || url.contains("aliyun")
         || url.contains("aliyuncs")
-        || url.contains("dialagram");
-    let model_match = model_lower.starts_with("qwen");
-    url_match || model_match
+        || url.contains("bailian")
+        || url.contains("dialagram")
 }
 
 /// Apply `cache_control: {type: "ephemeral"}` to the LAST part of the

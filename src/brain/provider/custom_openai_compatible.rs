@@ -2879,6 +2879,14 @@ impl OpenAIProvider {
             Some(s) => (Some(s.to_string()), None),
         };
 
+        // Carry reasoning across turns instead of re-deriving it each turn
+        // (#1033). Sent on every DashScope request, ungated by family.
+        let preserve_thinking = if super::qwen_reasoning::preserve_thinking_for(&self.base_url) {
+            Some(true)
+        } else {
+            None
+        };
+
         // MiniMax M3: send reasoning_split=true so reasoning goes to
         // reasoning_content field instead of being embedded in content
         // as <think> tags. Prevents reasoning leak into visible output (#667).
@@ -2901,6 +2909,7 @@ impl OpenAIProvider {
             reasoning_effort,
             thinking,
             reasoning_split,
+            preserve_thinking,
         }
     }
 
@@ -4732,6 +4741,10 @@ pub(crate) struct OpenAIRequest {
     /// reasoning from leaking into visible output (#667).
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_split: Option<bool>,
+    /// DashScope: carry reasoning across turns instead of re-deriving it every
+    /// turn. Sent on every Model Studio request (#1033).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preserve_thinking: Option<bool>,
 }
 
 impl OpenAIRequest {
