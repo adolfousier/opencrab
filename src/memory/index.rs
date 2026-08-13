@@ -1,6 +1,6 @@
-//! Indexing — insert memory/brain files into the qmd store and generate embeddings.
+//! Indexing — insert memory/brain files into the memory store and generate embeddings.
 
-use qmd::Store;
+use super::db::Store;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -20,7 +20,7 @@ pub const BRAIN_FILES: &[&str] = &[
     "HEARTBEAT.md",
 ];
 
-/// Index a single `.md` file into the qmd store under the `"memory"` collection.
+/// Index a single `.md` file into the memory store under the right collection.
 ///
 /// Skips re-indexing if the file's SHA-256 hash hasn't changed.
 /// Generates an embedding when the engine is already initialized.
