@@ -1,6 +1,6 @@
 //! Search — hybrid FTS5 + vector search via Reciprocal Rank Fusion.
 
-use qmd::{SearchResult, Store, hybrid_search_rrf};
+use super::db::{SearchResult, Store};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -66,9 +66,9 @@ pub async fn search(
 
         // Hybrid path: combine FTS + vector results via Reciprocal Rank Fusion
         if let Some(ref query_emb) = query_embedding {
-            // Chunk-aware (#998). qmd's own `search_vec` joins on `hash || '_0'`
-            // and therefore only ever sees a document's first chunk, which would
-            // make chunked embeddings write-only.
+            // Chunk-aware (#998): a vector search that joins on
+            // `hash || '_0'` only ever sees a document's first chunk, which
+            // would make chunked embeddings write-only.
             let db_path = super::store::memory_dir().join("memory.db");
             let vec_hits = super::vector_search::search_chunks(&db_path, query_emb, n, None)
                 .unwrap_or_default();
@@ -287,4 +287,117 @@ pub(crate) fn extract_snippet(body: &str, query: &str, max_len: usize) -> String
     }
 
     snippet
+}
+
+// ---------------------------------------------------------------------------
+// Reciprocal Rank Fusion
+// ---------------------------------------------------------------------------
+
+/// One fused hybrid-search hit.
+pub struct RrfResult {
+    pub file: String,
+    pub display_path: String,
+    pub title: String,
+    pub body: String,
+    pub score: f64,
+}
+
+/// Combine two ranked lists (FTS, vector) with Reciprocal Rank Fusion.
+///
+/// RRF score = sum(weight / (k + rank + 1)) across the lists a document
+/// appears in; k=60 is the standard balance between top and lower ranks.
+/// Position-aware bonuses protect top retrieval results from disagreement
+/// between the two halves: rank 1-3 get 0.08, rank 4-10 get 0.04, rank
+/// 11-20 get 0.01. These numbers are ranking behavior, not decoration —
+/// they shipped with the first hybrid search and stayed.
+pub fn hybrid_search_rrf(
+    fts_results: Vec<(String, String, String, String)>,
+    vec_results: Vec<(String, String, String, String)>,
+    k: usize,
+) -> Vec<RrfResult> {
+    use std::collections::HashMap;
+
+    let mut scores: HashMap<String, (f64, String, String, String, usize)> = HashMap::new();
+
+    for results in [fts_results, vec_results] {
+        for (rank, (file, display_path, title, body)) in results.iter().enumerate() {
+            let rrf_score = 1.0 / (k + rank + 1) as f64;
+
+            scores
+                .entry(file.clone())
+                .and_modify(|(score, _, _, _, best_rank)| {
+                    *score += rrf_score;
+                    *best_rank = (*best_rank).min(rank);
+                })
+                .or_insert((
+                    rrf_score,
+                    display_path.clone(),
+                    title.clone(),
+                    body.clone(),
+                    rank,
+                ));
+        }
+    }
+
+    let mut results: Vec<RrfResult> = scores
+        .into_iter()
+        .map(|(file, (score, display_path, title, body, best_rank))| {
+            let bonus = match best_rank {
+                0..=2 => 0.08,   // Top 3: high protection
+                3..=9 => 0.04,   // Rank 4-10: medium protection
+                10..=19 => 0.01, // Rank 11-20: low protection
+                _ => 0.0,
+            };
+
+            RrfResult {
+                file,
+                display_path,
+                title,
+                body,
+                score: score + bonus,
+            }
+        })
+        .collect();
+
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    results
+}
+
+#[cfg(test)]
+mod rrf_tests {
+    use super::*;
+
+    fn hit(file: &str) -> (String, String, String, String) {
+        (
+            file.to_string(),
+            file.to_string(),
+            format!("title of {file}"),
+            format!("body of {file}"),
+        )
+    }
+
+    #[test]
+    fn rrf_prefers_docs_in_both_lists() {
+        let fts = vec![hit("a.md"), hit("b.md")];
+        let vec = vec![hit("b.md"), hit("c.md")];
+        let fused = hybrid_search_rrf(fts, vec, 60);
+
+        // b.md appears in both lists, so it outranks single-list hits.
+        assert_eq!(fused[0].file, "b.md");
+        assert!(fused[0].score > fused[1].score);
+    }
+
+    #[test]
+    fn rrf_keeps_bodies_stable() {
+        let fused = hybrid_search_rrf(vec![hit("a.md")], vec![], 60);
+        assert_eq!(fused.len(), 1);
+        assert_eq!(fused[0].body, "body of a.md");
+        // Rank-1 bonus applies.
+        assert!(fused[0].score > 0.08);
+    }
 }

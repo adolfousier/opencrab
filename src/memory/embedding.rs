@@ -6,8 +6,9 @@
 //!
 //! The API path eliminates the model download and ~2.9GB RAM overhead.
 
+use super::db::Store;
+use super::local_engine::{DEFAULT_EMBED_MODEL_URI, EmbeddingEngine, pull_model};
 use once_cell::sync::OnceCell;
-use qmd::{EmbeddingEngine, Store, pull_model};
 use std::sync::Mutex;
 
 static ENGINE: OnceCell<Mutex<EmbeddingEngine>> = OnceCell::new();
@@ -51,7 +52,7 @@ pub fn get_engine() -> Result<&'static Mutex<EmbeddingEngine>, String> {
         // Progress is still logged via tracing, so no UX regression.
         let _fd_guard = crate::utils::fd_suppress::suppress_stdio();
 
-        let pull = pull_model(qmd::llm::DEFAULT_EMBED_MODEL_URI, false)
+        let pull = pull_model(DEFAULT_EMBED_MODEL_URI, false)
             .map_err(|e| format!("Failed to pull embedding model: {e}"))?;
 
         let engine = EmbeddingEngine::new(&pull.path)
@@ -106,22 +107,21 @@ const MAX_EMBED_BYTES: usize = 32_000;
 /// single averaged vector, so a document covering several topics landed as one
 /// meaningless point in embedding space.
 ///
-/// Chunking itself is ours rather than qmd's: `qmd::chunk_document` slices by
-/// byte index with no boundary check and panics on any multi-byte character
-/// near a chunk edge (#1002), which an em dash is enough to trigger.
+/// Chunking itself is ours: byte-index slicing without a boundary check
+/// panics on any multi-byte character near a chunk edge (#1002), which an
+/// em dash is enough to trigger.
 pub(crate) fn chunks_for(body: &str) -> Vec<super::chunker::Chunk> {
     super::chunker::chunk_document(body, CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS)
 }
 
 /// Target chunk size in characters, and the overlap between neighbours.
 ///
-/// Mirrors qmd's own defaults (800 tokens at roughly 4 characters per token,
-/// with a 15% overlap) but declared here because qmd does not re-export the
-/// character-based constants, and because these are the two numbers a
+/// 800 tokens at roughly 4 characters per token, with a 15% overlap: the
+/// numbers every stored vector was produced with, and the two numbers a
 /// retrieval eval would tune. Overlap exists so a passage split across a
 /// boundary is still wholly present in one chunk.
-const CHUNK_SIZE_CHARS: usize = qmd::CHUNK_SIZE_TOKENS * 4;
-const CHUNK_OVERLAP_CHARS: usize = qmd::CHUNK_OVERLAP_TOKENS * 4;
+const CHUNK_SIZE_CHARS: usize = 3200;
+const CHUNK_OVERLAP_CHARS: usize = 480;
 
 /// Generate and store an embedding for content.
 ///
@@ -365,7 +365,7 @@ pub async fn embed_via_api(text: &str) -> Result<Vec<f32>, String> {
         .ok_or_else(|| "Embedding API returned no data".to_string())
 }
 
-/// Embed content via the API and store in the qmd database.
+/// Embed content via the API and store it in the memory database.
 ///
 /// Async counterpart of `embed_content` for the API path.
 pub async fn embed_content_api(store: &'static Mutex<Store>, body: &str) -> Result<(), String> {

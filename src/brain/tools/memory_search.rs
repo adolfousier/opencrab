@@ -1,6 +1,6 @@
 //! Memory Search Tool
 //!
-//! Searches past conversation compaction logs using the `qmd` crate's FTS5 engine.
+//! Searches past conversation compaction logs using the memory store's FTS5 engine.
 //! Always available — no external dependencies required.
 
 use super::error::Result;
@@ -8,7 +8,7 @@ use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// Memory search tool backed by the `qmd` crate's FTS5 engine.
+/// Memory search tool backed by the memory store's FTS5 engine.
 pub struct MemorySearchTool;
 
 #[async_trait]
@@ -89,7 +89,7 @@ impl Tool for MemorySearchTool {
             .and_then(|v| v.as_str())
             .unwrap_or("memory");
 
-        // Get memory qmd store
+        // Get the memory store
         let store = match crate::memory::get_store() {
             Ok(s) => s,
             Err(e) => {

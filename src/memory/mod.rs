@@ -1,14 +1,17 @@
 //! Memory Module
 //!
-//! Provides long-term memory search via the `qmd` crate's FTS5 engine and
-//! vector semantic search (embeddinggemma-300M). Hybrid RRF when the model
-//! is available, FTS-only fallback otherwise.
+//! Provides long-term memory search via our own SQLite FTS5 store
+//! (`db.rs`) and vector semantic search (embeddinggemma-300M, local GGUF
+//! via `local_engine.rs` or an OpenAI-compatible embedding API). Hybrid
+//! RRF when embeddings are available, FTS-only fallback otherwise.
 //!
 //! When `config.memory.vector_enabled` is false, all vector/embedding code
 //! is skipped — no model download, no llama.cpp init, FTS5-only search.
 
+pub(crate) mod db;
 pub(crate) mod embedding;
 pub mod index;
+pub(crate) mod local_engine;
 pub(crate) mod search;
 pub(crate) mod store;
 
@@ -20,8 +23,9 @@ pub(crate) mod chunker;
 pub mod vector_search;
 
 pub mod freshness;
+pub use db::Store;
 pub use index::{BRAIN_FILES, index_file, index_file_fts_only, reindex};
-pub use search::{search, search_brain};
+pub use search::{RrfResult, hybrid_search_rrf, search, search_brain};
 pub use store::get_store;
 
 /// Whether vector embeddings are enabled in the current config.

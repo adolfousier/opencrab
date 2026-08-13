@@ -29,7 +29,7 @@ clap_complete = "4.6"
 ratatui = { version = "0.30", features = ["all-widgets"] }
 crossterm = { version = "0.29", features = ["event-stream"] }
 
-# Database (deadpool-sqlite uses rusqlite 0.38, same as qmd — zero libsqlite3-sys conflicts)
+# Database (deadpool-sqlite uses rusqlite 0.38 — single libsqlite3-sys build)
 deadpool-sqlite = { version = "0.13", features = ["rt_tokio_1"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
 rusqlite_migration = "2.4"
@@ -48,7 +48,7 @@ config = "0.15"
 dirs = "6.0"
 
 # HTTP & LLM Clients
-reqwest = { version = "0.12", features = ["json", "multipart", "native-tls", "stream"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "multipart", "native-tls", "stream", "blocking"], default-features = false }
 
 # A2A Gateway (HTTP Server)
 axum = "0.8"
@@ -162,8 +162,7 @@ tiktoken-rs = "0.9.1"
 flate2 = "1"
 tar = "0.4"
 
-# Memory Search (FTS5 + vector search)
-qmd = "0.3"
+# Memory Search (FTS5 + vector search — store owned in src/memory, #1028)
 llama-cpp-2 = "0.1.137"
 emojis = "0.8.0"
 url = "2.5.8"

@@ -1,5 +1,5 @@
+use crate::memory::db::Store;
 use crate::memory::store::*;
-use qmd::Store;
 
 #[test]
 fn test_memory_dir() {
@@ -64,9 +64,10 @@ fn test_vector_search_returns_results() {
     query_emb[0] = 0.9;
     query_emb[1] = 0.6;
 
-    let results = store.search_vec(&query_emb, 5, None).unwrap();
+    let results =
+        crate::memory::vector_search::search_chunks(&db_path, &query_emb, 5, None).unwrap();
     assert!(!results.is_empty());
-    assert_eq!(results[0].doc.title, "Debug");
+    assert_eq!(results[0].title, "Debug");
 }
 
 #[test]
@@ -88,7 +89,8 @@ fn test_vector_search_empty_when_no_embeddings() {
 
     // Vector search with no embeddings stored — should return empty
     let query_emb = vec![0.1f32; 768];
-    let results = store.search_vec(&query_emb, 5, None).unwrap();
+    let results =
+        crate::memory::vector_search::search_chunks(&db_path, &query_emb, 5, None).unwrap();
     assert!(results.is_empty());
 }
 
@@ -201,13 +203,14 @@ fn test_rrf_merges_fts_and_vector() {
     // Vector search close to emb_a finds doc A first
     let mut q = vec![0.0f32; 768];
     q[0] = 0.9;
-    let vec_results = store.search_vec(&q, 5, Some("memory")).unwrap();
+    let vec_results =
+        crate::memory::vector_search::search_chunks(&db_path, &q, 5, Some("memory")).unwrap();
     assert!(!vec_results.is_empty());
-    assert_eq!(vec_results[0].doc.title, "Auth Fix");
+    assert_eq!(vec_results[0].title, "Auth Fix");
 
     // RRF combines both — doc A should rank highest (appears in both lists)
 
-    use qmd::hybrid_search_rrf;
+    use crate::memory::search::hybrid_search_rrf;
     let fts_tuples: Vec<_> = fts
         .iter()
         .map(|r| {
@@ -222,15 +225,15 @@ fn test_rrf_merges_fts_and_vector() {
     let vec_tuples: Vec<_> = vec_results
         .iter()
         .map(|r| {
-            let body = if r.doc.title == "Auth Fix" {
+            let body = if r.title == "Auth Fix" {
                 body_a
             } else {
                 body_b
             };
             (
-                r.doc.path.clone(),
-                r.doc.path.clone(),
-                r.doc.title.clone(),
+                r.path.clone(),
+                r.path.clone(),
+                r.title.clone(),
                 body.to_string(),
             )
         })

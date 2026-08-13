@@ -16,9 +16,9 @@
 //!   the single place that decides them, so recomputing them from the body
 //!   yields the same pieces the embedder used, and both halves agree without
 //!   storing anything twice.
-//! - qmd owns `documents_fts` through triggers on `documents`. Writing chunk
-//!   rows into it would couple us to a third-party schema, the same coupling
-//!   #998 deliberately avoided.
+//! - `documents_fts` is kept in sync by triggers on `documents`, one FTS row
+//!   per document. Writing chunk rows into it would double-store content and
+//!   fight the trigger-managed rowids.
 //!
 //! Scoring reuses `section_rank`, so chunk-level lexical matching inherits the
 //! stemming and diacritic folding rather than growing a second implementation

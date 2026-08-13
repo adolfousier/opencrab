@@ -145,19 +145,3 @@ fn a_paragraph_break_is_preferred() {
         &chunks[0].text[chunks[0].text.len().saturating_sub(40)..]
     );
 }
-
-/// Canary: the dependency defect that made this module necessary still exists.
-///
-/// If this stops panicking, qmd has fixed `chunk_document` and
-/// `memory::chunker` could be reconsidered in favour of the upstream one. A
-/// failure here is therefore good news, not a regression, and this comment is
-/// the note explaining that to whoever hits it.
-///
-/// Verified against the real content that crashed a running binary: qmd panics
-/// at `llm.rs:627` on the same input our chunker handles above.
-#[test]
-#[should_panic(expected = "char boundary")]
-fn upstream_chunker_still_panics_on_multibyte_input() {
-    let content = "abcdefghij—".repeat(400);
-    let _ = qmd::chunk_document(&content, 100, 12);
-}
