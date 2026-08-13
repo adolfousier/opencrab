@@ -442,6 +442,7 @@ pub mod tui_app_state_test;
 pub mod tui_components_logo_test;
 pub mod tui_events_test;
 pub mod tui_highlight_test;
+pub mod tui_hyperlink_test;
 pub mod tui_markdown_test;
 pub mod tui_plan_tests_test;
 pub mod tui_process_commands_test;
