@@ -964,6 +964,14 @@ async fn cmd_chat_inner(
             });
         });
 
+    // Fallback destination for a session no channel claims. A sub-agent is
+    // reached from a tool with no service context, so unlike a detached
+    // command it carries no callback of its own and resolves this instead
+    // (#1036).
+    crate::brain::agent::service::background_tasks::register_local_route(
+        message_enqueue_callback.clone(),
+    );
+
     // Anything a previous process was doing died with it: detached commands
     // and sub-agents alike. Account for both and report each into the session
     // that owns it, instead of leaving that session waiting on a result that

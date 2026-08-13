@@ -7,6 +7,37 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// Holds a waiter registration for as long as the wait lasts.
+///
+/// A plain increment/decrement pair would leak the count on any early return,
+/// and this function has several: the fast path, the timeout, and the error
+/// arms. A leaked count permanently suppresses the agent's push, so the guard
+/// makes release unconditional.
+struct WaitGuard<'a> {
+    manager: &'a SubAgentManager,
+    agent_id: String,
+    /// False when the agent vanished before the wait began; nothing to release.
+    registered: bool,
+}
+
+impl<'a> WaitGuard<'a> {
+    fn enter(manager: &'a SubAgentManager, agent_id: &str) -> Self {
+        Self {
+            manager,
+            agent_id: agent_id.to_string(),
+            registered: manager.enter_wait(agent_id),
+        }
+    }
+}
+
+impl Drop for WaitGuard<'_> {
+    fn drop(&mut self) {
+        if self.registered {
+            self.manager.leave_wait(&self.agent_id);
+        }
+    }
+}
+
 /// Tool that waits for a spawned child agent to finish.
 pub struct WaitAgentTool {
     manager: Arc<SubAgentManager>,
@@ -84,6 +115,14 @@ impl Tool for WaitAgentTool {
             None => return Ok(ToolResult::error(self.unknown_agent_message(raw_agent_id))),
         };
         let agent_id = agent_id.as_str();
+
+        // Register as a waiter BEFORE the first state check. An agent that
+        // finishes between here and the check must see this waiter and skip
+        // its push, or the output arrives twice: once as this tool's result
+        // and once as a message injected into the session (#1036). The guard
+        // releases the count on every exit path, including the early returns
+        // below and any error.
+        let _wait_guard = WaitGuard::enter(&self.manager, agent_id);
 
         // Fast path — terminal or round-boundary states already visible
         // without awaiting the task handle (the task never terminates at a

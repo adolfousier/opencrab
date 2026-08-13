@@ -26,6 +26,7 @@ mod manager {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         }
     }
 
@@ -329,6 +330,7 @@ mod manager {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         };
         mgr.insert(agent);
 
@@ -388,6 +390,7 @@ mod send_input_tool {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         };
         (agent, rx)
     }
@@ -484,6 +487,7 @@ mod send_input_tool {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         };
         mgr.insert(agent);
 
@@ -546,6 +550,7 @@ mod close_agent_tool {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         }
     }
 
@@ -677,6 +682,7 @@ mod wait_agent_tool {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         }
     }
 
@@ -846,6 +852,7 @@ mod lifecycle {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         };
         (agent, rx)
     }
@@ -1300,6 +1307,7 @@ mod team_delete_tool {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         }
     }
 
@@ -1431,6 +1439,7 @@ mod team_broadcast_tool {
             input_tx: Some(tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         };
         (agent, rx)
     }

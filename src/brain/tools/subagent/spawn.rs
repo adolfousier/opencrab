@@ -13,6 +13,74 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+/// How much of a sub-agent's output the pushed message carries. Enough to act
+/// on, short of pasting a long transcript into the parent's context.
+const PUSHED_OUTPUT_LIMIT: usize = 4000;
+
+/// Build the message a finished sub-agent injects into the session that
+/// spawned it. Pure, so the framing is testable without spawning anything.
+///
+/// `outcome` is the output on success or the error on failure.
+pub(crate) fn completion_message(
+    label: &str,
+    agent_id: &str,
+    outcome: std::result::Result<&str, &str>,
+) -> crate::brain::agent::QueuedUserMessage {
+    let (context_text, display_text) = match outcome {
+        Ok(output) => (
+            format!(
+                "[System: the sub-agent you spawned has finished.\n\
+                 Agent: {label} (id {agent_id})\n\
+                 Status: completed\n\
+                 Output:\n{}\n\n\
+                 Report the result to the user and continue anything that was waiting on it. \
+                 Do not re-spawn the agent — this IS its result.]",
+                truncate_output(output)
+            ),
+            format!("🤖 sub-agent finished: {label}"),
+        ),
+        Err(error) => (
+            format!(
+                "[System: the sub-agent you spawned has failed.\n\
+                 Agent: {label} (id {agent_id})\n\
+                 Status: failed\n\
+                 Error: {error}\n\n\
+                 Report the failure to the user and decide what to do about it. Do not assume the \
+                 work was completed.]"
+            ),
+            format!("🤖 sub-agent failed: {label}"),
+        ),
+    };
+    crate::brain::agent::QueuedUserMessage {
+        context_text,
+        display_text,
+    }
+}
+
+/// Keep the tail of a long output: the conclusion matters more than the
+/// opening, same as the detached-command completion path.
+fn truncate_output(output: &str) -> String {
+    if output.chars().count() <= PUSHED_OUTPUT_LIMIT {
+        return output.to_string();
+    }
+    let skip = output.chars().count() - PUSHED_OUTPUT_LIMIT;
+    let tail: String = output.chars().skip(skip).collect();
+    format!("…(truncated)\n{tail}")
+}
+
+/// Deliver a finished sub-agent's outcome to the session that spawned it.
+fn push_result(
+    parent_session_id: uuid::Uuid,
+    label: &str,
+    agent_id: &str,
+    outcome: std::result::Result<&str, &str>,
+) {
+    let msg = completion_message(label, agent_id, outcome);
+    if crate::brain::agent::service::background_tasks::deliver_to_session(parent_session_id, msg) {
+        tracing::info!("Sub-agent {agent_id} reported its result to session {parent_session_id}");
+    }
+}
+
 /// Tool that spawns a child agent to handle a sub-task.
 pub struct SpawnAgentTool {
     manager: Arc<SubAgentManager>,
@@ -281,6 +349,10 @@ impl Tool for SpawnAgentTool {
         let prompt_clone = full_prompt;
         let label_clone = label.clone();
         let mut input_rx = input_rx;
+        // The session that asked for this agent, so a result nobody is waiting
+        // on still reaches the caller instead of sitting in the manager map
+        // (#1036). Not the child's session, which nothing is listening to.
+        let parent_session_id = context.session_id;
 
         let handle = tokio::spawn(async move {
             tracing::info!("Sub-agent {} starting: {}", agent_id_clone, prompt_clone);
@@ -382,7 +454,14 @@ impl Tool for SpawnAgentTool {
                                 agent_id_clone
                             );
                         }
-                        manager.mark_failed(&agent_id_clone, e.to_string());
+                        if manager.mark_failed(&agent_id_clone, e.to_string()) {
+                            push_result(
+                                parent_session_id,
+                                &label_clone,
+                                &agent_id_clone,
+                                Err(&e.to_string()),
+                            );
+                        }
                         return;
                     }
                 }
@@ -396,7 +475,14 @@ impl Tool for SpawnAgentTool {
                     agent_id_clone
                 );
             }
-            manager.mark_completed(&agent_id_clone, final_output);
+            if manager.mark_completed(&agent_id_clone, final_output.clone()) {
+                push_result(
+                    parent_session_id,
+                    &label_clone,
+                    &agent_id_clone,
+                    Ok(&final_output),
+                );
+            }
         });
 
         // Register in manager
@@ -410,6 +496,7 @@ impl Tool for SpawnAgentTool {
             input_tx: Some(input_tx),
             output: None,
             spawned_at: chrono::Utc::now(),
+            waiters: 0,
         });
 
         Ok(ToolResult::success(format!(

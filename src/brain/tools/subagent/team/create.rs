@@ -302,6 +302,7 @@ impl Tool for TeamCreateTool {
                 input_tx: Some(input_tx),
                 output: None,
                 spawned_at: chrono::Utc::now(),
+                waiters: 0,
             });
 
             spawned_ids.push(agent_id.clone());

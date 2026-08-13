@@ -25,6 +25,7 @@ fn mk_agent(id: &str, label: &str) -> SubAgent {
         input_tx: Some(tx),
         output: None,
         spawned_at: chrono::Utc::now(),
+        waiters: 0,
     }
 }
 

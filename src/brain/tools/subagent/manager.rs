@@ -55,6 +55,16 @@ pub struct SubAgent {
 
     /// Timestamp when spawned
     pub spawned_at: chrono::DateTime<chrono::Utc>,
+
+    /// How many `wait_agent` calls are currently blocked on this agent.
+    ///
+    /// Decides whether a finished agent pushes its result into the parent
+    /// session. A waiter already receives the output as its own tool result,
+    /// so pushing as well would deliver it twice; with no waiter there is
+    /// nothing to receive it and the output would otherwise be dropped
+    /// (#1036). Read and written only under the manager's write lock, so the
+    /// terminal transition and the decision cannot interleave.
+    pub waiters: usize,
 }
 
 /// Manages all sub-agents for a parent agent instance.
@@ -164,22 +174,64 @@ impl SubAgentManager {
         }
     }
 
-    /// Update agent state and output after completion.
-    pub fn mark_completed(&self, id: &str, output: String) {
+    /// Register a `wait_agent` call as blocked on `id`.
+    ///
+    /// Paired with [`Self::leave_wait`]. Taken before the first state check so
+    /// an agent finishing during the wait still sees the waiter and skips the
+    /// push. Returns false when no such agent exists, so the caller does not
+    /// leave a decrement outstanding.
+    pub fn enter_wait(&self, id: &str) -> bool {
         let mut agents = self.agents.write().expect("subagent manager lock poisoned");
-        if let Some(agent) = agents.get_mut(id) {
-            agent.state = SubAgentState::Completed;
-            agent.output = Some(output);
-            agent.input_tx = None;
+        match agents.get_mut(id) {
+            Some(agent) => {
+                agent.waiters += 1;
+                true
+            }
+            None => false,
         }
     }
 
-    /// Update agent state after failure.
-    pub fn mark_failed(&self, id: &str, error: String) {
+    /// Release a wait registered by [`Self::enter_wait`].
+    pub fn leave_wait(&self, id: &str) {
         let mut agents = self.agents.write().expect("subagent manager lock poisoned");
         if let Some(agent) = agents.get_mut(id) {
-            agent.state = SubAgentState::Failed(error);
-            agent.input_tx = None;
+            agent.waiters = agent.waiters.saturating_sub(1);
+        }
+    }
+
+    /// Update agent state and output after completion.
+    ///
+    /// Returns whether the result should be pushed into the parent session:
+    /// true when nobody is waiting on this agent, since then no tool result
+    /// will ever carry the output and it would simply be dropped. The check
+    /// happens under the same write lock as the transition, so a `wait_agent`
+    /// arriving concurrently either registers first (and we do not push) or
+    /// arrives after and reads the finished state directly.
+    pub fn mark_completed(&self, id: &str, output: String) -> bool {
+        let mut agents = self.agents.write().expect("subagent manager lock poisoned");
+        match agents.get_mut(id) {
+            Some(agent) => {
+                agent.state = SubAgentState::Completed;
+                agent.output = Some(output);
+                agent.input_tx = None;
+                agent.waiters == 0
+            }
+            None => false,
+        }
+    }
+
+    /// Update agent state after failure. Returns whether to push, on the same
+    /// terms as [`Self::mark_completed`]: a failure nobody is waiting on is
+    /// still a result the parent needs.
+    pub fn mark_failed(&self, id: &str, error: String) -> bool {
+        let mut agents = self.agents.write().expect("subagent manager lock poisoned");
+        match agents.get_mut(id) {
+            Some(agent) => {
+                agent.state = SubAgentState::Failed(error);
+                agent.input_tx = None;
+                agent.waiters == 0
+            }
+            None => false,
         }
     }
 

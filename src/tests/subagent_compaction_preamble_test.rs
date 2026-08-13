@@ -24,6 +24,7 @@ fn agent(id: &str, label: &str, state: SubAgentState) -> SubAgent {
         input_tx: None,
         output: None,
         spawned_at: chrono::Utc::now(),
+        waiters: 0,
     }
 }
 

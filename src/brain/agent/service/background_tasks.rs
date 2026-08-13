@@ -65,6 +65,63 @@ pub fn resolve_route(
     session_route(session_id).unwrap_or_else(|| executing.clone())
 }
 
+/// The surface this process booted on, used when no channel claims a session.
+///
+/// `spawn_command` carries the executing service's callback on the manager, so
+/// it always has a fallback. A sub-agent has no such handle — it is reached
+/// from a tool with no service context — so the local surface is registered
+/// once at startup and resolved on demand instead (#1036).
+static LOCAL_ROUTE: Mutex<Option<MessageEnqueueCallback>> = Mutex::new(None);
+
+/// Record the booting surface as the fallback destination. Called once per
+/// process start; re-registering replaces it.
+pub fn register_local_route(enqueue: MessageEnqueueCallback) {
+    match LOCAL_ROUTE.lock() {
+        Ok(mut guard) => *guard = Some(enqueue),
+        Err(e) => {
+            // Without it, a sub-agent finishing on a session no channel owns
+            // has nowhere to report and its output is dropped.
+            tracing::error!(
+                target: "background_task",
+                "Could not register the local delivery route: {e}"
+            );
+        }
+    }
+}
+
+/// Deliver `msg` to whoever owns `session_id`, falling back to the booting
+/// surface. Returns whether it went anywhere at all.
+pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> bool {
+    if let Some(route) = session_route(session_id) {
+        route(session_id, msg);
+        return true;
+    }
+    let local = match LOCAL_ROUTE.lock() {
+        Ok(guard) => guard.clone(),
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not read the local delivery route for session {session_id}: {e}"
+            );
+            None
+        }
+    };
+    match local {
+        Some(route) => {
+            route(session_id, msg);
+            true
+        }
+        None => {
+            tracing::error!(
+                target: "background_task",
+                "Nothing can receive a message for session {session_id}; it is dropped: {}",
+                msg.display_text
+            );
+            false
+        }
+    }
+}
+
 /// The surface that owns `session_id`'s completions, if one claimed it.
 pub(crate) fn session_route(session_id: Uuid) -> Option<MessageEnqueueCallback> {
     match SESSION_ROUTES.lock() {
