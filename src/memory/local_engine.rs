@@ -75,7 +75,11 @@ impl EmbeddingEngine {
     }
 
     /// Embed a document chunk, with its title riding along.
-    pub fn embed_document(&mut self, text: &str, title: Option<&str>) -> Result<EmbeddingResult, String> {
+    pub fn embed_document(
+        &mut self,
+        text: &str,
+        title: Option<&str>,
+    ) -> Result<EmbeddingResult, String> {
         let formatted = format_doc_for_embedding(text, title);
         self.embed_raw(&formatted)
     }
@@ -195,7 +199,10 @@ fn parse_hf_uri(uri: &str) -> Option<HfRef> {
 
 /// Remote ETag for cache validation.
 fn get_remote_etag(hf: &HfRef) -> Option<String> {
-    let url = format!("https://huggingface.co/{}/resolve/main/{}", hf.repo, hf.file);
+    let url = format!(
+        "https://huggingface.co/{}/resolve/main/{}",
+        hf.repo, hf.file
+    );
 
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -217,7 +224,10 @@ fn get_remote_etag(hf: &HfRef) -> Option<String> {
 fn download_from_hf(hf: &HfRef, local_path: &Path, etag_path: &Path) -> Result<(), String> {
     use std::io::{Read, Write};
 
-    let url = format!("https://huggingface.co/{}/resolve/main/{}", hf.repo, hf.file);
+    let url = format!(
+        "https://huggingface.co/{}/resolve/main/{}",
+        hf.repo, hf.file
+    );
 
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3600))
@@ -258,11 +268,7 @@ fn download_from_hf(hf: &HfRef, local_path: &Path, etag_path: &Path) -> Result<(
         if mb / 25 > last_log_mb / 25 {
             last_log_mb = mb;
             if total_size > 0 {
-                tracing::info!(
-                    "Model download: {} / {} MB",
-                    mb,
-                    total_size / 1_048_576
-                );
+                tracing::info!("Model download: {} / {} MB", mb, total_size / 1_048_576);
             }
         }
     }
@@ -308,7 +314,7 @@ pub fn pull_model(model_uri: &str, refresh: bool) -> Result<PullResult, String> 
             None => {
                 return Err(format!(
                     "Model not found and no HuggingFace URI provided: {model_uri}"
-                ))
+                ));
             }
         }
     }

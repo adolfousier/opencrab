@@ -207,7 +207,12 @@ impl Store {
     }
 
     /// Insert content into content-addressable storage.
-    pub fn insert_content(&self, hash: &str, content: &str, created_at: &str) -> Result<(), String> {
+    pub fn insert_content(
+        &self,
+        hash: &str,
+        content: &str,
+        created_at: &str,
+    ) -> Result<(), String> {
         self.conn
             .execute(
                 "INSERT OR IGNORE INTO content (hash, doc, created_at) VALUES (?1, ?2, ?3)",
@@ -545,11 +550,22 @@ mod tests {
         store
             .insert_document("memory", "b.md", "", &hash, "now", "now")
             .unwrap();
-        assert_eq!(store.search_fts("\"uniqueword\"", 10, None).unwrap().len(), 1);
+        assert_eq!(
+            store.search_fts("\"uniqueword\"", 10, None).unwrap().len(),
+            1
+        );
 
         store.deactivate_document("memory", "b.md").unwrap();
-        assert_eq!(store.search_fts("\"uniqueword\"", 10, None).unwrap().len(), 0);
-        assert!(store.find_active_document("memory", "b.md").unwrap().is_none());
+        assert_eq!(
+            store.search_fts("\"uniqueword\"", 10, None).unwrap().len(),
+            0
+        );
+        assert!(
+            store
+                .find_active_document("memory", "b.md")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
