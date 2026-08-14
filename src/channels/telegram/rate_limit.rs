@@ -41,3 +41,28 @@ pub(crate) fn parse_retry_after(error: &str) -> Option<Duration> {
 /// Resuming on the exact second risks landing inside the same window and
 /// renewing the penalty, which is the loop this exists to break.
 pub(crate) const RETRY_MARGIN: Duration = Duration::from_secs(2);
+
+/// Longest 429 wait any send path may sleep inline (#1064).
+///
+/// Telegram can hand out multi-hour windows (8288s observed on a flooded
+/// chat). Sleeping the full window inside the send call parked the whole
+/// agent turn for hours: the reply was already computed, the process just
+/// sat in `tokio::time::sleep` waiting to deliver it. Typical flood windows
+/// (placeholder-edit churn, command bursts) are seconds and stay under the
+/// cap, so their behavior is unchanged. Oversized windows are slept up to
+/// the cap, the retry fails again, and the existing never-silent error
+/// paths (#1019) take over. Same policy as `post_rich`'s
+/// `RICH_MAX_RETRY_WAIT_SECS`.
+pub(crate) const MAX_INLINE_RATE_LIMIT_WAIT: Duration = Duration::from_secs(30);
+
+/// The inline wait for a 429: the requested window, clamped to
+/// [`MAX_INLINE_RATE_LIMIT_WAIT`]. `capped` tells callers whether the log
+/// line should say the wait was shortened (forensics: a capped wait means
+/// the chat was flood-banned, not merely throttled).
+pub(crate) fn clamp_inline_wait(requested: Duration) -> (Duration, bool) {
+    if requested > MAX_INLINE_RATE_LIMIT_WAIT {
+        (MAX_INLINE_RATE_LIMIT_WAIT, true)
+    } else {
+        (requested, false)
+    }
+}

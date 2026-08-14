@@ -251,11 +251,23 @@ where
         match send().await {
             Err(teloxide::RequestError::RetryAfter(secs)) if attempt < MAX_RETRIES => {
                 attempt += 1;
-                tracing::warn!(
-                    "Telegram: {what} rate-limited, waiting {}s before retry ({attempt}/{MAX_RETRIES})",
-                    secs.seconds()
-                );
-                tokio::time::sleep(secs.duration()).await;
+                let (wait, capped) = super::rate_limit::clamp_inline_wait(secs.duration());
+                if capped {
+                    tracing::warn!(
+                        "Telegram: {what} rate-limited with {}s window (>{}s cap) — \
+                         waiting {}s before retry ({attempt}/{MAX_RETRIES}); window capped inline, \
+                         chat is likely flood-banned",
+                        secs.seconds(),
+                        super::rate_limit::MAX_INLINE_RATE_LIMIT_WAIT.as_secs(),
+                        wait.as_secs()
+                    );
+                } else {
+                    tracing::warn!(
+                        "Telegram: {what} rate-limited, waiting {}s before retry ({attempt}/{MAX_RETRIES})",
+                        wait.as_secs()
+                    );
+                }
+                tokio::time::sleep(wait).await;
             }
             Err(teloxide::RequestError::RetryAfter(secs)) => {
                 tracing::error!(
@@ -281,11 +293,22 @@ pub(crate) async fn send_html_or_plain(
     {
         Ok(m) => Ok(m.id),
         Err(teloxide::RequestError::RetryAfter(secs)) => {
-            tracing::warn!(
-                "Telegram: HTML send rate-limited, waiting {}s before retry",
-                secs.seconds()
-            );
-            tokio::time::sleep(secs.duration()).await;
+            let (wait, capped) = super::rate_limit::clamp_inline_wait(secs.duration());
+            if capped {
+                tracing::warn!(
+                    "Telegram: HTML send rate-limited with {}s window (>{}s cap) — \
+                     waiting {}s before retry; window capped inline (#1064)",
+                    secs.seconds(),
+                    super::rate_limit::MAX_INLINE_RATE_LIMIT_WAIT.as_secs(),
+                    wait.as_secs()
+                );
+            } else {
+                tracing::warn!(
+                    "Telegram: HTML send rate-limited, waiting {}s before retry",
+                    wait.as_secs()
+                );
+            }
+            tokio::time::sleep(wait).await;
             // Retry as HTML after waiting
             match message_in_thread(bot, chat_id, thread_id, html)
                 .parse_mode(ParseMode::Html)

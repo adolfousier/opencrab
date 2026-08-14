@@ -2,9 +2,15 @@
 //! out Telegram's RetryAfter (429) and retry instead of dropping. A per-chat
 //! rate limit (typically a streaming turn editing its placeholder in the
 //! same chat) may DELAY a programmatic reply, never lose it.
+//!
+//! #1064: the inline wait is capped at
+//! [`crate::channels::telegram::rate_limit::MAX_INLINE_RATE_LIMIT_WAIT`] so a
+//! multi-hour flood-ban window (8288s observed) cannot park the agent turn
+//! for hours. Small windows keep #297 semantics unchanged.
 
 use crate::channels::telegram::handler::send_retrying_rate_limit;
 use std::cell::Cell;
+use std::time::Duration;
 use teloxide::types::Seconds;
 
 fn rate_limited<T>() -> Result<T, teloxide::RequestError> {
@@ -63,4 +69,86 @@ async fn first_try_success_sends_once() {
     .await;
     assert_eq!(out.unwrap(), "ok");
     assert_eq!(calls.get(), 1);
+}
+
+// --- #1064: oversized windows are capped inline, never slept in full ---
+
+/// The observed field case: every attempt 429s with an 8288s window. The
+/// turn must exhaust its retries in ~3x30s of capped waits, not 3x8288s of
+/// inline sleep. Paused clock: sleeps resolve instantly, elapsed measures
+/// what WOULD have been slept.
+#[tokio::test(start_paused = true)]
+async fn oversized_windows_are_capped_not_slept_in_full() {
+    let calls = Cell::new(0u32);
+    let start = tokio::time::Instant::now();
+    let out: Result<(), _> = send_retrying_rate_limit("test send", || {
+        calls.set(calls.get() + 1);
+        async {
+            Err(teloxide::RequestError::RetryAfter(Seconds::from_seconds(
+                8288,
+            )))
+        }
+    })
+    .await;
+    let elapsed = start.elapsed();
+    assert!(
+        matches!(out, Err(teloxide::RequestError::RetryAfter(_))),
+        "exhausted retries still propagate the error"
+    );
+    assert_eq!(calls.get(), 4, "1 initial attempt + 3 retries");
+    assert_eq!(
+        elapsed,
+        Duration::from_secs(90),
+        "3 capped waits of 30s, not the 3x8288s inline hostage of #1064"
+    );
+}
+
+/// Windows under the cap keep #297 semantics: waited in full, then retried.
+#[tokio::test(start_paused = true)]
+async fn small_windows_are_waited_in_full() {
+    let calls = Cell::new(0u32);
+    let start = tokio::time::Instant::now();
+    let out = send_retrying_rate_limit("test send", || {
+        let n = calls.get() + 1;
+        calls.set(n);
+        async move {
+            if n == 1 {
+                Err(teloxide::RequestError::RetryAfter(Seconds::from_seconds(5)))
+            } else {
+                Ok(7u32)
+            }
+        }
+    })
+    .await;
+    assert_eq!(out.unwrap(), 7);
+    assert_eq!(start.elapsed(), Duration::from_secs(5));
+}
+
+#[test]
+fn clamp_inline_wait_respects_the_cap_boundary() {
+    use crate::channels::telegram::rate_limit::clamp_inline_wait;
+    // Under the cap: unchanged, not flagged.
+    assert_eq!(
+        clamp_inline_wait(Duration::from_secs(0)),
+        (Duration::from_secs(0), false)
+    );
+    assert_eq!(
+        clamp_inline_wait(Duration::from_secs(5)),
+        (Duration::from_secs(5), false)
+    );
+    assert_eq!(
+        clamp_inline_wait(Duration::from_secs(30)),
+        (Duration::from_secs(30), false),
+        "exactly the cap is not a capped wait"
+    );
+    // Over the cap: clamped and flagged for the forensics log line.
+    assert_eq!(
+        clamp_inline_wait(Duration::from_secs(31)),
+        (Duration::from_secs(30), true)
+    );
+    assert_eq!(
+        clamp_inline_wait(Duration::from_secs(8288)),
+        (Duration::from_secs(30), true),
+        "the observed flood-ban window clamps to the cap"
+    );
 }

@@ -1036,12 +1036,23 @@ pub(crate) async fn refresh_flow_html(
         // content. Deleting here used to wipe a fully rendered report off
         // the screen over a 9-second throttle (#356).
         Err(teloxide::RequestError::RetryAfter(secs)) => {
-            tracing::warn!(
-                "Telegram: refresh_flow rate-limited for mid={:?} — waiting {}s, then retrying",
-                mid,
-                secs.seconds()
-            );
-            tokio::time::sleep(secs.duration()).await;
+            let (wait, capped) = super::rate_limit::clamp_inline_wait(secs.duration());
+            if capped {
+                tracing::warn!(
+                    "Telegram: refresh_flow rate-limited for mid={:?} with {}s window (>{}s cap) — waiting {}s, then retry; capped inline (#1064)",
+                    mid,
+                    secs.seconds(),
+                    super::rate_limit::MAX_INLINE_RATE_LIMIT_WAIT.as_secs(),
+                    wait.as_secs()
+                );
+            } else {
+                tracing::warn!(
+                    "Telegram: refresh_flow rate-limited for mid={:?} — waiting {}s, then retrying",
+                    mid,
+                    wait.as_secs()
+                );
+            }
+            tokio::time::sleep(wait).await;
             let retry_html = {
                 let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 if s.open_group_msg_id != Some(mid) {
