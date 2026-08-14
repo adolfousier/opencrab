@@ -8,11 +8,13 @@
 //! point `should_render_mermaid` is not unit-tested because it reads the live
 //! `Config`, whose values in tests depend on the embedded example config.
 
-use crate::channels::telegram::rich::ast::{Block, Inline};
+use crate::channels::telegram::rich::api::build_body_markdown_media;
+use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
 use crate::channels::telegram::rich::mermaid::{
-    base64url, error_note, failure_html, has_mermaid_fence, image_html, is_image_response,
-    resolve_blocks,
+    MediaEntry, base64url, error_note, failure_html, find_mermaid_fences, has_mermaid_fence,
+    image_html, is_image_response, markdown_failure_block, replacement_for, resolve_blocks,
+    resolve_markdown_media,
 };
 
 // ---------------------------------------------------------------------------
@@ -210,4 +212,127 @@ async fn resolve_blocks_empty_input() {
 async fn markdown_to_html_mermaid_renders_plain_markdown() {
     let html = markdown_to_html_mermaid("# Hi\n\nSome **bold** text.").await;
     assert_eq!(html, "<b>Hi</b>\n\nSome <b>bold</b> text.");
+}
+
+// ---------------------------------------------------------------------------
+// find_mermaid_fences
+// ---------------------------------------------------------------------------
+
+#[test]
+fn find_mermaid_fences_locates_single_fence_with_range_and_source() {
+    let text = "before\n```mermaid\ngraph TD;\nA-->B\n```\nafter";
+    let fences = find_mermaid_fences(text);
+    assert_eq!(fences.len(), 1);
+    let f = &fences[0];
+    // start points at the opening fence line, end just past the closing one.
+    assert_eq!(&text[f.start..f.end], "```mermaid\ngraph TD;\nA-->B\n```\n");
+    assert_eq!(f.source, "graph TD;\nA-->B\n");
+}
+
+#[test]
+fn find_mermaid_fences_locates_multiple_and_orders_them() {
+    let text = "```mermaid\nA\n```\nmid\n```mermaid\nB\n```";
+    let fences = find_mermaid_fences(text);
+    assert_eq!(fences.len(), 2);
+    assert_eq!(fences[0].source, "A\n");
+    assert_eq!(fences[1].source, "B\n");
+    assert!(fences[0].start < fences[1].start);
+}
+
+#[test]
+fn find_mermaid_fences_ignores_non_mermaid_and_unclosed() {
+    assert!(find_mermaid_fences("```rust\nfn main() {}\n```").is_empty());
+    assert!(find_mermaid_fences("no fences").is_empty());
+    // Unclosed fence: no closing ``` so nothing is captured.
+    assert!(find_mermaid_fences("```mermaid\ngraph TD;\n").is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// replacement_for (pure, no network)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn replacement_for_image_emits_media_reference_and_entry() {
+    let outcome = MermaidResult::Image("https://mermaid.ink/img/xyz".into());
+    let (md, entry) = replacement_for(&outcome, 0, "graph TD;");
+    assert_eq!(md, "![diagram](tg://photo?id=diag0)");
+    let e = entry.expect("image outcome must carry a media entry");
+    assert_eq!(e.id, "diag0");
+    assert_eq!(e.url, "https://mermaid.ink/img/xyz");
+}
+
+#[test]
+fn replacement_for_image_uses_fence_index_in_id() {
+    let outcome = MermaidResult::Image("u".into());
+    let (md, entry) = replacement_for(&outcome, 3, "src");
+    assert_eq!(md, "![diagram](tg://photo?id=diag3)");
+    assert_eq!(entry.unwrap().id, "diag3");
+}
+
+#[test]
+fn replacement_for_failed_emits_failure_block_and_no_entry() {
+    let outcome = MermaidResult::Failed("Parse error".into());
+    let (md, entry) = replacement_for(&outcome, 0, "graph TD;");
+    assert!(
+        entry.is_none(),
+        "failed outcome must not carry a media entry"
+    );
+    assert!(md.contains("Mermaid diagram could not be rendered"));
+    assert!(md.contains("Parse error"));
+    assert!(md.contains("graph TD;"));
+}
+
+// ---------------------------------------------------------------------------
+// markdown_failure_block
+// ---------------------------------------------------------------------------
+
+#[test]
+fn markdown_failure_block_contains_warning_error_and_source() {
+    let md = markdown_failure_block("Parse error on line 2", "graph TD; A-->B");
+    assert!(md.contains("> ⚠️ **Mermaid diagram could not be rendered**"));
+    assert!(md.contains("Parse error on line 2"));
+    assert!(md.contains("graph TD; A-->B"));
+    assert!(md.contains("Source:"));
+}
+
+// ---------------------------------------------------------------------------
+// build_body_markdown_media (JSON shape, matches validated prototype 1073)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_body_markdown_media_matches_prototype_shape() {
+    let media = vec![MediaEntry {
+        id: "diag0".into(),
+        url: "https://mermaid.ink/img/abc".into(),
+    }];
+    let body = build_body_markdown_media(-100, None, "text", &media);
+    assert_eq!(body["chat_id"], -100);
+    assert_eq!(body["rich_message"]["markdown"], "text");
+    let arr = body["rich_message"]["media"]
+        .as_array()
+        .expect("media array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["id"], "diag0");
+    assert_eq!(arr[0]["media"]["type"], "photo");
+    assert_eq!(arr[0]["media"]["media"], "https://mermaid.ink/img/abc");
+    assert!(body.get("message_thread_id").is_none());
+}
+
+#[test]
+fn build_body_markdown_media_includes_thread_id_when_present() {
+    use teloxide::types::{MessageId, ThreadId};
+    let body = build_body_markdown_media(-100, Some(ThreadId(MessageId(249))), "m", &[]);
+    assert_eq!(body["message_thread_id"], 249);
+}
+
+// ---------------------------------------------------------------------------
+// resolve_markdown_media (no mermaid fence — no network)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn resolve_markdown_media_passes_through_without_fences() {
+    let text = "# Title\n\nSome **bold** text and a table:\n\n| a | b |\n|---|---|\n| 1 | 2 |";
+    let (resolved, media) = resolve_markdown_media(text).await;
+    assert_eq!(resolved, text, "no-fence text must be byte-identical");
+    assert!(media.is_empty());
 }

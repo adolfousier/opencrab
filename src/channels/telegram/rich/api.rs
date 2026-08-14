@@ -8,21 +8,6 @@
 
 use teloxide::types::ThreadId;
 
-/// Send `markdown` as a native rich message via `sendRichMessage`.
-///
-/// Returns `Err` on any transport failure or non-`ok` API response so the
-/// caller can fall back to the HTML `parse_mode` path. `thread_id` targets a
-/// forum topic when present.
-pub(crate) async fn send_rich_markdown(
-    token: &str,
-    chat_id: i64,
-    thread_id: Option<ThreadId>,
-    markdown: &str,
-) -> anyhow::Result<()> {
-    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
-    post_and_check(&url, &build_body(chat_id, thread_id, markdown)).await
-}
-
 /// Send `html` as a native rich message and return the new message id
 /// (#420 path A). The HTML input mode is parsed server-side into rich
 /// blocks, so `<details><summary>` becomes a native RichBlockDetails
@@ -188,6 +173,60 @@ pub(crate) fn build_body_html(
     let mut body = serde_json::json!({
         "chat_id": chat_id,
         "rich_message": { "html": html },
+    });
+    if let Some(t) = thread_id {
+        body["message_thread_id"] = serde_json::json!(t.0.0);
+    }
+    body
+}
+
+/// Send `markdown` with a `media` array as a native rich message
+/// (Bot API 10.2+, #1044). The markdown references each image via
+/// `tg://photo?id=<id>`; the `media` array maps each id to a renderer URL
+/// Telegram fetches server-side. This is the mode that embeds images while
+/// keeping pipe tables native. Returns the new message id.
+pub(crate) async fn send_rich_markdown_media_id(
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    markdown: &str,
+    media: &[super::mermaid::MediaEntry],
+) -> anyhow::Result<i32> {
+    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let result = post_rich(
+        &url,
+        &build_body_markdown_media(chat_id, thread_id, markdown, media),
+    )
+    .await?;
+    result
+        .get("message_id")
+        .and_then(serde_json::Value::as_i64)
+        .map(|id| id as i32)
+        .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
+}
+
+/// Build the `sendRichMessage` body with markdown input + a `media` array
+/// (Bot API 10.2+, #1044). Split out so the request shape is unit-testable
+/// without a live bot. Matches the validated prototype (message 1073):
+/// `rich_message: {markdown, media: [{id, media: {type:"photo", media:url}}]}`.
+pub(crate) fn build_body_markdown_media(
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    markdown: &str,
+    media: &[super::mermaid::MediaEntry],
+) -> serde_json::Value {
+    let media_arr: Vec<serde_json::Value> = media
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id,
+                "media": { "type": "photo", "media": m.url },
+            })
+        })
+        .collect();
+    let mut body = serde_json::json!({
+        "chat_id": chat_id,
+        "rich_message": { "markdown": markdown, "media": media_arr },
     });
     if let Some(t) = thread_id {
         body["message_thread_id"] = serde_json::json!(t.0.0);

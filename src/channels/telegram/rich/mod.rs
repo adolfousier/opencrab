@@ -127,8 +127,10 @@ pub(crate) fn markdown_to_html_p(text: &str) -> String {
 /// Parse `text`, resolve any mermaid fences to rendered images (or legible
 /// failure blocks) via [`mermaid::resolve_blocks`], and render the result as
 /// Telegram HTML. Async because mermaid pre-validation makes an HTTP call to
-/// the renderer. Used when a reply contains a mermaid fence, since `<img>`
-/// can only be embedded through the rich HTML input mode (#1044).
+/// the renderer. This is the FALLBACK path, used when the primary
+/// markdown+media send fails (e.g. a Bot API server < 10.2 without the
+/// `media` field); the primary path keeps tables native via the markdown
+/// dialect's `media` array (#1044).
 pub(crate) async fn markdown_to_html_mermaid(text: &str) -> String {
     let blocks = parse_markdown(text);
     let resolved = mermaid::resolve_blocks(blocks).await;
@@ -137,24 +139,21 @@ pub(crate) async fn markdown_to_html_mermaid(text: &str) -> String {
 
 /// Send `markdown` as a native rich message, rendering any mermaid fences as
 /// embedded images first (#1044). When a mermaid fence is present and the
-/// feature is enabled, the whole message is rendered to rich HTML and sent
-/// via `send_rich_html_id` (the only input mode that can embed an `<img>`);
-/// otherwise it goes out via `send_rich_markdown` exactly as before. Returns
-/// `Err` on transport failure so the caller can fall back.
+/// feature is enabled, fences are resolved once and the message goes out via
+/// the markdown dialect with a `media` array (so pipe tables stay native);
+/// if that send fails (e.g. a Bot API server < 10.2 without the `media`
+/// field) it falls back to the HTML dialect. With no mermaid fence it stays
+/// byte-identical to the plain rich-markdown path. Returns `Err` on
+/// transport failure so the caller can fall back.
 pub(crate) async fn send_rich_with_mermaid(
     token: &str,
     chat_id: i64,
     thread_id: Option<teloxide::types::ThreadId>,
     markdown: &str,
 ) -> anyhow::Result<()> {
-    if mermaid::should_render_mermaid(markdown) {
-        let html = markdown_to_html_mermaid(markdown).await;
-        api::send_rich_html_id(token, chat_id, thread_id, &html, None)
-            .await
-            .map(|_| ())
-    } else {
-        api::send_rich_markdown(token, chat_id, thread_id, markdown).await
-    }
+    send_rich_with_mermaid_id(token, chat_id, thread_id, markdown)
+        .await
+        .map(|_| ())
 }
 
 /// Same as [`send_rich_with_mermaid`] but returns the new message id.
@@ -164,10 +163,30 @@ pub(crate) async fn send_rich_with_mermaid_id(
     thread_id: Option<teloxide::types::ThreadId>,
     markdown: &str,
 ) -> anyhow::Result<i32> {
-    if mermaid::should_render_mermaid(markdown) {
-        let html = markdown_to_html_mermaid(markdown).await;
-        api::send_rich_html_id(token, chat_id, thread_id, &html, None).await
-    } else {
-        api::send_rich_markdown_id(token, chat_id, thread_id, markdown).await
+    if !mermaid::should_render_mermaid(markdown) {
+        return api::send_rich_markdown_id(token, chat_id, thread_id, markdown).await;
+    }
+
+    // Resolve every fence once: valid diagrams become markdown media
+    // references, broken ones become legible failure blocks. Non-fence text
+    // is left byte-identical.
+    let (resolved, media) = mermaid::resolve_markdown_media(markdown).await;
+
+    // All fences failed → `resolved` carries only failure blocks, no media to
+    // embed; send it as plain rich markdown (no `media` field).
+    if media.is_empty() {
+        return api::send_rich_markdown_id(token, chat_id, thread_id, &resolved).await;
+    }
+
+    // Primary: markdown dialect + media array keeps pipe tables native.
+    match api::send_rich_markdown_media_id(token, chat_id, thread_id, &resolved, &media).await {
+        Ok(id) => Ok(id),
+        Err(e) => {
+            // Fallback: HTML dialect (Bot API < 10.2 or a media-field
+            // rejection). Tables degrade there, but the message still lands.
+            tracing::warn!("rich markdown+media send failed ({e}); falling back to html dialect");
+            let html = markdown_to_html_mermaid(markdown).await;
+            api::send_rich_html_id(token, chat_id, thread_id, &html, None).await
+        }
     }
 }

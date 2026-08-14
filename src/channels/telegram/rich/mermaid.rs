@@ -1,14 +1,16 @@
 //! Mermaid diagram rendering for Telegram rich messages (#1044).
 //!
-//! Model output frequently carries ```mermaid fences. Telegram's
-//! `sendRichMessage` can embed an image via `<img>` but ONLY in the HTML
-//! input mode, and a broken image URL makes the whole send fail with
-//! `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`. So before delivery each fence is
-//! pre-validated against the renderer (mermaid.ink): a 200 + `image/*`
-//! response embeds the image, anything else degrades to a legible failure
-//! block (the renderer's error note plus the original source) instead of
-//! killing the message. Pre-validation never panics or hangs; every failure
-//! path yields [`MermaidResult::Failed`].
+//! Model output frequently carries ```mermaid fences. They are embedded via
+//! `sendRichMessage`: the PRIMARY path is the markdown input mode plus the
+//! Bot API 10.2 `media` field (`tg://photo?id=` references), which keeps any
+//! tables in the message native; the HTML input mode (`<img>`) is the
+//! fallback for servers without the `media` field. A broken image URL makes
+//! the whole send fail with `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`, so before
+//! delivery each fence is pre-validated against the renderer (mermaid.ink):
+//! a 200 + `image/*` response embeds the image, anything else degrades to a
+//! legible failure block (the renderer's error note plus the original
+//! source) instead of killing the message. Pre-validation never panics or
+//! hangs; every failure path yields [`MermaidResult::Failed`].
 
 use super::ast::{Block, MermaidResult};
 use futures::FutureExt;
@@ -25,6 +27,26 @@ const PREVALIDATE_TIMEOUT_SECS: u64 = 10;
 /// Cap on how much of the renderer's error body we surface, so a huge HTML
 /// error page can't blow up the message.
 const ERROR_NOTE_MAX_CHARS: usize = 400;
+
+/// One media reference embedded via the markdown `media` field (#1044).
+/// `id` matches the `tg://photo?id=<id>` reference in the markdown text;
+/// `url` is the validated renderer image Telegram fetches server-side.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MediaEntry {
+    pub(crate) id: String,
+    pub(crate) url: String,
+}
+
+/// A located ```mermaid fence in the source markdown. `start` is the byte
+/// offset of the opening fence line's first byte; `end` is the byte offset
+/// just past the closing fence line (including its terminator). Replacing
+/// `text[start..end]` swaps the fence without touching the rest.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MermaidFence {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) source: String,
+}
 
 /// Encode `input` as base64url (RFC 4648 §5, no padding), the alphabet
 /// mermaid.ink requires. Standard base64 (`+`, `/`) returns 404 there.
@@ -53,7 +75,45 @@ pub(crate) fn has_mermaid_fence(text: &str) -> bool {
     false
 }
 
-/// Whether `text` should be routed through the mermaid HTML render path:
+/// Locate every ```mermaid fence in `text`, returning byte ranges and the
+/// diagram source between the fences. Consistent with [`has_mermaid_fence`]:
+/// a fence is an opening ``` whose info string trims to `mermaid`
+/// (case-insensitive), closed by the next bare ``` line.
+pub(crate) fn find_mermaid_fences(text: &str) -> Vec<MermaidFence> {
+    let mut fences = Vec::new();
+    let mut in_fence = false;
+    let mut is_mermaid = false;
+    let mut block_start = 0usize;
+    let mut source_start = 0usize;
+    let mut pos = 0usize;
+
+    for line in text.split_inclusive('\n') {
+        let line_end = pos + line.len();
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("```") {
+            if in_fence {
+                if is_mermaid {
+                    fences.push(MermaidFence {
+                        start: block_start,
+                        end: line_end,
+                        source: text[source_start..pos].to_string(),
+                    });
+                }
+                in_fence = false;
+                is_mermaid = false;
+            } else {
+                block_start = pos;
+                source_start = line_end;
+                is_mermaid = rest.trim().eq_ignore_ascii_case("mermaid");
+                in_fence = true;
+            }
+        }
+        pos = line_end;
+    }
+    fences
+}
+
+/// Whether `text` should be routed through the mermaid render path:
 /// rich messages are enabled, the `mermaid_render` flag is on, and the text
 /// actually contains a mermaid fence. Requires `rich_messages` because the
 /// image can only be embedded via `sendRichMessage`.
@@ -123,11 +183,65 @@ pub(crate) fn error_note(status: u16, body: &str) -> String {
     trimmed.chars().take(ERROR_NOTE_MAX_CHARS).collect()
 }
 
+/// Pure: given a pre-validation outcome, the fence's position, and its
+/// source, produce the markdown replacement and (for a valid image) the
+/// media entry. Split out so the replacement shape is unit-testable without
+/// a network call. `index` is the fence's ordinal in the message.
+pub(crate) fn replacement_for(
+    outcome: &MermaidResult,
+    index: usize,
+    source: &str,
+) -> (String, Option<MediaEntry>) {
+    match outcome {
+        MermaidResult::Image(url) => {
+            let id = format!("diag{index}");
+            (
+                format!("![diagram](tg://photo?id={id})"),
+                Some(MediaEntry {
+                    id,
+                    url: url.clone(),
+                }),
+            )
+        }
+        MermaidResult::Failed(err) => (markdown_failure_block(err, source), None),
+    }
+}
+
+/// Resolve every mermaid fence in `text` for the markdown+media path: valid
+/// diagrams become `![diagram](tg://photo?id=diagN)` references with a
+/// matching [`MediaEntry`], broken ones become legible markdown failure
+/// blocks. Non-fence text is untouched (byte-identical). Boxed because the
+/// resolver is async and returned across an await boundary.
+pub(crate) fn resolve_markdown_media(text: &str) -> BoxFuture<'static, (String, Vec<MediaEntry>)> {
+    let text = text.to_string();
+    async move {
+        let fences = find_mermaid_fences(&text);
+        if fences.is_empty() {
+            return (text, Vec::new());
+        }
+        let mut result = text.clone();
+        let mut media = Vec::new();
+        // Replace from last to first so earlier byte offsets stay valid.
+        for (i, fence) in fences.iter().enumerate().rev() {
+            let outcome = prevalidate(&fence.source).await;
+            let (replacement, entry) = replacement_for(&outcome, i, &fence.source);
+            if let Some(e) = entry {
+                media.push(e);
+            }
+            result.replace_range(fence.start..fence.end, &replacement);
+        }
+        // Media was pushed in reverse fence order; restore fence order.
+        media.reverse();
+        (result, media)
+    }
+    .boxed()
+}
+
 /// Recursively replace every `Code{lang:"mermaid"}` block with a
 /// `Mermaid{source, result}` block by pre-validating each fence. Handles
 /// top-level fences and fences nested inside quotes, list items, and details.
 /// Boxed because the walk is recursive and an async fn cannot recurse
-/// without indirection (E0733).
+/// without indirection (E0733). Used by the HTML fallback path.
 pub(crate) fn resolve_blocks(blocks: Vec<Block>) -> BoxFuture<'static, Vec<Block>> {
     async move {
         let mut out = Vec::with_capacity(blocks.len());
@@ -176,6 +290,15 @@ fn resolve_block(block: Block) -> BoxFuture<'static, Block> {
 
 fn is_mermaid_lang(lang: &str) -> bool {
     lang.trim().eq_ignore_ascii_case("mermaid")
+}
+
+/// Markdown for a diagram that could not be rendered: a bold warning line,
+/// then a code fence holding the renderer's error note and the original
+/// source so the reader can see (and fix) what failed.
+pub(crate) fn markdown_failure_block(err: &str, source: &str) -> String {
+    format!(
+        "> ⚠️ **Mermaid diagram could not be rendered**\n\n```\n{err}\n\nSource:\n{source}\n```"
+    )
 }
 
 /// HTML for a successfully rendered diagram: a bare `<img>` in a `<figure>`,
