@@ -345,39 +345,43 @@ pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String
     let settled = parts.outcome.is_some();
     let mut segs: Vec<String> = Vec::new();
 
-    // Segment 1 — status: settled outcome, else plan state, else Working-on.
+    // Segment 1 — settled outcome leads; live turns lead with the LATEST
+    // ACTIVITY (what the agent is doing right now) and carry the
+    // reasoning/status second (#1052): the narration is the progress signal,
+    // the thinking excerpt is supplementary context. Strip a leading cog from
+    // the activity so the prefix is never doubled (#509 follow-up).
+    let mut live_activity = String::new();
     if let Some((icon, verb)) = parts.outcome {
         segs.push(format!("{icon} {}", esc(verb)));
-    } else if let Some(ps) = parts.plan_state {
-        segs.push(esc(ps));
-    } else if let Some(w) = parts.working_on {
-        segs.push(esc(w));
-    }
-
-    // Segment 2 — progress-log summary, only when a log exists. Live turns lead
-    // with the cog + activity; settled turns show a bare tool-call count with
-    // no cog (the stale narration is dropped, #498). Strip a leading cog from
-    // the activity so the prefix is never doubled (#509 follow-up).
-    if parts.has_log {
-        let mut seg2 = String::new();
-        if !settled && let Some(act) = parts.activity {
+    } else {
+        if parts.has_log && let Some(act) = parts.activity {
             let act = act.trim_start_matches(['⚙', '\u{fe0f}']).trim_start();
             if !act.is_empty() {
-                seg2 = format!("⚙️ {}", esc(act));
+                live_activity = format!("⚙️ {}", esc(act));
+                segs.push(live_activity.clone());
             }
         }
+        if let Some(ps) = parts.plan_state {
+            segs.push(esc(ps));
+        } else if let Some(w) = parts.working_on {
+            segs.push(esc(w));
+        }
+    }
+
+    // Segment 2 — progress-log summary, only when a log exists. Settled turns
+    // show a bare tool-call count with no cog (the stale narration is dropped,
+    // #498). Live turns show the count alone when the activity segment above
+    // already carries the cog, else the cog rides the count.
+    if parts.has_log {
+        let mut seg2 = String::new();
         if parts.tool_count >= 1 {
             let count = format!("{} tool calls", parts.tool_count);
-            if seg2.is_empty() {
-                seg2 = if settled {
-                    count
-                } else {
-                    format!("⚙️ {count}")
-                };
+            seg2 = if settled || !live_activity.is_empty() {
+                count
             } else {
-                seg2 = format!("{seg2} • {count}");
-            }
-        } else if !settled && seg2.is_empty() {
+                format!("⚙️ {count}")
+            };
+        } else if !settled && live_activity.is_empty() {
             // In-flight log with no tools and no activity preview yet: a bare
             // cog beats an empty segment so the footer still reads as active.
             seg2 = "⚙️".to_string();

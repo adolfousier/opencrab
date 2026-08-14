@@ -482,6 +482,32 @@ fn footer_shows_both_working_on_status_and_activity_summary() {
 }
 
 #[test]
+fn live_footer_leads_with_activity_before_reasoning() {
+    // #1052: live order is activity → reasoning/status → tool count → ctx →
+    // clock. The narration (what the agent is doing) is the progress signal;
+    // the thinking excerpt is supplementary context.
+    let lines = [
+        tline("✅ bash", "ls"),
+        FlowLine::Text("Now checking the config.".to_string()),
+        tline("⚙️ read_file", "config.toml"),
+    ];
+    let out = render_flow_html_chrome(
+        &lines,
+        &FlowHeader::Live(Some("30s")),
+        Some("Working on: ship it"),
+        &FlowSections::default(),
+        30,
+    );
+    let footer = out.rsplit("</blockquote>\n").next().expect("footer present");
+    assert!(
+        footer.starts_with(
+            "⚙️ Now checking the config. • Working on: ship it • 2 tool calls • ⏱ 0:30"
+        ),
+        "activity must lead the live footer, got: {footer}"
+    );
+}
+
+#[test]
 fn single_tool_gets_its_own_log_block_and_footer() {
     // The lone-tool-plain shortcut is gone under ADR 0005: even one entry sits
     // in its own expandable with the footer below.
