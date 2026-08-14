@@ -22,6 +22,14 @@ pub enum Block {
     Table(Table),
     /// A fenced code block with an optional language tag.
     Code { lang: Option<String>, text: String },
+    /// A mermaid diagram fence, resolved to a rendered outcome before
+    /// delivery (#1044). `source` is the original fence body, kept so the
+    /// legible failure block can show what could not be rendered.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Mermaid {
+        source: String,
+        result: MermaidResult,
+    },
     /// A block quotation; may contain nested blocks.
     Quote(Vec<Block>),
     /// Display (block-level) math, e.g. `$$ ... $$`.
@@ -36,6 +44,17 @@ pub enum Block {
         blocks: Vec<Block>,
         open: bool,
     },
+}
+
+/// The outcome of rendering a mermaid diagram via the configured renderer.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq)]
+pub enum MermaidResult {
+    /// The renderer accepted the diagram; carries the image URL to embed.
+    Image(String),
+    /// The renderer rejected the diagram or was unreachable; carries a
+    /// legible error note for the failure block.
+    Failed(String),
 }
 
 /// A bulleted or numbered list.

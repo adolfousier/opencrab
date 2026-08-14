@@ -16,6 +16,7 @@ pub(crate) mod api;
 pub(crate) mod ast;
 mod inline;
 mod list;
+pub(crate) mod mermaid;
 mod parse;
 mod render_html;
 pub(crate) mod render_json;
@@ -121,4 +122,52 @@ pub(crate) fn markdown_to_html(text: &str) -> String {
 /// chrome_rich path where Telegram expects native paragraph elements.
 pub(crate) fn markdown_to_html_p(text: &str) -> String {
     render_html::render_html_p(&parse_markdown(text))
+}
+
+/// Parse `text`, resolve any mermaid fences to rendered images (or legible
+/// failure blocks) via [`mermaid::resolve_blocks`], and render the result as
+/// Telegram HTML. Async because mermaid pre-validation makes an HTTP call to
+/// the renderer. Used when a reply contains a mermaid fence, since `<img>`
+/// can only be embedded through the rich HTML input mode (#1044).
+pub(crate) async fn markdown_to_html_mermaid(text: &str) -> String {
+    let blocks = parse_markdown(text);
+    let resolved = mermaid::resolve_blocks(blocks).await;
+    render_html::render_html(&resolved)
+}
+
+/// Send `markdown` as a native rich message, rendering any mermaid fences as
+/// embedded images first (#1044). When a mermaid fence is present and the
+/// feature is enabled, the whole message is rendered to rich HTML and sent
+/// via `send_rich_html_id` (the only input mode that can embed an `<img>`);
+/// otherwise it goes out via `send_rich_markdown` exactly as before. Returns
+/// `Err` on transport failure so the caller can fall back.
+pub(crate) async fn send_rich_with_mermaid(
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<teloxide::types::ThreadId>,
+    markdown: &str,
+) -> anyhow::Result<()> {
+    if mermaid::should_render_mermaid(markdown) {
+        let html = markdown_to_html_mermaid(markdown).await;
+        api::send_rich_html_id(token, chat_id, thread_id, &html, None)
+            .await
+            .map(|_| ())
+    } else {
+        api::send_rich_markdown(token, chat_id, thread_id, markdown).await
+    }
+}
+
+/// Same as [`send_rich_with_mermaid`] but returns the new message id.
+pub(crate) async fn send_rich_with_mermaid_id(
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<teloxide::types::ThreadId>,
+    markdown: &str,
+) -> anyhow::Result<i32> {
+    if mermaid::should_render_mermaid(markdown) {
+        let html = markdown_to_html_mermaid(markdown).await;
+        api::send_rich_html_id(token, chat_id, thread_id, &html, None).await
+    } else {
+        api::send_rich_markdown_id(token, chat_id, thread_id, markdown).await
+    }
 }

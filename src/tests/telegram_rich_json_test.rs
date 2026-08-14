@@ -4,6 +4,7 @@
 //! `Block::Details` maps to RichBlockDetails (`summary` / `blocks` /
 //! `is_open`) — the native collapse the markdown input mode cannot express.
 
+use crate::channels::telegram::rich::ast::{Block, MermaidResult};
 use crate::channels::telegram::rich::parse_markdown;
 use crate::channels::telegram::rich::render_json::{input_rich_message, render_block};
 
@@ -129,4 +130,30 @@ fn inline_styles_nest_as_typed_content() {
             .iter()
             .any(|i| i["type"] == "link" && i["url"] == "https://x.example")
     );
+}
+
+// ── mermaid → code-block fallback (#1044) ────────────────────────────
+
+#[test]
+fn mermaid_block_serializes_as_mermaid_code_block() {
+    // The native rich-block schema has no diagram type: the arm keeps the
+    // match exhaustive and ships the raw source as a `mermaid` code block.
+    let v = render_block(&Block::Mermaid {
+        source: "graph TD;\n  A-->B;".to_string(),
+        result: MermaidResult::Image("https://mermaid.ink/img/abc".to_string()),
+    });
+    assert_eq!(v["type"], "code");
+    assert_eq!(v["language"], "mermaid");
+    assert_eq!(v["text"], "graph TD;\n  A-->B;");
+}
+
+#[test]
+fn mermaid_failed_result_still_ships_source() {
+    let v = render_block(&Block::Mermaid {
+        source: "sequenceDiagram".to_string(),
+        result: MermaidResult::Failed("renderer returned HTTP 400".to_string()),
+    });
+    assert_eq!(v["type"], "code");
+    assert_eq!(v["language"], "mermaid");
+    assert_eq!(v["text"], "sequenceDiagram");
 }

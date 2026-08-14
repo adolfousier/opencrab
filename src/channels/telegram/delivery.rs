@@ -379,7 +379,7 @@ pub(crate) async fn deliver_final_response(
                 && super::rich::should_send_native_rich(&pre_dedup_text)
             {
                 let rich_md = pre_dedup_text.clone();
-                match super::rich::api::send_rich_markdown_id(
+                match super::rich::send_rich_with_mermaid_id(
                     bot.token(),
                     chat_id.0,
                     thread_id,
@@ -555,9 +555,10 @@ pub(crate) async fn deliver_final_response(
                     // into a run-on paragraph, which is why telegram_send now
                     // uses this same call rather than its own.
                     {
-                        // Rich MARKDOWN: renders tables correctly (only fences
-                        // mangle, which is why non-table content prefers blocks).
-                        match super::rich::api::send_rich_markdown_id(
+                        // Rich MARKDOWN renders tables correctly; mermaid fences
+                        // are routed to the rich-HTML image path inside the sender
+                        // (#1044), everything else stays on markdown.
+                        match super::rich::send_rich_with_mermaid_id(
                             bot.token(),
                             chat_id.0,
                             thread_id,

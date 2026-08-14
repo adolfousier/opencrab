@@ -394,6 +394,15 @@ pub struct TelegramConfig {
     /// rendering (which works on every client) is used instead.
     #[serde(default = "default_true")]
     pub rich_messages: bool,
+    /// Render ```mermaid code fences as inline diagram images inside rich
+    /// messages (#1044). Diagrams are rendered by mermaid.ink over HTTP and
+    /// embedded as `<img>` in the Telegram rich-HTML message; a diagram the
+    /// renderer rejects degrades to a legible failure block instead of
+    /// breaking the message. Note: the diagram source is sent to mermaid.ink
+    /// (a third party) for rendering. Requires `rich_messages`. Disable to
+    /// keep mermaid fences as plain code blocks.
+    #[serde(default = "default_true")]
+    pub mermaid_render: bool,
     /// Silently ignore /start commands from non-allowed users in group chats.
     /// When true (default), the bot does NOT reply with user ID in groups.
     /// Users who need their ID can DM the bot instead.

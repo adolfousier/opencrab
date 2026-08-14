@@ -623,6 +623,7 @@ pub mod telegram_handler_test;
 pub mod telegram_impersonation_test;
 pub mod telegram_join_detection_test;
 pub mod telegram_last_intermediate_footer_test;
+pub mod telegram_mermaid_test;
 pub mod telegram_model_callback_data_test;
 pub mod telegram_pending_question_steer_test;
 pub mod telegram_photo_batching_test;

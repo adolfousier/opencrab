@@ -2731,7 +2731,7 @@ pub(crate) async fn handle_message(
             // no trace at all and a fallback was indistinguishable from a clean
             // rich send (#927). Both outcomes are logged now.
             let sent_rich = super::rich::should_send_native_rich(&reply) && {
-                match super::rich::api::send_rich_markdown(
+                match super::rich::send_rich_with_mermaid(
                     bot.token(),
                     msg.chat.id.0,
                     thread_id,

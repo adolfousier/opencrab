@@ -47,6 +47,13 @@ pub(crate) fn render_block(b: &Block) -> Value {
             "language": lang,
             "text": text,
         }),
+        // Mermaid fences resolve to images on the HTML path; the blocks path
+        // (unused for mermaid) falls back to the raw source as a code block.
+        Block::Mermaid { source, .. } => json!({
+            "type": "code",
+            "language": "mermaid",
+            "text": source,
+        }),
         Block::Quote(blocks) => json!({
             "type": "quote",
             "blocks": render_blocks(blocks),

@@ -6,7 +6,7 @@
 //! become an aligned monospace grid inside `<pre>`. Inline styling is preserved
 //! everywhere except inside table cells (preformatted text can't carry tags).
 
-use super::ast::{Align, Block, Inline, List, Table};
+use super::ast::{Align, Block, Inline, List, MermaidResult, Table};
 
 /// Render a block list to a Telegram-HTML string. Block-level elements are
 /// separated by a blank line so paragraphs, headings, lists, and tables keep
@@ -71,6 +71,13 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
                 escape(text)
             ),
             None => format!("<pre><code>{}</code></pre>", escape(text)),
+        },
+        // Resolved mermaid fence (#1044): embed the rendered image, or degrade
+        // to a legible failure block. Both HTML shapes are built in
+        // super::mermaid so the escaping stays in one place.
+        Block::Mermaid { source, result } => match result {
+            MermaidResult::Image(url) => super::mermaid::image_html(url),
+            MermaidResult::Failed(err) => super::mermaid::failure_html(err, source),
         },
         Block::Quote(inner) => format!(
             "<blockquote>{}</blockquote>",

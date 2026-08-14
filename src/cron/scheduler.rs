@@ -1023,7 +1023,7 @@ async fn deliver_telegram(chat_id: &str, message: &str, pool: Option<crate::db::
     if let Some(cid) = chat_id_num
         && rich::should_send_native_rich(message)
     {
-        match rich::api::send_rich_markdown_id(&token, cid, None, message).await {
+        match rich::send_rich_with_mermaid_id(&token, cid, None, message).await {
             Ok(id) => {
                 tracing::info!("Cron result delivered to Telegram chat {chat_id} (native rich)");
                 sent_id = Some(id);

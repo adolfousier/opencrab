@@ -389,7 +389,7 @@ impl Tool for TelegramSendTool {
                 // correctly and is what every delivered rich message actually
                 // goes through, so both paths now behave identically.
                 let sent_rich = crate::channels::telegram::rich::should_send_native_rich(&text)
-                    && match crate::channels::telegram::rich::api::send_rich_markdown_id(
+                    && match crate::channels::telegram::rich::send_rich_with_mermaid_id(
                         bot.token(),
                         chat_id,
                         thread_id,
