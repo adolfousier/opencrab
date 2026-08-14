@@ -2166,6 +2166,10 @@ pub struct ProviderConfig {
     /// Default: 300 (5 minutes). Only used when cache_enabled is true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_ttl: Option<u32>,
+    /// Force use of `max_completion_tokens` field instead of `max_tokens`.
+    /// Useful for providers like Scaleway that require this field for all models.
+    #[serde(default, rename = "use_max_completion_tokens")]
+    pub use_max_completion_tokens: Option<bool>,
 }
 
 fn default_enabled() -> bool {

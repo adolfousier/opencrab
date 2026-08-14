@@ -2206,6 +2206,8 @@ pub struct OpenAIProvider {
     /// via Arc so clones of this provider (and the FallbackProvider that
     /// wraps it) read the same buffer.
     retry_notices: Arc<std::sync::Mutex<Vec<(u32, u32, String)>>>,
+    /// Force use of max_completion_tokens field instead of max_tokens
+    use_max_completion_tokens: Option<bool>,
 }
 
 impl OpenAIProvider {
@@ -2276,6 +2278,7 @@ impl OpenAIProvider {
             cache_ttl: None,
             reasoning_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
+            use_max_completion_tokens: None,
         }
     }
 
@@ -2311,6 +2314,7 @@ impl OpenAIProvider {
             cache_ttl: None,
             reasoning_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
+            use_max_completion_tokens: None,
         }
     }
 
@@ -2346,6 +2350,7 @@ impl OpenAIProvider {
             cache_ttl: None,
             reasoning_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
+            use_max_completion_tokens: None,
         }
     }
 
@@ -2460,6 +2465,12 @@ impl OpenAIProvider {
     /// Set OpenRouter cache TTL in seconds (1-86400, default 300).
     pub fn with_cache_ttl(mut self, ttl: u32) -> Self {
         self.cache_ttl = Some(ttl);
+        self
+    }
+
+    /// Set whether to force `max_completion_tokens` field usage.
+    pub fn with_use_max_completion_tokens(mut self, value: bool) -> Self {
+        self.use_max_completion_tokens = Some(value);
         self
     }
 
@@ -2839,7 +2850,9 @@ impl OpenAIProvider {
         // Newer OpenAI models (gpt-4.1-*, gpt-5-*, o1-*, o3-*) require
         // max_completion_tokens instead of max_tokens. Use the new field
         // for these models and fall back to max_tokens for everything else.
-        let uses_completion_tokens = uses_max_completion_tokens(&request.model);
+        let uses_completion_tokens = self
+            .use_max_completion_tokens
+            .unwrap_or_else(|| uses_max_completion_tokens(&request.model));
         let (max_tokens, max_completion_tokens) = if uses_completion_tokens {
             (None, request.max_tokens)
         } else {

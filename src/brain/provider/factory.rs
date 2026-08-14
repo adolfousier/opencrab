@@ -1645,6 +1645,11 @@ fn configure_openai_compatible(
         provider = provider.with_cache_ttl(ttl);
         tracing::info!("OpenRouter cache TTL: {}s", ttl);
     }
+    // Apply use_max_completion_tokens override
+    if let Some(use_completion) = config.use_max_completion_tokens {
+        provider = provider.with_use_max_completion_tokens(use_completion);
+    }
+
     provider
 }
 
