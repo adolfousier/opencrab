@@ -1246,6 +1246,12 @@ impl AgentService {
         // fallback to a different provider rather than giving up.
         let mut phantom_retries_used: u32 = 0;
         const MAX_PHANTOM_RETRIES: u32 = 5;
+        // Consecutive identical tool rounds (#1030). Observes only; the
+        // repeated call still runs and its result still reaches the model.
+        // Reset on a provider swap below, because a fallback replays the
+        // failed attempt's calls and those copies must not stack onto the
+        // count for calls the model made once.
+        let mut tool_repeat = super::tool_repeat::ToolRepeatTracker::new();
         // How many times the phantom retry budget may ROLL (reset + keep
         // nudging) before we give up. Previously the roll was unbounded — the
         // counter reset and re-nudged forever, so a model stuck narrating
@@ -4573,6 +4579,12 @@ impl AgentService {
                     ) {
                         phantom_sticky_swap_done = true;
                         phantom_retries_used = 0;
+                        // A swap replays this turn against another provider,
+                        // which re-emits the calls already counted. Without
+                        // this the replayed copies stack onto the run and trip
+                        // the repeat threshold on calls the model made once
+                        // (#1030).
+                        tool_repeat.reset();
                         let new_name = fb_provider
                             .active_subprovider_name()
                             .unwrap_or_else(|| fb_provider.name().to_string());
@@ -5824,6 +5836,19 @@ impl AgentService {
                 }
             }
 
+            // Identity of this whole round, so parallel batches compare as a
+            // unit rather than per call (#1030).
+            let round_signature = tool_uses
+                .iter()
+                .map(|(_, name, input)| super::tool_repeat::signature(name, input))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let repeat_verdict = super::tool_repeat::observe_round(
+                &mut tool_repeat,
+                &round_signature,
+                tool_uses.first().map(|(_, name, _)| name.clone()),
+            );
+
             // Execute tools and build response message
             let mut tool_results = Vec::new();
             let mut tool_descriptions: Vec<String> = Vec::new(); // For DB persistence
@@ -6695,6 +6720,19 @@ impl AgentService {
                 content: tool_results,
             };
             context.add_message(tool_result_msg);
+
+            // The repeat correction goes AFTER the results, so the model sees
+            // the identical output it just got and then why repeating it
+            // cannot help. Never suppresses the call and never ends the turn:
+            // it adds one message and the loop continues (#1030).
+            if let Some(nudge) = repeat_verdict {
+                tracing::warn!(
+                    target: "tool_repeat",
+                    "Identical tool round repeated {} times; injecting a correction",
+                    tool_repeat.consecutive()
+                );
+                context.add_message(Message::user(nudge));
+            }
 
             // Fire token count update after tool results are added — keeps TUI in sync.
             if let Some(ref cb) = progress_callback {
