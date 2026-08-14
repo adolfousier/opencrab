@@ -334,7 +334,16 @@ pub async fn embed_via_api(text: &str) -> Result<Vec<f32>, String> {
         body["dimensions"] = serde_json::json!(dims);
     }
 
-    let client = reqwest::Client::new();
+    // #1062: this used to be `reqwest::Client::new()`, whose default is NO
+    // timeout at all. A blackholed embedding endpoint wedged the `.await`
+    // forever, and write_opencrabs_file awaits indexing inline, so the tool
+    // call never returned. House pattern (local_engine.rs, exa_search.rs,
+    // a2a_send.rs): connect fast, cap the whole call.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("Failed to build embedding client: {e}"))?;
     let mut request = client.post(&endpoint).json(&body);
 
     if let Some(ref key) = cfg.api_key {
@@ -369,6 +378,14 @@ pub async fn embed_via_api(text: &str) -> Result<Vec<f32>, String> {
 ///
 /// Async counterpart of `embed_content` for the API path.
 pub async fn embed_content_api(store: &'static Mutex<Store>, body: &str) -> Result<(), String> {
+    // #1062: gate parity with the local path. The local `embed_content`
+    // checks vector_enabled at the top; this API twin used to skip the
+    // check entirely, so vector_enabled = false with a leftover
+    // [memory.embedding] section still fired one HTTP call per chunk on
+    // every write.
+    if !super::vector_enabled() {
+        return Ok(());
+    }
     if body.is_empty() {
         return Ok(());
     }

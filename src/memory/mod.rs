@@ -55,11 +55,16 @@ fn read_memory_config() -> crate::config::MemoryConfig {
 }
 
 /// Whether an external embedding API is configured under `[memory.embedding]`.
-fn embedding_api_configured() -> bool {
+pub(crate) fn embedding_api_configured() -> bool {
     let cfg = read_memory_config();
-    cfg.embedding
-        .as_ref()
-        .is_some_and(|e| e.url.is_some() && e.model.is_some())
+    // #1062: vector_enabled = false means no embedding work at all, local or
+    // API. Folding the check here gives every caller (index Phase 2, memory
+    // search) the gate in one place instead of each remembering to test it.
+    cfg.vector_enabled
+        && cfg
+            .embedding
+            .as_ref()
+            .is_some_and(|e| e.url.is_some() && e.model.is_some())
 }
 
 /// Get the embedding API config if configured.

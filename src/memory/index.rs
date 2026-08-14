@@ -79,22 +79,34 @@ pub async fn index_file(store: &'static Mutex<Store>, path: &Path) -> Result<(),
     .map_err(|e| format!("spawn_blocking failed: {e}"))??;
 
     // Phase 2: embedding (async for API, blocking for local)
+    //
+    // #1062: detached, never awaited by the caller. This used to be awaited
+    // inline, and write_opencrabs_file awaits index_file, so a slow or
+    // blackholed embedding path held the write tool hostage even though
+    // Phase 1 FTS (the searchable index) was already complete. The API
+    // branch now also has per-call timeouts (embed_via_api), so this task
+    // always terminates; anything it misses is caught by the backfill on
+    // next reindex. Sequential per-chunk embedding stays sequential within
+    // the task.
     if indexed {
-        if embedding_api_configured() {
-            if let Err(e) = embed_content_api(store, &body_clone).await {
-                tracing::warn!("API embedding skipped during index: {e}");
-            }
-        } else {
-            let store_ref = store;
-            let body_for_embed = body_clone;
-            tokio::task::spawn_blocking(move || {
-                if let Err(e) = embed_content(store_ref, &body_for_embed) {
+        let store_ref = store;
+        tokio::spawn(async move {
+            if embedding_api_configured() {
+                if let Err(e) = embed_content_api(store_ref, &body_clone).await {
+                    tracing::warn!("API embedding skipped during index: {e}");
+                }
+            } else {
+                let body_for_embed = body_clone;
+                if let Err(e) =
+                    tokio::task::spawn_blocking(move || embed_content(store_ref, &body_for_embed))
+                        .await
+                        .map_err(|e| format!("spawn_blocking failed: {e}"))
+                        .and_then(|r| r)
+                {
                     tracing::warn!("Embedding skipped during index: {e}");
                 }
-            })
-            .await
-            .map_err(|e| format!("spawn_blocking failed: {e}"))?;
-        }
+            }
+        });
     }
 
     Ok(())
