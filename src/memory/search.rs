@@ -5,9 +5,17 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use super::embedding::{embed_query_api, engine_if_ready};
-use super::{COLLECTION_BRAIN, MemoryResult, embedding_api_configured};
+use super::{
+    COLLECTION_BRAIN, COLLECTION_EXTERNAL, COLLECTION_MEMORY, MemoryResult,
+    embedding_api_configured,
+};
 
-/// Hybrid search across memory logs: FTS5 (BM25) + vector (cosine) via RRF.
+/// Hybrid search across ALL collections in the store: FTS5 (BM25) + vector
+/// (cosine) via RRF.
+///
+/// Kept collection-wide so existing callers (e.g. a2a debate context) see
+/// everything. Scope-specific variants: `search_memory`, `search_brain`,
+/// `search_external` (#1051).
 ///
 /// Falls back to FTS-only when the embedding engine is unavailable.
 /// Returns up to `n` results sorted by relevance.
@@ -21,7 +29,45 @@ pub async fn search(
     // here until the next restart — precisely when a duplicate check needs it.
     // Stat-only for unchanged files, single-flight guarded, never fatal.
     super::freshness::refresh_stale_brain_files().await;
+    search_core(store, query, n, None).await
+}
 
+/// Hybrid search over the memory-log collection only (#1051 scope="memory").
+pub(crate) async fn search_memory(
+    store: &'static Mutex<Store>,
+    query: &str,
+    n: usize,
+) -> Result<Vec<MemoryResult>, String> {
+    search_core(store, query, n, Some(COLLECTION_MEMORY)).await
+}
+
+/// Hybrid search over the EXTERNAL collection (#1051 scope="external").
+///
+/// Tier-1 freshness (ADR-002): after the first pass, refresh any hit whose
+/// mtime moved and re-query once, so an in-place edit is reflected. The
+/// tier-2 sweep handles additions and deletions; this catches content edits
+/// that don't bump the parent directory's mtime.
+pub(crate) async fn search_external(
+    store: &'static Mutex<Store>,
+    query: &str,
+    n: usize,
+) -> Result<Vec<MemoryResult>, String> {
+    let results = search_core(store, query, n, Some(COLLECTION_EXTERNAL)).await?;
+    let paths: Vec<String> = results.iter().map(|r| r.path.clone()).collect();
+    if super::freshness::refresh_stale_external(&paths).await > 0 {
+        return search_core(store, query, n, Some(COLLECTION_EXTERNAL)).await;
+    }
+    Ok(results)
+}
+
+/// Core hybrid search over one collection, or all collections when
+/// `collection` is `None`.
+async fn search_core(
+    store: &'static Mutex<Store>,
+    query: &str,
+    n: usize,
+    collection: Option<&'static str>,
+) -> Result<Vec<MemoryResult>, String> {
     let fts_query = sanitize_fts_query(query);
     if fts_query.is_empty() {
         return Ok(vec![]);
@@ -61,7 +107,7 @@ pub async fn search(
         let home = crate::config::opencrabs_home();
 
         let fts_results = store
-            .search_fts(&fts_query, n, None)
+            .search_fts(&fts_query, n, collection)
             .map_err(|e| format!("FTS search failed: {e}"))?;
 
         // Hybrid path: combine FTS + vector results via Reciprocal Rank Fusion
@@ -70,7 +116,7 @@ pub async fn search(
             // `hash || '_0'` only ever sees a document's first chunk, which
             // would make chunked embeddings write-only.
             let db_path = super::store::memory_dir().join("memory.db");
-            let vec_hits = super::vector_search::search_chunks(&db_path, query_emb, n, None)
+            let vec_hits = super::vector_search::search_chunks(&db_path, query_emb, n, collection)
                 .unwrap_or_default();
 
             if !vec_hits.is_empty() {
@@ -234,6 +280,13 @@ fn results_to_tuples_for(
 
 /// Resolve filesystem path for a search result based on its collection.
 fn resolve_path(home: &Path, collection: &str, doc_path: &str) -> String {
+    if collection == COLLECTION_EXTERNAL {
+        // External documents are keyed by ABSOLUTE path (#1051): the stored
+        // path IS the filesystem path. Rebuilding it as home/memory/<key>
+        // would point every external hit at a nonexistent file, so pass it
+        // through unchanged (mine map #3).
+        return doc_path.to_string();
+    }
     let p = if collection == COLLECTION_BRAIN {
         home.join(doc_path)
     } else {
