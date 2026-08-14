@@ -577,13 +577,21 @@ pub(crate) async fn handle_message(
             let uid = member.id.0;
             let name = member.username.as_deref().unwrap_or(&member.first_name);
             let is_bot = member.is_bot;
+            // Who performed the add. Logged on every join so a membership is
+            // always attributable afterwards: this was in scope and unused,
+            // which is why an unauthorized add could not be traced to anyone
+            // (#1042).
+            let adder_name_for_guard = user.username.as_deref().unwrap_or(&user.first_name);
             tracing::info!(
-                "Telegram: member joined chat \"{}\" (chat_id={}) — user_id={} username={} is_bot={}",
+                "Telegram: member joined chat \"{}\" (chat_id={}) — user_id={} username={} \
+                 is_bot={} added_by={} (user_id={})",
                 chat_title,
                 chat_id,
                 uid,
                 name,
                 is_bot,
+                adder_name_for_guard,
+                user_id,
             );
 
             // Notify the owner when a bot joins so they can grab the ID
@@ -603,13 +611,12 @@ pub(crate) async fn handle_message(
                             user_id: uid,
                         }
                     };
-                    let adder_name = user.username.as_deref().unwrap_or(&user.first_name);
                     let notify = format_bot_join_notification(
                         join,
                         chat_title,
                         chat_id,
                         msg.chat.username(),
-                        adder_name,
+                        adder_name_for_guard,
                         user_id,
                     );
                     // Send notification to owner's DM. A failure here means
@@ -631,6 +638,72 @@ pub(crate) async fn handle_message(
                             e
                         );
                     }
+                }
+
+                // Being added is a larger grant than any command: it exposes
+                // the agent, its tools and its credentials to everyone in the
+                // chat. Commands are owner-gated, so this is gated by the very
+                // same predicate rather than a second notion of authority
+                // (#1042). Telegram does not gate it at all — any member with
+                // invite rights can add a public bot.
+                if telegram_state.bot_user_id().await == Some(uid as i64)
+                    && !cfg.channels.telegram.is_owner(&user_id.to_string())
+                {
+                    tracing::warn!(
+                        "Telegram: {} (user_id={}) is not the owner and added me to \"{}\" \
+                         (chat_id={}) — leaving",
+                        adder_name_for_guard,
+                        user_id,
+                        chat_title,
+                        chat_id,
+                    );
+                    // Leave first, notify second. The decision fails closed:
+                    // an owner DM that cannot be delivered must not leave the
+                    // bot sitting in a chat it was never authorised to join.
+                    let left = match bot.leave_chat(msg.chat.id).await {
+                        Ok(_) => true,
+                        Err(e) => {
+                            tracing::error!(
+                                "Telegram: could not leave \"{}\" (chat_id={}) after an \
+                                 unauthorized add, so I am still in it: {}",
+                                chat_title,
+                                chat_id,
+                                e
+                            );
+                            false
+                        }
+                    };
+                    let tg_cfg = &cfg.channels.telegram;
+                    if let Some(owner_id_str) = tg_cfg.allowed_users.first()
+                        && let Ok(owner_id) = owner_id_str.parse::<i64>()
+                    {
+                        let notify = format_unauthorized_add_notification(
+                            chat_title,
+                            chat_id,
+                            msg.chat.username(),
+                            adder_name_for_guard,
+                            user_id,
+                            left,
+                        );
+                        if let Err(e) = crate::channels::telegram::send::message_in_thread(
+                            &bot,
+                            teloxide::types::ChatId(owner_id),
+                            None,
+                            notify,
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "Telegram: could not warn the owner about an unauthorized add \
+                                 to \"{}\" (chat_id={}): {}",
+                                chat_title,
+                                chat_id,
+                                e
+                            );
+                        }
+                    }
+                    // Nothing below applies: we are not in this chat.
+                    continue;
                 }
 
                 // When the joining bot is US, announce ourselves in the group so
@@ -4725,6 +4798,33 @@ fn chat_reference(chat_title: &str, chat_id: i64, chat_username: Option<&str>) -
         }
         _ => format!("\"{chat_title}\" (chat_id={chat_id}, private chat with no public link)"),
     }
+}
+
+/// Format the owner's notification for an add by someone who is not the owner.
+///
+/// Being added to a group grants strictly more than any single command: the
+/// whole agent, its tools and its credentials become reachable by everyone in
+/// that chat. Commands are already owner-gated, so this is too, and the owner
+/// is told who tried with the id needed to act on it (#1042).
+pub(crate) fn format_unauthorized_add_notification(
+    chat_title: &str,
+    chat_id: i64,
+    chat_username: Option<&str>,
+    adder_name: &str,
+    adder_id: i64,
+    left: bool,
+) -> String {
+    let where_ = chat_reference(chat_title, chat_id, chat_username);
+    let outcome = if left {
+        "I left immediately."
+    } else {
+        "I tried to leave and could not, so remove me manually or revoke my group access in \
+         BotFather."
+    };
+    format!(
+        "🚫 {adder_name} (user_id={adder_id}) added me to {where_} and is not the bot owner. \
+         {outcome}"
+    )
 }
 
 /// Format the owner's notification for a bot join.

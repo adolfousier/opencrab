@@ -151,3 +151,57 @@ fn large_ids_keep_their_precision() {
     assert!(notify.contains("9999999999999"));
     assert!(notify.contains("1234567890123"));
 }
+
+// ── Owner-only add guard (#1042) ────────────────────────────────────
+
+use crate::channels::telegram::handler::format_unauthorized_add_notification;
+
+#[test]
+fn an_unauthorized_add_names_who_did_it_and_says_we_left() {
+    let notify = format_unauthorized_add_notification(
+        "Some Group",
+        -1003848401482,
+        None,
+        "stranger",
+        8908506478,
+        true,
+    );
+    assert!(notify.contains("stranger"), "names the adder");
+    assert!(notify.contains("8908506478"), "with the id to act on");
+    assert!(notify.contains("not the bot owner"));
+    assert!(notify.contains("I left immediately"));
+    assert!(notify.contains("-1003848401482"));
+}
+
+#[test]
+fn a_failed_leave_is_reported_rather_than_implied_success() {
+    // The owner must never read "handled" when the bot is still sitting in a
+    // chat it was not authorised to join.
+    let notify = format_unauthorized_add_notification(
+        "Some Group",
+        -1003848401482,
+        None,
+        "stranger",
+        8908506478,
+        false,
+    );
+    assert!(!notify.contains("I left immediately"));
+    assert!(notify.contains("could not"));
+    assert!(
+        notify.contains("BotFather"),
+        "points at the lever that works when leaving does not"
+    );
+}
+
+#[test]
+fn an_unauthorized_add_to_a_public_chat_is_reachable() {
+    let notify = format_unauthorized_add_notification(
+        "Some Group",
+        -1003848401482,
+        Some("somegroup"),
+        "stranger",
+        8908506478,
+        true,
+    );
+    assert!(notify.contains("https://t.me/somegroup"));
+}
