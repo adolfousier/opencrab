@@ -592,15 +592,45 @@ pub(crate) async fn handle_message(
                 if let Some(owner_id_str) = tg_cfg.allowed_users.first()
                     && let Ok(owner_id) = owner_id_str.parse::<i64>()
                 {
-                    let notify = format_bot_join_notification(chat_title, chat_id, name, uid);
-                    // Send notification to owner's DM
-                    let _ = crate::channels::telegram::send::message_in_thread(
+                    // Being added somewhere and watching another bot arrive
+                    // are different events needing different advice, so the
+                    // notice is chosen here rather than left ambiguous (#1041).
+                    let join = if telegram_state.bot_user_id().await == Some(uid as i64) {
+                        BotJoin::Ourselves
+                    } else {
+                        BotJoin::Other {
+                            username: name,
+                            user_id: uid,
+                        }
+                    };
+                    let adder_name = user.username.as_deref().unwrap_or(&user.first_name);
+                    let notify = format_bot_join_notification(
+                        join,
+                        chat_title,
+                        chat_id,
+                        msg.chat.username(),
+                        adder_name,
+                        user_id,
+                    );
+                    // Send notification to owner's DM. A failure here means
+                    // the join goes unreported entirely, so it is logged
+                    // rather than discarded.
+                    if let Err(e) = crate::channels::telegram::send::message_in_thread(
                         &bot,
                         teloxide::types::ChatId(owner_id),
                         None,
                         notify,
                     )
-                    .await;
+                    .await
+                    {
+                        tracing::error!(
+                            "Telegram: could not tell the owner about a bot joining \"{}\" \
+                             (chat_id={}), so the join is unreported: {}",
+                            chat_title,
+                            chat_id,
+                            e
+                        );
+                    }
                 }
 
                 // When the joining bot is US, announce ourselves in the group so
@@ -4670,15 +4700,56 @@ pub(crate) fn tool_context(name: &str, input: &serde_json::Value) -> String {
     crate::utils::tool_context_hint(name, input)
 }
 
-/// Format notification when a bot joins a group chat
+/// Who joined, and therefore what the owner should do about it.
+///
+/// One notice used to serve both, which made them indistinguishable in the
+/// owner's DM and gave the wrong advice for half of them: being told to add
+/// OpenCrabs' own id to `allowed_users` is not an action anyone should take
+/// (#1041).
+pub(crate) enum BotJoin<'a> {
+    /// OpenCrabs itself was added to a chat.
+    Ourselves,
+    /// A different bot arrived in a chat OpenCrabs is already in.
+    Other { username: &'a str, user_id: u64 },
+}
+
+/// How to reach a chat, beyond its numeric id.
+///
+/// A numeric `chat_id` alone leaves the owner unable to find the group they
+/// are being told about. A public chat has a `t.me` handle; a private one does
+/// not, and saying so is the answer rather than the absence of one.
+fn chat_reference(chat_title: &str, chat_id: i64, chat_username: Option<&str>) -> String {
+    match chat_username {
+        Some(u) if !u.is_empty() => {
+            format!("\"{chat_title}\" (chat_id={chat_id}, https://t.me/{u})")
+        }
+        _ => format!("\"{chat_title}\" (chat_id={chat_id}, private chat with no public link)"),
+    }
+}
+
+/// Format the owner's notification for a bot join.
+///
+/// `adder` is who performed the add, taken from the service message's sender.
+/// It is the one field that answers "how did this happen", and it was missing
+/// entirely before.
 pub(crate) fn format_bot_join_notification(
+    join: BotJoin<'_>,
     chat_title: &str,
     chat_id: i64,
-    username: &str,
-    user_id: u64,
+    chat_username: Option<&str>,
+    adder_name: &str,
+    adder_id: i64,
 ) -> String {
-    format!(
-        "🤖 Bot joined \"{}\" (chat_id={}): @{} (user_id={}). Add this ID to allowed_users if you want me to respond to it.",
-        chat_title, chat_id, username, user_id,
-    )
+    let where_ = chat_reference(chat_title, chat_id, chat_username);
+    match join {
+        BotJoin::Ourselves => format!(
+            "🦀 I was added to {where_} by {adder_name} (user_id={adder_id}). \
+             Reply here or check the group's settings if this was not you."
+        ),
+        BotJoin::Other { username, user_id } => format!(
+            "🤖 Another bot joined {where_}, a chat I am already in: @{username} \
+             (user_id={user_id}), added by {adder_name} (user_id={adder_id}). \
+             Add {user_id} to allowed_users if you want me to respond to it."
+        ),
+    }
 }
