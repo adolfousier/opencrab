@@ -484,7 +484,12 @@ fn test_selected_model_name_uses_fetched() {
 
     wizard.ps.models = vec!["live-model-1".into(), "live-model-2".into()];
     wizard.ps.selected_model = 1;
-    assert_eq!(wizard.ps.selected_model_name(), "live-model-2");
+    // Resolved against the list as DISPLAYED, which is ordered newest-first
+    // (#1057) rather than by insertion. The property under test is that
+    // selection indexes the shown list, not what that order happens to be.
+    let shown = wizard.ps.filtered_model_names();
+    assert_eq!(wizard.ps.selected_model_name(), shown[1]);
+    assert!(shown.contains(&"live-model-2"));
 }
 
 #[test]

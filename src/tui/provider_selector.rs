@@ -558,14 +558,20 @@ impl ProviderSelectorState {
     /// Model names filtered by `model_filter` (case-insensitive substring match).
     pub fn filtered_model_names(&self) -> Vec<&str> {
         let all = self.all_model_names();
-        if self.model_filter.is_empty() {
+        let mut out = if self.model_filter.is_empty() {
             all
         } else {
             let q = self.model_filter.to_lowercase();
             all.into_iter()
                 .filter(|m| m.to_lowercase().contains(&q))
                 .collect()
-        }
+        };
+        // Newest first, here rather than in all_model_names: that function's
+        // fetched-then-config insertion order is a contract other callers
+        // rely on. Ordering is purely what the picker shows, so it belongs on
+        // the display path and never touches config.models on disk (#1057).
+        crate::tui::model_order::sort_newest_first(&mut out);
+        out
     }
 
     /// Number of models available after applying the current filter.

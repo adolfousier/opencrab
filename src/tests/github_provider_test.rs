@@ -230,7 +230,12 @@ fn wizard_selected_model_name_in_bounds() {
     wizard.ps.selected_provider = 2;
     wizard.ps.models = vec!["gpt-4o".to_string(), "gpt-4o-mini".to_string()];
     wizard.ps.selected_model = 1;
-    assert_eq!(wizard.ps.selected_model_name(), "gpt-4o-mini");
+    // In bounds against the list as DISPLAYED, which is ordered newest-first
+    // (#1057). The property is that an in-range index resolves to a real
+    // entry, not that the order is the one they were inserted in.
+    let shown = wizard.ps.filtered_model_names();
+    assert_eq!(wizard.ps.selected_model_name(), shown[1]);
+    assert!(!wizard.ps.selected_model_name().is_empty());
 }
 
 #[test]

@@ -5,6 +5,7 @@
 pub mod app;
 pub mod error;
 pub mod events;
+pub(crate) mod model_order;
 pub mod onboarding;
 pub mod onboarding_render;
 pub mod pane;
