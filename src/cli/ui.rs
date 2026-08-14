@@ -333,6 +333,10 @@ async fn cmd_chat_inner(
             Ok(Err(e)) => tracing::info!("Embedding engine init skipped: {e}"),
             Err(e) => tracing::warn!("Embedding engine warmup failed: {e}"),
         }
+        // Tier-2 external sweep (#1051): periodic incremental walk of the
+        // configured extra paths. Boot reindex above is sweep #0; this loop
+        // keeps the external collection current afterwards (ADR-002).
+        crate::memory::freshness::spawn_external_sweep();
     });
 
     // Preload local whisper model before the TUI starts so candle's
