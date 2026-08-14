@@ -2548,11 +2548,12 @@ pub(crate) async fn handle_message(
             return Ok(());
         }
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
-            // Every slash command is owner-gated, so its output is addressed
-            // to one person: in a group it goes ephemeral (#756). Native rich
-            // is tried first for output that benefits from it, so a scoped
-            // reply only drops to HTML once the server has refused the rich
-            // variant of the parameter.
+            // Every slash command is owner-gated (built-ins individually,
+            // skills and commands.toml entries by the catch-all gate, #975),
+            // so its output is addressed to one person: in a group it goes
+            // ephemeral (#756). Native rich is tried first for output that
+            // benefits from it, so a scoped reply only drops to HTML once the
+            // server has refused the rich variant of the parameter.
             if let Some(rx) = super::ephemeral::receiver_for(is_dm, user_id) {
                 if super::rich::should_send_native_rich(&reply)
                     && super::ephemeral::try_send_rich(
