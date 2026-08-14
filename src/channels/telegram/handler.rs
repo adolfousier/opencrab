@@ -39,7 +39,7 @@ pub(crate) use super::keyboards::*;
 // Crash-recovery resume moved to resume.rs (#471 phase 1).
 pub(crate) use super::resume::resume_session;
 // Final-response delivery moved to delivery.rs (#471 phase 4).
-pub(crate) use super::delivery::{deliver_final_response, drain_remaining_display};
+pub(crate) use super::delivery::{bg_indicator_for, deliver_final_response, drain_remaining_display};
 
 /// Guard that cancels a CancellationToken on drop (used for typing loop).
 pub(crate) struct TypingGuard(pub(crate) CancellationToken);
@@ -3420,6 +3420,7 @@ pub(crate) async fn handle_message(
         tools_started_at: Some(std::time::Instant::now()),
         turn_started_at: std::time::Instant::now(),
         flow_outcome: None,
+        bg_indicator: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -4117,6 +4118,7 @@ pub(crate) async fn handle_message(
     {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.flow_outcome = Some(flow_outcome);
+        s.bg_indicator = bg_indicator_for(&agent, session_id);
     }
     // Recompute sections now that the turn has settled: the plan Approve/Discard
     // keyboard attaches only at turn end (load_plan_state_section keys off

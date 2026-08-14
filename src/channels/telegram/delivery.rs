@@ -51,6 +51,21 @@ pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
 /// handle_message (#471 phase 2) — the only edit is early
 /// `return Ok(())` becoming `return Ok(false)` so the caller can
 /// preserve handle_message's original control flow exactly.
+/// Background-task indicator for the settled flow footer (#1054): the first
+/// task's label when exactly one is running, a count when several, `None`
+/// when nothing is detached or no manager is wired (#722). A settled turn
+/// that ends with detached work looks identical to a complete one without
+/// this, and the typing indicator staying alive is too easy to miss.
+pub(crate) fn bg_indicator_for(agent: &AgentService, session_id: Uuid) -> Option<String> {
+    let bm = agent.background_manager()?;
+    let tasks = bm.running_tasks(session_id);
+    match tasks.len() {
+        0 => None,
+        1 => Some(format!("{} running", tasks[0].label)),
+        n => Some(format!("{n} tasks running")),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn deliver_final_response(
     bot: &Bot,

@@ -483,9 +483,9 @@ fn footer_shows_both_working_on_status_and_activity_summary() {
 
 #[test]
 fn live_footer_leads_with_activity_before_reasoning() {
-    // #1052: live order is activity → reasoning/status → tool count → ctx →
-    // clock. The narration (what the agent is doing) is the progress signal;
-    // the thinking excerpt is supplementary context.
+    // #1052: live order is latest activity → reasoning/status → tool count →
+    // clock. The narration (what the agent is DOING) is the progress signal;
+    // the reasoning excerpt is supplementary context.
     let lines = [
         tline("✅ bash", "ls"),
         FlowLine::Text("Now checking the config.".to_string()),
@@ -498,12 +498,15 @@ fn live_footer_leads_with_activity_before_reasoning() {
         &FlowSections::default(),
         30,
     );
-    let footer = out.rsplit("</blockquote>\n").next().expect("footer present");
+    let footer = out
+        .rsplit("</blockquote>\n")
+        .next()
+        .expect("footer present");
     assert!(
         footer.starts_with(
             "⚙️ Now checking the config. • Working on: ship it • 2 tool calls • ⏱ 0:30"
         ),
-        "activity must lead the live footer, got: {footer}"
+        "activity leads, reasoning second: got {footer:?}"
     );
 }
 
@@ -553,6 +556,58 @@ fn settled_footer_drops_the_cog() {
     assert!(
         !footer.contains("⚙️"),
         "settled footer never carries the cog"
+    );
+}
+
+#[test]
+fn settled_footer_shows_bg_indicator_when_task_running() {
+    // #1054: a settled turn ending with detached work shows the indicator as
+    // the final segment after the clock; with nothing running the footer is
+    // unchanged (no stray wrench).
+    let lines = [tline("✅ bash", "ls"), tline("✅ grep", "todo")];
+    let header = FlowHeader::Settled {
+        icon: "✅",
+        verb: "Finished",
+        duration: "8:37",
+    };
+    let with_bg = render_flow_html_chrome_pref(
+        &lines,
+        &header,
+        None,
+        &FlowSections::default(),
+        usize::MAX,
+        517,
+        Some("cargo test running"),
+    );
+    assert!(
+        with_bg.ends_with("⏱ 8:37 • 🔧 cargo test running"),
+        "bg indicator rides after the clock: {with_bg:?}"
+    );
+    let without_bg = render_flow_html_chrome_pref(
+        &lines,
+        &header,
+        None,
+        &FlowSections::default(),
+        usize::MAX,
+        517,
+        None,
+    );
+    assert!(
+        without_bg.ends_with("⏱ 8:37") && !without_bg.contains('🔧'),
+        "no indicator when nothing is detached"
+    );
+    let many = render_flow_details_chrome_pref(
+        &lines,
+        &header,
+        None,
+        &FlowSections::default(),
+        usize::MAX,
+        517,
+        Some("3 tasks running"),
+    );
+    assert!(
+        many.contains("🔧 3 tasks running"),
+        "multiple tasks show the count, rich path included: {many:?}"
     );
 }
 
@@ -614,6 +669,7 @@ fn cli_cap_truncates_body_api_keeps_it_full_html() {
         &FlowSections::default(),
         300,
         2,
+        None,
     );
     let api = render_flow_html_chrome_pref(
         &lines,
@@ -622,6 +678,7 @@ fn cli_cap_truncates_body_api_keeps_it_full_html() {
         &FlowSections::default(),
         usize::MAX,
         2,
+        None,
     );
     assert!(
         cli.contains('…'),
@@ -649,6 +706,7 @@ fn cli_cap_truncates_body_api_keeps_it_full_details() {
         &FlowSections::default(),
         300,
         2,
+        None,
     );
     let api = render_flow_details_chrome_pref(
         &lines,
@@ -657,6 +715,7 @@ fn cli_cap_truncates_body_api_keeps_it_full_details() {
         &FlowSections::default(),
         usize::MAX,
         2,
+        None,
     );
     assert!(
         cli.contains('…'),
@@ -684,6 +743,7 @@ fn short_narration_untouched_by_either_cap() {
             &FlowSections::default(),
             cap,
             2,
+            None,
         );
         assert!(out.contains("brief note"));
         assert!(

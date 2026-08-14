@@ -127,6 +127,12 @@ pub(crate) struct StreamingState {
     /// (`✅ Finished (N tool calls, 45s)` / `❌ Failed` / `⏱ Timed out`, #480).
     /// `None` while the turn is live.
     pub(crate) flow_outcome: Option<FlowOutcome>,
+    /// Background-work indicator for the settled footer (#1054): computed at
+    /// settle time from `agent.background_manager().running_tasks(session_id)`
+    /// — `Some("<label> running")` for one task, `Some("N tasks running")`
+    /// for several, `None` when nothing is detached. Rendered as the final
+    /// footer segment after the clock.
+    pub(crate) bg_indicator: Option<String>,
     /// Intermediate texts already sent — used to dedup final response
     pub(crate) sent_intermediates: Vec<String>,
     /// Message IDs of every intermediate chunk delivered to Telegram, so a
@@ -357,12 +363,15 @@ pub(crate) fn render_flow_html_chrome(
         sections,
         FOLDED_NARRATION_CAP,
         elapsed_secs,
+        None,
     )
 }
 
 /// Decompose the renderer's header / sections / activity into the merged-footer
 /// inputs (ADR 0005 Decision 12), shared by the classic and rich paths so the
 /// footer join can never drift between surfaces.
+#[allow(clippy::too_many_arguments)] // one primitive per footer input; the
+// decomposition IS the point (ADR 0005 Decision 12)
 fn footer_parts<'a>(
     header: &'a FlowHeader,
     fallback_status: Option<&'a str>,
@@ -371,6 +380,7 @@ fn footer_parts<'a>(
     tool_count: usize,
     has_log: bool,
     elapsed_secs: u64,
+    bg: Option<&'a str>,
 ) -> super::flow_chrome::FooterParts<'a> {
     let outcome = match header {
         FlowHeader::Settled { icon, verb, .. } => Some((*icon, *verb)),
@@ -385,6 +395,7 @@ fn footer_parts<'a>(
         has_log,
         ctx: sections.ctx.as_deref(),
         elapsed_secs,
+        bg,
     }
 }
 
@@ -441,6 +452,7 @@ pub(crate) fn render_flow_html_chrome_pref(
     sections: &super::flow_chrome::FlowSections,
     narration_cap: usize,
     elapsed_secs: u64,
+    bg: Option<&str>,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
     let has_log = !out.is_empty();
@@ -454,6 +466,7 @@ pub(crate) fn render_flow_html_chrome_pref(
             tool_count,
             has_log,
             elapsed_secs,
+            bg,
         ),
         HeaderMarkup::Html,
     );
@@ -527,6 +540,7 @@ pub(crate) fn render_flow_details_chrome(
         sections,
         FOLDED_NARRATION_CAP,
         elapsed_secs,
+        None,
     )
 }
 
@@ -544,6 +558,7 @@ pub(crate) fn render_flow_details_chrome_pref(
     sections: &super::flow_chrome::FlowSections,
     narration_cap: usize,
     elapsed_secs: u64,
+    bg: Option<&str>,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
     let has_log = !out.is_empty();
@@ -557,6 +572,7 @@ pub(crate) fn render_flow_details_chrome_pref(
             tool_count,
             has_log,
             elapsed_secs,
+            bg,
         ),
         HeaderMarkup::Html,
     );
@@ -835,6 +851,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
                 &s.sections,
                 narration_cap,
                 elapsed,
+                s.bg_indicator.as_deref(),
             )
         }
         None => render_flow_html_chrome_pref(
@@ -844,6 +861,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
             &s.sections,
             narration_cap,
             elapsed,
+            s.bg_indicator.as_deref(),
         ),
     }
 }
@@ -868,6 +886,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
                 &s.sections,
                 narration_cap,
                 elapsed,
+                s.bg_indicator.as_deref(),
             )
         }
         None => render_flow_details_chrome_pref(
@@ -877,6 +896,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
             &s.sections,
             narration_cap,
             elapsed,
+            s.bg_indicator.as_deref(),
         ),
     }
 }
