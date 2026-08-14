@@ -18,7 +18,13 @@ use teloxide::prelude::*;
 use uuid::Uuid;
 
 /// Longest plan-title / goal text shown in flow chrome before truncation.
-const SECTION_TEXT_CAP: usize = 60;
+///
+/// 150, not 60 (#1053): the old cap truncated titles mid-sentence ("Fix
+/// Telegram message flow to display last...") and hid checklist task names
+/// exactly when the user needed them. 150 shows full context in almost all
+/// real titles at negligible height cost; genuinely longer text still gets
+/// cut with an ellipsis.
+const SECTION_TEXT_CAP: usize = 150;
 
 /// Which plan keyboard the latest flow message owns. Keyboards attach only
 /// after `plan init` succeeds: Approve + Discard while the design plan is
