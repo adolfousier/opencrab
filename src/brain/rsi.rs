@@ -30,6 +30,15 @@ const RSI_BACKOFF_LADDER_SECS: &[u64] = &[RSI_CYCLE_INTERVAL_SECS, 4 * 3600, 12 
 /// Cycle interval for a given zero-improvement streak (#977). Streak 0 =
 /// base 1h; each consecutive agent run that applies nothing climbs one
 /// rung; capped at the last rung (24h).
+/// Effective RSI enablement, the #1063 master gate. An explicit
+/// `rsi_enabled` in config.toml always wins. When the key is absent the
+/// default is by run mode: ON for the interactive TUI (the feature users see
+/// and expect), OFF for headless daemons, where unattended hourly cycles
+/// with auto-approved tools burned provider quota and were read as hangs.
+pub(crate) fn rsi_effectively_enabled(config: &Config, headless: bool) -> bool {
+    config.agent.rsi_enabled.unwrap_or(!headless)
+}
+
 pub(crate) fn rsi_interval_for_streak(streak: u64) -> u64 {
     let idx = (streak as usize).min(RSI_BACKOFF_LADDER_SECS.len() - 1);
     RSI_BACKOFF_LADDER_SECS[idx]
@@ -915,6 +924,7 @@ pub fn spawn_rsi_engine(
     pool: crate::db::Pool,
     config: &Config,
     notification_tx: mpsc::UnboundedSender<RsiNotification>,
+    headless: bool,
 ) {
     let pool_clone = pool.clone();
     let config_clone = config.clone();
@@ -922,49 +932,67 @@ pub fn spawn_rsi_engine(
         // Delay to let the app fully start
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-        // 1. Upstream template sync. No version gate (#820): whether the app
-        // was upgraded says nothing about whether a template changed, and
-        // gating on it left #816/#817 undeliverable for as long as the release
-        // took. sync_templates decides per file by content, and one whose
-        // upstream is unchanged writes nothing.
-        {
-            let results = crate::brain::rsi_sync::sync_templates().await;
-            if results.is_empty() {
-                tracing::info!("RSI template sync: no files to sync");
-            } else {
-                let synced = results.iter().filter(|r| r.synced).count();
-                let failed = results.iter().filter(|r| r.error.is_some()).count();
-                let sections: usize = results.iter().map(|r| r.sections_added).sum();
-                let summary = format!(
-                    "{} files synced, {} failed, {} new sections (v{})",
-                    synced,
-                    failed,
-                    sections,
-                    crate::VERSION
-                );
-                if failed > 0 {
-                    let errors: Vec<_> = results
-                        .iter()
-                        .filter_map(|r| r.error.as_ref().map(|e| format!("{}: {}", r.filename, e)))
-                        .collect();
-                    let _ = notification_tx.send(RsiNotification::TemplateSyncFailed {
-                        error: errors.join("; "),
-                    });
-                }
-                if synced > 0 {
-                    let _ = notification_tx.send(RsiNotification::TemplateSyncComplete { summary });
+        // #1063 master gate. Absent key defaults by run mode: ON for the
+        // interactive TUI, OFF for headless daemons (an unattended daemon
+        // burning provider quota and appending to brain files hourly is the
+        // bug this fixes). Re-read from the live config mirror every cycle,
+        // so flipping `rsi_enabled` in config.toml takes effect on the next
+        // boundary without a restart, in both directions. The engine task
+        // itself always spawns so an enable can hot-reload in.
+        if !rsi_effectively_enabled(&Config::current(), headless) {
+            tracing::info!(
+                "RSI engine disabled (rsi_enabled unset or false, headless={headless}); \
+                 skipping template sync + startup digest"
+            );
+        } else {
+            // 1. Upstream template sync. No version gate (#820): whether the app
+            // was upgraded says nothing about whether a template changed, and
+            // gating on it left #816/#817 undeliverable for as long as the release
+            // took. sync_templates decides per file by content, and one whose
+            // upstream is unchanged writes nothing.
+            {
+                let results = crate::brain::rsi_sync::sync_templates().await;
+                if results.is_empty() {
+                    tracing::info!("RSI template sync: no files to sync");
+                } else {
+                    let synced = results.iter().filter(|r| r.synced).count();
+                    let failed = results.iter().filter(|r| r.error.is_some()).count();
+                    let sections: usize = results.iter().map(|r| r.sections_added).sum();
+                    let summary = format!(
+                        "{} files synced, {} failed, {} new sections (v{})",
+                        synced,
+                        failed,
+                        sections,
+                        crate::VERSION
+                    );
+                    if failed > 0 {
+                        let errors: Vec<_> = results
+                            .iter()
+                            .filter_map(|r| {
+                                r.error.as_ref().map(|e| format!("{}: {}", r.filename, e))
+                            })
+                            .collect();
+                        let _ = notification_tx.send(RsiNotification::TemplateSyncFailed {
+                            error: errors.join("; "),
+                        });
+                    }
+                    if synced > 0 {
+                        let _ =
+                            notification_tx.send(RsiNotification::TemplateSyncComplete { summary });
+                    }
                 }
             }
-        }
 
-        // 2. Write startup digest
-        write_startup_digest(pool_clone.clone()).await;
-        let repo = FeedbackLedgerRepository::new(pool_clone.clone());
-        if let Ok(total) = repo.total_count().await {
-            let _ = notification_tx.send(RsiNotification::DigestWritten {
-                total_events: total,
-            });
+            // 2. Write startup digest
+            write_startup_digest(pool_clone.clone()).await;
+            let repo = FeedbackLedgerRepository::new(pool_clone.clone());
+            if let Ok(total) = repo.total_count().await {
+                let _ = notification_tx.send(RsiNotification::DigestWritten {
+                    total_events: total,
+                });
+            }
         }
+        let repo = FeedbackLedgerRepository::new(pool_clone.clone());
 
         // 2. Periodic analysis + autonomous improvement cycle
         //
@@ -1023,6 +1051,10 @@ pub fn spawn_rsi_engine(
         let cycle_number_path = crate::config::opencrabs_home().join("rsi/cycle_number");
 
         let mut first_iteration = true;
+        // #1063: gate state for transition logging. The engine spawns in both
+        // modes; when disabled it just sleeps through cycles, so an enable in
+        // config.toml hot-reloads without a restart.
+        let mut gate_announced_state = rsi_effectively_enabled(&Config::current(), headless);
         // Baseline of ACTIONABLE ledger events (tool_failure + user_correction
         // + provider_error) seen at the last cycle, persisted across restarts
         // (#977): without the file, every restart reset the baseline to 0 and
@@ -1061,6 +1093,20 @@ pub fn spawn_rsi_engine(
                 rsi_interval_for_streak(zero_improvement_streak)
             };
             tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+
+            // #1063: master gate, re-read from the live config mirror every
+            // cycle so `rsi_enabled` edits apply without a restart.
+            let gate_now = rsi_effectively_enabled(&Config::current(), headless);
+            if gate_now != gate_announced_state {
+                tracing::info!(
+                    "RSI engine {} via config (rsi_enabled / hot reload)",
+                    if gate_now { "enabled" } else { "disabled" }
+                );
+                gate_announced_state = gate_now;
+            }
+            if !gate_now {
+                continue;
+            }
 
             let total = match repo.total_count().await {
                 Ok(t) => t,

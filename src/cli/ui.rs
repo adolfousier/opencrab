@@ -360,9 +360,11 @@ async fn cmd_chat_inner(
     // Create service context
     let service_context = ServiceContext::new(db.pool().clone());
 
-    // Spawn RSI background engine (digest + periodic analysis)
+    // Spawn RSI background engine (digest + periodic analysis). #1063: the
+    // engine task always spawns and gates itself per cycle from the live
+    // config mirror (headless daemons default OFF, TUI default ON).
     let (rsi_tx, mut rsi_rx) = tokio::sync::mpsc::unbounded_channel();
-    crate::brain::rsi::spawn_rsi_engine(db.pool().clone(), config, rsi_tx);
+    crate::brain::rsi::spawn_rsi_engine(db.pool().clone(), config, rsi_tx, headless);
 
     // Resolve RTK in the background (auto-downloads on first use if missing) so
     // the first bash command never blocks on it.

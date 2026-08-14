@@ -1008,6 +1008,21 @@ pub struct AgentConfig {
     #[serde(default)]
     pub self_improvement_provider: Option<String>,
 
+    /// Master switch for the RSI autonomous engine (hourly self-improvement
+    /// cycles with auto-approved tools). `None` (key absent) resolves by run
+    /// mode: ON for the interactive TUI, OFF for headless daemons, because an
+    /// unattended daemon burning provider quota and appending to brain files
+    /// every hour is a bug, not a feature (#1063). Explicit `true`/`false`
+    /// always wins, so a daemon operator who wants RSI opts in knowingly:
+    /// ```toml
+    /// [agent]
+    /// rsi_enabled = true
+    /// ```
+    /// Re-checked every cycle from the live config mirror, so flipping it
+    /// takes effect on the next cycle without a restart.
+    #[serde(default)]
+    pub rsi_enabled: Option<bool>,
+
     /// Override model for RSI self-improvement cycles. Only used when self_improvement_provider is set.
     /// Prefer cheap, fast models for autonomous analysis — results are deterministic.
     #[serde(default)]
@@ -1183,6 +1198,7 @@ impl Default for AgentConfig {
             auto_update: default_auto_update(),
             subagent_session_ttl_days: default_subagent_session_ttl_days(),
             self_improvement_provider: None,
+            rsi_enabled: None,
             self_improvement_model: None,
             eval_providers: Vec::new(),
             default_provider: None,

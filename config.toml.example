@@ -398,6 +398,12 @@ profile_id = ""
 # self_improvement_provider = "zhipu"
 # self_improvement_model = "glm-5.1"
 
+# Master switch for the RSI autonomous engine (#1063). Unset → ON for the
+# interactive TUI, OFF for headless daemons (unattended hourly cycles with
+# auto-approved tools are quota burn, not a feature). Set explicitly to
+# override for your install; edits apply on the next cycle, no restart.
+# rsi_enabled = true
+
 # Auto-install new releases on startup (default: true).
 # When true, OpenCrabs checks GitHub on startup and silently installs any
 # new release, then hot-restarts. Set to false if you prefer to be prompted
