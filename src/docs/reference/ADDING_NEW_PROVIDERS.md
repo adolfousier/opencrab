@@ -27,16 +27,17 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub default_model: Option<String>,
-    pub models: Vec<String>,              // For providers without /models endpoint
-    pub vision_model: Option<String>,     // Vision-capable model override
-    pub generation_model: Option<String>, // Image generation model override
-    pub context_window: Option<u32>,      // Context window size in tokens
-    pub endpoint_type: Option<String>,    // For providers with multiple API modes
-    pub voice: Option<String>,            // TTS voice name (voice providers only)
-    pub model: Option<String>,            // TTS/image model override (voice/image providers)
-    pub enable_thinking: Option<bool>,    // Thinking-mode switch for reasoning models
-    pub cache_enabled: Option<bool>,      // Response caching (OpenRouter)
-    pub cache_ttl: Option<u32>,           // Cache TTL in seconds
+    pub models: Vec<String>,                      // For providers without /models endpoint
+    pub vision_model: Option<String>,             // Vision-capable model override
+    pub generation_model: Option<String>,         // Image generation model override
+    pub context_window: Option<u32>,              // Context window size in tokens
+    pub endpoint_type: Option<String>,            // For providers with multiple API modes
+    pub voice: Option<String>,                    // TTS voice name (voice providers only)
+    pub model: Option<String>,                    // TTS/image model override (voice/image providers)
+    pub enable_thinking: Option<bool>,            // Thinking-mode switch for reasoning models
+    pub cache_enabled: Option<bool>,              // Response caching (OpenRouter)
+    pub cache_ttl: Option<u32>,                   // Cache TTL in seconds
+    pub use_max_completion_tokens: Option<bool>,  // Force max_completion_tokens field
 }
 ```
 
@@ -297,6 +298,15 @@ enabled = true
 base_url = "https://api.yourprovider.com/v1"
 default_model = "your-reasoning-model"
 enable_thinking = true  # Enable hybrid reasoning mode
+```
+
+### With forced use of max_completion_tokens instead of max_tokens:
+```toml
+[providers.yourprovider]
+enabled = true
+base_url = "https://api.yourprovider.com/v1"
+default_model = "your-reasoning-model"
+use_max_completion_tokens = true
 ```
 
 ## Provider Requirements (Mandatory)
