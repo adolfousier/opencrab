@@ -268,7 +268,8 @@ fn rich_message_blocks_decodes_to_text() {
         ]}
     });
     let out = decode_rich_content(&raw).expect("rich_message blocks decode");
-    assert_eq!(out, "Release\nBody here");
+    // #1058: headings now render with markdown level markers.
+    assert_eq!(out, "## Release\nBody here");
 }
 
 #[test]

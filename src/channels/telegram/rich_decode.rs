@@ -53,11 +53,12 @@ pub(crate) fn decode_rich_content(raw: &Value) -> Option<String> {
 }
 
 /// Decode a `rich_message` payload (`sendRichMessage`, Bot API 10.1) into
-/// readable text (#686). Peer OpenCrabs bots post via this, and teloxide leaves
-/// `text()`/`caption()` empty, so without this the content is lost or dumped as
-/// raw JSON. Two input modes, mirroring how we SEND: `{"html": "..."}` (markdown
-/// input mode) and `{"blocks": [...]}` (our `render_json` block AST). Returns
-/// `None` when neither carries text.
+/// readable text (#686, typed rendering in #1058). Peer OpenCrabs bots post via
+/// this, and teloxide leaves `text()`/`caption()` empty, so without this the
+/// content is lost or dumped as raw JSON. The html branch tolerates legacy
+/// payloads; the blocks branch renders the official `RichBlock[]` tree
+/// Telegram delivers on receipt (the sender's markdown/html source is
+/// normalized away server-side). Returns `None` when neither carries text.
 fn decode_rich_message(v: &Value) -> Option<String> {
     if let Some(html) = v.get("html").and_then(Value::as_str) {
         let text = html_to_readable_text(html);
@@ -66,12 +67,331 @@ fn decode_rich_message(v: &Value) -> Option<String> {
         }
     }
     if let Some(blocks) = v.get("blocks").and_then(Value::as_array) {
-        let text = collect_blocks_text(blocks);
+        let text = render_blocks(blocks);
         if !text.trim().is_empty() {
             return Some(text);
         }
     }
     None
+}
+
+// ── Typed RichBlock/RichText rendering (#1058) ──────────────────────────────
+//
+// The official `RichMessage` a bot RECEIVES carries only `blocks` (Bot API
+// 10.1/10.2): Telegram normalizes the sender's markdown/html into a
+// `RichBlock[]` tree server-side and discards the source. Rendering is
+// type-driven where the block announces itself, structural where it does not:
+// a table is recognized by its 2D `cells`, a details block by `summary`, a
+// photo by its `photo` array — so wire-casing drift (or our own legacy
+// `render_json` AST, which used `content` nesting) degrades gracefully instead
+// of silently dropping content. Unknown block types always leave a marker.
+
+/// Render a top-level block array: one block per line, empty blocks dropped.
+fn render_blocks(blocks: &[Value]) -> String {
+    blocks
+        .iter()
+        .map(render_block)
+        .filter(|s| !s.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The block's discriminator, tolerating `"type"` (Bot API wire) and `"@type"`
+/// (TL-schema flavored dumps).
+fn block_tag(b: &Value) -> &str {
+    b.get("type")
+        .or_else(|| b.get("@type"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+/// Render one block into readable markdown-ish text.
+fn render_block(b: &Value) -> String {
+    let tag = block_tag(b);
+
+    // Details/collapsible: `summary` + nested blocks (the #1058 repro — the
+    // old leaf-walk never touched `summary`'s sibling content).
+    if let Some(summary) = b.get("summary") {
+        let head = rich_text(summary);
+        let mut out = format!("[details: {head}]");
+        let inner = b
+            .get("blocks")
+            .or_else(|| b.get("content"))
+            .and_then(Value::as_array)
+            .map(|arr| render_blocks(arr))
+            .unwrap_or_default();
+        if !inner.is_empty() {
+            for line in inner.lines() {
+                out.push_str("\n  ");
+                out.push_str(line);
+            }
+        }
+        return out;
+    }
+
+    // Table: official 2D `cells`, or legacy `rows[].cells[]`.
+    if let Some(rows) = table_rows(b) {
+        return rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|c| table_cell_text(c))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    // List: `items`, optionally carrying a `label` prefix each.
+    if let Some(items) = b.get("items").and_then(Value::as_array) {
+        let ordered = b.get("ordered").and_then(Value::as_bool) == Some(true)
+            || b.get("is_ordered").and_then(Value::as_bool) == Some(true);
+        return items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let label = item.get("label").map(rich_text);
+                let body = match item.get("blocks").or_else(|| item.get("content")) {
+                    Some(inner) => {
+                        render_blocks(inner.as_array().map(Vec::as_slice).unwrap_or(&[]))
+                    }
+                    None => {
+                        // Item may be a bare RichText or a block itself.
+                        let inline = rich_text(item);
+                        if inline.trim().is_empty() {
+                            leaf_text(item)
+                        } else {
+                            inline
+                        }
+                    }
+                };
+                let marker = if ordered {
+                    format!("{}. ", i + 1)
+                } else {
+                    "- ".to_string()
+                };
+                match label {
+                    Some(l) if !l.trim().is_empty() => format!("{marker}{l}: {body}"),
+                    _ => format!("{marker}{body}"),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    // Media blocks: surface the file reference for the download pipeline
+    // (wiring is a follow-up) plus any caption text.
+    if let Some(marker) = media_marker(b) {
+        let mut out = marker;
+        if let Some(caption) = b.get("caption") {
+            let c = if let Some(arr) = caption.as_array() {
+                // Inline concatenation, no separator: spans carry their own
+                // spacing (same semantics as table_cell_text). A " " join
+                // would double spaces when a string span already ends in one.
+                arr.iter().map(rich_text).collect::<Vec<_>>().join("")
+            } else {
+                rich_text(caption)
+            };
+            if !c.trim().is_empty() {
+                out.push_str(&format!("\n{c}"));
+            }
+        }
+        return out;
+    }
+
+    // Math: the expression is the payload.
+    if let Some(expr) = b.get("expression").and_then(Value::as_str) {
+        return format!("[math: {expr}]");
+    }
+
+    // Code: fenced for copyability, language when present.
+    if tag.contains("code") || tag.contains("monospace") || tag.contains("pre") {
+        let body = b
+            .get("text")
+            .or_else(|| b.get("content"))
+            .map(rich_text)
+            .unwrap_or_default();
+        let lang = b.get("language").and_then(Value::as_str).unwrap_or("");
+        return format!("```{lang}\n{body}\n```");
+    }
+
+    // Quote: prefix each inner line.
+    if tag == "quote" || tag.contains("blockquote") {
+        let inner = b
+            .get("text")
+            .or_else(|| b.get("content"))
+            .or_else(|| b.get("blocks"))
+            .map(|t| match t.as_array() {
+                Some(arr) => arr.iter().map(rich_text).collect::<Vec<_>>().join("\n"),
+                None => rich_text(t),
+            })
+            .unwrap_or_default();
+        return inner
+            .lines()
+            .map(|l| format!("> {l}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    if tag == "divider" {
+        return "---".to_string();
+    }
+
+    // Heading: `level` clamps to 1-6 markers.
+    let level = b.get("level").and_then(Value::as_u64).unwrap_or(0);
+    if tag == "heading" || (1..=6).contains(&level) {
+        let text = b
+            .get("text")
+            .or_else(|| b.get("content"))
+            .map(rich_text)
+            .unwrap_or_default();
+        let markers = "#".repeat(level.clamp(1, 6) as usize);
+        return format!("{markers} {text}");
+    }
+
+    // Everything else (paragraph, caption, text, and inline-ish blocks):
+    // render as inline text; fall back to the deep leaf-walk, then to an
+    // explicit unsupported marker so nothing disappears silently.
+    let inline = b
+        .get("text")
+        .or_else(|| b.get("content"))
+        .map(rich_text)
+        .unwrap_or_default();
+    if !inline.trim().is_empty() {
+        return inline;
+    }
+    let gathered = leaf_text(b);
+    if !gathered.trim().is_empty() {
+        return gathered;
+    }
+    if tag.is_empty() {
+        String::new()
+    } else {
+        format!("[unsupported rich block: {tag}]")
+    }
+}
+
+/// Render the recursive `RichText` union: bare string, array of runs, or an
+/// object wrapping more text (`text`, `content`). Inline runs concatenate
+/// contiguously — separators belong to block boundaries, not inline spans.
+/// Links append their URL; mentions append the @handle.
+fn rich_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Array(arr) => arr.iter().map(rich_text).collect::<Vec<_>>().join(""),
+        Value::Object(map) => {
+            let mut out = String::new();
+            if let Some(text) = map.get("text") {
+                out.push_str(&rich_text(text));
+            }
+            if let Some(content) = map.get("content") {
+                out.push_str(&rich_text(content));
+            }
+            if let Some(url) = map.get("url").and_then(Value::as_str) {
+                if !out.trim().is_empty() {
+                    out.push_str(&format!(" ({url})"));
+                } else {
+                    out.push_str(url);
+                }
+            }
+            if let Some(username) = map
+                .get("user")
+                .and_then(|user| user.get("username"))
+                .and_then(Value::as_str)
+                && !out.trim().is_empty()
+            {
+                out.push_str(&format!(" (@{username})"));
+            }
+            out
+        }
+        _ => String::new(),
+    }
+}
+
+/// Extract table rows as a 2D grid: official `cells: [[cell, ...], ...]` or
+/// legacy `rows[].cells[]`. Returns None when neither shape is present.
+fn table_rows(b: &Value) -> Option<Vec<Vec<&Value>>> {
+    if let Some(cells) = b.get("cells").and_then(Value::as_array) {
+        let rows = cells
+            .iter()
+            .map(|row| {
+                row.as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .collect()
+            })
+            .collect();
+        return Some(rows);
+    }
+    let rows = b.get("rows").and_then(Value::as_array)?;
+    Some(
+        rows.iter()
+            .map(|row| {
+                row.get("cells")
+                    .and_then(Value::as_array)
+                    .map(|c| c.iter().collect())
+                    .unwrap_or_default()
+            })
+            .collect(),
+    )
+}
+
+/// Render one table cell: unwrap the official cell wrapper's `content`, render
+/// its inner text, and trim so the grid stays clean.
+fn table_cell_text(cell: &Value) -> String {
+    let inner = cell
+        .get("content")
+        .or_else(|| cell.get("blocks"))
+        .or_else(|| cell.get("text").is_some().then_some(cell))
+        .map(|c| match c.as_array() {
+            Some(arr) => arr.iter().map(rich_text).collect::<Vec<_>>().join(""),
+            None => rich_text(c),
+        })
+        .unwrap_or_else(|| leaf_text(cell));
+    inner.trim().to_string()
+}
+
+/// Marker for media-carrying blocks, surfacing the downloadable file id.
+fn media_marker(b: &Value) -> Option<String> {
+    for (key, label) in [
+        ("slideshow", "slideshow"),
+        ("collage", "collage"),
+        ("photo", "photo"),
+        ("video", "video"),
+        ("audio", "audio"),
+        ("animation", "animation"),
+    ] {
+        if let Some(media) = b.get(key).and_then(Value::as_array) {
+            let count = media.len();
+            let file_id = media
+                .last()
+                .and_then(|m| m.get("file_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("unavailable");
+            return Some(format!(
+                "[{label} attached ({count} size(s), file_id: {file_id})]"
+            ));
+        }
+    }
+    // Embed/link blocks: a URL with no text of its own.
+    if let Some(url) = b.get("url").and_then(Value::as_str)
+        && b.get("text").is_none()
+        && b.get("content").is_none()
+    {
+        return Some(format!("[embed: {url}]"));
+    }
+    None
+}
+
+/// Deep leaf-gather for structures the typed paths do not model: collects
+/// every `text` leaf under the generic nesting keys. Kept from #686 as the
+/// graceful-degradation fallback.
+fn leaf_text(v: &Value) -> String {
+    let mut s = String::new();
+    gather_leaf_text(v, &mut s);
+    s.trim().to_string()
 }
 
 /// Strip HTML tags and decode the handful of entities Telegram's HTML mode
@@ -95,22 +415,6 @@ fn html_to_readable_text(html: &str) -> String {
         .replace("&#39;", "'")
         .trim()
         .to_string()
-}
-
-/// Extract readable text from a `render_json` block array: one line per
-/// top-level block, inline text concatenated within a block. Empty blocks
-/// (e.g. dividers with no text) are dropped.
-fn collect_blocks_text(blocks: &[Value]) -> String {
-    blocks
-        .iter()
-        .map(|b| {
-            let mut s = String::new();
-            gather_leaf_text(b, &mut s);
-            s
-        })
-        .filter(|s| !s.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Recursively gather `text` leaves from a block/inline value, walking the
