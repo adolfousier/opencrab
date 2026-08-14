@@ -1226,20 +1226,43 @@ pub(crate) async fn handle_message(
     if !is_dm {
         let chat_id_str = msg.chat.id.0.to_string();
 
+        // Whether a message we are NOT answering is still worth keeping.
+        // Passive capture exists to hold context in a chat we belong to; it
+        // ran for every undirected message regardless of authorisation, so a
+        // group nobody approved still had its members' messages and media
+        // written to the database and disk (#1043). Computed once here and
+        // applied at every drop site below.
+        let retain_passive = cfg
+            .channels
+            .telegram
+            .retains_history(&chat_id_str, &user_id.to_string());
+        if !retain_passive {
+            tracing::debug!(
+                "Telegram: not retaining history for chat {} — it has no group entry and \
+                 sender {} is not allowlisted",
+                chat_id_str,
+                user_id,
+            );
+        }
+
         // Check allowed_channels (empty = all channels allowed)
         if !allowed_channels.is_empty() && !allowed_channels.contains(&chat_id_str) {
             tracing::debug!(
                 "Telegram: dropping — chat {} not in allowed_channels",
                 chat_id_str
             );
-            let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
-            let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
-            let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
-                (mtype, Some((bytes, fname)))
-            } else {
-                ("text".to_string(), None)
-            };
-            store_channel_msg(text, msg_type, file_data).await;
+            // Gated: an unauthorised chat retains nothing, and is not
+            // even downloaded from (#1043).
+            if retain_passive {
+                let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
+                let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
+                let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
+                    (mtype, Some((bytes, fname)))
+                } else {
+                    ("text".to_string(), None)
+                };
+                store_channel_msg(text, msg_type, file_data).await;
+            }
             return Ok(());
         }
 
@@ -1256,14 +1279,18 @@ pub(crate) async fn handle_message(
                     chat_kind,
                     chat_title
                 );
-                let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
-                let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
-                let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
-                    (mtype, Some((bytes, fname)))
-                } else {
-                    ("text".to_string(), None)
-                };
-                store_channel_msg(text, msg_type, file_data).await;
+                // Gated: an unauthorised chat retains nothing, and is not
+                // even downloaded from (#1043).
+                if retain_passive {
+                    let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
+                    let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
+                    let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
+                        (mtype, Some((bytes, fname)))
+                    } else {
+                        ("text".to_string(), None)
+                    };
+                    store_channel_msg(text, msg_type, file_data).await;
+                }
                 return Ok(());
             }
             RespondTo::Mention => {
@@ -1317,14 +1344,19 @@ pub(crate) async fn handle_message(
                             truncate_str(text_content, 80),
                         );
                     }
-                    let text = text_content.to_string();
-                    let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
-                    let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
-                        (mtype, Some((bytes, fname)))
-                    } else {
-                        ("text".to_string(), None)
-                    };
-                    store_channel_msg(text, msg_type, file_data).await;
+                    // Gated: an unauthorised chat retains nothing, and is not
+                    // even downloaded from (#1043).
+                    if retain_passive {
+                        let text = text_content.to_string();
+                        let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
+                        let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment
+                        {
+                            (mtype, Some((bytes, fname)))
+                        } else {
+                            ("text".to_string(), None)
+                        };
+                        store_channel_msg(text, msg_type, file_data).await;
+                    }
                     return Ok(());
                 }
                 tracing::info!(
@@ -1396,15 +1428,20 @@ pub(crate) async fn handle_message(
                                 truncate_str(text_content, 80),
                             );
                         }
-                        let text = text_content.to_string();
-                        let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
-                        let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment
-                        {
-                            (mtype, Some((bytes, fname)))
-                        } else {
-                            ("text".to_string(), None)
-                        };
-                        store_channel_msg(text, msg_type, file_data).await;
+                        // Gated: an unauthorised chat retains nothing, and is not
+                        // even downloaded from (#1043).
+                        if retain_passive {
+                            let text = text_content.to_string();
+                            let attachment =
+                                download_attachment(&msg, &bot, bot_token.clone()).await;
+                            let (msg_type, file_data) =
+                                if let Some((mtype, bytes, fname)) = attachment {
+                                    (mtype, Some((bytes, fname)))
+                                } else {
+                                    ("text".to_string(), None)
+                                };
+                            store_channel_msg(text, msg_type, file_data).await;
+                        }
                         return Ok(());
                     }
                 }

@@ -633,6 +633,7 @@ pub mod telegram_react_delivery_test;
 pub mod telegram_reaction_prompt_test;
 pub mod telegram_reaction_queue_test;
 pub mod telegram_reflow_collapsed_table_test;
+pub mod telegram_retain_history_test;
 pub mod telegram_rich_json_test;
 pub mod telegram_rich_parse_test;
 pub mod telegram_rich_test;

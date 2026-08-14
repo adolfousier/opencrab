@@ -458,11 +458,33 @@ pub struct TelegramGroupConfig {
 impl TelegramConfig {
     /// Check if a user ID is a bot owner.
     ///
-    /// Uses `bot_owner` list if configured, otherwise falls back to the
-    /// first entry in `allowed_users`. Returns true when `allowed_users`
-    /// is empty (open mode — everyone is treated as owner).
+    /// Uses `bot_owner` if configured, otherwise falls back to the first entry
+    /// in `allowed_users`. With BOTH empty the channel is unconfigured and
+    /// nobody is an owner, which is what `config::owner::is_owner` implements;
+    /// this comment previously claimed the opposite ("everyone is treated as
+    /// owner") and that stale claim misled a caller into assuming an open
+    /// channel grants ownership.
     pub fn is_owner(&self, user_id: &str) -> bool {
         crate::config::owner::is_owner(&self.allowed_users, &self.bot_owner, user_id)
+    }
+
+    /// Whether a message we are NOT going to answer is still worth keeping.
+    ///
+    /// Passive capture exists so the bot holds context in a chat it belongs
+    /// to. It ran for every undirected message regardless of whether the chat
+    /// was ever authorised, so a group nobody approved still had its members'
+    /// messages and media written to the database and disk (#1043). "Not
+    /// addressed to us" and "not ours at all" are different things and only
+    /// the first should retain anything.
+    ///
+    /// A chat qualifies when it has its own `[channels.telegram.groups.<id>]`
+    /// entry, which is what the owner adding the bot creates, or when the
+    /// sender is someone we already answer anywhere (allowlisted or owner) —
+    /// their message is ours to keep even in a chat with no entry yet.
+    pub fn retains_history(&self, chat_id: &str, sender_id: &str) -> bool {
+        self.groups.contains_key(chat_id)
+            || Self::id_in(&self.allowed_users, sender_id)
+            || self.is_owner(sender_id)
     }
 
     /// Whether any list in `list` matches `uid` (ignoring a leading '+').
