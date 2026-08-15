@@ -23,7 +23,8 @@
 
 use crate::brain::agent::service::tool_loop::{
     RepeatLoopAction, build_tool_result_content, extract_path_for_recent_buffer,
-    is_implausible_token_report, is_user_correction, repeat_loop_action, strip_ansi_output,
+    is_duplicate_iteration_text, is_implausible_token_report, is_user_correction,
+    repeat_loop_action, strip_ansi_output,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -490,4 +491,86 @@ fn window_bounds_the_count() {
         repeat_loop_action(&recent, "grep:aa", 3, 2, 3, false),
         RepeatLoopAction::Continue,
     );
+}
+
+// ── is_duplicate_iteration_text (#1070) ────────────────────────────
+
+#[test]
+fn duplicate_text_catches_verbatim_reemission() {
+    // The bug: the model answers, calls one more tool, then restates the
+    // SAME answer on the next iteration. Both copies used to land in
+    // accumulated_text and ship to the user as one doubled message.
+    let answer = "The config key is never merged, so the value is dropped.";
+    assert!(is_duplicate_iteration_text(answer, answer));
+}
+
+#[test]
+fn duplicate_text_allows_the_first_emission() {
+    // Nothing accumulated yet — the first answer must always get through.
+    assert!(!is_duplicate_iteration_text("", "here is the answer"));
+}
+
+#[test]
+fn duplicate_text_allows_a_genuine_continuation() {
+    // Real follow-up content is not a duplicate and must not be swallowed.
+    let accumulated = "Checked the merge arms.";
+    assert!(!is_duplicate_iteration_text(accumulated, "Now filing the issue."));
+}
+
+#[test]
+fn duplicate_text_ignores_whitespace_only_candidate() {
+    // The trap this helper exists to avoid: `contains("")` is trivially
+    // true, so a naive guard would classify every blank segment as a
+    // duplicate and swallow the separator bookkeeping the call sites rely
+    // on. Blank candidates are never duplicates.
+    assert!(!is_duplicate_iteration_text("some earlier text", "   "));
+    assert!(!is_duplicate_iteration_text("some earlier text", ""));
+    assert!(!is_duplicate_iteration_text("", ""));
+}
+
+#[test]
+fn duplicate_text_matches_despite_surrounding_whitespace() {
+    // Providers pad segments with newlines; the padding must not defeat
+    // the check or the duplicate slips straight through.
+    let accumulated = "Filed as issue #1070.";
+    assert!(is_duplicate_iteration_text(accumulated, "\n\n  Filed as issue #1070.  \n"));
+}
+
+#[test]
+fn duplicate_text_catches_a_segment_added_earlier_in_the_same_loop() {
+    // The CLI path rebuilds accumulated_text by draining ordered segments
+    // in a loop, so the guard has to see MID-loop state, not a snapshot
+    // taken before it started. Segment two repeats segment one.
+    let mut accumulated = String::new();
+    for seg in ["Done.", "Done."] {
+        if is_duplicate_iteration_text(&accumulated, seg) {
+            continue;
+        }
+        if !accumulated.is_empty() {
+            accumulated.push_str("\n\n");
+        }
+        accumulated.push_str(seg);
+    }
+    assert_eq!(accumulated, "Done.", "second identical segment must be skipped");
+}
+
+#[test]
+fn duplicate_text_does_not_catch_a_reworded_restatement() {
+    // Documented limit, asserted so nobody assumes more than it does.
+    // Containment catches verbatim re-emission only. Catching a reworded
+    // restatement needs similarity scoring, and a false positive there
+    // would silently delete real content the user is waiting on — so this
+    // deliberately stays a substring check.
+    let accumulated = "The key is dropped because there is no merge arm.";
+    let reworded = "There is no merge arm, so the key gets dropped.";
+    assert!(!is_duplicate_iteration_text(accumulated, reworded));
+}
+
+#[test]
+fn duplicate_text_catches_a_substring_of_longer_accumulated_text() {
+    // A short completion note the turn already emitted verbatim inside a
+    // longer block is still a duplicate — this is the "pure completion
+    // acknowledgement" shape the phantom exemption lets through.
+    let accumulated = "Ran the tests.\n\nAll 112 passed, 0 failed.";
+    assert!(is_duplicate_iteration_text(accumulated, "All 112 passed, 0 failed."));
 }

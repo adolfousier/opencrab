@@ -223,6 +223,30 @@ pub(crate) fn strip_ansi_output(raw: &str) -> String {
     strip_ansi::strip_ansi(raw)
 }
 
+/// Whether `candidate` is text the turn has already accumulated, i.e. a
+/// re-emission that must not be appended a second time (#1070).
+///
+/// `accumulated_text` deliberately collects text from EVERY loop iteration,
+/// not just the last one. That is correct for a model that narrates as it
+/// works, but it also means a model that RESTATES its whole answer after a
+/// tool round gets that answer delivered twice. CLI providers make this the
+/// common case rather than the corner case: they are stateless per
+/// invocation, so each iteration replays the full prompt including the
+/// model's own previous answer, and restating beats continuing.
+///
+/// Whitespace-only candidates are never duplicates. `"".contains("")` is
+/// trivially true, so treating them as such would swallow the separator
+/// bookkeeping the call sites depend on.
+///
+/// Containment catches verbatim re-emission only. A reworded restatement
+/// still gets through — that needs similarity scoring, not substring
+/// matching, and is deliberately out of scope: a false positive here would
+/// silently delete real content the user is waiting on.
+pub(crate) fn is_duplicate_iteration_text(accumulated: &str, candidate: &str) -> bool {
+    let trimmed = candidate.trim();
+    !trimmed.is_empty() && accumulated.contains(trimmed)
+}
+
 /// What to do about a non-modification tool call that keeps recurring (#507).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RepeatLoopAction {
@@ -3737,6 +3761,11 @@ impl AgentService {
                                     accumulated_text.push_str(&marker);
                                     pending_tools.clear();
                                 }
+                                // Skip a segment this turn already carries
+                                // (#1070) — tool markers above still flush.
+                                if is_duplicate_iteration_text(&accumulated_text, &text) {
+                                    continue;
+                                }
                                 if !accumulated_text.is_empty() {
                                     accumulated_text.push_str("\n\n");
                                 }
@@ -3782,8 +3811,10 @@ impl AgentService {
                         if let ContentBlock::Text { text } = block
                             && !text.trim().is_empty()
                         {
-                            // Only append if not already covered by streamed segments
-                            if !accumulated_text.contains(text.trim()) {
+                            // Only append if not already covered by streamed
+                            // segments. Shares the #1070 helper so every append
+                            // site applies one rule instead of drifting apart.
+                            if !is_duplicate_iteration_text(&accumulated_text, text) {
                                 cancel_content.push_str(&format!("{}\n\n", text));
                                 if !accumulated_text.is_empty() {
                                     accumulated_text.push_str("\n\n");
@@ -3817,6 +3848,9 @@ impl AgentService {
                     for block in &response.content {
                         if let ContentBlock::Text { text } = block
                             && !text.trim().is_empty()
+                            // Same guard its sibling above already had (#1070):
+                            // don't re-append text the turn already carries.
+                            && !is_duplicate_iteration_text(&accumulated_text, text)
                         {
                             if !accumulated_text.is_empty() {
                                 accumulated_text.push_str("\n\n");
@@ -4197,6 +4231,13 @@ impl AgentService {
                                 accumulated_text.push_str(&marker);
                                 pending_tools.clear();
                             }
+                            // Skip a segment this turn already carries (#1070):
+                            // CLI providers replay the whole prompt each
+                            // iteration, so the model restates its full answer
+                            // after a tool round instead of continuing.
+                            if is_duplicate_iteration_text(&accumulated_text, &text) {
+                                continue;
+                            }
                             if !accumulated_text.is_empty() {
                                 accumulated_text.push_str("\n\n");
                             }
@@ -4312,7 +4353,12 @@ impl AgentService {
                     };
                 } else {
                     pending_phantom_content = None;
-                    if !iteration_text.is_empty() {
+                    // Skip a verbatim restatement of what the turn already
+                    // carries (#1070). The DB append is skipped with it, so a
+                    // resumed session doesn't surface the duplicate either.
+                    if !iteration_text.is_empty()
+                        && !is_duplicate_iteration_text(&accumulated_text, &iteration_text)
+                    {
                         if !accumulated_text.is_empty() {
                             accumulated_text.push_str("\n\n");
                         }
@@ -4850,7 +4896,9 @@ impl AgentService {
                         } else {
                             iteration_text.clone()
                         };
-                    if !give_up_text.is_empty() {
+                    if !give_up_text.is_empty()
+                        && !is_duplicate_iteration_text(&accumulated_text, &give_up_text)
+                    {
                         if !accumulated_text.is_empty() {
                             accumulated_text.push_str("\n\n");
                         }
