@@ -364,9 +364,58 @@ fn strip_think_tags_multiple() {
 }
 
 #[test]
-fn strip_think_tags_unclosed() {
-    let input = "Hello <think>this never closes and should all go";
-    assert_eq!(strip_think_tags(input), "Hello");
+fn strip_think_tags_unclosed_at_start_strips_the_rest() {
+    // A stream cut mid-reasoning: the opener leads, so every byte after
+    // it is reasoning and none of it is an answer.
+    let input = "<think>this never closes and should all go";
+    assert_eq!(strip_think_tags(input), "");
+}
+
+#[test]
+fn strip_think_tags_unclosed_mid_text_keeps_the_answer() {
+    // Regression: an opener that follows real text is prose mentioning
+    // the tag, not reasoning. Deleting from there silently truncated
+    // delivered messages — the sender saw a complete answer, the reader
+    // got everything up to the mention and nothing after it.
+    let input = "The gate gates on <think> and misses the longer form.";
+    let out = strip_think_tags(input);
+    assert!(!out.contains("<think>"), "tag leaked: {out}");
+    assert!(
+        out.contains("misses the longer form."),
+        "text after the mention was eaten: {out}"
+    );
+}
+
+#[test]
+fn strip_thinking_tags_are_stripped() {
+    // `find("<think>")` cannot match inside `<thinking>` (the byte after
+    // `<think` is `i`, not `>`), so this form needs its own pass.
+    let input = "Answer. <thinking>private deliberation</thinking> Done.";
+    let out = strip_thinking_tags(input);
+    assert!(!out.contains("<thinking>"), "tag leaked: {out}");
+    assert!(!out.contains("private deliberation"), "reasoning leaked: {out}");
+    assert!(out.contains("Answer."), "answer lost: {out}");
+    assert!(out.contains("Done."), "tail lost: {out}");
+}
+
+#[test]
+fn strip_llm_artifacts_covers_the_longer_thinking_form() {
+    // End-to-end through the delivery-side entry point: this is the shape
+    // CLI providers serialize prior reasoning into the prompt as, which
+    // teaches models to reproduce it as plain output text.
+    let input = "<thinking>The user is asking about X.</thinking>\n\nHere is the answer.";
+    let out = strip_llm_artifacts(input);
+    assert!(!out.contains("<thinking>"), "tag leaked: {out}");
+    assert!(!out.contains("The user is asking about X."), "reasoning leaked: {out}");
+    assert!(out.contains("Here is the answer."), "answer lost: {out}");
+}
+
+#[test]
+fn strip_reasoning_tags_do_not_eat_the_next_character() {
+    // The old copy advanced by 13 for a 12-byte close tag, swallowing the
+    // first character after every block it stripped.
+    let input = "<reasoning>internal</reasoning>Answer";
+    assert_eq!(strip_reasoning_tags(input), "Answer");
 }
 
 #[test]
@@ -377,8 +426,14 @@ fn strip_think_tags_no_tags() {
 
 #[test]
 fn strip_reasoning_tags_basic() {
+    // Two spaces, not one: removing the block leaves the space that
+    // preceded the opener AND the space that followed the closer. This
+    // asserted one space while the stripper advanced 13 bytes past a
+    // 12-byte close tag, so the test was pinning the swallowed
+    // character. `strip_think_tags_basic` above has always expected the
+    // two-space form for the identical shape.
     let input = "Before <reasoning>internal</reasoning> After";
-    assert_eq!(strip_reasoning_tags(input), "Before After");
+    assert_eq!(strip_reasoning_tags(input), "Before  After");
 }
 
 #[test]

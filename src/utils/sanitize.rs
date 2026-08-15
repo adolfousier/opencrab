@@ -869,9 +869,18 @@ pub fn strip_llm_artifacts(text: &str) -> String {
     if result.contains("CODE_EDIT_BLOCK") {
         result = strip_code_edit_block_fences(&result);
     }
-    // Strip `<think>` / `<reasoning>` blocks that models emit inline.
-    // Some providers (e.g. mimo) promote these to ReasoningDelta, but
-    // chunk boundaries can leak raw tags into the response text.
+    // Strip `<thinking>` / `<think>` / `<reasoning>` blocks that models
+    // emit inline. Some providers (e.g. mimo) promote these to
+    // ReasoningDelta, but chunk boundaries can leak raw tags into the
+    // response text.
+    //
+    // `<thinking>` needs its own gate: it is not a superstring match for
+    // `<think>` (the byte after `<think` is `i`, not `>`), so for as long
+    // as only the shorter form was checked this variant passed through
+    // untouched on every provider.
+    if result.contains("<thinking>") {
+        result = strip_thinking_tags(&result);
+    }
     if result.contains("<think>") {
         result = strip_think_tags(&result);
     }
@@ -909,37 +918,68 @@ pub fn strip_llm_artifacts(text: &str) -> String {
     result
 }
 
-/// Strip `<think>...</think>` blocks from LLM output.
-pub(crate) fn strip_think_tags(text: &str) -> String {
+/// Strip a matched `<tag>...</tag>` block, and handle an unclosed opener
+/// by POSITION rather than by deleting the rest of the message.
+///
+/// The old per-tag copies dropped everything from an unclosed opener
+/// onward. That is right for a stream cut mid-reasoning, where the
+/// opener sits at the very start and every byte after it is reasoning.
+/// It is destructive anywhere else: a message that merely *mentions* a
+/// tag in prose ("the sanitizer gates on `<think>`") lost every
+/// character after the mention, silently, with no error and no log
+/// line. Three live repros in one chat thread, each eating the rest of
+/// a delivered answer.
+///
+/// So: a leading opener still strips the remainder, a mid-text opener
+/// drops only the tag token. This matches the policy the sibling
+/// `<!-- reasoning -->` path already settled on, pinned by
+/// `sanitize_reasoning_leak_test::an_unclosed_marker_does_not_eat_the_answer`.
+///
+/// Taking `close` as a parameter also removes a hand-counted length: the
+/// `<reasoning>` copy advanced by 13 for a 12-byte close tag and ate the
+/// first character after every block it stripped.
+fn strip_tag_block(text: &str, open: &str, close: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut remaining = text;
-    while let Some(start) = remaining.find("<think>") {
+    while let Some(start) = remaining.find(open) {
         result.push_str(&remaining[..start]);
-        if let Some(end) = remaining[start..].find("</think>") {
-            remaining = &remaining[start + end + 8..]; // 8 = len("</think>")
-        } else {
-            // Unclosed tag — strip everything from <think> onward
+        if let Some(end) = remaining[start..].find(close) {
+            remaining = &remaining[start + end + close.len()..];
+        } else if result.trim().is_empty() {
+            // Opener leads the message: a truncated reasoning stream.
             remaining = "";
+        } else {
+            // Opener appears after real text: prose, not reasoning.
+            // Drop the token, keep everything the user wrote.
+            remaining = &remaining[start + open.len()..];
         }
     }
     result.push_str(remaining);
     result.trim().to_string()
 }
 
+/// Strip `<think>...</think>` blocks from LLM output.
+pub(crate) fn strip_think_tags(text: &str) -> String {
+    strip_tag_block(text, "<think>", "</think>")
+}
+
+/// Strip `<thinking>...</thinking>` blocks from LLM output.
+///
+/// A separate pass from [`strip_think_tags`] because the two never
+/// overlap: `find("<think>")` cannot match inside `<thinking>` (the
+/// byte after `<think` is `i`, not `>`), so the shorter stripper was
+/// blind to this form and it reached users verbatim. CLI providers
+/// serialize prior reasoning back into the prompt in exactly this
+/// shape (`claude_cli.rs`, `codex_cli.rs`, `opencode_cli.rs`,
+/// `command_code_cli.rs`), so models read it in their own history and
+/// reproduce it as plain output text.
+pub(crate) fn strip_thinking_tags(text: &str) -> String {
+    strip_tag_block(text, "<thinking>", "</thinking>")
+}
+
 /// Strip `<reasoning>...</reasoning>` blocks from LLM output.
 pub(crate) fn strip_reasoning_tags(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut remaining = text;
-    while let Some(start) = remaining.find("<reasoning>") {
-        result.push_str(&remaining[..start]);
-        if let Some(end) = remaining[start..].find("</reasoning>") {
-            remaining = &remaining[start + end + 13..]; // 13 = len("</reasoning>")
-        } else {
-            remaining = "";
-        }
-    }
-    result.push_str(remaining);
-    result.trim().to_string()
+    strip_tag_block(text, "<reasoning>", "</reasoning>")
 }
 
 /// Strip `CODE_EDIT_BLOCK`-style fenced blocks the LLM emits as text
