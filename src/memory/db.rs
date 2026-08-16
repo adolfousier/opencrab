@@ -35,6 +35,23 @@ pub struct SearchResult {
     pub score: f64,
 }
 
+/// How much of the store is vectorised (#1067).
+///
+/// `documents_unembedded` and `last_embedded_at` are the two numbers that make
+/// a stalled backfill visible: a store with 65 of 66 documents waiting and a
+/// last-embedded date three months old is broken, and nothing said so before.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VectorStats {
+    /// Active documents in the index.
+    pub documents_active: usize,
+    /// Active documents with no vector row at all.
+    pub documents_unembedded: usize,
+    /// Rows in `content_vectors`, one per embedded chunk.
+    pub vector_rows: usize,
+    /// UTC timestamp of the most recent embedding, if any.
+    pub last_embedded_at: Option<String>,
+}
+
 /// The database store: one connection per database file, owned by the caller
 /// behind a Mutex (see `super::store`).
 #[derive(Debug)]
@@ -467,6 +484,40 @@ impl Store {
             .map_err(|e| format!("insert_embedding blob: {e}"))?;
 
         Ok(())
+    }
+
+    /// Counts describing how much of the store is actually vectorised (#1067).
+    ///
+    /// Counts only, never document bodies: `/doctor` runs on a channel and must
+    /// not pull memory content into a group chat, and the queries stay cheap on
+    /// a large store.
+    pub fn vector_stats(&self) -> Result<VectorStats, String> {
+        let scalar = |sql: &str| -> Result<i64, String> {
+            self.conn
+                .query_row(sql, [], |r| r.get(0))
+                .map_err(|e| format!("vector_stats: {e}"))
+        };
+
+        Ok(VectorStats {
+            documents_active: scalar("SELECT COUNT(*) FROM documents WHERE active = 1")? as usize,
+            // Same shape as `get_hashes_needing_embedding`, counted rather than
+            // materialised: doctor wants the number, not 65 document bodies.
+            documents_unembedded: scalar(
+                r"
+                SELECT COUNT(DISTINCT d.hash)
+                FROM documents d
+                LEFT JOIN content_vectors v ON d.hash = v.hash AND v.seq = 0
+                WHERE d.active = 1 AND v.hash IS NULL
+                ",
+            )? as usize,
+            vector_rows: scalar("SELECT COUNT(*) FROM content_vectors")? as usize,
+            last_embedded_at: self
+                .conn
+                .query_row("SELECT MAX(embedded_at) FROM content_vectors", [], |r| {
+                    r.get::<_, Option<String>>(0)
+                })
+                .map_err(|e| format!("vector_stats: {e}"))?,
+        })
     }
 
     /// Active documents with no `seq = 0` vector row yet: (hash, path, body).

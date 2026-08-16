@@ -390,7 +390,26 @@ pub(crate) async fn cmd_doctor(config: &crate::config::Config) -> Result<()> {
         println!("    ⬚  Trello: disabled");
     }
 
-    // 7. CLI tools in PATH
+    // 7. Memory embeddings (#1067). Counted into the summary, not just printed:
+    // a store where every document is waiting on an embedding is a broken
+    // install that reported all-green because search fell back to FTS and kept
+    // answering.
+    println!();
+    println!("  Memory:");
+    for line in crate::memory::doctor_lines() {
+        let marker = if line.contains("MISSING") || line.contains("FAILING") {
+            fail += 1;
+            "❌"
+        } else if line.contains("awaiting embedding") && !line.contains(", 0 awaiting") {
+            warn += 1;
+            "⚠️ "
+        } else {
+            "  "
+        };
+        println!("    {marker} {line}");
+    }
+
+    // 8. CLI tools in PATH
     println!();
     println!("  CLI tools:");
     for (name, desc) in [

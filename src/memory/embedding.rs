@@ -187,6 +187,99 @@ pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
 /// any documents missing embeddings. Lock ordering: store → release → engine → release → store.
 ///
 /// No-op when `config.memory.vector_enabled = false`.
+/// Embed every active document that has no vector yet, via the configured
+/// embedding API.
+///
+/// Returns `(documents_embedded, documents_needing)` so a caller can report
+/// what it did without querying the store again.
+///
+/// Lives here rather than in the indexer because it is the API twin of
+/// [`backfill_embeddings`], and keeping the two apart is exactly what let them
+/// drift: #998 and #1001 were both "the placeholder sweep was wired into the
+/// local path only", filed weeks apart, because the API copy sat in `index.rs`
+/// where nobody editing the embedder would ever see it.
+pub(super) async fn run_api_backfill(store: &'static Mutex<Store>) -> (usize, usize) {
+    // Retire pre-chunking placeholders before listing what needs work (#998,
+    // #1001). Without this the documents that most need embedding stay
+    // permanently excluded from the query below.
+    match super::store::clear_skipped_placeholders() {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("API backfill: reopened {n} previously skipped documents"),
+        Err(e) => tracing::warn!("API backfill: placeholder sweep failed, continuing: {e}"),
+    }
+
+    let needing = tokio::task::spawn_blocking(move || {
+        store
+            .lock()
+            .ok()
+            .and_then(|s| s.get_hashes_needing_embedding().ok())
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
+
+    let count = needing.len();
+    if count == 0 {
+        return (0, 0);
+    }
+
+    // Resolved once rather than per document: `embedding_api_config` re-reads
+    // config.toml from disk on every call, and the old loop paid that for each
+    // of the 65 documents it was meant to embed.
+    let model_name = super::embedding_api_config()
+        .and_then(|c| c.model)
+        .unwrap_or_else(|| "api-embedding".to_string());
+
+    tracing::info!("API backfill: embedding {count} documents");
+    let mut stored = 0usize;
+    let mut last_error: Option<String> = None;
+
+    for (hash, path, body) in &needing {
+        let mut chunks_stored = 0usize;
+        // Chunked like every other embed path (#998). The pre-chunking version
+        // wrote `skipped-too-large` placeholders past 32 KB, which is what made
+        // those documents permanently unembeddable.
+        for (seq, chunk) in chunks_for(body).into_iter().enumerate() {
+            match embed_via_api(&chunk.text).await {
+                Ok(embedding) => {
+                    let now = crate::utils::string::utc_timestamp();
+                    if let Ok(s) = store.lock()
+                        && s.insert_embedding(hash, seq, chunk.pos, &embedding, &model_name, &now)
+                            .is_ok()
+                    {
+                        chunks_stored += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("API embed failed for '{path}' chunk {seq}: {e}");
+                    last_error = Some(e);
+                }
+            }
+        }
+        if chunks_stored > 0 {
+            stored += 1;
+        }
+    }
+
+    // Feed the same health table every chat provider uses (#1067), so `/doctor`
+    // can report "FAILING (27x): 401 invalid api key" without ever making a
+    // call of its own. Recorded once per pass rather than per chunk: the table
+    // is a JSON file rewritten on every write, and 589 chunks would mean 589
+    // rewrites to say one thing.
+    match (stored, last_error) {
+        (0, Some(e)) => {
+            crate::config::health::record_failure(super::health_report::EMBEDDING_HEALTH_KEY, &e)
+        }
+        (n, _) if n > 0 => {
+            crate::config::health::record_success(super::health_report::EMBEDDING_HEALTH_KEY)
+        }
+        _ => {}
+    }
+
+    tracing::info!("API backfilled {stored}/{count} embeddings");
+    (stored, count)
+}
+
 pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
     if !super::vector_enabled() {
         tracing::info!("Vector embeddings disabled — skipping backfill");

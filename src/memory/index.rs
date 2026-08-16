@@ -4,8 +4,8 @@ use super::db::Store;
 use std::path::Path;
 use std::sync::Mutex;
 
-use super::embedding::{backfill_embeddings, embed_content, embed_content_api, embed_via_api};
-use super::{COLLECTION_BRAIN, COLLECTION_MEMORY, embedding_api_config, embedding_api_configured};
+use super::embedding::{backfill_embeddings, embed_content, embed_content_api};
+use super::{COLLECTION_BRAIN, COLLECTION_MEMORY, embedding_api_configured};
 
 /// Brain files loaded from the workspace root (`~/.opencrabs/`).
 pub const BRAIN_FILES: &[&str] = &[
@@ -314,111 +314,10 @@ pub async fn reindex(store: &'static Mutex<Store>) -> Result<usize, String> {
 
     // --- Backfill embeddings for documents missing them ---
     if embedding_api_configured() {
-        // API path: backfill one-by-one via HTTP (async)
-        let store_ref = store;
-        tokio::task::spawn_blocking(move || {
-            let needing = match store_ref.lock() {
-                Ok(s) => s.get_hashes_needing_embedding().unwrap_or_default(),
-                Err(_) => return,
-            };
-            if needing.is_empty() {
-                return;
-            }
-            tracing::info!("API backfill: {} documents need embeddings", needing.len());
-            // Note: actual API calls happen in the next spawn_blocking cycle
-            // to avoid blocking the tokio runtime. For now, just log.
-            drop(needing);
-        })
-        .await
-        .map_err(|e| format!("spawn_blocking failed: {e}"))?;
-
-        // Async backfill: spawn as a background task
-        let home = crate::config::opencrabs_home();
+        // Network-bound, so it runs detached rather than holding the reindex.
+        // Anything this pass misses is picked up by the periodic sweep (#1069).
         tokio::spawn(async move {
-            let store_ref = store;
-            // Retire pre-chunking placeholders before listing what needs work
-            // (#998). This was wired only into the local backfill at first,
-            // which meant an install configured for an embedding API — where
-            // THIS path runs and the local one never does — kept its
-            // placeholders forever and never re-embedded a single document.
-            match super::store::clear_skipped_placeholders() {
-                Ok(0) => {}
-                Ok(n) => tracing::info!("API backfill: reopened {n} previously skipped documents"),
-                Err(e) => tracing::warn!("API backfill: placeholder sweep failed, continuing: {e}"),
-            }
-
-            // Retire pre-chunking placeholders before listing what needs work
-            // (#1001). The sweep was wired only into the LOCAL backfill, which
-            // meant an install configured for an embedding API — where THIS
-            // path runs and the local one never does — kept its placeholders
-            // forever and re-embedded nothing.
-            match super::store::clear_skipped_placeholders() {
-                Ok(0) => {}
-                Ok(n) => tracing::info!("API backfill: reopened {n} previously skipped documents"),
-                Err(e) => tracing::warn!("API backfill: placeholder sweep failed, continuing: {e}"),
-            }
-
-            // Get hashes needing embedding
-            let needing = tokio::task::spawn_blocking(move || {
-                store_ref
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.get_hashes_needing_embedding().ok())
-                    .unwrap_or_default()
-            })
-            .await
-            .unwrap_or_default();
-
-            if needing.is_empty() {
-                return;
-            }
-
-            let count = needing.len();
-            tracing::info!("API backfill: embedding {count} documents");
-            let mut stored = 0usize;
-
-            for (hash, path, body) in &needing {
-                // Chunked like every other embed path (#998). This one was
-                // missed in the first pass: it is a second API backfill living
-                // in the indexer rather than in `embedding.rs`, and it kept
-                // writing `skipped-too-large` placeholders for anything past
-                // 32 KB, which is exactly what made those documents
-                // permanently unembeddable.
-                let model_name = embedding_api_config()
-                    .and_then(|c| c.model)
-                    .unwrap_or_else(|| "api-embedding".to_string());
-                let mut chunks_stored = 0usize;
-
-                for (seq, chunk) in super::embedding::chunks_for(body).into_iter().enumerate() {
-                    match embed_via_api(&chunk.text).await {
-                        Ok(embedding) => {
-                            let now = crate::utils::string::utc_timestamp();
-                            if let Ok(s) = store_ref.lock()
-                                && s.insert_embedding(
-                                    hash,
-                                    seq,
-                                    chunk.pos,
-                                    &embedding,
-                                    &model_name,
-                                    &now,
-                                )
-                                .is_ok()
-                            {
-                                chunks_stored += 1;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("API embed failed for '{path}' chunk {seq}: {e}");
-                        }
-                    }
-                }
-
-                if chunks_stored > 0 {
-                    stored += 1;
-                }
-            }
-            tracing::info!("API backfilled {stored}/{count} embeddings");
-            drop(home);
+            super::embedding::run_api_backfill(store).await;
         });
     } else {
         // Local path: use GGUF engine (blocking)

@@ -320,10 +320,16 @@ async fn cmd_chat_inner(
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         match crate::memory::get_store() {
-            Ok(store) => match crate::memory::reindex(store).await {
-                Ok(n) => tracing::info!("Startup memory reindex: {n} files"),
-                Err(e) => tracing::warn!("Startup memory reindex failed: {e}"),
-            },
+            Ok(store) => {
+                match crate::memory::reindex(store).await {
+                    Ok(n) => tracing::info!("Startup memory reindex: {n} files"),
+                    Err(e) => tracing::warn!("Startup memory reindex failed: {e}"),
+                }
+                // Started only after the startup reindex has been awaited, so
+                // the first sweep tick can never race the backfill reindex
+                // already runs (#1069).
+                crate::memory::backfill_sweep::spawn(store);
+            }
             Err(e) => tracing::warn!("Memory store init failed at startup: {e}"),
         }
         // Warm up embedding engine so first search doesn't pay model download cost.

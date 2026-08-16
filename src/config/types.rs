@@ -1334,6 +1334,18 @@ pub struct MemoryConfig {
     /// files are caught lazily at search time regardless.
     #[serde(default = "default_sweep_interval_secs")]
     pub sweep_interval_secs: u64,
+
+    /// How often to sweep for documents that still have no embedding, in
+    /// seconds. `0` disables the sweep. Default 300.
+    ///
+    /// Embedding used to happen only at startup and on write. A backfill that
+    /// failed (a bad key, an endpoint that was down) left the vector table at
+    /// zero until someone restarted the process, and nothing said so: search
+    /// silently degraded to keyword-only FTS (#1069). The sweep re-reads
+    /// config.toml on every tick, so a key fixed mid-session takes effect
+    /// without a restart.
+    #[serde(default = "default_backfill_interval_secs")]
+    pub backfill_interval_secs: u64,
 }
 
 /// One external index path (#1051): a bare string or `{ path, pattern }`.
@@ -1397,6 +1409,10 @@ const fn default_vector_enabled() -> bool {
     true
 }
 
+const fn default_backfill_interval_secs() -> u64 {
+    300
+}
+
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
@@ -1406,6 +1422,7 @@ impl Default for MemoryConfig {
             exclude: default_external_excludes(),
             external_allowed_in_shared: false,
             sweep_interval_secs: default_sweep_interval_secs(),
+            backfill_interval_secs: default_backfill_interval_secs(),
         }
     }
 }

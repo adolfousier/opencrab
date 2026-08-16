@@ -222,6 +222,15 @@ impl SlashCommandTool {
             }
         }
 
+        // Memory embeddings (#1067). A broken embedding key never surfaced
+        // anywhere: search silently degrades to keyword-only FTS and keeps
+        // answering, so nothing in this report ever went red for it.
+        lines.push(String::new());
+        lines.push("Memory:".to_string());
+        for line in crate::memory::doctor_lines() {
+            lines.push(format!("  {line}"));
+        }
+
         // Last known good config
         let has_good = crate::config::opencrabs_home()
             .join("config.last_good.toml")
