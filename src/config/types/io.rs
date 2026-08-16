@@ -299,9 +299,14 @@ pub fn write_secret_key(section: &str, key: &str, value: &str) -> Result<()> {
 
     // Sanitize: strip carriage returns, take only first token (reject pasted URLs/junk after key)
     let value = value.split(['\r', '\n']).next().unwrap_or("").trim();
-    if value.is_empty() {
-        return Ok(()); // Don't write empty values
-    }
+    // The last gate before disk. Callers are supposed to resolve the "a key is
+    // already stored" marker themselves, and one of them did not, which is how
+    // a real key landed in keys.toml with the marker glued to its front (#1075).
+    // Refusing the bare marker keeps a stored key from being overwritten by a
+    // placeholder; stripping a prefix keeps the key the user actually typed.
+    let Some(value) = crate::config::stored_key::real_key(value) else {
+        return Ok(()); // Nothing to write: empty, or "leave what is on disk"
+    };
 
     // Hold lock for entire read-modify-write to prevent races
     let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -395,27 +400,29 @@ pub(crate) fn merge_provider_keys(
     mut base: ProviderConfigs,
     keys: ProviderConfigs,
 ) -> ProviderConfigs {
-    // Guard: never merge the sentinel placeholder that /models uses internally
-    let is_real_key = |k: &str| !k.is_empty() && k != "__EXISTING_KEY__";
+    // Never merge the sentinel placeholder `/models` uses internally, and strip
+    // it when a typed key was left glued to it (#1075). Sanitising rather than
+    // rejecting matters: a keys.toml already holding `__EXISTING_KEY__sk-...`
+    // from an older build heals on the next load instead of needing a hand edit.
+    let real_key = |k: String| -> Option<String> {
+        crate::config::stored_key::real_key(&k).map(str::to_string)
+    };
 
     // Merge each provider's api_key if present in keys
     if let Some(k) = keys.anthropic
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.anthropic.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
     if let Some(k) = keys.openai
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.openai.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
     if let Some(k) = keys.openrouter
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.openrouter.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
@@ -426,8 +433,7 @@ pub(crate) fn merge_provider_keys(
         base.minimax.is_some()
     );
     if let Some(k) = keys.minimax
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.minimax.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
@@ -436,38 +442,33 @@ pub(crate) fn merge_provider_keys(
     // other provider (#610). Without this the key wrote to keys.toml but never
     // merged back, so the factory reported "API key missing" right after setup.
     if let Some(k) = keys.moonshot
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.moonshot.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
     // Xiaomi: merge the user's key from keys.toml like any other provider.
     if let Some(k) = keys.xiaomi
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.xiaomi.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
     if let Some(k) = keys.gemini
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.gemini.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
     if let Some(k) = keys.github
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.github.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
     // Merge zhipu
     if let Some(k) = keys.zhipu
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.zhipu.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
@@ -476,8 +477,7 @@ pub(crate) fn merge_provider_keys(
     // keys.toml has a key but config.toml doesn't — the user authenticated
     // through onboarding and wants Qwen on.
     if let Some(k) = keys.qwen
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.qwen.get_or_insert_with(|| ProviderConfig {
             enabled: true,
@@ -500,8 +500,7 @@ pub(crate) fn merge_provider_keys(
     // is unaffected; auto-enable on creation matches qwen/opencode, and an
     // existing `[providers.ollama]` entry keeps whatever `enabled` it set.
     if let Some(k) = keys.ollama
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.ollama.get_or_insert_with(|| ProviderConfig {
             enabled: true,
@@ -521,8 +520,7 @@ pub(crate) fn merge_provider_keys(
     // it (factory.rs reports "API key missing" and the picker's
     // selection silently fails to take effect).
     if let Some(k) = keys.opencode
-        && let Some(key) = k.api_key
-        && is_real_key(&key)
+        && let Some(key) = k.api_key.and_then(real_key)
     {
         let entry = base.opencode.get_or_insert_with(|| ProviderConfig {
             enabled: true,
@@ -542,9 +540,7 @@ pub(crate) fn merge_provider_keys(
     if let Some(custom_keys) = keys.custom {
         let base_customs = base.custom.get_or_insert_with(BTreeMap::default);
         for (name, key_cfg) in custom_keys {
-            if let Some(key) = key_cfg.api_key
-                && is_real_key(&key)
-            {
+            if let Some(key) = key_cfg.api_key.and_then(real_key) {
                 use std::collections::btree_map::Entry;
                 match base_customs.entry(name.clone()) {
                     Entry::Occupied(mut occupied) => {
@@ -579,15 +575,15 @@ pub(crate) fn merge_provider_keys(
     // exactly those paths, so two of its four voice-key writes produced a key
     // that could never reach the runtime.
     //
-    // The `is_real_key` guard now covers groq/openai too; it was missing, which
-    // let the `__EXISTING_KEY__` sentinel `/models` uses internally merge as if
-    // it were a credential.
+    // The sentinel guard now covers groq/openai too; it was missing, which let
+    // the `__EXISTING_KEY__` sentinel `/models` uses internally merge as if it
+    // were a credential.
     if let Some(stt) = keys.stt {
-        let groq_key = stt.groq.and_then(|g| g.api_key).filter(|k| is_real_key(k));
+        let groq_key = stt.groq.and_then(|g| g.api_key).and_then(real_key);
         let compat_key = stt
             .openai_compatible
             .and_then(|c| c.api_key)
-            .filter(|k| is_real_key(k));
+            .and_then(real_key);
         // Materialise `base.stt` only once a real key has arrived, so an empty
         // `[providers.stt]` in keys.toml cannot conjure a phantom section.
         if groq_key.is_some() || compat_key.is_some() {
@@ -607,14 +603,11 @@ pub(crate) fn merge_provider_keys(
         }
     }
     if let Some(tts) = keys.tts {
-        let openai_key = tts
-            .openai
-            .and_then(|o| o.api_key)
-            .filter(|k| is_real_key(k));
+        let openai_key = tts.openai.and_then(|o| o.api_key).and_then(real_key);
         let compat_key = tts
             .openai_compatible
             .and_then(|c| c.api_key)
-            .filter(|k| is_real_key(k));
+            .and_then(real_key);
         if openai_key.is_some() || compat_key.is_some() {
             let base_tts = base.tts.get_or_insert_with(TtsProviders::default);
             if let Some(key) = openai_key {
@@ -671,7 +664,7 @@ pub(crate) fn merge_provider_keys(
             .filter(|c| {
                 c.api_key
                     .as_ref()
-                    .is_some_and(|k| !k.is_empty() && k != "__EXISTING_KEY__")
+                    .is_some_and(|k| crate::config::stored_key::is_real_key(k))
             })
             .count();
         let missing: Vec<&str> = customs
@@ -679,7 +672,7 @@ pub(crate) fn merge_provider_keys(
             .filter(|(_, c)| {
                 !c.api_key
                     .as_ref()
-                    .is_some_and(|k| !k.is_empty() && k != "__EXISTING_KEY__")
+                    .is_some_and(|k| crate::config::stored_key::is_real_key(k))
             })
             .map(|(n, _)| n.as_str())
             .collect();

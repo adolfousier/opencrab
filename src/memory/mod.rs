@@ -103,9 +103,8 @@ pub(crate) fn memory_embedding_key_in(keys_toml: &str) -> Option<String> {
         .get("providers")?
         .get("memory_embedding")?
         .get("api_key")?
-        .as_str()?
-        .trim();
-    (!key.is_empty() && key != "__EXISTING_KEY__").then(|| key.to_string())
+        .as_str()?;
+    crate::config::stored_key::real_key(key).map(str::to_string)
 }
 
 /// Whether an external embedding API is configured under `[memory.embedding]`.

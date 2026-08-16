@@ -18,7 +18,7 @@ impl OnboardingWizard {
 
     /// Check if discord token holds a pre-existing value
     pub fn has_existing_discord_token(&self) -> bool {
-        self.discord_token_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.discord_token_input)
     }
 
     /// Detect existing Discord channel ID from config.toml
@@ -32,7 +32,7 @@ impl OnboardingWizard {
 
     /// Check if discord channel ID holds a pre-existing value
     pub fn has_existing_discord_channel_id(&self) -> bool {
-        self.discord_channel_id_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.discord_channel_id_input)
     }
 
     /// Detect existing Discord allowed users from config.toml
@@ -46,7 +46,7 @@ impl OnboardingWizard {
 
     /// Check if Discord allowed list holds a pre-existing value
     pub fn has_existing_discord_allowed_list(&self) -> bool {
-        self.discord_allowed_list_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.discord_allowed_list_input)
     }
 
     /// Detect existing Slack tokens from keys.toml
@@ -75,12 +75,12 @@ impl OnboardingWizard {
 
     /// Check if slack bot token holds a pre-existing value
     pub fn has_existing_slack_bot_token(&self) -> bool {
-        self.slack_bot_token_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.slack_bot_token_input)
     }
 
     /// Check if slack app token holds a pre-existing value
     pub fn has_existing_slack_app_token(&self) -> bool {
-        self.slack_app_token_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.slack_app_token_input)
     }
 
     /// Detect existing Slack channel ID from config.toml
@@ -94,7 +94,7 @@ impl OnboardingWizard {
 
     /// Check if slack channel ID holds a pre-existing value
     pub fn has_existing_slack_channel_id(&self) -> bool {
-        self.slack_channel_id_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.slack_channel_id_input)
     }
 
     /// Detect existing Slack allowed IDs from config.toml
@@ -108,7 +108,7 @@ impl OnboardingWizard {
 
     /// Check if Slack allowed list holds a pre-existing value
     pub fn has_existing_slack_allowed_list(&self) -> bool {
-        self.slack_allowed_list_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.slack_allowed_list_input)
     }
 
     /// Detect existing Telegram bot token from keys.toml
@@ -127,7 +127,7 @@ impl OnboardingWizard {
 
     /// Check if telegram token holds a pre-existing value
     pub fn has_existing_telegram_token(&self) -> bool {
-        self.telegram_token_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.telegram_token_input)
     }
 
     /// Load the first existing Telegram allowed_user from config.toml
@@ -159,7 +159,7 @@ impl OnboardingWizard {
 
     /// Check if WhatsApp phone holds a pre-existing value
     pub fn has_existing_whatsapp_phone(&self) -> bool {
-        self.whatsapp_phone_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.whatsapp_phone_input)
     }
 
     /// Detect existing Trello credentials (API Key, API Token, Board ID) from config/keys.toml
@@ -194,22 +194,22 @@ impl OnboardingWizard {
 
     /// Check if Trello API Key holds a pre-existing value
     pub fn has_existing_trello_api_key(&self) -> bool {
-        self.trello_api_key_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.trello_api_key_input)
     }
 
     /// Check if Trello API Token holds a pre-existing value
     pub fn has_existing_trello_api_token(&self) -> bool {
-        self.trello_api_token_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.trello_api_token_input)
     }
 
     /// Check if Trello Board ID holds a pre-existing value
     pub fn has_existing_trello_board_id(&self) -> bool {
-        self.trello_board_id_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.trello_board_id_input)
     }
 
     /// Check if Trello Allowed Users holds a pre-existing value
     pub fn has_existing_trello_allowed_users(&self) -> bool {
-        self.trello_allowed_users_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.trello_allowed_users_input)
     }
 
     /// Detect existing respond_to values from config for all channels
@@ -260,7 +260,7 @@ impl OnboardingWizard {
 
     /// Check if image api key holds a pre-existing value
     pub fn has_existing_image_key(&self) -> bool {
-        self.image_api_key_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.image_api_key_input)
     }
 
     /// Detect existing Groq API key from keys.toml
@@ -280,6 +280,6 @@ impl OnboardingWizard {
 
     /// Check if groq key holds a pre-existing value
     pub fn has_existing_groq_key(&self) -> bool {
-        self.groq_api_key_input == EXISTING_KEY_SENTINEL
+        super::key_field::is_stored(&self.groq_api_key_input)
     }
 }

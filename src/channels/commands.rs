@@ -75,7 +75,7 @@ pub async fn sync_provider_for_session(
             .as_ref()
             .and_then(|c| c.get(sess_prov))
             .and_then(|p| p.api_key.as_ref())
-            .is_some_and(|k| !k.is_empty() && k != "__EXISTING_KEY__");
+            .is_some_and(|k| crate::config::stored_key::is_real_key(k));
         tracing::info!(
             "sync_provider_for_session[{}]: create_provider_by_name('{}') — config has api_key: {}",
             session_id,

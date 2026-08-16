@@ -1843,7 +1843,7 @@ impl ProviderConfigs {
                 && cfg
                     .api_key
                     .as_deref()
-                    .is_some_and(|k| !k.is_empty() && k != "__EXISTING_KEY__");
+                    .is_some_and(crate::config::stored_key::is_real_key);
         }
         // Known providers: same alias ladder as `is_declared`, plus
         // enabled + key.

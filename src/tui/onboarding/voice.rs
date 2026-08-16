@@ -378,9 +378,21 @@ where
     F: FnOnce(&mut OnboardingWizard) -> &mut String,
 {
     match key {
-        KeyCode::Char(c) => get_field(wizard).push(c),
+        KeyCode::Char(c) => {
+            let field = get_field(wizard);
+            super::key_field::clear_marker_before_edit(field);
+            field.push(c);
+        }
         KeyCode::Backspace => {
-            get_field(wizard).pop();
+            let field = get_field(wizard);
+            // A seeded marker is one value, not a run of characters: backspacing
+            // it one char at a time would leave `__EXISTING_KEY_` looking like a
+            // typed key. Every other secret input in the wizard clears whole.
+            if super::key_field::is_stored(field) {
+                field.clear();
+            } else {
+                field.pop();
+            }
         }
         KeyCode::Tab | KeyCode::Enter => {
             wizard.voice_field = forward;
@@ -815,8 +827,7 @@ fn render_tts_api_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
 
     // API Key field
     let key_focused = wizard.voice_field == VoiceField::TtsApiKey;
-    let has_key = !wizard.tts_api_key_input.is_empty()
-        && wizard.tts_api_key_input != super::types::EXISTING_KEY_SENTINEL;
+    let has_key = super::key_field::typed_secret(&wizard.tts_api_key_input).is_some();
     render_text_field(
         lines,
         "  API Key: ",
@@ -824,7 +835,7 @@ fn render_tts_api_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         "uses OpenAI key",
         key_focused,
     );
-    if key_focused && !has_key && wizard.tts_api_key_input != super::types::EXISTING_KEY_SENTINEL {
+    if key_focused && !has_key && !super::key_field::is_stored(&wizard.tts_api_key_input) {
         lines.push(Line::from(Span::styled(
             "    (falls back to your OpenAI chat key if empty)",
             Style::default()

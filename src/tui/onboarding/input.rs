@@ -311,6 +311,11 @@ impl OnboardingWizard {
                     self.stt_openai_compat_model.push_str(clean);
                 }
                 VoiceField::SttOpenaiCompatKey => {
+                    // Pasting over a seeded marker replaces the stored key; it
+                    // does not append to the marker (#1075).
+                    super::key_field::clear_marker_before_edit(
+                        &mut self.stt_openai_compat_key_input,
+                    );
                     self.stt_openai_compat_key_input.push_str(clean);
                 }
                 VoiceField::SttVoiceboxUrl => {
@@ -328,9 +333,15 @@ impl OnboardingWizard {
                     self.tts_openai_compat_voice.push_str(clean);
                 }
                 VoiceField::TtsOpenaiCompatKey => {
+                    super::key_field::clear_marker_before_edit(
+                        &mut self.tts_openai_compat_key_input,
+                    );
                     self.tts_openai_compat_key_input.push_str(clean);
                 }
                 VoiceField::TtsApiKey => {
+                    // The field that produced the corrupted key on disk: seeded
+                    // with the marker by `from_config`, pasted into, saved whole.
+                    super::key_field::clear_marker_before_edit(&mut self.tts_api_key_input);
                     self.tts_api_key_input.push_str(clean);
                 }
                 VoiceField::TtsVoiceboxUrl => {

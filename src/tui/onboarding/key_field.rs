@@ -16,18 +16,16 @@
 //!   writes. The sentinel never survives this, alone or as a prefix.
 //! - [`masked`] — what to show in the field, never the secret.
 
-use super::types::EXISTING_KEY_SENTINEL;
-
 /// True when the field still carries the "a key is already stored" marker.
 ///
-/// Prefix, not equality. Nothing clears the seeded marker on the first
-/// keystroke, so typing into a pre-filled field yields
-/// `__EXISTING_KEY__<typed>`. Under an equality check that reads as a freshly
-/// typed secret and gets persisted verbatim, which is how a real key ended up
-/// stored with the marker glued to its front, a value that fails auth exactly
-/// like a wrong key, with nothing on screen to say why.
+/// Prefix, not equality. Clearing on the first keystroke is best effort and was
+/// missing on three voice fields, so a pre-filled field that is typed into can
+/// hold `__EXISTING_KEY__<typed>`. An equality test reads that as a freshly
+/// typed secret, which is how a real key ended up stored with the marker glued
+/// to its front, a value that fails auth exactly like a wrong key with nothing
+/// on screen to say why.
 pub(crate) fn is_stored(value: &str) -> bool {
-    value.starts_with(EXISTING_KEY_SENTINEL)
+    crate::config::stored_key::is_stored_marker(value)
 }
 
 /// The secret to persist, or `None` when the field says "leave what is on disk".
@@ -36,11 +34,15 @@ pub(crate) fn is_stored(value: &str) -> bool {
 /// after it is kept rather than dropped, and returns `None` when nothing but
 /// the marker (or whitespace) is left.
 pub(crate) fn typed_secret(value: &str) -> Option<&str> {
-    let typed = value
-        .strip_prefix(EXISTING_KEY_SENTINEL)
-        .unwrap_or(value)
-        .trim();
-    (!typed.is_empty()).then_some(typed)
+    crate::config::stored_key::real_key(value)
+}
+
+/// Drop the seeded marker so an edit replaces the stored key instead of being
+/// appended to it. Call before the first mutation of a secret input.
+pub(crate) fn clear_marker_before_edit(buf: &mut String) {
+    if is_stored(buf) {
+        buf.clear();
+    }
 }
 
 /// True when a key exists for this provider, whether stored earlier or typed

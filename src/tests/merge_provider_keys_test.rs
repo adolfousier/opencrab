@@ -279,6 +279,37 @@ fn voice_sentinel_placeholder_is_never_merged() {
 }
 
 #[test]
+fn a_key_stored_with_the_sentinel_glued_to_it_still_merges() {
+    // An older build let a seeded field that was typed into persist as
+    // `__EXISTING_KEY__<key>`, so keys.toml on real machines already holds that
+    // shape. The merge sanitises rather than rejects, which is what heals those
+    // machines on the next load instead of asking for a hand edit (#1075).
+    let base = ProviderConfigs::default();
+    let keys = ProviderConfigs {
+        anthropic: Some(key_only("__EXISTING_KEY__sk-ant-real")),
+        tts: Some(TtsProviders {
+            openai: Some(key_only("__EXISTING_KEY__sk-tts-real")),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let merged = merge_provider_keys(base, keys);
+    assert_eq!(
+        merged.anthropic.and_then(|c| c.api_key).as_deref(),
+        Some("sk-ant-real"),
+        "the marker must be stripped, not treated as part of the key"
+    );
+    assert_eq!(
+        merged
+            .tts
+            .and_then(|t| t.openai)
+            .and_then(|c| c.api_key)
+            .as_deref(),
+        Some("sk-tts-real")
+    );
+}
+
+#[test]
 fn empty_voice_sections_do_not_create_phantom_config() {
     // A [providers.stt] table carrying no real key must not materialise a
     // base.stt section. Phantom entries are how the resurrected-provider class

@@ -765,12 +765,12 @@ fn try_create_custom_by_name(config: &Config, name: &str) -> Result<Option<Arc<d
     // authenticate.
     let key_status = if api_key.is_empty() {
         "MISSING".to_string()
-    } else if api_key == "__EXISTING_KEY__" {
+    } else if crate::config::stored_key::is_stored_marker(&api_key) {
         "SENTINEL(__EXISTING_KEY__ never merged)".to_string()
     } else {
         format!("present (len={})", api_key.len())
     };
-    if api_key.is_empty() || api_key == "__EXISTING_KEY__" {
+    if !crate::config::stored_key::is_real_key(&api_key) {
         tracing::warn!(
             "Custom provider '{}' being constructed without a real api_key ({}). \
              Requests will fail auth. Check keys.toml has [providers.custom.{}] api_key = \"...\" \

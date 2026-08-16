@@ -280,6 +280,7 @@ pub mod services_project_test;
 pub mod services_session_test;
 #[cfg(feature = "telegram")]
 pub mod start_gate_allowed_user_test;
+pub mod stored_key_test;
 pub mod systemd_unit_test;
 pub mod telegram_cancel_token_no_drop_test;
 #[cfg(feature = "telegram")]
@@ -374,6 +375,7 @@ pub mod onboarding_tts_api_test;
 pub mod onboarding_types_test;
 pub mod onboarding_user_scroll_test;
 pub mod onboarding_visible_window_test;
+pub mod onboarding_voice_key_edit_test;
 pub mod onboarding_voice_seed_test;
 pub mod onboarding_welcome_test;
 pub mod onboarding_wizard_test;

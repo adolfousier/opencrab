@@ -12,6 +12,7 @@ pub mod registry_client;
 pub mod repair;
 pub mod secrets;
 pub mod startup_checks;
+pub mod stored_key;
 pub(crate) mod types;
 pub mod update;
 

@@ -6,8 +6,13 @@
 use crate::config::ProviderConfig;
 
 /// Sentinel value stored in api_key_input when a key was loaded from config.
-/// The actual key is never held in memory — this just signals "key exists".
-pub const EXISTING_KEY_SENTINEL: &str = "__EXISTING_KEY__";
+/// The actual key is never held in memory, this just signals "key exists".
+///
+/// Re-exported from the config layer, which owns the marker and the only
+/// sanctioned way to read past it. It used to be spelled out here and at seven
+/// other call sites, each with its own equality test, and equality is wrong
+/// once a seeded field has been typed into (#1075).
+pub use crate::config::stored_key::EXISTING_KEY_SENTINEL;
 
 /// Provider definitions (index → info).
 /// Last entry is always "Custom OpenAI-Compatible".
@@ -183,7 +188,7 @@ impl ProviderSelectorState {
 
     /// Whether the current api_key_input holds a pre-existing key sentinel.
     pub fn has_existing_key_sentinel(&self) -> bool {
-        self.api_key_input == EXISTING_KEY_SENTINEL
+        crate::config::stored_key::is_stored_marker(&self.api_key_input)
     }
 
     /// Visual display order: named providers sorted alphabetically,
@@ -440,8 +445,7 @@ impl ProviderSelectorState {
     /// keys.toml (e.g. Model Studio). `None` means no key is available (a keyless
     /// local endpoint), so the caller sends no auth.
     pub fn effective_api_key(&self) -> Option<String> {
-        let typed = self.api_key_input.trim();
-        if !typed.is_empty() && typed != EXISTING_KEY_SENTINEL {
+        if let Some(typed) = crate::config::stored_key::real_key(&self.api_key_input) {
             return Some(typed.to_string());
         }
         self.load_api_key_from_config()
@@ -449,10 +453,9 @@ impl ProviderSelectorState {
 
     /// Resolve the effective API key: user-typed key if present, else config key.
     pub fn resolve_api_key(&self) -> Option<String> {
-        if !self.api_key_input.is_empty() && self.api_key_input != EXISTING_KEY_SENTINEL {
-            Some(self.api_key_input.clone())
-        } else {
-            self.load_api_key_from_config()
+        match crate::config::stored_key::real_key(&self.api_key_input) {
+            Some(typed) => Some(typed.to_string()),
+            None => self.load_api_key_from_config(),
         }
     }
 
