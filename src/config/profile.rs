@@ -863,6 +863,110 @@ pub(crate) fn acquire_scheduler_lock_in(lock_dir: &Path, profile: &str) -> Optio
     Some(SchedulerLock { _file: file })
 }
 
+/// Exclusive ownership of a profile for the lifetime of this process (#1072).
+///
+/// Held from the very top of boot, before the database, the provider, the tool
+/// registry or the memory reindex. A second instance of the same profile used
+/// to run all of that in parallel with the first: two full reindexes over one
+/// memory.db, two provider factories, two sets of channel connect attempts. The
+/// scheduler and token locks caught it later and only partially, by which point
+/// the duplicate work was already done and the process stayed up as a zombie
+/// serving nothing.
+///
+/// Same mechanics as [`SchedulerLock`]: an advisory `flock` released by the
+/// kernel when the fd closes, so a crashed instance never wedges a profile.
+pub struct InstanceLock {
+    // Holding the File keeps the flock; nothing reads this field.
+    _file: fs::File,
+}
+
+/// Outcome of trying to claim a profile.
+pub enum InstanceGuard {
+    /// This process now owns the profile. Hold the lock for its lifetime.
+    Acquired(InstanceLock),
+    /// Another live process owns it. `pid` is the stamp when it was readable
+    /// and the process is still alive; the flock is the guard, not the stamp,
+    /// so `None` still means held.
+    Held { pid: Option<u32> },
+    /// The lock file could not be created or opened. Boot proceeds unguarded.
+    ///
+    /// Deliberately not a refusal: an unwritable lock dir is an environment
+    /// problem, and turning it into "the machine will not start" is a worse
+    /// failure than the duplicate work this guard prevents.
+    Unavailable,
+}
+
+/// Try to take the single-instance lock for `profile`.
+pub fn acquire_instance_lock(profile: &str) -> InstanceGuard {
+    acquire_instance_lock_in(
+        &base_opencrabs_dir().join("locks").join("instance"),
+        profile,
+    )
+}
+
+/// Dir-injectable core of [`acquire_instance_lock`], so tests point at a
+/// TempDir rather than the real `~/.opencrabs/locks/`.
+///
+/// Lives in its own `instance/` subdirectory rather than alongside the channel
+/// token locks: `foreign_lock_owners` scans that directory for `*.lock` files
+/// and SIGTERMs whatever it finds, so a lock file dropped there would make the
+/// TUI kill the very process that is starting up.
+pub(crate) fn acquire_instance_lock_in(lock_dir: &Path, profile: &str) -> InstanceGuard {
+    if let Err(e) = fs::create_dir_all(lock_dir) {
+        tracing::warn!(
+            "instance lock: cannot create {}: {e} — starting without the guard",
+            lock_dir.display()
+        );
+        return InstanceGuard::Unavailable;
+    }
+    let path = lock_dir.join(format!("{profile}.lock"));
+    let file = match fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .read(true)
+        .open(&path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(
+                "instance lock: cannot open {}: {e} — starting without the guard",
+                path.display()
+            );
+            return InstanceGuard::Unavailable;
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if ret != 0 {
+            let pid = fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                // A stamp naming a dead process means the file is stale while
+                // something else holds the flock, or the stamp was never
+                // written. Reporting it would send the user chasing a PID that
+                // does not exist.
+                .filter(|p| is_pid_alive(*p));
+            return InstanceGuard::Held { pid };
+        }
+    }
+
+    {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = &file;
+        let _ = f.set_len(0);
+        let _ = f.seek(SeekFrom::Start(0));
+        if let Err(e) = write!(f, "{}", std::process::id()) {
+            tracing::debug!("instance lock: could not stamp PID into {path:?}: {e}");
+        }
+    }
+
+    InstanceGuard::Acquired(InstanceLock { _file: file })
+}
+
 /// A live, OTHER instance of the active profile that was holding channel
 /// token locks when the interactive TUI started.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -138,7 +138,11 @@ impl ChannelManager {
                     if let Err(e) =
                         crate::config::profile::acquire_token_lock("telegram", &token_hash)
                     {
-                        tracing::warn!("ChannelManager: Telegram token lock denied — {}", e);
+                        tracing::error!(
+                            "ChannelManager: Telegram token lock denied, this channel will NOT run: {}. \
+                             Another profile is using the same bot credential; give each profile its own.",
+                            e
+                        );
                         return;
                     }
                     // Wire the reaction queue so a mid-turn reaction is injected
@@ -283,7 +287,11 @@ impl ChannelManager {
                     if let Err(e) =
                         crate::config::profile::acquire_token_lock("discord", &token_hash)
                     {
-                        tracing::warn!("ChannelManager: Discord token lock denied — {}", e);
+                        tracing::error!(
+                            "ChannelManager: Discord token lock denied, this channel will NOT run: {}. \
+                             Another profile is using the same bot credential; give each profile its own.",
+                            e
+                        );
                         return;
                     }
                     // Background-task resume (#732): a finished detached command
@@ -347,7 +355,11 @@ impl ChannelManager {
                     let token_hash = crate::config::profile::hash_token(&bot_tok);
                     if let Err(e) = crate::config::profile::acquire_token_lock("slack", &token_hash)
                     {
-                        tracing::warn!("ChannelManager: Slack token lock denied — {}", e);
+                        tracing::error!(
+                            "ChannelManager: Slack token lock denied, this channel will NOT run: {}. \
+                             Another profile is using the same bot credential; give each profile its own.",
+                            e
+                        );
                         return;
                     }
                     // Background-task resume (#733): a finished detached command
@@ -409,7 +421,11 @@ impl ChannelManager {
                     if let Err(e) =
                         crate::config::profile::acquire_token_lock("trello", &token_hash)
                     {
-                        tracing::warn!("ChannelManager: Trello token lock denied — {}", e);
+                        tracing::error!(
+                            "ChannelManager: Trello token lock denied, this channel will NOT run: {}. \
+                             Another profile is using the same bot credential; give each profile its own.",
+                            e
+                        );
                         return;
                     }
                     let agent = crate::channels::trello::TrelloAgent::new(

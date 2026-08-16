@@ -236,12 +236,106 @@ pub(crate) async fn cmd_chat(
     cmd_chat_inner(config, session_id, force_onboard, false).await
 }
 
+/// Claim this profile, or refuse to boot (#1072).
+///
+/// Branches on `headless` because BOOT.md documents that the TUI takes
+/// priority: opening it shuts down a running daemon for the profile. A blanket
+/// exit would mean the TUI refuses to start whenever systemd has the daemon up,
+/// which is the normal state on a daemonised box, so the interactive path
+/// preempts first and only gives up if the lock survives that.
+///
+/// The daemon path never preempts, or two daemons would take turns killing each
+/// other.
+async fn acquire_profile_instance(
+    headless: bool,
+) -> Result<(
+    Option<crate::config::profile::InstanceLock>,
+    Vec<crate::config::profile::PreemptedInstance>,
+)> {
+    use crate::config::profile::{InstanceGuard, acquire_instance_lock, active_profile};
+
+    let profile = active_profile().unwrap_or("default").to_string();
+    let claim = {
+        let p = profile.clone();
+        tokio::task::spawn_blocking(move || acquire_instance_lock(&p)).await?
+    };
+
+    let held_by = match claim {
+        InstanceGuard::Acquired(lock) => return Ok((Some(lock), Vec::new())),
+        InstanceGuard::Unavailable => return Ok((None, Vec::new())),
+        InstanceGuard::Held { pid } => pid,
+    };
+
+    if headless {
+        let who = held_by
+            .map(|p| format!("PID {p}"))
+            .unwrap_or_else(|| "another process".to_string());
+        tracing::error!(
+            "Profile '{profile}' is already running ({who}); refusing to start a second instance"
+        );
+        eprintln!("Error: OpenCrabs is already running for profile '{profile}' ({who}).");
+        eprintln!("Stop it first, or start this one with a different profile: opencrabs -p <name>");
+        std::process::exit(1);
+    }
+
+    // Interactive: the running daemon loses. Preemption also releases the
+    // channel token locks, which is the "I had to reconnect Telegram" bug it
+    // was written for; taking the instance lock here means it now also stops
+    // the duplicate reindex that used to run alongside the daemon's.
+    let preempted =
+        tokio::task::spawn_blocking(crate::config::profile::preempt_other_profile_instances)
+            .await
+            .unwrap_or_default();
+    if !preempted.is_empty() {
+        tracing::info!(
+            "TUI priority: preempted {} background instance(s) of profile '{profile}'",
+            preempted.len()
+        );
+    }
+
+    // One retry. The kernel releases the flock when the preempted process dies,
+    // which is not instant, so a single immediate retry would race the SIGTERM.
+    for attempt in 0..20u32 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let p = profile.clone();
+        match tokio::task::spawn_blocking(move || acquire_instance_lock(&p)).await? {
+            InstanceGuard::Acquired(lock) => {
+                tracing::info!("Instance lock acquired after preemption ({attempt} retries)");
+                return Ok((Some(lock), preempted));
+            }
+            InstanceGuard::Unavailable => return Ok((None, preempted)),
+            InstanceGuard::Held { .. } => continue,
+        }
+    }
+
+    let who = held_by
+        .map(|p| format!("PID {p}"))
+        .unwrap_or_else(|| "another process".to_string());
+    tracing::error!("Profile '{profile}' still held by {who} two seconds after preemption");
+    eprintln!(
+        "Error: OpenCrabs is already running for profile '{profile}' ({who}) and did not stop."
+    );
+    eprintln!("Stop it manually, or start this one with a different profile: opencrabs -p <name>");
+    std::process::exit(1);
+}
+
 async fn cmd_chat_inner(
     config: &crate::config::Config,
     session_id: Option<String>,
     force_onboard: bool,
     headless: bool,
 ) -> Result<()> {
+    // Single-instance guard (#1072), before the database, the provider, the
+    // tool registry or the memory reindex. A second instance of the same
+    // profile used to run all of that in parallel with the first: two full
+    // reindexes over one memory.db, two provider factories, two sets of channel
+    // connect attempts. The scheduler and token locks caught it later and only
+    // partially, by which point the duplicate work was already done.
+    //
+    // Held for the whole function so the kernel releases it on exit, crash
+    // included.
+    let (_instance_lock, preempted_instances) = acquire_profile_instance(headless).await?;
+
     // Startup config diagnostics (#477): once per process, never on hot
     // reload. Non-fatal — each line is a hint for silent-config-drift
     // mistakes (ignored keys, defaults that only affect new sessions).
@@ -1294,23 +1388,18 @@ async fn cmd_chat_inner(
         trello_state.clone(),
     ));
 
-    // TUI priority: before we start any channel, shut down any background
-    // instance of this profile (e.g. an `opencrabs daemon` auto-started by
-    // systemd on boot) that is already holding the channel token locks.
-    // Otherwise the TUI's `acquire_token_lock` is denied and the user
-    // silently gets no Telegram — the "I had to reconnect Telegram" bug.
-    // The interactive session always wins; the daemon stays down until the
-    // user starts it again. Headless/daemon launches skip this so a daemon
-    // never preempts another daemon.
-    if !headless {
-        let preempted =
-            tokio::task::spawn_blocking(crate::config::profile::preempt_other_profile_instances)
-                .await
-                .unwrap_or_default();
+    // Report what the instance guard preempted on the way in. The preemption
+    // itself moved to the top of boot (#1072): it used to run here, after the
+    // database, the provider and the memory reindex had already been set up
+    // alongside the daemon's, which is the duplicate work the guard exists to
+    // stop. Only the user-facing message is left at this point, because it
+    // needs the TUI event channel that does not exist that early.
+    {
+        let preempted = &preempted_instances;
         if !preempted.is_empty() {
             use crate::tui::events::TuiEvent;
             let mut lines = Vec::new();
-            for inst in &preempted {
+            for inst in preempted {
                 let chans = if inst.channels.is_empty() {
                     "channels".to_string()
                 } else {
