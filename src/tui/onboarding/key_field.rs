@@ -12,16 +12,35 @@
 //!
 //! - [`is_configured`] — is a key set at all, stored or freshly typed? Drives
 //!   display.
-//! - [`is_new_secret`] — did the user actually type something to persist?
-//!   Drives writes. The sentinel never survives this.
+//! - [`typed_secret`]: what did the user actually type, if anything? Drives
+//!   writes. The sentinel never survives this, alone or as a prefix.
 //! - [`masked`] — what to show in the field, never the secret.
 
 use super::types::EXISTING_KEY_SENTINEL;
 
-/// True when the field holds the "a key is already stored" marker rather than
-/// something the user typed.
+/// True when the field still carries the "a key is already stored" marker.
+///
+/// Prefix, not equality. Nothing clears the seeded marker on the first
+/// keystroke, so typing into a pre-filled field yields
+/// `__EXISTING_KEY__<typed>`. Under an equality check that reads as a freshly
+/// typed secret and gets persisted verbatim, which is how a real key ended up
+/// stored with the marker glued to its front, a value that fails auth exactly
+/// like a wrong key, with nothing on screen to say why.
 pub(crate) fn is_stored(value: &str) -> bool {
-    value == EXISTING_KEY_SENTINEL
+    value.starts_with(EXISTING_KEY_SENTINEL)
+}
+
+/// The secret to persist, or `None` when the field says "leave what is on disk".
+///
+/// The only value a write may use. Strips a leading marker so the key typed
+/// after it is kept rather than dropped, and returns `None` when nothing but
+/// the marker (or whitespace) is left.
+pub(crate) fn typed_secret(value: &str) -> Option<&str> {
+    let typed = value
+        .strip_prefix(EXISTING_KEY_SENTINEL)
+        .unwrap_or(value)
+        .trim();
+    (!typed.is_empty()).then_some(typed)
 }
 
 /// True when a key exists for this provider, whether stored earlier or typed
@@ -29,15 +48,6 @@ pub(crate) fn is_stored(value: &str) -> bool {
 /// sentinel counts, because it only ever appears when a key is stored.
 pub(crate) fn is_configured(value: &str) -> bool {
     !value.is_empty()
-}
-
-/// True when the field carries a secret worth persisting.
-///
-/// The only gate that may guard a write. An empty field means "not set" and
-/// the sentinel means "unchanged, keep what is on disk"; writing either one
-/// destroys a working key.
-pub(crate) fn is_new_secret(value: &str) -> bool {
-    !value.is_empty() && !is_stored(value)
 }
 
 /// What to render in the field. Never the secret: a stored key reads as saved,

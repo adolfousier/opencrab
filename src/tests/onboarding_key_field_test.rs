@@ -5,14 +5,52 @@
 //! it as a value worth writing, so a configured provider displayed as empty
 //! and its key was overwritten with the literal marker on the next save.
 
-use crate::tui::onboarding::key_field::{is_configured, is_new_secret, is_stored, masked};
+use crate::tui::onboarding::key_field::{is_configured, is_stored, masked, typed_secret};
 use crate::tui::provider_selector::EXISTING_KEY_SENTINEL;
+
+fn is_new_secret(value: &str) -> bool {
+    typed_secret(value).is_some()
+}
 
 #[test]
 fn the_sentinel_is_recognised_as_a_stored_key() {
     assert!(is_stored(EXISTING_KEY_SENTINEL));
     assert!(!is_stored("sk-real-key"));
     assert!(!is_stored(""));
+}
+
+#[test]
+fn typing_into_a_seeded_field_persists_only_what_was_typed() {
+    // Nothing clears the marker on the first keystroke, so a pre-filled field
+    // that is typed into reads `__EXISTING_KEY__sk-...`. The equality check
+    // this replaces called that a fresh secret and stored it verbatim, leaving
+    // a key that 401s for a reason nothing on screen explains.
+    let concatenated = format!("{EXISTING_KEY_SENTINEL}sk-typed-after-the-marker");
+    assert!(is_stored(&concatenated));
+    assert_eq!(
+        typed_secret(&concatenated),
+        Some("sk-typed-after-the-marker")
+    );
+}
+
+#[test]
+fn the_marker_alone_yields_nothing_to_write() {
+    assert_eq!(typed_secret(EXISTING_KEY_SENTINEL), None);
+    // Whitespace after the marker is not a key either.
+    assert_eq!(
+        typed_secret(&format!("{EXISTING_KEY_SENTINEL}   ")),
+        None,
+        "trailing whitespace must not count as a typed key"
+    );
+}
+
+#[test]
+fn a_plain_typed_key_is_returned_untouched() {
+    assert_eq!(typed_secret("sk-real-key"), Some("sk-real-key"));
+    // A pasted key often carries a trailing newline; an untrimmed bearer token
+    // is rejected by most gateways.
+    assert_eq!(typed_secret("  sk-padded \n"), Some("sk-padded"));
+    assert_eq!(typed_secret(""), None);
 }
 
 #[test]

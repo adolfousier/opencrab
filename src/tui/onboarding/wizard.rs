@@ -531,6 +531,30 @@ impl OnboardingWizard {
         wizard
     }
 
+    /// A wizard pre-filled from the config on disk, falling back to defaults
+    /// when there is no readable config yet (genuine first run).
+    ///
+    /// Every wizard that can reach a save has to start here. `apply_config`
+    /// writes each section from wizard state, and the fields it writes are
+    /// plain values, not "unset" markers: a wizard built by `new()` carries
+    /// `SttProvider::Off` and `TtsProvider::Off` because those are the struct
+    /// defaults, not because the user chose them. Saving from such a wizard
+    /// writes `enabled = false` over every `providers.stt.*` and
+    /// `providers.tts.*` section, so working voice config was wiped by a
+    /// wizard the user opened for an unrelated step and then left.
+    fn seeded_from_disk() -> Self {
+        match crate::config::Config::load() {
+            Ok(config) => Self::from_config(&config),
+            Err(e) => {
+                // Not fatal: a first run has no config yet. Logged because the
+                // other reason to land here is an unparseable config, and that
+                // silently downgrades the wizard to defaults.
+                tracing::info!("[onboarding] no config to seed the wizard from: {e}");
+                Self::new()
+            }
+        }
+    }
+
     /// Reopen the wizard where the user left it.
     ///
     /// Falls back to a fresh wizard when there is nothing to resume, when the
@@ -538,7 +562,7 @@ impl OnboardingWizard {
     /// `Complete` — resuming onto the finish screen would let a half-finished
     /// setup be marked done by pressing Enter.
     pub fn resumed() -> Self {
-        let mut wizard = Self::new();
+        let mut wizard = Self::seeded_from_disk();
         let saved = super::state::OnboardingState::load();
         let Some(step) = saved
             .last_step

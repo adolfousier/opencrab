@@ -822,16 +822,11 @@ impl OnboardingWizard {
                 );
                 // Write selected voice to [voice] tts_voice
                 try_write!(write_errors, "voice", "tts_voice", &self.tts_api_voice);
-                // Write API key to keys.toml (only if newly entered, not sentinel)
-                if !self.tts_api_key_input.is_empty()
-                    && self.tts_api_key_input != super::types::EXISTING_KEY_SENTINEL
-                {
-                    try_write_keys!(
-                        write_errors,
-                        "providers.tts.openai",
-                        "api_key",
-                        &self.tts_api_key_input
-                    );
+                // Write API key to keys.toml (only what the user actually typed).
+                // The equality check this replaces let a seeded field that was
+                // typed into through persist as `__EXISTING_KEY__<key>`.
+                if let Some(key) = super::key_field::typed_secret(&self.tts_api_key_input) {
+                    try_write_keys!(write_errors, "providers.tts.openai", "api_key", key);
                 }
             }
 
@@ -1013,12 +1008,11 @@ impl OnboardingWizard {
         // already stored, so an emptiness check treats "unchanged" as a value
         // and persists the literal marker over a working key (#1039).
         if write_voice {
-            use super::key_field::is_new_secret;
+            use super::key_field::typed_secret;
 
-            if let Some(ref groq_key) = groq_key
-                && is_new_secret(groq_key)
+            if let Some(key) = groq_key.as_deref().and_then(typed_secret)
                 && let Err(e) =
-                    crate::config::write_secret_key("providers.stt.groq", "api_key", groq_key)
+                    crate::config::write_secret_key("providers.stt.groq", "api_key", key)
             {
                 tracing::warn!("Failed to save Groq key to keys.toml: {}", e);
             }
@@ -1029,20 +1023,20 @@ impl OnboardingWizard {
             // to put in its place, so set it with
             // `/onboard:voice tts openai <key>` rather than writing something
             // that cannot work.
-            if is_new_secret(&self.stt_openai_compat_key_input)
+            if let Some(key) = typed_secret(&self.stt_openai_compat_key_input)
                 && let Err(e) = crate::config::write_secret_key(
                     "providers.stt.openai_compatible",
                     "api_key",
-                    &self.stt_openai_compat_key_input,
+                    key,
                 )
             {
                 tracing::warn!("Failed to save OpenAI-compatible STT key: {}", e);
             }
-            if is_new_secret(&self.tts_openai_compat_key_input)
+            if let Some(key) = typed_secret(&self.tts_openai_compat_key_input)
                 && let Err(e) = crate::config::write_secret_key(
                     "providers.tts.openai_compatible",
                     "api_key",
-                    &self.tts_openai_compat_key_input,
+                    key,
                 )
             {
                 tracing::warn!("Failed to save OpenAI-compatible TTS key: {}", e);
