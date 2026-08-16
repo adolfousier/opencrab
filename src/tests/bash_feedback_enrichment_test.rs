@@ -11,13 +11,45 @@ use crate::brain::agent::service::feedback::enrich_metadata;
 use serde_json::json;
 
 #[test]
-fn bash_failure_appends_cmd_to_snippet() {
+fn bash_failure_leads_with_the_discriminators_then_the_cmd() {
+    // Shape changed in #1068. This used to be `<snippet> | cmd=<cmd>`, which
+    // put the field this file exists to add at the very END of a string the
+    // recorder then caps at 500 chars. A bash failure snippet is the tool's
+    // error line plus up to 8000 chars of captured output, so any failure with
+    // more than ~430 chars of output silently lost its `cmd=` before it
+    // reached the ledger. Short discriminators lead now, so the cap can only
+    // eat the tail.
     let input = json!({ "command": "git rebase main" });
     let result = enrich_metadata("bash", Some("Command exited with code 1"), Some(&input));
     assert_eq!(
         result,
-        Some("Command exited with code 1 | cmd=git rebase main".to_string())
+        Some(
+            "class=unknown | exit=1 | cmd=git rebase main | Command exited with code 1".to_string()
+        )
     );
+}
+
+#[test]
+fn a_bash_failure_row_carries_its_class_and_stderr() {
+    // The whole point of the enrichment (#1068): split `tool_failure|bash`
+    // by hand or by the RSI pass without inventing a new event type.
+    let input = json!({ "command": "curl http://localhost:8931" });
+    let snippet = "Command exited with code 7\n\n-- output captured before error --\n\
+                   STDERR:\ncurl: (7) Failed to connect to localhost port 8931: Connection refused\n";
+    let result = enrich_metadata("bash", Some(snippet), Some(&input)).unwrap();
+    assert!(result.starts_with("class=environmental | exit=7 | cmd=curl http://localhost:8931 | "));
+    assert!(result.ends_with(
+        "stderr_head=curl: (7) Failed to connect to localhost port 8931: Connection refused"
+    ));
+}
+
+#[test]
+fn a_model_error_row_is_labelled_as_one() {
+    let input = json!({ "command": "frobnicate --all" });
+    let snippet = "Command exited with code 127\n\n-- output captured before error --\n\
+                   STDERR:\nbash: frobnicate: command not found\n";
+    let result = enrich_metadata("bash", Some(snippet), Some(&input)).unwrap();
+    assert!(result.starts_with("class=model_error | exit=127 |"));
 }
 
 #[test]
@@ -58,7 +90,11 @@ fn bash_without_command_field_falls_back_to_snippet() {
     // recorder. We get only the original snippet.
     let input = json!({ "something_else": "..." });
     let result = enrich_metadata("bash", Some("Some error"), Some(&input));
-    assert_eq!(result, Some("Some error".to_string()));
+    assert_eq!(
+        result,
+        Some("class=unknown | Some error".to_string()),
+        "no cmd= and no exit line, but the row must still say which population it is in"
+    );
 }
 
 #[test]
@@ -67,7 +103,10 @@ fn bash_with_none_input_falls_back_to_snippet() {
     // meaningful input; the recorder should still produce a
     // ledger entry.
     let result = enrich_metadata("bash", Some("user_denied_approval"), None);
-    assert_eq!(result, Some("user_denied_approval".to_string()));
+    assert_eq!(
+        result,
+        Some("class=unknown | user_denied_approval".to_string())
+    );
 }
 
 #[test]
@@ -76,7 +115,8 @@ fn empty_command_string_is_not_appended() {
     // subsystem prefix LIKE queries would still match.
     let input = json!({ "command": "" });
     let result = enrich_metadata("bash", Some("error"), Some(&input));
-    assert_eq!(result, Some("error".to_string()));
+    assert_eq!(result, Some("class=unknown | error".to_string()));
+    assert!(!result.unwrap().contains("cmd="));
 }
 
 #[test]
@@ -84,14 +124,15 @@ fn very_long_command_is_truncated_to_300_chars() {
     let long_cmd = "git push origin main && ".repeat(200); // ~4800 chars
     let input = json!({ "command": long_cmd });
     let result = enrich_metadata("bash", Some("error"), Some(&input)).unwrap();
-    // Snippet (~5 chars) + " | cmd=" (7) + truncated command (300) = 312 chars.
+    // class= (13) + " | cmd=" (7) + truncated command (300) + " | " (3)
+    // + snippet (5) = 328 chars.
     assert!(
-        result.len() <= 312,
+        result.len() <= 328,
         "command should be capped at 300 chars; got {} char meta: {}",
         result.len(),
         &result[..result.len().min(120)]
     );
-    assert!(result.starts_with("error | cmd=git push"));
+    assert!(result.starts_with("class=unknown | cmd=git push"));
 }
 
 #[test]
@@ -112,8 +153,8 @@ fn realistic_git_failure() {
     let input = json!({ "command": "git rebase --continue" });
     let snippet = "error: could not apply abc1234... fix typo\nhint: Resolve conflicts then run git rebase --continue";
     let result = enrich_metadata("bash", Some(snippet), Some(&input)).unwrap();
-    assert!(result.starts_with("error: could not apply"));
-    assert!(result.ends_with("cmd=git rebase --continue"));
+    assert!(result.starts_with("class=unknown | cmd=git rebase --continue | "));
+    assert!(result.contains("error: could not apply"));
 }
 
 #[test]

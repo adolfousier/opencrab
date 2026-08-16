@@ -50,6 +50,21 @@ pub fn is_recoverable_tool_failure(tool_name: &str, error: Option<&str>) -> bool
                 || e.contains("no answer")
                 || e.contains("no response")
         }
+        // bash carries two failure populations under one tool name (#1068). A
+        // correctly written command that hit a missing file, a closed port or a
+        // dead service says nothing about the tool, and counting it as a defect
+        // made `tool_failure|bash` the ledger's loudest signal, steering RSI at
+        // "bash is broken" when the real finding was a bad command or an absent
+        // resource.
+        //
+        // Model errors stay hard failures on purpose: wrong syntax, an invented
+        // binary, a bare REPL. Those are agent behaviour RSI should act on.
+        // So does an unclassifiable failure, because guessing "environmental"
+        // would quietly drop real defects out of the denominator.
+        "bash" => {
+            crate::brain::bash_failure::classify(error)
+                == crate::brain::bash_failure::BashFailureKind::Environmental
+        }
         _ => false,
     }
 }

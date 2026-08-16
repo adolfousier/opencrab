@@ -71,6 +71,50 @@ fn genuine_defects_are_not_recoverable() {
 }
 
 #[test]
+fn environmental_bash_failures_are_recoverable() {
+    // #1068: bash had no arm at all, so a well-formed command that hit a
+    // missing file or a dead service counted against the tool exactly like a
+    // command the model got wrong. That made `tool_failure|bash` the ledger's
+    // loudest signal and pointed RSI at "bash is broken".
+    assert!(is_recoverable_tool_failure(
+        "bash",
+        Some(
+            "Command exited with code 1\n\n-- output captured before error --\n\
+             STDERR:\ncat: /etc/nope.conf: No such file or directory\n"
+        )
+    ));
+    assert!(is_recoverable_tool_failure(
+        "bash",
+        Some(
+            "Command exited with code 7\n\n-- output captured before error --\n\
+             STDERR:\ncurl: (7) Failed to connect to localhost port 8931: Connection refused\n"
+        )
+    ));
+}
+
+#[test]
+fn bash_commands_the_model_got_wrong_stay_failures() {
+    // The other half of the split, and the reason the classifier checks model
+    // markers first: these are agent behaviour RSI is supposed to act on.
+    for stderr in [
+        "bash: line 3: syntax error near unexpected token `fi'",
+        "bash: line 1: MY_VAR: unbound variable",
+        "ls: illegal option -- Z",
+    ] {
+        assert!(
+            !is_recoverable_tool_failure(
+                "bash",
+                Some(&format!(
+                    "Command exited with code 2\n\n-- output captured before error --\n\
+                     STDERR:\n{stderr}\n"
+                ))
+            ),
+            "must stay a failure: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn missing_error_text_is_not_recoverable() {
     // No error string → cannot be classified benign; must count normally.
     assert!(!is_recoverable_tool_failure("hashline_edit", None));

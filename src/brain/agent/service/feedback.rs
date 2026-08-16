@@ -27,12 +27,24 @@ use uuid::Uuid;
 /// is truncated independently of the error snippet so a giant
 /// command line can't crowd out the error itself; the full meta
 /// then gets the 500-char outer cap below.
+///
+/// A bash FAILURE additionally leads with `class=` and `exit=` and
+/// ends with the head of stderr rather than the raw snippet (#1068),
+/// so `tool_failure|bash` can be split by hand or by the RSI pass
+/// without a new event type. Ordering is load-bearing: the raw
+/// snippet carries captured stdout and routinely runs past the
+/// 500-char cap, which silently truncated away the `cmd=` this
+/// function exists to add. Short discriminators go first so the cap
+/// can only ever eat the least useful tail.
 pub(crate) fn enrich_metadata(
     tool_name: &str,
     error_snippet: Option<&str>,
     tool_input: Option<&serde_json::Value>,
 ) -> Option<String> {
     let snippet = error_snippet.unwrap_or("");
+    if tool_name == "bash" && !snippet.is_empty() {
+        return Some(bash_failure_metadata(snippet, tool_input));
+    }
     let cmd_suffix = if tool_name == "bash"
         && let Some(input) = tool_input
         && let Some(cmd) = input.get("command").and_then(|v| v.as_str())
@@ -61,6 +73,51 @@ pub(crate) fn enrich_metadata(
         (false, None) => Some(snippet.to_string()),
         (false, Some(suffix)) => Some(format!("{snippet}{suffix}")),
     }
+}
+
+/// How much stderr to carry. 80 chars, as first sketched, cuts a typical git
+/// or ssh diagnostic mid-sentence; 160 holds one whole line in nearly every
+/// case and still leaves room under the 500-char cap for a long `cmd=`.
+const STDERR_HEAD_CAP: usize = 160;
+
+/// The metadata row for a failed bash call.
+///
+/// Captured stdout is deliberately dropped. `exit=` already carries the tool's
+/// error line and `stderr_head=` carries the diagnostic, so what stdout adds to
+/// a FAILURE row is bulk that pushes the fields above out past the cap.
+fn bash_failure_metadata(snippet: &str, tool_input: Option<&serde_json::Value>) -> String {
+    use crate::brain::bash_failure::{BashFailureKind, classify, exit_code, stderr_head};
+
+    let class = match classify(snippet) {
+        BashFailureKind::ModelError => "model_error",
+        BashFailureKind::Environmental => "environmental",
+        BashFailureKind::Unknown => "unknown",
+    };
+    let mut meta = format!("class={class}");
+    if let Some(code) = exit_code(snippet) {
+        meta.push_str(&format!(" | exit={code}"));
+    }
+    if let Some(cmd) = tool_input
+        .and_then(|i| i.get("command"))
+        .and_then(|v| v.as_str())
+        .filter(|c| !c.is_empty())
+    {
+        let cmd_short: String = cmd.chars().take(300).collect();
+        meta.push_str(&format!(" | cmd={cmd_short}"));
+    }
+    // No stderr section means the command wrote its diagnostic to stdout (or
+    // nowhere). Fall back to the snippet head so the row is not left with only
+    // a class and an exit code to explain itself.
+    match stderr_head(snippet, STDERR_HEAD_CAP) {
+        Some(head) => meta.push_str(&format!(" | stderr_head={head}")),
+        None => {
+            let head: String = snippet.trim().chars().take(STDERR_HEAD_CAP).collect();
+            if !head.is_empty() {
+                meta.push_str(&format!(" | {head}"));
+            }
+        }
+    }
+    meta
 }
 
 impl AgentService {
