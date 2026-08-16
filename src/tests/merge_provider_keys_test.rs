@@ -10,7 +10,10 @@
 //!
 //! These tests pin the contract for the providers we ship today.
 
-use crate::config::{ProviderConfig, ProviderConfigs, merge_provider_keys};
+use crate::config::{
+    OpenaiCompatibleSttConfig, OpenaiCompatibleTtsConfig, ProviderConfig, ProviderConfigs,
+    SttProviders, TtsProviders, merge_provider_keys,
+};
 
 fn key_only(api_key: &str) -> ProviderConfig {
     ProviderConfig {
@@ -128,4 +131,165 @@ fn moonshot_api_key_from_keys_toml_lands_in_runtime_config() {
     let merged = merge_provider_keys(base, keys);
     let moonshot = merged.moonshot.expect("moonshot entry created");
     assert_eq!(moonshot.api_key.as_deref(), Some("sk-kimi-test"));
+}
+
+#[test]
+fn ollama_api_key_from_keys_toml_lands_in_runtime_config() {
+    // #1066: ProviderConfigs has carried an `ollama` field for a while, so a
+    // cloud key under [providers.ollama] in keys.toml deserialised cleanly and
+    // was then dropped for want of a merge arm. The factory reads the key with
+    // unwrap_or_default(), so the drop became an empty bearer token and
+    // api.ollama.com answered 401. Local Ollama needs no key and never noticed.
+    let base = ProviderConfigs::default();
+    let keys = ProviderConfigs {
+        ollama: Some(key_only("ollama_cloud_key")),
+        ..Default::default()
+    };
+    let merged = merge_provider_keys(base, keys);
+    let ollama = merged.ollama.expect("ollama entry created");
+    assert_eq!(ollama.api_key.as_deref(), Some("ollama_cloud_key"));
+}
+
+#[test]
+fn stt_openai_compatible_api_key_lands_in_runtime_config() {
+    // #1066: /onboard writes this key to keys.toml, but merge_provider_keys had
+    // an arm only for stt.groq — so the key the supported setup flow writes was
+    // exactly the one that never reached the runtime.
+    let base = ProviderConfigs::default();
+    let keys = ProviderConfigs {
+        stt: Some(SttProviders {
+            openai_compatible: Some(OpenaiCompatibleSttConfig {
+                api_key: Some("stt_compat_key".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let merged = merge_provider_keys(base, keys);
+    assert_eq!(
+        merged
+            .stt
+            .and_then(|s| s.openai_compatible)
+            .and_then(|c| c.api_key)
+            .as_deref(),
+        Some("stt_compat_key")
+    );
+}
+
+#[test]
+fn tts_openai_compatible_api_key_lands_in_runtime_config() {
+    // #1066: mirror of the STT gap — [providers.tts.openai_compatible] parsed
+    // fine and was discarded, so a configured OpenAI-compatible voice endpoint
+    // spoke with no credential.
+    let base = ProviderConfigs::default();
+    let keys = ProviderConfigs {
+        tts: Some(TtsProviders {
+            openai_compatible: Some(OpenaiCompatibleTtsConfig {
+                api_key: Some("tts_compat_key".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let merged = merge_provider_keys(base, keys);
+    assert_eq!(
+        merged
+            .tts
+            .and_then(|s| s.openai_compatible)
+            .and_then(|c| c.api_key)
+            .as_deref(),
+        Some("tts_compat_key")
+    );
+}
+
+#[test]
+fn both_keyed_voice_providers_survive_one_merge() {
+    // Restructuring the STT/TTS arms to cover openai_compatible must not cost
+    // groq/openai their keys: keys.stt is moved by the outer `if let`, so the
+    // two providers have to be handled inside a single block.
+    let base = ProviderConfigs::default();
+    let keys = ProviderConfigs {
+        stt: Some(SttProviders {
+            groq: Some(key_only("groq_key")),
+            openai_compatible: Some(OpenaiCompatibleSttConfig {
+                api_key: Some("stt_compat_key".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        tts: Some(TtsProviders {
+            openai: Some(key_only("tts_openai_key")),
+            openai_compatible: Some(OpenaiCompatibleTtsConfig {
+                api_key: Some("tts_compat_key".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let merged = merge_provider_keys(base, keys);
+    let stt = merged.stt.expect("stt section created");
+    let tts = merged.tts.expect("tts section created");
+    assert_eq!(
+        stt.groq.and_then(|c| c.api_key).as_deref(),
+        Some("groq_key")
+    );
+    assert_eq!(
+        stt.openai_compatible.and_then(|c| c.api_key).as_deref(),
+        Some("stt_compat_key")
+    );
+    assert_eq!(
+        tts.openai.and_then(|c| c.api_key).as_deref(),
+        Some("tts_openai_key")
+    );
+    assert_eq!(
+        tts.openai_compatible.and_then(|c| c.api_key).as_deref(),
+        Some("tts_compat_key")
+    );
+}
+
+#[test]
+fn voice_sentinel_placeholder_is_never_merged() {
+    // `__EXISTING_KEY__` is what /models writes internally to mean "keep the
+    // stored key". The STT/TTS arms had no is_real_key guard, so the sentinel
+    // could land in runtime config as though it were a credential (#1066).
+    let base = ProviderConfigs::default();
+    let keys = ProviderConfigs {
+        stt: Some(SttProviders {
+            groq: Some(key_only("__EXISTING_KEY__")),
+            ..Default::default()
+        }),
+        tts: Some(TtsProviders {
+            openai: Some(key_only("__EXISTING_KEY__")),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let merged = merge_provider_keys(base, keys);
+    assert!(
+        merged.stt.is_none(),
+        "sentinel must not create an stt section"
+    );
+    assert!(
+        merged.tts.is_none(),
+        "sentinel must not create a tts section"
+    );
+}
+
+#[test]
+fn empty_voice_sections_do_not_create_phantom_config() {
+    // A [providers.stt] table carrying no real key must not materialise a
+    // base.stt section. Phantom entries are how the resurrected-provider class
+    // of bug starts, so the arm only allocates once a real key has arrived.
+    let base = ProviderConfigs::default();
+    let keys = ProviderConfigs {
+        stt: Some(SttProviders::default()),
+        tts: Some(TtsProviders::default()),
+        ..Default::default()
+    };
+    let merged = merge_provider_keys(base, keys);
+    assert!(merged.stt.is_none(), "empty stt keys must not allocate");
+    assert!(merged.tts.is_none(), "empty tts keys must not allocate");
 }

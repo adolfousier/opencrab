@@ -218,6 +218,7 @@ pub mod markdown_render_test;
 pub mod memory_chunk_vector_test;
 pub mod memory_chunker_test;
 pub mod memory_collection_routing_test;
+pub mod memory_embedding_key_test;
 pub mod memory_recall_eval_test;
 pub mod memory_recall_multilingual_test;
 pub mod memory_recall_test;

@@ -39,19 +39,73 @@ fn vector_enabled() -> bool {
     config.vector_enabled
 }
 
-/// Read the `[memory]` section from config.toml.
+/// Read the `[memory]` section from config.toml, resolving the embedding
+/// `api_key` from keys.toml when config.toml does not carry one.
+///
+/// `EmbeddingConfig::api_key` has always documented that it is "also loaded
+/// from keys.toml under `[providers.memory_embedding]`", but nothing
+/// implemented it, and the gap was two layers deep (#1066): `ProviderConfigs`
+/// had no `memory_embedding` field, so serde dropped the section outright —
+/// and even with a merge arm it could not have helped, because this function
+/// parses config.toml directly and never passes through `Config::load()`.
+/// Resolving the key here fixes it at the one place that actually consumes it,
+/// and keeps the secret in keys.toml where the config/keys split intends it.
 fn read_memory_config() -> crate::config::MemoryConfig {
-    let config_path = crate::config::opencrabs_home().join("config.toml");
-    if let Ok(content) = std::fs::read_to_string(&config_path)
-        && let Ok(table) = content.parse::<toml::Table>()
-        && let Some(memory) = table.get("memory")
-        && let Ok(cfg) = toml::from_str::<crate::config::MemoryConfig>(
-            &toml::to_string(memory).unwrap_or_default(),
-        )
+    let mut cfg = read_memory_section().unwrap_or_default();
+    if let Some(ref mut emb) = cfg.embedding
+        && needs_embedding_key(emb.api_key.as_deref())
+        && let Some(key) = memory_embedding_key_from_keys_file()
     {
-        return cfg;
+        emb.api_key = Some(key);
     }
-    crate::config::MemoryConfig::default()
+    cfg
+}
+
+/// Whether config.toml left the embedding key for keys.toml to supply.
+///
+/// A whitespace-only value counts as absent: it reaches the provider as an
+/// empty bearer token and 401s exactly like no key at all, so treating it as
+/// "configured" would keep the keys.toml fallback locked out for the one user
+/// who most needs it.
+pub(crate) fn needs_embedding_key(configured: Option<&str>) -> bool {
+    configured.is_none_or(|k| k.trim().is_empty())
+}
+
+/// Parse just the `[memory]` table out of config.toml.
+fn read_memory_section() -> Option<crate::config::MemoryConfig> {
+    let config_path = crate::config::opencrabs_home().join("config.toml");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let table = content.parse::<toml::Table>().ok()?;
+    let memory = table.get("memory")?;
+    toml::from_str::<crate::config::MemoryConfig>(&toml::to_string(memory).ok()?).ok()
+}
+
+/// `[providers.memory_embedding].api_key` from keys.toml, when it holds a real
+/// credential. Mirrors the `__EXISTING_KEY__` sentinel guard that
+/// `merge_provider_keys` applies, so the placeholder `/models` writes
+/// internally is never mistaken for a key.
+fn memory_embedding_key_from_keys_file() -> Option<String> {
+    let keys_path = crate::config::opencrabs_home().join("keys.toml");
+    let content = std::fs::read_to_string(&keys_path).ok()?;
+    memory_embedding_key_in(&content)
+}
+
+/// The parsing half of the above, split out so the contract can be tested
+/// without a keys.toml on disk.
+///
+/// The section is read as a raw toml table rather than through
+/// `ProviderConfigs`, which has no `memory_embedding` field: adding one would
+/// not help, because this module parses config.toml directly and never passes
+/// through `Config::load()` where `merge_provider_keys` runs.
+pub(crate) fn memory_embedding_key_in(keys_toml: &str) -> Option<String> {
+    let table = keys_toml.parse::<toml::Table>().ok()?;
+    let key = table
+        .get("providers")?
+        .get("memory_embedding")?
+        .get("api_key")?
+        .as_str()?
+        .trim();
+    (!key.is_empty() && key != "__EXISTING_KEY__").then(|| key.to_string())
 }
 
 /// Whether an external embedding API is configured under `[memory.embedding]`.

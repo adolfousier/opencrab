@@ -491,6 +491,30 @@ pub(crate) fn merge_provider_keys(
             entry.base_url = k.base_url;
         }
     }
+    // Merge ollama (Ollama Cloud API key). `ProviderConfigs` has had an
+    // `ollama` field for a while, so a key under `[providers.ollama]` in
+    // keys.toml deserialised cleanly — and was then dropped here for want
+    // of an arm (#1066). The factory reads `api_key` with
+    // `unwrap_or_default()`, so the dropped key became an empty bearer
+    // token and api.ollama.com answered 401. Local Ollama needs no key and
+    // is unaffected; auto-enable on creation matches qwen/opencode, and an
+    // existing `[providers.ollama]` entry keeps whatever `enabled` it set.
+    if let Some(k) = keys.ollama
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.ollama.get_or_insert_with(|| ProviderConfig {
+            enabled: true,
+            ..Default::default()
+        });
+        entry.api_key = Some(key);
+        if entry.default_model.is_none() && k.default_model.is_some() {
+            entry.default_model = k.default_model;
+        }
+        if entry.base_url.is_none() && k.base_url.is_some() {
+            entry.base_url = k.base_url;
+        }
+    }
     // Merge opencode (Go/Zen plan API key). Same auto-enable logic as
     // qwen — `/models` writes the key under `[providers.opencode]` in
     // keys.toml, and without this merge the runtime config never sees
@@ -548,22 +572,64 @@ pub(crate) fn merge_provider_keys(
             }
         }
     }
-    // Also handle STT/TTS keys
-    if let Some(stt) = keys.stt
-        && let Some(groq) = stt.groq
-        && let Some(key) = groq.api_key
-    {
-        let base_stt = base.stt.get_or_insert_with(SttProviders::default);
-        let entry = base_stt.groq.get_or_insert_with(ProviderConfig::default);
-        entry.api_key = Some(key);
+    // Also handle STT/TTS keys. Each section carries two keyed providers, and
+    // until #1066 only one of each had an arm: a key under
+    // `[providers.stt.openai_compatible]` or `[providers.tts.openai_compatible]`
+    // parsed cleanly and was then discarded here. `/onboard` writes keys to
+    // exactly those paths, so two of its four voice-key writes produced a key
+    // that could never reach the runtime.
+    //
+    // The `is_real_key` guard now covers groq/openai too; it was missing, which
+    // let the `__EXISTING_KEY__` sentinel `/models` uses internally merge as if
+    // it were a credential.
+    if let Some(stt) = keys.stt {
+        let groq_key = stt.groq.and_then(|g| g.api_key).filter(|k| is_real_key(k));
+        let compat_key = stt
+            .openai_compatible
+            .and_then(|c| c.api_key)
+            .filter(|k| is_real_key(k));
+        // Materialise `base.stt` only once a real key has arrived, so an empty
+        // `[providers.stt]` in keys.toml cannot conjure a phantom section.
+        if groq_key.is_some() || compat_key.is_some() {
+            let base_stt = base.stt.get_or_insert_with(SttProviders::default);
+            if let Some(key) = groq_key {
+                base_stt
+                    .groq
+                    .get_or_insert_with(ProviderConfig::default)
+                    .api_key = Some(key);
+            }
+            if let Some(key) = compat_key {
+                base_stt
+                    .openai_compatible
+                    .get_or_insert_with(OpenaiCompatibleSttConfig::default)
+                    .api_key = Some(key);
+            }
+        }
     }
-    if let Some(tts) = keys.tts
-        && let Some(openai) = tts.openai
-        && let Some(key) = openai.api_key
-    {
-        let base_tts = base.tts.get_or_insert_with(TtsProviders::default);
-        let entry = base_tts.openai.get_or_insert_with(ProviderConfig::default);
-        entry.api_key = Some(key);
+    if let Some(tts) = keys.tts {
+        let openai_key = tts
+            .openai
+            .and_then(|o| o.api_key)
+            .filter(|k| is_real_key(k));
+        let compat_key = tts
+            .openai_compatible
+            .and_then(|c| c.api_key)
+            .filter(|k| is_real_key(k));
+        if openai_key.is_some() || compat_key.is_some() {
+            let base_tts = base.tts.get_or_insert_with(TtsProviders::default);
+            if let Some(key) = openai_key {
+                base_tts
+                    .openai
+                    .get_or_insert_with(ProviderConfig::default)
+                    .api_key = Some(key);
+            }
+            if let Some(key) = compat_key {
+                base_tts
+                    .openai_compatible
+                    .get_or_insert_with(OpenaiCompatibleTtsConfig::default)
+                    .api_key = Some(key);
+            }
+        }
     }
     if let Some(ws) = keys.web_search {
         let base_ws = base
