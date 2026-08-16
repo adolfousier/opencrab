@@ -514,7 +514,10 @@ fn duplicate_text_allows_the_first_emission() {
 fn duplicate_text_allows_a_genuine_continuation() {
     // Real follow-up content is not a duplicate and must not be swallowed.
     let accumulated = "Checked the merge arms.";
-    assert!(!is_duplicate_iteration_text(accumulated, "Now filing the issue."));
+    assert!(!is_duplicate_iteration_text(
+        accumulated,
+        "Now filing the issue."
+    ));
 }
 
 #[test]
@@ -533,7 +536,10 @@ fn duplicate_text_matches_despite_surrounding_whitespace() {
     // Providers pad segments with newlines; the padding must not defeat
     // the check or the duplicate slips straight through.
     let accumulated = "Filed as issue #1070.";
-    assert!(is_duplicate_iteration_text(accumulated, "\n\n  Filed as issue #1070.  \n"));
+    assert!(is_duplicate_iteration_text(
+        accumulated,
+        "\n\n  Filed as issue #1070.  \n"
+    ));
 }
 
 #[test]
@@ -551,7 +557,10 @@ fn duplicate_text_catches_a_segment_added_earlier_in_the_same_loop() {
         }
         accumulated.push_str(seg);
     }
-    assert_eq!(accumulated, "Done.", "second identical segment must be skipped");
+    assert_eq!(
+        accumulated, "Done.",
+        "second identical segment must be skipped"
+    );
 }
 
 #[test]
@@ -572,5 +581,8 @@ fn duplicate_text_catches_a_substring_of_longer_accumulated_text() {
     // longer block is still a duplicate — this is the "pure completion
     // acknowledgement" shape the phantom exemption lets through.
     let accumulated = "Ran the tests.\n\nAll 112 passed, 0 failed.";
-    assert!(is_duplicate_iteration_text(accumulated, "All 112 passed, 0 failed."));
+    assert!(is_duplicate_iteration_text(
+        accumulated,
+        "All 112 passed, 0 failed."
+    ));
 }

@@ -393,7 +393,10 @@ fn strip_thinking_tags_are_stripped() {
     let input = "Answer. <thinking>private deliberation</thinking> Done.";
     let out = strip_thinking_tags(input);
     assert!(!out.contains("<thinking>"), "tag leaked: {out}");
-    assert!(!out.contains("private deliberation"), "reasoning leaked: {out}");
+    assert!(
+        !out.contains("private deliberation"),
+        "reasoning leaked: {out}"
+    );
     assert!(out.contains("Answer."), "answer lost: {out}");
     assert!(out.contains("Done."), "tail lost: {out}");
 }
@@ -406,7 +409,10 @@ fn strip_llm_artifacts_covers_the_longer_thinking_form() {
     let input = "<thinking>The user is asking about X.</thinking>\n\nHere is the answer.";
     let out = strip_llm_artifacts(input);
     assert!(!out.contains("<thinking>"), "tag leaked: {out}");
-    assert!(!out.contains("The user is asking about X."), "reasoning leaked: {out}");
+    assert!(
+        !out.contains("The user is asking about X."),
+        "reasoning leaked: {out}"
+    );
     assert!(out.contains("Here is the answer."), "answer lost: {out}");
 }
 
