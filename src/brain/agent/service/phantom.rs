@@ -956,7 +956,7 @@ pub fn claims_uncalled_commands(text: &str, executed_inputs: &[String]) -> Vec<S
     // claims slipped through when this trusted it. Multi-word framings carry
     // little cross-language collision risk, which is why the intent phrases
     // are scanned the same way.
-    for sentence in text.split(['.', '\n', '!', '?']) {
+    for sentence in sentences_outside_code_spans(text) {
         if !frames_as_executed_any(&sentence.to_lowercase()) {
             continue;
         }
@@ -974,6 +974,60 @@ pub fn claims_uncalled_commands(text: &str, executed_inputs: &[String]) -> Vec<S
         }
     }
     out
+}
+
+/// Sentence fragments, split on the usual terminators but never inside a
+/// backticked span (#1074).
+///
+/// Splitting first and looking for backticks second tore every dotted command
+/// in half: `` `wc -l src/tui/mod.rs` `` became `` `wc -l src/tui/mod `` plus
+/// `` rs` ``, neither fragment holding a closed pair, so the span was never
+/// parsed and the allowlist never consulted. That is the majority shape of a
+/// real inspection claim, because the fabricated fact is normally about a
+/// specific file, a path or a host.
+///
+/// Backticks are paired over the whole text before splitting rather than
+/// toggled statefully as the scan walks it. A stray unmatched backtick would
+/// otherwise swallow the entire remainder into one pseudo-sentence, letting a
+/// framing in one paragraph vouch for a command three paragraphs down.
+fn sentences_outside_code_spans(text: &str) -> Vec<&str> {
+    let spans = code_span_ranges(text);
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (offset, c) in text.char_indices() {
+        if !matches!(c, '.' | '\n' | '!' | '?') {
+            continue;
+        }
+        if spans
+            .iter()
+            .any(|(open, close)| offset > *open && offset < *close)
+        {
+            continue;
+        }
+        out.push(&text[start..offset]);
+        start = offset + c.len_utf8();
+    }
+    out.push(&text[start..]);
+    out
+}
+
+/// Byte offsets of each opening backtick and its matching closing one.
+///
+/// Unmatched trailing backticks are dropped: without a close there is no span,
+/// so the delimiters after it keep splitting normally.
+fn code_span_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some(open_rel) = text[cursor..].find('`') {
+        let open = cursor + open_rel;
+        let Some(close_rel) = text[open + 1..].find('`') else {
+            break;
+        };
+        let close = open + 1 + close_rel;
+        ranges.push((open, close));
+        cursor = close + 1;
+    }
+    ranges
 }
 
 /// Whether the sentence presents its command as done rather than proposed.
