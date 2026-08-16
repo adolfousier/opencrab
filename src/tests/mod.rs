@@ -241,6 +241,7 @@ pub mod phantom_going_to_test;
 pub mod phantom_issue_action_test;
 pub mod phantom_null_effect_test;
 pub mod phantom_oven_claim_test;
+pub mod phantom_trigger_gap_test;
 pub mod phantom_unbacked_evidence_test;
 pub mod phantom_uncalled_command_test;
 pub mod phantom_unsent_file_test;

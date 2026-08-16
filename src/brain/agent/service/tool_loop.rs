@@ -4720,7 +4720,32 @@ impl AgentService {
                         // but carrying no <<IMG:>>/<<VID:>> marker is fabricating —
                         // generate_image delivers via those markers.
                         || (tool_calls_completed_this_turn == 0
-                            && super::phantom::claims_unbacked_media_result(&iteration_text)))
+                            && super::phantom::claims_unbacked_media_result(&iteration_text))
+                        // Fact-based, not wording-based (#1073). Every branch
+                        // above reads the wording for a signal, so a fabricated
+                        // PAST-TENSE result claim matched none of them: no
+                        // forward intent, no registered tool name, no
+                        // side-effect verb, not a bare completion, no media
+                        // claim. These two do not infer — the loop knows what
+                        // it executed, so a named command absent from every
+                        // tool input was not run, and quoted output absent from
+                        // every tool result was written rather than read.
+                        //
+                        // Both already gate `phantom_eligible` above. Without
+                        // them here the strongest evidence we hold could not
+                        // fire the correction it was computed for: the turn was
+                        // ruled eligible, every wording branch missed, and the
+                        // fabrication shipped with no nudge and no log line.
+                        //
+                        // Deliberately NOT gated on
+                        // `tool_calls_completed_this_turn == 0`: #785 and #825
+                        // exist precisely because a turn that DID run tools can
+                        // still fabricate a separate claim alongside them.
+                        || !uncalled_commands.is_empty()
+                        || super::phantom::claims_unbacked_evidence(
+                            &iteration_text,
+                            &turn_tool_output,
+                        ))
                 {
                     phantom_retries_used += 1;
                     tracing::warn!(
