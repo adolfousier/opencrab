@@ -991,14 +991,41 @@ fn frames_as_executed_any(lower: &str) -> bool {
 /// Backticked spans that look like a shell command: a bare program name
 /// followed by at least one argument. Prose in backticks (`mod.rs`, a symbol,
 /// a file path) has no space and is skipped.
+///
+/// The allowlist is what bounds this check, so a gap in it is a gap in the
+/// check. It shipped with `psql` but not `ps`, and with `sha256sum` but not
+/// `stat` or `date` — the three commands that produce the facts a turn is most
+/// tempted to invent. Fabricated build timestamps ("the binary was built at
+/// 20:24:41") named `stat` in backticks, framed as executed, and passed
+/// untouched because the program was unknown. Inspection commands belong here
+/// at least as much as the mutating ones: nobody fabricates `git commit`, they
+/// fabricate its output.
+///
+/// Deliberately absent: `env`, `file`, `test` and other program names that are
+/// also ordinary English nouns. A backticked `env var` or `file path` inside a
+/// sentence framed as executed would read as a command claim and flag an
+/// honest recap, and a false self-heal costs a whole turn.
 fn backticked_commands(text: &str) -> Vec<String> {
     const PROGRAMS: &[&str] = &[
+        // Version control and issue tracking.
         "gh",
         "git",
+        // Build and package managers.
         "cargo",
         "npm",
         "pnpm",
         "yarn",
+        "make",
+        "pip",
+        "pip3",
+        "brew",
+        "rustc",
+        "rustup",
+        "go",
+        "node",
+        "python",
+        "python3",
+        // Text and file inspection.
         "grep",
         "rg",
         "ls",
@@ -1006,21 +1033,46 @@ fn backticked_commands(text: &str) -> Vec<String> {
         "wc",
         "sed",
         "awk",
-        "curl",
-        "docker",
-        "psql",
-        "sqlite3",
-        "python",
-        "python3",
-        "make",
+        "diff",
         "find",
         "head",
         "tail",
+        "sort",
+        "uniq",
+        "jq",
+        // Filesystem and process facts — the timestamp/size/uptime claims.
+        "stat",
+        "date",
+        "du",
+        "df",
+        "ps",
+        "lsof",
+        "uname",
+        "whoami",
+        "which",
+        "uptime",
+        // Hashing and crypto.
         "shasum",
         "sha256sum",
-        "diff",
+        "md5sum",
+        "openssl",
+        // Network.
+        "curl",
+        "wget",
+        "dig",
+        "ping",
+        "ssh",
+        "scp",
+        "rsync",
+        // Services and infrastructure.
+        "systemctl",
+        "journalctl",
+        "docker",
         "kubectl",
         "terraform",
+        // Databases.
+        "psql",
+        "sqlite3",
     ];
     let mut out = Vec::new();
     let mut rest = text;
