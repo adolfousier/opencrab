@@ -2180,18 +2180,20 @@ The vocabulary appears throughout the codebase and in gate names, so it is worth
 Beliefs live in `~/.opencrabs/brain/epistemic/beliefs.toml`:
 
 ```toml
-[beliefs."plan:task:2:b353fa70a23ee29e"]
-key = "plan:task:2:b353fa70a23ee29e"
+[beliefs."plan:0f5c2b1e-9a44-4d7f-8c31-6e2ab7d90f11:task:2:b353fa70a23ee29e"]
+key = "plan:0f5c2b1e-9a44-4d7f-8c31-6e2ab7d90f11:task:2:b353fa70a23ee29e"
 value = "completed — branch created off main, clean working tree"
 confidence = "uncertain"
 
-[beliefs."plan:task:2:b353fa70a23ee29e".source]
+[beliefs."plan:0f5c2b1e-9a44-4d7f-8c31-6e2ab7d90f11:task:2:b353fa70a23ee29e".source]
 origin = "plan_tool:complete"
 recorded_at = "2026-07-29T23:36:45Z"
 last_verified = "2026-07-29T23:36:45Z"
 ```
 
 Every belief carries **source attribution** — which code path recorded it, when, and when it was last verified. A belief with `recorded_at == last_verified` and a `uncertain` confidence has never been independently confirmed.
+
+A plan-task key carries the plan's own id, so one plan's outcomes never surface in an unrelated plan's brief, including two plans run back to back in the same session. A superseded belief is archived under `contradicted:{timestamp}:{original key}`, which keeps the history queryable without leaving it in the live key space.
 
 ### Configuration
 
