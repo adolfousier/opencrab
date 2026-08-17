@@ -90,6 +90,40 @@ const RICH_MAX_RETRY_WAIT_SECS: u64 = 30;
 /// previous version rebound `status`/`text`/`parsed` inside the retry block,
 /// so those bindings fell out of scope and a retry that failed for a new
 /// reason was reported as the rate limit that preceded it (#927).
+/// Extract correlation fields for a rich-API call from the request pair
+/// (#1085 P1a): method from the URL, chat/thread from the body, len and
+/// hash from the payload text. Works for sends, edits and deletes alike
+/// (non-send calls simply log msg=0).
+fn rich_send_fields<'a>(
+    url: &'a str,
+    body: &serde_json::Value,
+) -> (&'a str, i64, Option<i32>, usize, String) {
+    let method = url.rsplit('/').next().unwrap_or("?");
+    let chat_id = body
+        .get("chat_id")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let thread = body
+        .get("message_thread_id")
+        .and_then(serde_json::Value::as_i64)
+        .map(|t| t as i32);
+    let text = body
+        .pointer("/rich_message/markdown")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            body.pointer("/rich_message/html")
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("");
+    (
+        method,
+        chat_id,
+        thread,
+        text.len(),
+        crate::channels::telegram::telemetry::content_hash8(text),
+    )
+}
+
 async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
     let client = reqwest::Client::new();
     let mut attempt = 0u32;
@@ -103,10 +137,21 @@ async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_
         if status.is_success()
             && parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
         {
-            return Ok(parsed
+            let result = parsed
                 .get("result")
                 .cloned()
-                .unwrap_or(serde_json::Value::Null));
+                .unwrap_or(serde_json::Value::Null);
+            // Correlation telemetry (#1085 P1a): every rich send that lands
+            // gets one line with full correlation fields.
+            let (method, chat_id, thread, len, hash8) = rich_send_fields(url, body);
+            let msg_id = result
+                .get("message_id")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0) as i32;
+            crate::channels::telegram::telemetry::log_send_success(
+                "turn", "rich_api", method, chat_id, thread, msg_id, len, &hash8,
+            );
+            return Ok(result);
         }
 
         if status.as_u16() == 429 && attempt < RICH_MAX_RETRIES {
@@ -133,6 +178,21 @@ async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_
         if status.as_u16() == 429 {
             tracing::warn!(
                 "Rich API still rate limited after {RICH_MAX_RETRIES} retries — falling back"
+            );
+        }
+        {
+            // Correlation telemetry (#1085 P1a): a failed rich send must
+            // carry the same fields a successful one does.
+            let (method, chat_id, thread, len, hash8) = rich_send_fields(url, body);
+            crate::channels::telegram::telemetry::log_send_failure(
+                "turn",
+                "rich_api",
+                method,
+                chat_id,
+                thread,
+                len,
+                &hash8,
+                &format!("({status}): {desc}"),
             );
         }
         anyhow::bail!("Telegram rich API error ({status}): {desc}")

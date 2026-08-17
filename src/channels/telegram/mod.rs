@@ -29,6 +29,7 @@ pub(crate) mod rich_decode;
 pub(crate) mod send;
 pub(crate) mod session_resolve;
 pub(crate) mod suggest_followups;
+pub(crate) mod telemetry;
 pub(crate) mod typing;
 
 pub use agent::TelegramAgent;

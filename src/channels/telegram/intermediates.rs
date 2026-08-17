@@ -247,6 +247,7 @@ where
 {
     const MAX_RETRIES: u32 = 3;
     let mut attempt = 0u32;
+    let started = std::time::Instant::now();
     loop {
         match send().await {
             Err(teloxide::RequestError::RetryAfter(secs)) if attempt < MAX_RETRIES => {
@@ -276,7 +277,16 @@ where
                 );
                 return Err(teloxide::RequestError::RetryAfter(secs));
             }
-            other => return other,
+            other => {
+                if other.is_ok() {
+                    tracing::debug!(
+                        "Telegram send ok: kind=retrying what={what} elapsed_ms={} attempts={}",
+                        started.elapsed().as_millis(),
+                        attempt + 1
+                    );
+                }
+                return other;
+            }
         }
     }
 }
@@ -287,11 +297,32 @@ pub(crate) async fn send_html_or_plain(
     thread_id: Option<teloxide::types::ThreadId>,
     html: &str,
 ) -> std::result::Result<MessageId, teloxide::RequestError> {
+    // Correlation telemetry (#1085 P1a): this is the chokepoint carrying
+    // chunked final replies, command acks and error notices. Every exit
+    // logs; metadata only, never content.
+    let thread = thread_id.map(|t| t.0.0);
+    let hash8 = super::telemetry::content_hash8(html);
+    let len = html.len();
+    let log_ok = |path: &str, m: &MessageId| {
+        super::telemetry::log_send_success(
+            "turn",
+            "html_or_plain",
+            path,
+            chat_id.0,
+            thread,
+            m.0,
+            len,
+            &hash8,
+        );
+    };
     match message_in_thread(bot, chat_id, thread_id, html)
         .parse_mode(ParseMode::Html)
         .await
     {
-        Ok(m) => Ok(m.id),
+        Ok(m) => {
+            log_ok("html_first", &m.id);
+            Ok(m.id)
+        }
         Err(teloxide::RequestError::RetryAfter(secs)) => {
             let (wait, capped) = super::rate_limit::clamp_inline_wait(secs.duration());
             if capped {
@@ -314,22 +345,57 @@ pub(crate) async fn send_html_or_plain(
                 .parse_mode(ParseMode::Html)
                 .await
             {
-                Ok(m) => Ok(m.id),
+                Ok(m) => {
+                    log_ok("html_retry", &m.id);
+                    Ok(m.id)
+                }
                 Err(e) => {
                     tracing::warn!("Telegram: HTML retry failed ({e}), sending as plain text");
                     let plain = strip_html_tags(html);
-                    message_in_thread(bot, chat_id, thread_id, plain)
-                        .await
-                        .map(|m| m.id)
+                    match message_in_thread(bot, chat_id, thread_id, plain).await {
+                        Ok(m) => {
+                            log_ok("plain_fallback_retry", &m.id);
+                            Ok(m.id)
+                        }
+                        Err(e2) => {
+                            super::telemetry::log_send_failure(
+                                "turn",
+                                "html_or_plain",
+                                "plain_fallback_retry",
+                                chat_id.0,
+                                thread,
+                                len,
+                                &hash8,
+                                &e2.to_string(),
+                            );
+                            Err(e2)
+                        }
+                    }
                 }
             }
         }
         Err(e) => {
             tracing::warn!("Telegram: HTML send failed ({e}), retrying as plain text");
             let plain = strip_html_tags(html);
-            message_in_thread(bot, chat_id, thread_id, plain)
-                .await
-                .map(|m| m.id)
+            match message_in_thread(bot, chat_id, thread_id, plain).await {
+                Ok(m) => {
+                    log_ok("plain_fallback_outer", &m.id);
+                    Ok(m.id)
+                }
+                Err(e2) => {
+                    super::telemetry::log_send_failure(
+                        "turn",
+                        "html_or_plain",
+                        "plain_fallback_outer",
+                        chat_id.0,
+                        thread,
+                        len,
+                        &hash8,
+                        &e2.to_string(),
+                    );
+                    Err(e2)
+                }
+            }
         }
     }
 }
