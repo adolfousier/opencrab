@@ -229,7 +229,7 @@ fn checklist_blocked_reason(state: crate::utils::plan_files::PlanModeState) -> O
 
 /// Map a plan task outcome verb to an epistemic confidence level.
 /// Pure — unit-testable without store access.
-fn task_outcome_confidence(verb: &str) -> super::epistemic::Confidence {
+pub(crate) fn task_outcome_confidence(verb: &str) -> super::epistemic::Confidence {
     match verb {
         "completed" => super::epistemic::Confidence::Verified,
         "failed" => super::epistemic::Confidence::Contradicted,
@@ -240,7 +240,7 @@ fn task_outcome_confidence(verb: &str) -> super::epistemic::Confidence {
 /// Stable belief key for a plan task (order + title hash) so a retry that
 /// later succeeds supersedes the earlier failure on the same key rather than
 /// duplicating it. Pure — unit-testable without store access.
-fn task_outcome_key(task_order: usize, title: &str) -> String {
+pub(crate) fn task_outcome_key(task_order: usize, title: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     title.hash(&mut hasher);
@@ -2269,36 +2269,4 @@ async fn spawn_plan_worker(
         return Err(ToolError::Execution(format!("spawn failed: {msg}")));
     }
     Ok(res.output)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::brain::tools::epistemic::Confidence;
-
-    #[test]
-    fn outcome_confidence_mapping() {
-        assert_eq!(task_outcome_confidence("completed"), Confidence::Verified);
-        assert_eq!(task_outcome_confidence("failed"), Confidence::Contradicted);
-        assert_eq!(task_outcome_confidence("skipped"), Confidence::Uncertain);
-    }
-
-    #[test]
-    fn outcome_key_stable_across_retries() {
-        let k1 = task_outcome_key(3, "Fix the parser");
-        let k2 = task_outcome_key(3, "Fix the parser");
-        assert_eq!(k1, k2);
-    }
-
-    #[test]
-    fn outcome_key_differs_by_task() {
-        assert_ne!(
-            task_outcome_key(3, "Fix the parser"),
-            task_outcome_key(4, "Fix the parser")
-        );
-        assert_ne!(
-            task_outcome_key(3, "Fix the parser"),
-            task_outcome_key(3, "Write the docs")
-        );
-    }
 }

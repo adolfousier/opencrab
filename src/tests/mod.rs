@@ -257,6 +257,7 @@ pub mod phantom_unbacked_evidence_test;
 pub mod phantom_uncalled_command_test;
 pub mod phantom_unsent_file_test;
 pub mod phantom_work_announcement_test;
+pub mod plan_tool_inline_test;
 pub mod pressure_warning_test;
 pub mod pricing_fallback_test;
 pub mod profile_pid_lock_test;
@@ -293,6 +294,7 @@ pub mod start_gate_allowed_user_test;
 pub mod stored_key_test;
 pub mod systemd_unit_test;
 pub mod telegram_cancel_token_no_drop_test;
+pub mod telegram_dedup_approval_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_md_to_html_test;
 #[cfg(feature = "telegram")]
@@ -302,6 +304,7 @@ pub mod telegram_menu_scope_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_table_render_test;
 pub mod tools_md_regression_test;
+pub mod write_opencrabs_file_inline_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows
 // `dirs::home_dir()` uses the Win32 `SHGetKnownFolderPath` API rather
 // than env vars, so the HomeGuard has no effect and Config::load
