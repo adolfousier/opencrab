@@ -11,7 +11,7 @@ use super::flow::{
 use super::handler::{fire_reaction, map_to_allowed_reaction};
 use super::intermediates::send_html_or_plain;
 use super::markdown::{markdown_to_telegram_html, split_message};
-use super::send::{message_in_thread, photo_in_thread};
+use super::send::{best_effort_delete, message_in_thread, photo_in_thread};
 use crate::brain::agent::AgentService;
 use crate::db::ChannelMessageRepository;
 use crate::db::models::ChannelMessage as DbChannelMessage;
@@ -232,7 +232,7 @@ pub(crate) async fn deliver_final_response(
                         tracing::error!("Telegram: fallback completion send failed: {}", e);
                     }
                     if let Some(mid) = streaming_msg_id {
-                        let _ = bot.delete_message(chat_id, mid).await;
+                        best_effort_delete(bot, chat_id, mid, "fallback send cleanup").await;
                     }
                     return Ok(false);
                 }
@@ -331,10 +331,10 @@ pub(crate) async fn deliver_final_response(
                         s.open_group_msg_id.take()
                     };
                     if let Some(mid) = flow_mid {
-                        let _ = bot.delete_message(chat_id, mid).await;
+                        best_effort_delete(bot, chat_id, mid, "flow teardown").await;
                     }
                     if let Some(mid) = streaming_msg_id {
-                        let _ = bot.delete_message(chat_id, mid).await;
+                        best_effort_delete(bot, chat_id, mid, "streaming teardown").await;
                     }
                     return Ok(false);
                 }
@@ -394,7 +394,7 @@ pub(crate) async fn deliver_final_response(
                             s.intermediate_msg_ids.clone()
                         };
                         for mid in &intermediate_ids {
-                            let _ = bot.delete_message(chat_id, *mid).await;
+                            best_effort_delete(bot, chat_id, *mid, "intermediate cleanup").await;
                         }
                         tracing::info!(
                             "Telegram: rich fallback delivered ({} chars), deleted {} HTML intermediates",
@@ -534,7 +534,7 @@ pub(crate) async fn deliver_final_response(
                     // clears the id so the HTML fallback below sends a fresh
                     // message (not an edit of a deleted one) if the rich send fails.
                     if let Some(mid) = streaming_msg_id.take() {
-                        let _ = bot.delete_message(chat_id, mid).await;
+                        best_effort_delete(bot, chat_id, mid, "pre-rich-fallback cleanup").await;
                     }
                     // Native BLOCKS first (#476 path B) for NON-table content: the
                     // block value is sent as-is, so code fences render natively with
@@ -613,7 +613,8 @@ pub(crate) async fn deliver_final_response(
                                     tracing::warn!(
                                         "Telegram: edit retry failed ({e}), falling back to delete+send"
                                     );
-                                    let _ = bot.delete_message(chat_id, mid).await;
+                                    best_effort_delete(bot, chat_id, mid, "edit-retry fallback")
+                                        .await;
                                     // Never silent (#1019): this is the LAST fallback.
                                     // The edit already failed and was logged; if the
                                     // resend fails too the message is gone entirely,
@@ -633,7 +634,7 @@ pub(crate) async fn deliver_final_response(
                                 tracing::warn!(
                                     "Telegram: edit final failed ({e}), falling back to delete+send"
                                 );
-                                let _ = bot.delete_message(chat_id, mid).await;
+                                best_effort_delete(bot, chat_id, mid, "edit-final fallback").await;
                                 let _ =
                                     send_html_or_plain(bot, chat_id, thread_id, &chunks[0]).await;
                             }
@@ -641,7 +642,7 @@ pub(crate) async fn deliver_final_response(
                     } else {
                         // Multi-chunk or no streaming message — delete old, send new
                         if let Some(mid) = streaming_msg_id {
-                            let _ = bot.delete_message(chat_id, mid).await;
+                            best_effort_delete(bot, chat_id, mid, "multi-chunk swap").await;
                         }
                         for chunk in &chunks {
                             // Last chunk wins — that's the bubble a user replies to.
@@ -658,7 +659,7 @@ pub(crate) async fn deliver_final_response(
                 // intermediate messages. The ctx budget rides the settled
                 // flow message now, so just remove the now-empty streaming
                 // placeholder.
-                let _ = bot.delete_message(chat_id, mid).await;
+                best_effort_delete(bot, chat_id, mid, "empty-final placeholder").await;
             }
 
             // Record the bot's text reply into channel_messages.
@@ -745,7 +746,7 @@ pub(crate) async fn deliver_final_response(
             tracing::info!("Telegram: agent call cancelled for session {}", session_id);
             // Silently clean up — user already received "Operation cancelled." from /stop
             if let Some(mid) = streaming_msg_id {
-                let _ = bot.delete_message(chat_id, mid).await;
+                best_effort_delete(bot, chat_id, mid, "cancel cleanup").await;
             }
         }
         Err(e) => {
@@ -759,7 +760,15 @@ pub(crate) async fn deliver_final_response(
             // large / stream broken / repetition loop / etc.).
             let user_msg = format!("❌ Error\n\n{}", crate::brain::agent::format_user_error(&e));
             if let Some(mid) = streaming_msg_id {
-                let _ = bot.edit_message_text(chat_id, mid, user_msg).await;
+                if let Err(e) = bot.edit_message_text(chat_id, mid, user_msg).await {
+                    tracing::warn!(
+                        target: "telegram::send",
+                        chat_id = chat_id.0,
+                        message_id = mid.0,
+                        error = %e,
+                        "final-error edit failed"
+                    );
+                }
             } else {
                 message_in_thread(bot, chat_id, thread_id, user_msg).await?;
             }

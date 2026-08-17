@@ -151,7 +151,8 @@ pub async fn handle_callback(bot: &Bot, query: &CallbackQuery, rest: &str, brain
     let action = match parse_callback(rest) {
         Some(a) => a,
         None => {
-            let _ = bot.answer_callback_query(query.id.clone()).await;
+            crate::channels::telegram::keyboards::ack_callback(bot, query, "unparsed callback")
+                .await;
             return;
         }
     };
@@ -191,7 +192,7 @@ pub async fn handle_callback(bot: &Bot, query: &CallbackQuery, rest: &str, brain
         Ok(s) => format!("\u{2705} {s}"),
         Err(e) => format!("\u{26a0}\u{fe0f} {e}"),
     };
-    let _ = bot.answer_callback_query(query.id.clone()).await;
+    crate::channels::telegram::keyboards::ack_callback(bot, query, "dedup decision").await;
 
     if let Some(msg) = query.message.as_ref() {
         let _ = bot

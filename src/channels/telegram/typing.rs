@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::brain::agent::service::background_tasks::BackgroundTaskManager;
 
-use super::send::chat_action_in_thread;
+use super::send::fire_chat_action;
 
 /// Re-send interval. Telegram clears the action after roughly five seconds, so
 /// this stays under that to avoid a visible flicker between ticks.
@@ -48,7 +48,7 @@ pub(crate) fn spawn_typing(
             tokio::select! {
                 _ = cancel.cancelled() => break,
                 _ = tokio::time::sleep(TICK) => {
-                    let _ = chat_action_in_thread(&bot, chat_id, thread_id, ChatAction::Typing)
+                    fire_chat_action(&bot, chat_id, thread_id, ChatAction::Typing, "typing tick")
                         .await;
                 }
             }
@@ -92,7 +92,14 @@ async fn keep_typing_while_detached(
         // Sent BEFORE sleeping: the turn just ended and its last action is
         // already expiring, so waiting a full tick first would leave a visible
         // dead gap at the handover.
-        let _ = chat_action_in_thread(&bot, chat_id, thread_id, ChatAction::Typing).await;
+        fire_chat_action(
+            &bot,
+            chat_id,
+            thread_id,
+            ChatAction::Typing,
+            "handover typing",
+        )
+        .await;
         tokio::time::sleep(TICK).await;
     }
 }

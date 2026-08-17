@@ -180,6 +180,49 @@ where
     }
 }
 
+/// Delete a Telegram message, tolerating failure. Cleanup paths (streaming
+/// placeholder teardown, recreate swaps, aborted flows) must never break on
+/// a delete Telegram rejects — but silently dropping the error (the old
+/// `let _ =` culture) hides real breakage. Warn on anything except
+/// "already gone", which is the outcome the caller wanted anyway.
+/// Model: `fire_reaction`. (#1085 P3)
+pub async fn best_effort_delete<C>(bot: &Bot, chat_id: C, msg_id: MessageId, why: &str)
+where
+    C: Into<ChatId>,
+{
+    if let Err(e) = bot.delete_message(chat_id.into(), msg_id).await {
+        let text = e.to_string();
+        let quiet = text.contains("message to delete not found")
+            || text.contains("message id is invalid")
+            || text.contains("message to forward not found");
+        if !quiet {
+            tracing::warn!("Telegram: best-effort delete failed ({}): {}", why, e);
+        }
+    }
+}
+
+/// Fire a chat action (typing indicator) and warn if Telegram rejects it.
+/// Pure cosmetics on the wire — never breaks a turn — but the failure line
+/// tells forensics the bot was mid-turn when the API hiccuped. Awaited
+/// sibling of [`chat_action_in_thread`] so call sites stop discarding the
+/// Result. (#1085 P3)
+pub async fn fire_chat_action<C>(
+    bot: &Bot,
+    chat_id: C,
+    thread_id: Option<ThreadId>,
+    action: ChatAction,
+    why: &str,
+) where
+    C: Into<ChatId>,
+{
+    if let Err(e) = chat_action_in_thread(bot, chat_id, thread_id, action)
+        .await
+        .map(|_| ())
+    {
+        tracing::warn!("Telegram: chat action failed ({}): {}", why, e);
+    }
+}
+
 /// One send ladder for every proactive Telegram writer (#1085 P1b R2).
 ///
 /// Owns the wire path end to end: rich-gate (whole message, never chunked —

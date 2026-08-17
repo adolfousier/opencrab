@@ -20,7 +20,7 @@ use teloxide::types::{
     ReplyParameters,
 };
 
-use super::send::{chat_action_in_thread, message_in_thread};
+use super::send::{best_effort_delete, chat_action_in_thread, fire_chat_action, message_in_thread};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -1536,11 +1536,12 @@ pub(crate) async fn handle_message(
         );
 
         // Show typing immediately so user knows we're processing
-        let _ = super::send::chat_action_in_thread(
+        fire_chat_action(
             &bot,
             msg.chat.id,
             thread_id,
             teloxide::types::ChatAction::Typing,
+            "immediate ack",
         )
         .await;
 
@@ -2206,7 +2207,7 @@ pub(crate) async fn handle_message(
         let cancel = typing_cancel.clone();
         async move {
             loop {
-                let _ = chat_action_in_thread(&bot, chat, thread_id, ChatAction::Typing).await;
+                fire_chat_action(&bot, chat, thread_id, ChatAction::Typing, "typing loop").await;
                 tokio::select! {
                     _ = cancel.cancelled() => break,
                     _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
@@ -3835,7 +3836,7 @@ pub(crate) async fn handle_message(
                         if snap.recreate
                             && let Some(old_mid) = snap.msg_id
                         {
-                            let _ = bot.delete_message(chat, old_mid).await;
+                            best_effort_delete(&bot, chat, old_mid, "recreate swap").await;
                             let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                             s.msg_id = None;
                         }
@@ -3887,7 +3888,7 @@ pub(crate) async fn handle_message(
                         }
 
                         // Re-send typing indicator after any bot message
-                        let _ = chat_action_in_thread(&bot, chat, thread_id,  ChatAction::Typing).await;
+                        fire_chat_action(&bot, chat, thread_id, ChatAction::Typing, "post-message typing").await;
                     }
                 }
             }
@@ -4195,7 +4196,7 @@ pub(crate) async fn handle_message(
         // rare enough to tolerate. User explicitly asked 2026-04-18
         // not to remove prior chat on follow-up messages.
         if let Some(mid) = streaming_msg_id {
-            let _ = bot.delete_message(msg.chat.id, mid).await;
+            best_effort_delete(&bot, msg.chat.id, mid, "keep-history teardown").await;
         }
         return Ok(());
     }

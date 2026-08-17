@@ -241,3 +241,26 @@ pub(crate) fn build_profiles_keyboard(
 
     rows
 }
+
+/// Best-effort callback ack: clears the button spinner for `query`.
+///
+/// Failures are logged (not propagated): an ack racing a deleted message or
+/// a slow Telegram round-trip must never break the surrounding handler —
+/// the action itself has already run by the time the ack fires. Same shape
+/// as `fire_reaction` / `best_effort_delete`.
+pub(crate) async fn ack_callback(
+    bot: &teloxide::Bot,
+    query: &teloxide::types::CallbackQuery,
+    why: &str,
+) {
+    use teloxide::prelude::Requester;
+    if let Err(e) = bot.answer_callback_query(query.id.clone()).await {
+        tracing::warn!(
+            target: "telegram::send",
+            why,
+            query_id = %query.id,
+            error = %e,
+            "callback ack failed"
+        );
+    }
+}

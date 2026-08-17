@@ -7,7 +7,7 @@
 use super::TelegramState;
 #[allow(unused_imports)]
 use super::handler::*;
-use super::send::{chat_action_in_thread, message_in_thread};
+use super::send::{best_effort_delete, fire_chat_action, message_in_thread};
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
@@ -326,7 +326,7 @@ pub(crate) async fn resume_session(
                         if snap.recreate
                             && let Some(old_mid) = snap.msg_id
                         {
-                            let _ = bot.delete_message(chat_id, old_mid).await;
+                            best_effort_delete(&bot, chat_id, old_mid, "recreate swap").await;
                             let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                             s.msg_id = None;
                         }
@@ -375,7 +375,7 @@ pub(crate) async fn resume_session(
                             }
                         }
 
-                        let _ = chat_action_in_thread(&bot, chat_id, thread_id,  ChatAction::Typing).await;
+                        fire_chat_action(&bot, chat_id, thread_id, ChatAction::Typing, "post-message typing").await;
                     }
                 }
             }
@@ -395,7 +395,8 @@ pub(crate) async fn resume_session(
                 let bot = bot_typing.clone();
                 let chat = chat_typing;
                 tokio::spawn(async move {
-                    let _ = chat_action_in_thread(&bot, chat, thread_id, ChatAction::Typing).await;
+                    fire_chat_action(&bot, chat, thread_id, ChatAction::Typing, "resume typing")
+                        .await;
                 });
             }
             ProgressEvent::ReasoningChunk { text } => {
@@ -568,7 +569,7 @@ pub(crate) async fn resume_session(
         // intermediate + tool-call history visible. See the matching
         // block in handle_message() for rationale.
         if let Some(mid) = streaming_msg_id {
-            let _ = bot.delete_message(chat_id, mid).await;
+            best_effort_delete(&bot, chat_id, mid, "streaming teardown").await;
         }
         return Ok(());
     }

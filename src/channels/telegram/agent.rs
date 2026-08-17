@@ -259,7 +259,7 @@ impl TelegramAgent {
                             if let Some(rest) = data.strip_prefix(
                                 crate::channels::telegram::suggest_followups::FOLLOWUP_PREFIX,
                             ) {
-                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "followup").await;
                                 tracing::info!("Telegram followup tap: rest={rest}");
                                 let parsed = rest.rsplit_once(':').and_then(|(s, i)| {
                                     Some((uuid::Uuid::parse_str(s).ok()?, i.parse::<usize>().ok()?))
@@ -448,7 +448,7 @@ impl TelegramAgent {
                                     .parse_mode(teloxide::types::ParseMode::Html)
                                     .await;
                                 }
-                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "model switch").await;
                                 return Ok::<(), teloxide::RequestError>(());
                             }
 
@@ -478,7 +478,7 @@ impl TelegramAgent {
                                     if !resp.current_model.is_empty() {
                                         let _ = crate::channels::commands::switch_model(&agent, &resp.current_model, session_id, Some(provider_name)).await;
                                     }
-                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    crate::channels::telegram::keyboards::ack_callback(&bot, &query, "model switch").await;
                                     // Send synthetic message to agent so it handles follow-up
                                     let prompt = if resp.current_model.is_empty() {
                                         format!(
@@ -538,7 +538,7 @@ impl TelegramAgent {
                                         .await;
                                     return ResponseResult::Ok(());
                                 }
-                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "callback").await;
                                 if let Some(msg) = &query.message {
                                     use teloxide::payloads::EditMessageTextSetters;
                                     use teloxide::prelude::Requester;
@@ -614,10 +614,17 @@ impl TelegramAgent {
                                 } else {
                                     "⚠️ Malformed apply-all payload.".to_string()
                                 };
-                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "apply-all").await;
                                 if let Some(msg) = &query.message {
                                     use teloxide::prelude::Requester;
-                                    let _ = bot.send_message(msg.chat().id, reply).await;
+                                    if let Err(e) = bot.send_message(msg.chat().id, reply).await {
+                                        tracing::warn!(
+                                            target: "telegram::send",
+                                            chat_id = msg.chat().id.0,
+                                            error = %e,
+                                            "apply-all reply send failed"
+                                        );
+                                    }
                                 }
                                 return ResponseResult::Ok(());
                             }
@@ -672,7 +679,7 @@ impl TelegramAgent {
                                         Err(e) => (false, format!("⚠️ {}", e)),
                                     }
                                 };
-                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "approval").await;
                                 if let Some(msg) = &query.message {
                                     use teloxide::payloads::EditMessageTextSetters;
                                     use teloxide::prelude::Requester;
@@ -780,7 +787,7 @@ impl TelegramAgent {
                                     idx,
                                     resolved
                                 );
-                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "resolution").await;
                                 if let Some(answer) = resolved
                                     && let Some(msg) = &query.message
                                 {
@@ -840,7 +847,7 @@ impl TelegramAgent {
 
                                 // Handle cd:noop (page indicator, no action)
                                 if data == "cd:noop" {
-                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    crate::channels::telegram::keyboards::ack_callback(&bot, &query, "cd noop").await;
                                     return ResponseResult::Ok(());
                                 }
 
@@ -854,7 +861,7 @@ impl TelegramAgent {
                                 });
 
                                 let new_state: Option<crate::channels::commands::DirBrowserResponse> = if data == "cd:up" {
-                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    crate::channels::telegram::keyboards::ack_callback(&bot, &query, "cd up").await;
                                     // Navigate to parent
                                     let parent = std::path::PathBuf::from(&current_path)
                                         .parent()
@@ -862,7 +869,7 @@ impl TelegramAgent {
                                         .unwrap_or_else(|| "/".to_string());
                                     Some(crate::channels::commands::rebuild_cd_browser(&parent, 0, current_filter.as_deref()))
                                 } else if data == "cd:here" {
-                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    crate::channels::telegram::keyboards::ack_callback(&bot, &query, "cd here").await;
                                     // Confirm directory — set as working dir
                                     let session_id = resolve_callback_session(&query, &state, &shared_session).await;
                                     if let Some(sid) = session_id {
@@ -898,7 +905,7 @@ impl TelegramAgent {
                                     ).0;
                                     if let Some(entry) = all_entries.get(idx) {
                                         if entry.is_dir {
-                                            let _ = bot.answer_callback_query(query.id.clone()).await;
+                                            crate::channels::telegram::keyboards::ack_callback(&bot, &query, "cd dir").await;
                                             // Navigate into directory
                                             let new_path = std::path::PathBuf::from(&current_path)
                                                 .join(&entry.name)
@@ -910,22 +917,31 @@ impl TelegramAgent {
                                             let file_path = std::path::PathBuf::from(&current_path)
                                                 .join(&entry.name);
                                             // Answer with a popup showing the file path
-                                            let _ = bot.answer_callback_query(query.id.clone())
+                                            if let Err(e) = bot
+                                                .answer_callback_query(query.id.clone())
                                                 .text(format!("📄 {}", file_path.display()))
                                                 .show_alert(true)
-                                                .await;
+                                                .await
+                                            {
+                                                tracing::warn!(
+                                                    target: "telegram::send",
+                                                    query_id = %query.id,
+                                                    error = %e,
+                                                    "file popup ack failed"
+                                                );
+                                            }
                                             Some(crate::channels::commands::rebuild_cd_browser(&current_path, 0, current_filter.as_deref()))
                                         }
                                     } else {
                                         None
                                     }
                                 } else if let Some(pg_str) = data.strip_prefix("cd:pg:") {
-                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    crate::channels::telegram::keyboards::ack_callback(&bot, &query, "cd page").await;
                                     // Page navigation
                                     let page: usize = pg_str.parse().unwrap_or(0);
                                     Some(crate::channels::commands::rebuild_cd_browser(&current_path, page, current_filter.as_deref()))
                                 } else {
-                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    crate::channels::telegram::keyboards::ack_callback(&bot, &query, "cd fallback").await;
                                     None
                                 };
 
@@ -956,7 +972,7 @@ impl TelegramAgent {
                             if data.starts_with("prof:") {
                                 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
                                 let chat_id = query.message.as_ref().map(|m| m.chat().id.0).unwrap_or(0);
-                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "profile picker").await;
 
                                 if let Some(name) = data.strip_prefix("prof:sel:") {
                                     // Show profile detail view with action buttons
@@ -1195,7 +1211,7 @@ impl TelegramAgent {
                                     return ResponseResult::Ok(());
                                 }
 
-                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "callback").await;
                                 return ResponseResult::Ok(());
                             }
 
@@ -1236,7 +1252,7 @@ impl TelegramAgent {
                                         m.regular_message().and_then(|r| r.thread_id),
                                     ),
                                     None => {
-                                        let _ = bot.answer_callback_query(query.id.clone()).await;
+                                        crate::channels::telegram::keyboards::ack_callback(&bot, &query, "callback").await;
                                         return ResponseResult::Ok(());
                                     }
                                 };
@@ -1377,7 +1393,7 @@ impl TelegramAgent {
                                         "Telegram: routing unrecognized callback to agent: {}",
                                         data
                                     );
-                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    crate::channels::telegram::keyboards::ack_callback(&bot, &query, "callback").await;
 
                                     // Echo the tapped button as a quoted message so there's
                                     // a visible record of the user's choice in the chat.
@@ -1501,7 +1517,7 @@ impl TelegramAgent {
                                     id
                                 );
                             }
-                            let _ = bot.answer_callback_query(query.id.clone()).await;
+                            crate::channels::telegram::keyboards::ack_callback(&bot, &query, "callback").await;
 
                             // Edit the approval message: keep original context, append outcome, remove buttons
                             if let Some(msg) = &query.message {
@@ -1535,7 +1551,7 @@ impl TelegramAgent {
                             }
                         } else {
                             tracing::warn!("Telegram: callback query with no data");
-                            let _ = bot.answer_callback_query(query.id.clone()).await;
+                            crate::channels::telegram::keyboards::ack_callback(&bot, &query, "callback").await;
                         }
                         ResponseResult::Ok(())
                     }
