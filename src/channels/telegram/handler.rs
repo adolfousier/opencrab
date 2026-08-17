@@ -16,8 +16,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
-    ChatAction, ChatKind, FileId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode,
-    ReplyParameters,
+    ChatAction, ChatKind, FileId, InlineKeyboardMarkup, MessageId, ParseMode, ReplyParameters,
 };
 
 use super::send::{best_effort_delete, fire_chat_action, message_in_thread};
@@ -27,6 +26,7 @@ use uuid::Uuid;
 
 // Flow-block machinery moved to flow.rs (#471 phase 1); the glob
 // re-export keeps handler::X paths (call sites and tests) stable.
+use super::commands_tg;
 pub(crate) use super::flow::*;
 use super::member_events;
 // Markdown/HTML text transforms moved to markdown.rs (#471 phase 1).
@@ -2361,441 +2361,38 @@ pub(crate) async fn handle_message(
     )
     .await;
 
-    // ── Channel commands (/help, /usage, /models) ──────────────────────────
-    // Soft-nudge analyzes the user's own words, so capture them before a
-    // slash command resolves to a skill/user-command body and rewrites `text`.
-    let pre_rewrite_user_text = text.clone();
-    let mut text = text;
-    // When a slash command resolves to a prompt (a skill or user command),
-    // remember the raw invocation (e.g. "/drop_release"). A slash command is a
-    // deliberate NEW directive, so if it lands mid-turn it must be injected as
-    // its own instruction — not with the "factor into the CURRENT task, do not
-    // restart" wrapper a plain follow-up gets, which would neutralize it (#503
-    // follow-up: /drop_release arrived mid-turn, got queued, but the wrapper
-    // told the model to fold it into unrelated work so the release never ran).
-    let mut command_invocation: Option<String> = None;
-    if !is_voice {
-        use crate::channels::commands::{self, ChannelCommand};
-        let cmd = commands::handle_command(
-            &text,
-            session_id,
+    // ── Channel commands (/help, /usage, /models) ── extracted to commands_tg.rs
+    let (pre_rewrite_user_text, text, command_invocation) =
+        match commands_tg::handle_channel_command(
+            &bot,
+            &msg,
             &agent,
             &session_svc,
+            &telegram_state,
+            text,
+            thread_id,
+            is_dm,
+            session_id,
+            chat_id,
+            topic_id,
+            user_id,
             is_owner,
-            Some(&chat_id_str),
+            user,
+            chat_title,
+            &chat_id_str,
+            &topic_name,
+            is_voice,
+            &shared_session,
         )
-        .await;
-
-        tracing::info!(
-            "Telegram: handle_command returned {:?} (chat={}, is_dm={})",
-            std::mem::discriminant(&cmd),
-            msg.chat.id.0,
-            is_dm
-        );
-
-        // Handle simple text-response commands (Help, Usage, MissionControl,
-        // Evolve, Doctor, etc.). Prefer NATIVE rich rendering — the same
-        // `sendRichMessage` path regular messages and cron reports use, which
-        // turns markdown tables/headings into real Telegram tables (not `<pre>`
-        // ASCII grids). Falls back to chunked HTML-or-plain when rich is
-        // disabled, the reply has no rich structure, or the native send fails.
-        // (The old single `.parse_mode(Html).await?` had no chunking either, so
-        // the >4096-char mission-control report silently failed to send at all.)
-        // Direct model switch (#467): on success, Telegram offers an inline
-        // "Apply to all sessions" button (#468) unless the user already
-        // scoped with the textual `all`. Pipe separator in the callback
-        // (like model:) so custom: prefixes and :free suffixes survive;
-        // skipped when the payload would exceed Telegram's 64-byte limit.
-        if let commands::ChannelCommand::ModelSwitched(reply) = &cmd {
-            let mut keyboard: Option<InlineKeyboardMarkup> = None;
-            if !reply.starts_with('⚠')
-                && !text.trim().ends_with(" all")
-                && let Some(arg) = text.trim().split_once(' ').map(|x| x.1.trim())
-                && let Ok((prov, model)) = crate::utils::provider_pair::parse_pair(arg)
-            {
-                let data = format!("allm:{prov}|{model}");
-                if data.len() <= 64 {
-                    keyboard = Some(InlineKeyboardMarkup::new(vec![vec![
-                        InlineKeyboardButton::callback("Apply to all sessions", data),
-                    ]]));
-                }
-            }
-            let mut req = bot.send_message(msg.chat.id, reply.clone());
-            if let Some(kb) = keyboard {
-                req = req.reply_markup(kb);
-            }
-            if let Some(t) = thread_id {
-                req = req.message_thread_id(t);
-            }
-            if let Err(e) = req.await {
-                tracing::warn!("Telegram: model-switch reply failed: {e}");
-                send_html_or_plain(&bot, msg.chat.id, thread_id, reply, "turn").await?;
-            }
-            return Ok(());
-        }
-        if let Some(reply) = commands::try_execute_text_command(&cmd).await {
-            // Every slash command is owner-gated (built-ins individually,
-            // skills and commands.toml entries by the catch-all gate, #975),
-            // so its output is addressed to one person: in a group it goes
-            // ephemeral (#756). Native rich is tried first for output that
-            // benefits from it, so a scoped reply only drops to HTML once the
-            // server has refused the rich variant of the parameter.
-            if let Some(rx) = super::ephemeral::receiver_for(is_dm, user_id) {
-                if super::rich::should_send_native_rich(&reply)
-                    && super::ephemeral::try_send_rich(
-                        bot.token(),
-                        msg.chat.id.0,
-                        thread_id,
-                        rx,
-                        &reply,
-                    )
-                    .await
-                {
-                    return Ok(());
-                }
-                let html = command_md_to_html(&reply);
-                let chunks = split_message(&html, 4096);
-                let delivered = super::ephemeral::send_html_chunks(
-                    bot.token(),
-                    msg.chat.id.0,
-                    thread_id,
-                    rx,
-                    &chunks,
-                )
-                .await;
-                if delivered > 0 {
-                    // A short delivery finishes publicly: dropping the tail
-                    // would truncate the reply with nothing to show for it.
-                    for chunk in chunks.iter().skip(delivered) {
-                        send_html_or_plain(&bot, msg.chat.id, thread_id, chunk, "turn").await?;
-                    }
-                    return Ok(());
-                }
-                // Nothing landed: fall through to the public path unchanged.
-            }
-            // `.is_ok()` used to discard the error here, so a rich failure left
-            // no trace at all and a fallback was indistinguishable from a clean
-            // rich send (#927). Both outcomes are logged now.
-            let sent_rich = super::rich::should_send_native_rich(&reply) && {
-                match super::rich::send_rich_with_mermaid(
-                    bot.token(),
-                    msg.chat.id.0,
-                    thread_id,
-                    &reply,
-                    "turn",
-                    "-",
-                )
-                .await
-                {
-                    Ok(()) => true,
-                    Err(e) => {
-                        tracing::warn!("Telegram: rich command reply failed, using HTML: {e}");
-                        false
-                    }
-                }
-            };
-            if !sent_rich {
-                let html = command_md_to_html(&reply);
-                for chunk in split_message(&html, 4096) {
-                    send_html_or_plain(&bot, msg.chat.id, thread_id, chunk, "turn").await?;
-                }
-            }
-            return Ok(());
-        }
-
-        // Set once for the command acks below. `None` in a DM, where there is
-        // nobody to hide the ack from. Commands whose reply carries an inline
-        // keyboard (Models, Sessions, ChangeDir, Profiles) stay public: their
-        // buttons drive callback edits, which need the ephemeral edit/delete
-        // methods 10.2 added and this path does not implement.
-        let ephemeral_rx = super::ephemeral::receiver_for(is_dm, user_id);
-        match cmd {
-            ChannelCommand::Models(resp) => {
-                let rows: Vec<Vec<InlineKeyboardButton>> = resp
-                    .providers
-                    .iter()
-                    .map(|(name, label, configured)| {
-                        let display = if !*configured {
-                            format!("🔒 {} (setup)", label)
-                        } else if *name == resp.current_provider {
-                            format!("✓ {}", label)
-                        } else {
-                            label.clone()
-                        };
-                        // Unconfigured providers route through `setup:<name>`
-                        // so the callback handler can show setup instructions
-                        // instead of trying to swap to a provider with no key.
-                        let cb = if *configured {
-                            format!("provider:{}", name)
-                        } else {
-                            format!("setup:{}", name)
-                        };
-                        vec![InlineKeyboardButton::callback(display, cb)]
-                    })
-                    .collect();
-                let keyboard = InlineKeyboardMarkup::new(rows);
-                send_retrying_rate_limit("command reply", || {
-                    message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
-                        .parse_mode(ParseMode::Html)
-                        .reply_markup(keyboard.clone())
-                })
-                .await?;
-                return Ok(());
-            }
-            ChannelCommand::NewSession => {
-                // MUST match the title format used by the per-message
-                // session resolver above (see `session_title` at the
-                // top of `handle_message`). Without the `[chat:<id>]`
-                // suffix, the next typed message won't find this row
-                // via `find_session_by_title_suffix` and resolution
-                // reverts to the previously-bound session — i.e. /new
-                // appears to do nothing (issue #89).
-                let session_title = session_resolve::build_session_title(
-                    is_dm,
-                    &user.first_name,
-                    user_id,
-                    chat_title,
-                    chat_id,
-                    topic_id,
-                    topic_name.as_deref(),
-                );
-                // The new session inherits its working directory from the
-                // session that received this /new (same chat), not the global
-                // most-recent session (#263).
-                let prior_session = session_svc
-                    .find_session_by_title_suffix(&session_resolve::chat_id_suffix(
-                        chat_id, topic_id,
-                    ))
-                    .await
-                    .unwrap_or_else(|e| {
-                        // /new means a fresh session IS the intent — creation
-                        // proceeds, but the lookup failure is never silent (#442).
-                        tracing::error!(
-                            "Telegram: /new prior-session lookup failed: {e:#} — \
-                             proceeding without wd inheritance"
-                        );
-                        None
-                    });
-                // Archive the previous session on /new, except for the owner —
-                // owner sessions stay non-archived so they remain visible in
-                // /sessions for history review. Guest sessions get archived
-                // so the next title lookup resolves cleanly to the new row.
-                if !is_owner
-                    && let Ok(Some(old)) = session_svc.find_session_by_title(&session_title).await
-                    && let Err(e) = session_svc.archive_session(old.id).await
-                {
-                    tracing::error!("Telegram: failed to archive old session {}: {}", old.id, e);
-                }
-                match crate::channels::session_init::create_channel_session(
-                    &session_svc,
-                    Some(session_title),
-                    prior_session.as_ref(),
-                )
-                .await
-                {
-                    Ok(new_session) => {
-                        if is_owner {
-                            *shared_session.lock().await = Some(new_session.id);
-                        }
-                        telegram_state
-                            .register_session_chat(new_session.id, msg.chat.id.0, topic_id)
-                            .await;
-                        // Sync provider for the new session so baseline is accurate
-                        let new_meta = session_svc.get_session(new_session.id).await.ok().flatten();
-                        crate::channels::commands::sync_provider_for_session(
-                            &agent,
-                            new_session.id,
-                            new_meta.as_ref().and_then(|s| s.provider_name.as_deref()),
-                            new_meta.as_ref().and_then(|s| s.model.as_deref()),
-                        )
-                        .await;
-                        let baseline = agent.base_context_tokens();
-                        let ctx_max = agent.context_limit_for_session(new_session.id);
-                        let footer = crate::utils::format_ctx_footer(baseline, ctx_max, None);
-                        let msg_text = format!("✅ New session started.\n\n{footer}");
-                        super::ephemeral::send_ack(
-                            &bot,
-                            msg.chat.id,
-                            thread_id,
-                            ephemeral_rx,
-                            &msg_text,
-                        )
-                        .await?;
-                        tracing::info!(
-                            "Telegram /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
-                            footer,
-                            baseline,
-                            ctx_max,
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("Telegram: failed to create session: {}", e);
-                        super::ephemeral::send_ack(
-                            &bot,
-                            msg.chat.id,
-                            thread_id,
-                            ephemeral_rx,
-                            "Failed to create session.",
-                        )
-                        .await?;
-                    }
-                }
-                return Ok(());
-            }
-            ChannelCommand::Sessions(resp) => {
-                let rows: Vec<Vec<InlineKeyboardButton>> = resp
-                    .sessions
-                    .iter()
-                    .map(|(id, label)| {
-                        let display = if *id == resp.current_session_id {
-                            format!("▸ {} ← current", label)
-                        } else {
-                            label.clone()
-                        };
-                        vec![InlineKeyboardButton::callback(
-                            display,
-                            format!("session:{}", id),
-                        )]
-                    })
-                    .collect();
-                let keyboard = InlineKeyboardMarkup::new(rows);
-                send_retrying_rate_limit("command reply", || {
-                    message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
-                        .parse_mode(ParseMode::Html)
-                        .reply_markup(keyboard.clone())
-                })
-                .await?;
-                return Ok(());
-            }
-            ChannelCommand::Stop => {
-                let cancelled = telegram_state.cancel_session(session_id).await;
-                let reply = if cancelled {
-                    "Operation cancelled."
-                } else {
-                    "No operation in progress."
-                };
-                super::ephemeral::send_ack(&bot, msg.chat.id, thread_id, ephemeral_rx, reply)
-                    .await?;
-                return Ok(());
-            }
-            ChannelCommand::ChangeDir(resp) => {
-                // Store the browsing state for this chat
-                telegram_state
-                    .set_dir_browser(
-                        msg.chat.id.0,
-                        thread_id.map(|t| t.0.0),
-                        resp.current_path.clone(),
-                        resp.filter.clone(),
-                    )
-                    .await;
-
-                let rows = build_cd_keyboard(&resp);
-                let keyboard = InlineKeyboardMarkup::new(rows);
-                send_retrying_rate_limit("command reply", || {
-                    message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
-                        .parse_mode(ParseMode::Html)
-                        .reply_markup(keyboard.clone())
-                })
-                .await?;
-                return Ok(());
-            }
-            ChannelCommand::Profiles(resp) => {
-                let rows = build_profiles_keyboard(&resp);
-                let keyboard = InlineKeyboardMarkup::new(rows);
-                send_retrying_rate_limit("command reply", || {
-                    message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
-                        .parse_mode(ParseMode::Html)
-                        .reply_markup(keyboard.clone())
-                })
-                .await?;
-                return Ok(());
-            }
-            ChannelCommand::Compact => {
-                // Only the ack is scoped: the compaction turn that follows is
-                // an ordinary agent turn and stays public.
-                super::ephemeral::send_ack(
-                    &bot,
-                    msg.chat.id,
-                    thread_id,
-                    ephemeral_rx,
-                    "⏳ Compacting context...",
-                )
-                .await?;
-                text = "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
-                    .to_string();
-                // fall through to agent
-            }
-            ChannelCommand::ExecutePlan => {
-                // Approve and /execute are FORBIDDEN while a turn is
-                // running: refuse immediately, never queue (locked).
-                if telegram_state.is_turn_active(session_id) {
-                    super::ephemeral::send_ack(
-                        &bot,
-                        msg.chat.id,
-                        thread_id,
-                        ephemeral_rx,
-                        "⛔ A turn is running. /execute and Approve are refused while \
-                         busy; try again when the turn finishes.",
-                    )
-                    .await?;
-                    return Ok(());
-                }
-                match crate::utils::plan_mode::try_approve(session_id).await {
-                    crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
-                        super::ephemeral::send_ack(
-                            &bot,
-                            msg.chat.id,
-                            thread_id,
-                            ephemeral_rx,
-                            &reply,
-                        )
-                        .await?;
-                        return Ok(());
-                    }
-                    crate::utils::plan_mode::ApproveOutcome::SeedTurn { prompt } => {
-                        // Visible seed turn: fall through to the agent with
-                        // the locked implement-turn prompt as the message.
-                        text = prompt;
-                    }
-                }
-            }
-            ChannelCommand::DiscardPlan => {
-                // /discard cancels an in-flight turn first, then cleans up.
-                let cancelled = telegram_state.cancel_session(session_id).await;
-                let mut reply = crate::utils::plan_mode::discard(session_id, agent.context()).await;
-                // Remove the persistent plan card — no turn runs to refresh it
-                // away (#580).
-                super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
-                    .await;
-                if cancelled {
-                    reply = format!("⏹️ Cancelled the running turn. {reply}");
-                }
-                super::ephemeral::send_ack(&bot, msg.chat.id, thread_id, ephemeral_rx, &reply)
-                    .await?;
-                return Ok(());
-            }
-            ChannelCommand::UserPrompt(prompt) => {
-                // Capture the raw invocation ("/drop_release") BEFORE `text` is
-                // overwritten with the resolved skill/command body, so a
-                // mid-turn injection can name the command and frame it as a
-                // distinct directive rather than a follow-up to absorb.
-                command_invocation = Some(text.clone());
-                text = prompt;
-                // fall through to agent with the prompt as the message
-            }
-            ChannelCommand::PlanModeWithQuery(query) => {
-                // `/plan <query>`: Plan mode was already armed in handle_command;
-                // run `query` as the planning turn so the agent drafts the design
-                // from it in one step (#579).
-                command_invocation = Some("/plan".to_string());
-                text = query;
-                // fall through to agent with the query as the message
-            }
-            ChannelCommand::NotACommand => {} // fall through to agent
-            // Help, Usage, Evolve, Doctor, UserSystem handled by try_execute_text_command above
-            _ => {}
-        }
-    }
+        .await?
+        {
+            commands_tg::CommandOutcome::Handled => return Ok(()),
+            commands_tg::CommandOutcome::Continue {
+                text,
+                command_invocation,
+                pre_rewrite_user_text,
+            } => (pre_rewrite_user_text, text, command_invocation),
+        };
 
     // ── Profile create flow: intercept text input when awaiting a profile name ──
     if !text.is_empty() && telegram_state.is_prof_create(msg.chat.id.0).await {
