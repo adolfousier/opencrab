@@ -708,31 +708,36 @@ pub(crate) enum CriteriaVerdict {
     Accept,
     /// Accept, but nothing mechanically verified the claim — log as Uncertain.
     Downgrade,
-    /// Refuse the completion: criteria were declared but nothing verifies them.
+    /// Refuse the completion: nothing verifies the claim.
     Reject,
 }
 
 /// Decide how to treat a success claim given the criteria policy (#870).
 ///
 /// Pure so the whole policy matrix is unit-testable without a plan, a context,
-/// or a config file on disk. The policy only bites when a task DECLARES
-/// acceptance criteria yet its type ran NO verification commands
-/// (`NotConfigured`). A proven completion (`Verified`), a globally disabled
-/// gate (`Disabled` — an explicit user choice to turn the gate off), or a task
-/// with no criteria always accepts.
+/// or a config file on disk. The verdict judges proof, not paperwork: what
+/// matters is whether verification commands ran for the task's type
+/// (`Verified`), not whether criteria were declared. A claim nothing
+/// verified (`NotConfigured`) is downgraded to an Uncertain belief under the
+/// default policy and refused under `strict`, whether or not the task
+/// declared criteria: silence is not proof (maintainer ruling, 2026-08-17).
+/// A globally disabled gate (`Disabled`, an explicit user choice) always
+/// accepts.
 pub(crate) fn criteria_verdict(
     policy: CriteriaPolicy,
-    has_criteria: bool,
     outcome: VerificationOutcome,
 ) -> CriteriaVerdict {
-    let unverified = matches!(outcome, VerificationOutcome::NotConfigured);
-    if !(has_criteria && unverified) {
-        return CriteriaVerdict::Accept;
-    }
-    match policy {
-        CriteriaPolicy::Strict => CriteriaVerdict::Reject,
-        CriteriaPolicy::Downgrade => CriteriaVerdict::Downgrade,
-        CriteriaPolicy::Off => CriteriaVerdict::Accept,
+    match outcome {
+        // Proof, or an explicit gate-off, accepts under every policy.
+        VerificationOutcome::Verified | VerificationOutcome::Disabled => CriteriaVerdict::Accept,
+        // Nothing verified the claim: silence is not proof. Strict refuses,
+        // the default downgrades the belief to Uncertain, Off keeps the
+        // pre-#870 advisory behaviour (maintainer ruling, 2026-08-17).
+        VerificationOutcome::NotConfigured => match policy {
+            CriteriaPolicy::Strict => CriteriaVerdict::Reject,
+            CriteriaPolicy::Downgrade => CriteriaVerdict::Downgrade,
+            CriteriaPolicy::Off => CriteriaVerdict::Accept,
+        },
     }
 }
 
@@ -1756,10 +1761,12 @@ impl Tool for PlanTool {
                 // The model cannot hallucinate "tests passed" when the
                 // shell says otherwise.
                 //
-                // Criteria-aware (#870): a success claimed against stated
-                // acceptance criteria that nothing mechanically verified is
-                // downgraded to an Uncertain belief (default) or rejected
-                // outright under `criteria_policy = "strict"`.
+                // Criteria-aware (#870): a success claim that nothing
+                // mechanically verified is downgraded to an Uncertain belief
+                // (default) or rejected outright under
+                // `criteria_policy = "strict"`, whether or not the task
+                // declared acceptance criteria: silence is not proof
+                // (maintainer ruling, 2026-08-17).
                 let mut criteria_downgraded = false;
                 if action.to_lowercase() == "success" {
                     let (task_type_str, has_criteria) = current_plan
@@ -1777,22 +1784,31 @@ impl Tool for PlanTool {
                             let policy = ralph_loop_config(&context.working_dir())
                                 .map(|c| c.verification.criteria_policy)
                                 .unwrap_or_default();
-                            match criteria_verdict(policy, has_criteria, outcome) {
+                            match criteria_verdict(policy, outcome) {
                                 CriteriaVerdict::Reject => {
+                                    let reason = if has_criteria {
+                                        "it declares acceptance criteria but no verification \
+                                         commands are configured for this task type"
+                                            .to_string()
+                                    } else {
+                                        "it declares no acceptance criteria and no verification \
+                                         commands are configured for this task type"
+                                            .to_string()
+                                    };
                                     return Ok(ToolResult::error(format!(
                                         "🔒 Ralph Loop REJECTED task #{task_order} (type={task_type_str}): \
-                                         it declares acceptance criteria but no verification commands are \
-                                         configured for this task type. Under `criteria_policy = \"strict\"` \
-                                         a success claim against unverified criteria is refused. Configure \
-                                         commands under [verification] in ralph_loop.toml (or remove the \
-                                         criteria), then complete again."
+                                         {reason}. Under `criteria_policy = \"strict\"` a success claim \
+                                         without proof is refused. Configure commands under [verification] \
+                                         in ralph_loop.toml for the task type (or set \
+                                         criteria_policy = \"downgrade\"), then complete again."
                                     )));
                                 }
                                 CriteriaVerdict::Downgrade => {
                                     criteria_downgraded = true;
                                     tracing::info!(
                                         "Ralph loop: task #{task_order} completion downgraded to Uncertain \
-                                         (criteria declared, type '{task_type_str}' has no verification commands)"
+                                         (type '{task_type_str}' ran no verification commands; criteria \
+                                         declared: {has_criteria})"
                                     );
                                 }
                                 CriteriaVerdict::Accept => {}
