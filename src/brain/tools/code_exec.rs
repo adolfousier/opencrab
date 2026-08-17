@@ -194,6 +194,9 @@ impl Tool for CodeExecTool {
         // child processes don't consume TUI mouse-capture bytes and surface
         // them on stdout (same TUI-bleed issue as bash.rs).
         let mut cmd = Command::new(interpreter);
+        // Reap the child if this future is dropped; tokio leaves the process
+        // running otherwise, so a timed-out exec would outlive its turn (#1046).
+        cmd.kill_on_drop(true);
         cmd.current_dir(context.working_dir())
             .stdin(std::process::Stdio::null());
 

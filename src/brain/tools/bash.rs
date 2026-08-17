@@ -474,6 +474,9 @@ impl Tool for BashTool {
 
             let command_future = async {
                 let mut cmd = Command::new(shell);
+                // Reap the child if this future is dropped. A timeout drops it, and
+                // tokio leaves the process running unless told otherwise (#1046).
+                cmd.kill_on_drop(true);
                 cmd.arg(shell_arg)
                     .arg(&sudo_cmd)
                     .current_dir(&working_dir)
@@ -513,6 +516,9 @@ impl Tool for BashTool {
             let probe_cmd = inject_batch_mode(&input.command);
             let probe_future = async {
                 let mut cmd = Command::new(shell);
+                // Reap the child if this future is dropped. A timeout drops it, and
+                // tokio leaves the process running unless told otherwise (#1046).
+                cmd.kill_on_drop(true);
                 cmd.arg(shell_arg)
                     .arg(&probe_cmd)
                     .current_dir(&working_dir)
@@ -577,6 +583,9 @@ impl Tool for BashTool {
 
                 let retry_future = async {
                     let mut cmd = Command::new(shell);
+                    // Reap the child if this future is dropped. A timeout drops it, and
+                    // tokio leaves the process running unless told otherwise (#1046).
+                    cmd.kill_on_drop(true);
                     cmd.arg(shell_arg)
                         .arg(&input.command)
                         .current_dir(&working_dir)
@@ -645,6 +654,9 @@ impl Tool for BashTool {
 
             let command_future = async {
                 let mut cmd = Command::new(shell);
+                // Reap the child if this future is dropped. A timeout drops it, and
+                // tokio leaves the process running unless told otherwise (#1046).
+                cmd.kill_on_drop(true);
                 cmd.arg(shell_arg)
                     .arg(&execution_command)
                     .current_dir(&working_dir)

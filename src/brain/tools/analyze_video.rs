@@ -299,6 +299,7 @@ impl AnalyzeVideoTool {
         // keeps the JPEGs small but readable for vision.
         let fps_filter = format!("fps={FALLBACK_FPS}");
         let output = tokio::process::Command::new("ffmpeg")
+            .kill_on_drop(true)
             .args([
                 "-hide_banner",
                 "-loglevel",
@@ -703,6 +704,7 @@ impl AnalyzeVideoTool {
 /// the frame-extraction fallback is possible before attempting extraction.
 async fn ffmpeg_available() -> bool {
     tokio::process::Command::new("ffmpeg")
+        .kill_on_drop(true)
         .arg("-version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

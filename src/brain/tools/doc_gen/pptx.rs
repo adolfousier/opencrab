@@ -149,6 +149,7 @@ pub(crate) async fn write_deck(
     .to_string();
 
     let mut child = tokio::process::Command::new("python3")
+        .kill_on_drop(true)
         .arg("-c")
         .arg(PPTX_SCRIPT)
         .arg(path)

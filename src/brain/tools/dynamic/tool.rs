@@ -487,6 +487,7 @@ impl DynamicTool {
         // Detach stdin from the parent TTY so mouse-capture bytes don't
         // leak into captured stdout (same TUI-bleed issue as bash.rs).
         let output = tokio::process::Command::new("sh")
+            .kill_on_drop(true)
             .arg("-c")
             .arg(&cmd)
             .env("OPENCRABS_PARAMS", &params_path)

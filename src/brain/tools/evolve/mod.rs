@@ -243,6 +243,7 @@ async fn health_check_binary(path: &std::path::Path) -> std::result::Result<(), 
         let r = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             tokio::process::Command::new(path)
+                .kill_on_drop(true)
                 .arg("--version")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
@@ -326,6 +327,7 @@ async fn get_binary_migration_count(path: &std::path::Path) -> std::result::Resu
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         tokio::process::Command::new(path)
+            .kill_on_drop(true)
             .arg("print-migration-count")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
