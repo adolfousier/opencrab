@@ -123,14 +123,30 @@ fn index_file_sync(
     path: &Path,
     body: &str,
 ) -> Result<bool, String> {
-    let hash = Store::hash_content(body);
     let rel_path = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string_lossy().to_string());
+    index_file_sync_keyed(store, collection, &rel_path, body)
+}
+
+/// Index one document under an explicit key.
+///
+/// Brain/memory use the basename (their corpora are single flat dirs); the
+/// external collection uses absolute canonical paths so identically-named
+/// files in different directories never collide (#1051).
+///
+/// Returns `true` if new content was indexed, `false` if hash-skipped.
+pub(crate) fn index_file_sync_keyed(
+    store: &Store,
+    collection: &str,
+    doc_key: &str,
+    body: &str,
+) -> Result<bool, String> {
+    let hash = Store::hash_content(body);
 
     if let Ok(Some((_id, existing_hash, _title))) =
-        store.find_active_document(collection, &rel_path)
+        store.find_active_document(collection, doc_key)
         && existing_hash == hash
     {
         return Ok(false);
@@ -143,16 +159,16 @@ fn index_file_sync(
     // insert_document fires a plain INSERT into documents_fts (not OR REPLACE,
     // which SQLite FTS5 rejects with "constraint failed").
     // Safe for new documents: deactivate_document matches 0 rows → no-op.
-    let _ = store.deactivate_document(collection, &rel_path);
+    let _ = store.deactivate_document(collection, doc_key);
 
     store
         .insert_content(&hash, body, &now)
         .map_err(|e| format!("Failed to insert content: {e}"))?;
     store
-        .insert_document(collection, &rel_path, &title, &hash, &now, &now)
+        .insert_document(collection, doc_key, &title, &hash, &now, &now)
         .map_err(|e| format!("Failed to insert document: {e}"))?;
 
-    tracing::debug!("Indexed {collection} file: {}", path.display());
+    tracing::debug!("Indexed {collection} document: {doc_key}");
     Ok(true)
 }
 
@@ -254,6 +270,35 @@ pub async fn reindex(store: &'static Mutex<Store>) -> Result<usize, String> {
     if let Err(e) = prune_result {
         tracing::warn!("Memory prune failed: {e}");
     }
+
+    // --- Index external paths (#1051) ---
+    // FTS-only here; embeddings ride the backfill below. The report carries
+    // every problem (missing / unreadable / nested roots) so nothing is
+    // silent. The periodic sweep reuses this same path, so extra_paths
+    // config changes reconcile within one interval (Q15) and file deletion
+    // is covered by the same prune.
+    let external_report = match tokio::task::spawn_blocking({
+        move || {
+            let store = store
+                .lock()
+                .map_err(|e| format!("Store lock poisoned: {e}"))?;
+            Ok::<_, String>(super::external::reindex_external(&store))
+        }
+    })
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            tracing::warn!("memory: external reindex failed: {e}");
+            super::external::ExternalReport::default()
+        }
+        Err(e) => {
+            tracing::warn!("memory: external reindex join failed: {e}");
+            super::external::ExternalReport::default()
+        }
+    };
+    external_report.log();
+    indexed += external_report.indexed;
 
     // --- Backfill embeddings for documents missing them ---
     if embedding_api_configured() {

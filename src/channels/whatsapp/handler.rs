@@ -737,6 +737,12 @@ pub(crate) async fn handle_message(
         }
     };
 
+    // Session gate (#1051, ADR-003): mark group sessions so memory_search
+    // keeps external index content out of them by default.
+    if info.source.is_group {
+        crate::memory::mark_session_shared(session_id);
+    }
+
     // Remember which chat this session is handled in, so a finished background
     // task can resume the right chat (#731).
     wa_state

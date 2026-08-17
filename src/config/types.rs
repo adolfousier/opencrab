@@ -1261,6 +1261,89 @@ pub struct MemoryConfig {
     /// via API instead of the local GGUF model. Eliminates ~300MB download + ~2.9GB RAM.
     #[serde(default)]
     pub embedding: Option<EmbeddingConfig>,
+
+    /// External filesystem paths indexed into the `external` collection (#1051).
+    /// Entries are bare path strings or `{ path, pattern }` tables. Relative
+    /// paths resolve against the OpenCrabs home, not the session cwd, so the
+    /// index stays stable across `/cd` and profile switches.
+    #[serde(default)]
+    pub extra_paths: Vec<ExtraPath>,
+
+    /// Glob patterns excluded from external indexing (#1051), global for all
+    /// extra paths. Defaults cover VCS/build dirs and common secret files;
+    /// the session gate is the real security boundary, this is defense in
+    /// depth.
+    #[serde(default = "default_external_excludes")]
+    pub exclude: Vec<String>,
+
+    /// Allow `scope="external"` results in shared/group sessions (#1051).
+    /// Default-deny: external content inherits memory_search's exposure
+    /// surface, so it stays main/owner-session-only unless opted in.
+    #[serde(default)]
+    pub external_allowed_in_shared: bool,
+
+    /// Seconds between external-path freshness sweeps (#1051). The sweep
+    /// discovers added/removed files and reconciles config changes; modified
+    /// files are caught lazily at search time regardless.
+    #[serde(default = "default_sweep_interval_secs")]
+    pub sweep_interval_secs: u64,
+}
+
+/// One external index path (#1051): a bare string or `{ path, pattern }`.
+/// Untagged so both forms parse from the same TOML array.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExtraPath {
+    /// Bare path: indexed with the default pattern `**/*.md`.
+    Simple(String),
+    /// Path with an explicit glob, matched against root-relative paths.
+    WithPattern {
+        path: String,
+        #[serde(default = "default_extra_pattern")]
+        pattern: String,
+    },
+}
+
+impl ExtraPath {
+    /// The configured path, either form.
+    pub fn path(&self) -> &str {
+        match self {
+            ExtraPath::Simple(p) | ExtraPath::WithPattern { path: p, .. } => p,
+        }
+    }
+
+    /// The glob pattern, defaulting to `**/*.md` for bare entries.
+    pub fn pattern(&self) -> &str {
+        match self {
+            ExtraPath::Simple(_) => "**/*.md",
+            ExtraPath::WithPattern { pattern, .. } => pattern,
+        }
+    }
+}
+
+fn default_extra_pattern() -> String {
+    "**/*.md".to_string()
+}
+
+const fn default_sweep_interval_secs() -> u64 {
+    300
+}
+
+fn default_external_excludes() -> Vec<String> {
+    vec![
+        ".git".to_string(),
+        "node_modules".to_string(),
+        "target".to_string(),
+        "dist".to_string(),
+        "build".to_string(),
+        "vendor".to_string(),
+        "__pycache__".to_string(),
+        ".env*".to_string(),
+        "*.key".to_string(),
+        "*.pem".to_string(),
+        ".ssh/**".to_string(),
+        "*credential*".to_string(),
+    ]
 }
 
 const fn default_vector_enabled() -> bool {
@@ -1272,6 +1355,10 @@ impl Default for MemoryConfig {
         Self {
             vector_enabled: default_vector_enabled(),
             embedding: None,
+            extra_paths: Vec::new(),
+            exclude: default_external_excludes(),
+            external_allowed_in_shared: false,
+            sweep_interval_secs: default_sweep_interval_secs(),
         }
     }
 }
@@ -2258,3 +2345,87 @@ pub use io::*;
 pub(crate) use io::{load_keys_from_file, merge_channel_keys};
 mod loader;
 pub use loader::*;
+
+#[cfg(test)]
+mod memory_external_config_tests {
+    use super::{ExtraPath, MemoryConfig};
+
+    fn parse(s: &str) -> MemoryConfig {
+        toml::from_str(s).expect("valid [memory] TOML")
+    }
+
+    #[test]
+    fn bare_string_entry_parses_with_default_md_pattern() {
+        let cfg = parse(r#"extra_paths = ["/home/u/notes"]"#);
+        assert_eq!(cfg.extra_paths.len(), 1);
+        assert_eq!(cfg.extra_paths[0].path(), "/home/u/notes");
+        assert_eq!(cfg.extra_paths[0].pattern(), "**/*.md");
+        assert!(matches!(cfg.extra_paths[0], ExtraPath::Simple(_)));
+    }
+
+    #[test]
+    fn table_entry_parses_with_explicit_pattern() {
+        let cfg = parse(
+            r#"[[extra_paths]]
+path = "/home/u/docs"
+pattern = "**/*.txt"
+"#,
+        );
+        assert_eq!(cfg.extra_paths.len(), 1);
+        assert_eq!(cfg.extra_paths[0].path(), "/home/u/docs");
+        assert_eq!(cfg.extra_paths[0].pattern(), "**/*.txt");
+        assert!(matches!(cfg.extra_paths[0], ExtraPath::WithPattern { .. }));
+    }
+
+    #[test]
+    fn table_entry_without_pattern_defaults_to_md() {
+        let cfg = parse(
+            r#"[[extra_paths]]
+path = "/home/u/docs"
+"#,
+        );
+        assert_eq!(cfg.extra_paths[0].pattern(), "**/*.md");
+    }
+
+    #[test]
+    fn mixed_forms_parse_together() {
+        let cfg = parse(
+            r#"extra_paths = ["/a", { path = "/b", pattern = "**/*.org" }]"#,
+        );
+        assert_eq!(cfg.extra_paths.len(), 2);
+        assert_eq!(cfg.extra_paths[0].path(), "/a");
+        assert_eq!(cfg.extra_paths[1].path(), "/b");
+        assert_eq!(cfg.extra_paths[1].pattern(), "**/*.org");
+    }
+
+    #[test]
+    fn defaults_are_secure_and_sane() {
+        let cfg = parse("");
+        assert!(cfg.extra_paths.is_empty(), "no paths by default");
+        assert!(
+            !cfg.external_allowed_in_shared,
+            "session gate must default to DENY (#1051 security boundary)"
+        );
+        assert_eq!(cfg.sweep_interval_secs, 300);
+        let excl = &cfg.exclude;
+        for secret in [".env*", "*.key", "*.pem", ".ssh/**", "*credential*"] {
+            assert!(excl.iter().any(|e| e == secret), "missing secret exclude {secret}");
+        }
+        for noise in [".git", "node_modules", "target", "dist", "build", "vendor", "__pycache__"] {
+            assert!(excl.iter().any(|e| e == noise), "missing noise exclude {noise}");
+        }
+    }
+
+    #[test]
+    fn explicit_exclude_overrides_defaults() {
+        let cfg = parse(r#"exclude = ["*.md"]"#);
+        assert_eq!(cfg.exclude, vec!["*.md".to_string()]);
+    }
+
+    #[test]
+    fn gate_and_interval_are_overridable() {
+        let cfg = parse("external_allowed_in_shared = true\nsweep_interval_secs = 60");
+        assert!(cfg.external_allowed_in_shared);
+        assert_eq!(cfg.sweep_interval_secs, 60);
+    }
+}

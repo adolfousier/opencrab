@@ -10,6 +10,8 @@
 
 pub(crate) mod db;
 pub(crate) mod embedding;
+pub(crate) mod external;
+pub(crate) mod external_sweep;
 pub mod index;
 pub(crate) mod local_engine;
 pub(crate) mod search;
@@ -26,6 +28,7 @@ pub mod freshness;
 pub use db::Store;
 pub use index::{BRAIN_FILES, index_file, index_file_fts_only, reindex};
 pub use search::{RrfResult, hybrid_search_rrf, search, search_brain};
+pub(crate) use search::{search_external, search_memory};
 pub use store::get_store;
 
 /// Whether vector embeddings are enabled in the current config.
@@ -76,6 +79,60 @@ fn embedding_dimensions() -> usize {
     768 // local GGUF embeddinggemma-300M default
 }
 
+/// Extra external paths to index, from `[memory].extra_paths` (#1051).
+/// Read fresh on every call — config changes settle within one sweep
+/// interval with no restart or reload handler (the module live-reads
+/// config by construction).
+pub(crate) fn extra_paths_config() -> Vec<crate::config::ExtraPath> {
+    read_memory_config().extra_paths
+}
+
+/// Global exclude patterns for external indexing (#1051).
+pub(crate) fn external_excludes() -> Vec<String> {
+    read_memory_config().exclude
+}
+
+/// Whether external results may surface in shared/group sessions (#1051).
+/// Defaults to deny — the session gate is the security boundary.
+pub(crate) fn external_allowed_in_shared() -> bool {
+    read_memory_config().external_allowed_in_shared
+}
+
+/// Seconds between external freshness sweeps (#1051).
+pub(crate) fn sweep_interval_secs() -> u64 {
+    read_memory_config().sweep_interval_secs
+}
+
+/// Session IDs of shared/group channel sessions (#1051, ADR-003).
+///
+/// The external session gate must know whether the current session is a
+/// shared/group chat (several people can read the reply) or the owner's own
+/// session. Channel handlers know that when they resolve a session — they see
+/// the chat type — so they mark it here; `memory_search` checks it before
+/// returning external content. Process-local by design: on restart the set is
+/// empty and each channel re-marks its group sessions on first use, which is
+/// harmless because the gate only ever denies until then.
+static SHARED_SESSIONS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashSet<uuid::Uuid>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// Mark a session as a shared/group channel session (#1051). Called by the
+/// channel handlers when they resolve a session for a group chat.
+pub fn mark_session_shared(session_id: uuid::Uuid) {
+    if let Ok(mut g) = SHARED_SESSIONS.lock() {
+        g.insert(session_id);
+    }
+}
+
+/// Whether a session is a shared/group channel session (#1051). Consulted by
+/// the `memory_search` external gate.
+pub fn is_session_shared(session_id: uuid::Uuid) -> bool {
+    SHARED_SESSIONS
+        .lock()
+        .map(|g| g.contains(&session_id))
+        .unwrap_or(false)
+}
+
 /// A single search result from the memory index.
 #[derive(Debug, Clone)]
 pub struct MemoryResult {
@@ -88,3 +145,6 @@ pub struct MemoryResult {
 pub(crate) const COLLECTION_MEMORY: &str = "memory";
 /// Collection name for workspace brain files (SOUL.md, MEMORY.md, etc.).
 pub(crate) const COLLECTION_BRAIN: &str = "brain";
+/// Collection name for user-configured external paths (#1051). Keyed by
+/// absolute canonical path — unlike brain/memory, which key by basename.
+pub(crate) const COLLECTION_EXTERNAL: &str = "external";

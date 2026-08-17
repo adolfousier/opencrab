@@ -54,8 +54,8 @@ impl Tool for MemorySearchTool {
                 },
                 "scope": {
                     "type": "string",
-                    "enum": ["memory", "brain", "all"],
-                    "description": "Which corpus to search: \"memory\" (daily logs, the default) for history, \"brain\" for rules and policy in your brain files, \"all\" for both.",
+                    "enum": ["memory", "brain", "external", "all"],
+                    "description": "Which corpus to search: \"memory\" (daily logs, the default) for history, \"brain\" for rules and policy in your brain files, \"external\" for the user-configured external index paths, \"all\" for everything.",
                     "default": "memory"
                 }
             },
@@ -71,7 +71,7 @@ impl Tool for MemorySearchTool {
         false
     }
 
-    async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
+    async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
         let query = input
             .get("query")
             .and_then(|v| v.as_str())
@@ -102,20 +102,52 @@ impl Tool for MemorySearchTool {
             }
         };
 
+        // External session gate (#1051, ADR-003): external content is
+        // default-deny in shared/group sessions. The gate — not the exclude
+        // patterns — is the security boundary.
+        let external_blocked = crate::memory::is_session_shared(context.session_id)
+            && !crate::memory::external_allowed_in_shared();
+
         let searched = match scope {
             "brain" => crate::memory::search_brain(store, &query, n).await,
+            "external" => {
+                if external_blocked {
+                    return Ok(ToolResult::error(
+                        "scope=\"external\" is not available in this shared/group session. \
+                         External index content stays private to the owner's sessions by \
+                         default (ADR-003). Set [memory] external_allowed_in_shared = true \
+                         to allow it here."
+                            .to_string(),
+                    ));
+                }
+                crate::memory::search_external(store, &query, n).await
+            }
             "all" => match crate::memory::search_brain(store, &query, n).await {
-                Ok(mut brain) => match crate::memory::search(store, &query, n).await {
+                Ok(mut brain) => match crate::memory::search_memory(store, &query, n).await {
                     // Brain hits lead: a rule outranks a note mentioning it.
                     Ok(mem) => {
                         brain.extend(mem);
-                        Ok(brain)
+                        if external_blocked {
+                            Ok(brain)
+                        } else {
+                            match crate::memory::search_external(store, &query, n).await {
+                                // External hits land last: brain > memory > external (Q10).
+                                Ok(ext) => {
+                                    brain.extend(ext);
+                                    Ok(brain)
+                                }
+                                Err(e) => Err(e),
+                            }
+                        }
                     }
                     Err(e) => Err(e),
                 },
                 Err(e) => Err(e),
             },
-            _ => crate::memory::search(store, &query, n).await,
+            // Default "memory" searches the memory corpus only (#1051):
+            // external content never leaks into the default scope, and rules
+            // live in scope="brain" (the empty-result hint below says so).
+            _ => crate::memory::search_memory(store, &query, n).await,
         };
 
         match searched {
