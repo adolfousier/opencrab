@@ -214,44 +214,6 @@ pub(crate) async fn resolve_chat_target(
 /// empty `channel_messages` lookup, and because rich/cron messages arrive with
 /// no readable text in the reply, the agent can only honestly say it cannot see
 /// it. `sent` is `(message_id, content)` pairs (one per chunk for plain sends).
-async fn persist_outgoing(
-    chat_id: i64,
-    thread_id: Option<teloxide::types::ThreadId>,
-    sent: &[(i32, String)],
-) {
-    if sent.is_empty() {
-        return;
-    }
-    let Some(pool) = crate::db::global_pool() else {
-        tracing::warn!("telegram_send: no global DB pool — outgoing message not persisted");
-        return;
-    };
-    let repo = crate::db::ChannelMessageRepository::new(pool.clone());
-    let chat_id_str = chat_id.to_string();
-    let thread = thread_id.map(|t| t.0.0.to_string());
-    for (mid, content) in sent {
-        if content.trim().is_empty() {
-            continue;
-        }
-        let cm = crate::db::models::ChannelMessage::new(
-            "telegram".to_string(),
-            chat_id_str.clone(),
-            None,
-            "bot:opencrabs".to_string(),
-            "OpenCrabs".to_string(),
-            content.clone(),
-            "text".to_string(),
-            Some(mid.to_string()),
-        )
-        .with_thread(thread.clone(), None);
-        if let Err(e) = repo.insert(&cm).await {
-            tracing::warn!(
-                "telegram_send: failed to persist outgoing message {mid} for reply-recovery: {e}"
-            );
-        }
-    }
-}
-
 async fn chat_or_err(
     input: &Value,
     state: &TelegramState,
@@ -492,68 +454,28 @@ impl TelegramSendTool {
         // and Telegram's parser never reinterprets incidental characters.
         // Track sent (message_id, content) so the message is persisted
         // for reply-recovery below.
-        let mut sent: Vec<(i32, String)> = Vec::new();
-        // Convert markdown to Telegram HTML upfront so that both the
-        // rich path and the plain fallback send properly formatted
-        // content. The rich API's HTML input mode renders tags natively
-        // (tables, bold, code); the markdown input mode showed literal
-        // tags as text when the model emitted HTML (#834).
-        // Same rich mode as the agent's own replies (#871). This used
-        // send_rich_html_id, whose HTML input mode returns 200 and then
-        // renders headings inline and FLATTENS tables into a run-on
-        // paragraph — a silent wrong render with nothing logged, which
-        // is worse than an error. Rich-markdown renders tables
-        // correctly and is what every delivered rich message actually
-        // goes through, so both paths now behave identically.
-        let sent_rich = crate::channels::telegram::rich::should_send_native_rich(&text)
-            && match crate::channels::telegram::rich::send_rich_with_mermaid_id(
-                bot.token(),
-                chat_id,
-                thread_id,
-                &text,
-            )
-            .await
-            {
-                Ok(id) => {
-                    sent.push((id, text.clone()));
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("telegram_send: rich send failed, sending plain: {e}");
-                    false
-                }
-            };
-        if !sent_rich {
-            // Convert only on the fallback now that the rich send takes
-            // markdown directly (#871); split so chunks stay within
-            // Telegram's 4096 limit.
-            let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
-            for chunk in crate::channels::telegram::handler::split_message(&html, 4096) {
-                let chunk_str = chunk.to_string();
-                // Retry Telegram 429 (RetryAfter): a rate-limited send
-                // must be delayed and retried, not dropped as a failure
-                // to the agent (#524).
-                let result = send_retrying_rate_limit("telegram_send send", || {
-                    crate::channels::telegram::send::message_in_thread(
-                        bot,
-                        ChatId(chat_id),
-                        thread_id,
-                        chunk_str.clone(),
-                    )
-                    .parse_mode(teloxide::types::ParseMode::Html)
-                })
-                .await;
-                match result {
-                    Ok(m) => sent.push((m.id.0, chunk_str)),
-                    Err(e) => {
-                        return Ok(ToolResult::error(format!("Failed to send: {e}")));
-                    }
-                }
-            }
-        }
+        // One send ladder for the wire path (#1085 P1b R2): rich-gate →
+        // HTML → 4096 chunks → plain-text fallback, all inside
+        // send_markdown_outbox. The old inline ladder claimed a
+        // plain-text fallback it never implemented (comment at :504 vs
+        // HTML-only chunks) — now the claim is true and telemetry carries
+        // origin=tool on every landing.
+        let sent = match crate::channels::telegram::send::send_markdown_outbox(
+            bot,
+            ChatId(chat_id),
+            thread_id,
+            &text,
+            "tool",
+            "send",
+        )
+        .await
+        {
+            Ok(sent) => sent,
+            Err(e) => return Ok(ToolResult::error(format!("Failed to send: {e}"))),
+        };
         // Persist so a later reply to this message can be read back by id
         // (a report/cron post replied-to would otherwise be unrecoverable).
-        persist_outgoing(chat_id, thread_id, &sent).await;
+        crate::channels::telegram::send::record_outgoing(None, chat_id, thread_id, &sent).await;
         Ok(ToolResult::success(format!(
             "Message sent to chat {chat_id}."
         )))
@@ -589,7 +511,13 @@ impl TelegramSendTool {
         {
             Ok(m) => {
                 // Persist for reply-recovery (a user can reply to this bot reply).
-                persist_outgoing(chat_id, thread_id, &[(m.id.0, reply_text)]).await;
+                crate::channels::telegram::send::record_outgoing(
+                    None,
+                    chat_id,
+                    thread_id,
+                    &[(m.id.0, reply_text.clone())],
+                )
+                .await;
                 Ok(ToolResult::success(format!(
                     "Reply sent to message {message_id}."
                 )))

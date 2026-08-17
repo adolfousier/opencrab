@@ -179,3 +179,129 @@ where
         None => req,
     }
 }
+
+/// One send ladder for every proactive Telegram writer (#1085 P1b R2).
+///
+/// Owns the wire path end to end: rich-gate (whole message, never chunked —
+/// a split table breaks) → `markdown_to_telegram_html` → 4096 chunks →
+/// [`send_html_or_plain`] (which retries 429s per #297 and falls back to
+/// plain text when Telegram rejects the markup). Callers keep their
+/// delivery *decisions*; this function owns retry, thread routing,
+/// fallback and telemetry so they stop being per-writer choices. This is
+/// the deliberate Q4 behavior change from the #1085 grill: cron and the
+/// telegram_send tool previously had NO plain-text fallback and would 400
+/// on markup Telegram rejects — now they inherit it.
+///
+/// `origin`/`origin_detail` feed the correlation telemetry (cron → job
+/// name, tool → arm name). Returns `(message_id, content)` pairs for
+/// reply-recovery persistence. Errors describe the failing attempt and
+/// name any chunks already delivered.
+pub(crate) async fn send_markdown_outbox(
+    bot: &Bot,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    markdown: &str,
+    origin: &str,
+    origin_detail: &str,
+) -> std::result::Result<Vec<(i32, String)>, String> {
+    let thread = thread_id.map(|t| t.0.0);
+    let hash8 = super::telemetry::content_hash8(markdown);
+    let len = markdown.len();
+
+    // 1. Native rich, as a whole message.
+    if super::rich::should_send_native_rich(markdown) {
+        match super::rich::send_rich_with_mermaid_id(bot.token(), chat_id.0, thread_id, markdown)
+            .await
+        {
+            Ok(id) => {
+                super::telemetry::log_send_success(
+                    origin, "outbox", "rich", chat_id.0, thread, id, len, &hash8,
+                );
+                return Ok(vec![(id, markdown.to_string())]);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "{origin}/{origin_detail}: native rich send failed ({e}) — falling back to HTML"
+                );
+            }
+        }
+    }
+
+    // 2. Universal HTML ladder, chunked to Telegram's limit.
+    let html = super::handler::markdown_to_telegram_html(markdown);
+    let chunks = super::handler::split_message(&html, 4096);
+    let total = chunks.len();
+    let mut sent: Vec<(i32, String)> = Vec::new();
+    for (i, chunk) in chunks.into_iter().enumerate() {
+        match super::intermediates::send_html_or_plain(bot, chat_id, thread_id, chunk).await {
+            Ok(mid) => {
+                super::telemetry::log_send_success(
+                    origin,
+                    "outbox",
+                    "html_chunk",
+                    chat_id.0,
+                    thread,
+                    mid.0,
+                    chunk.len(),
+                    &super::telemetry::content_hash8(chunk),
+                );
+                sent.push((mid.0, chunk.to_string()));
+            }
+            Err(e) => {
+                let partial = if sent.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({} of {total} chunks already delivered)", sent.len())
+                };
+                return Err(format!(
+                    "{origin}/{origin_detail} chunk {}/{total} failed{partial}: {e}",
+                    i + 1
+                ));
+            }
+        }
+    }
+    Ok(sent)
+}
+
+/// Persist delivered outbox messages for reply recovery (#234, #1085 P1b
+/// R2). One implementation of what cron's `deliver_telegram` and the tool's
+/// `persist_outgoing` previously built separately as byte-identical rows.
+/// `thread_id` is stamped when known (cron rows previously lost it).
+pub(crate) async fn record_outgoing(
+    pool: Option<crate::db::Pool>,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    sent: &[(i32, String)],
+) {
+    if sent.is_empty() {
+        return;
+    }
+    let Some(pool) = pool.or_else(|| crate::db::global_pool().cloned()) else {
+        tracing::warn!("telegram outbox: no DB pool — outgoing messages not persisted");
+        return;
+    };
+    let repo = crate::db::ChannelMessageRepository::new(pool);
+    let chat_id_str = chat_id.to_string();
+    let thread = thread_id.map(|t| t.0.0.to_string());
+    for (mid, content) in sent {
+        if content.trim().is_empty() {
+            continue;
+        }
+        let cm = crate::db::models::ChannelMessage::new(
+            "telegram".to_string(),
+            chat_id_str.clone(),
+            None,
+            "bot:opencrabs".to_string(),
+            "OpenCrabs".to_string(),
+            content.clone(),
+            "text".to_string(),
+            Some(mid.to_string()),
+        )
+        .with_thread(thread.clone(), None);
+        if let Err(e) = repo.insert(&cm).await {
+            tracing::warn!(
+                "telegram outbox: failed to persist message {mid} for reply-recovery: {e}"
+            );
+        }
+    }
+}

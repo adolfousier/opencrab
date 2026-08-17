@@ -878,7 +878,7 @@ async fn deliver_result(
             #[cfg(feature = "telegram")]
             {
                 tracing::info!("Delivering cron result to Telegram chat {target_id}");
-                deliver_telegram(target_id, &delivery_msg, pool.clone()).await;
+                deliver_telegram(target_id, job_name, &delivery_msg, pool.clone()).await;
             }
             #[cfg(not(feature = "telegram"))]
             {
@@ -995,108 +995,53 @@ fn split_for_delivery(text: &str, max_len: usize) -> Vec<&str> {
     chunks
 }
 
-/// Deliver via Telegram Bot API (direct HTTP POST).
+/// Deliver via the shared Telegram outbox ladder (#1085 P1b R2). The
+/// hand-rolled raw `reqwest` POST + message_id JSON scrape is gone: retry
+/// (#297), 4096 chunking, plain-text fallback (Q4) and correlation
+/// telemetry come from `send_markdown_outbox`, and the delivery is
+/// persisted through the same `record_outgoing` the tool path uses.
 #[cfg(feature = "telegram")]
-async fn deliver_telegram(chat_id: &str, message: &str, pool: Option<crate::db::Pool>) {
+async fn deliver_telegram(
+    chat_id: &str,
+    job_name: &str,
+    message: &str,
+    pool: Option<crate::db::Pool>,
+) {
     let Some(token) = read_channel_secret("telegram", "token") else {
         tracing::warn!("No Telegram bot token found in keys.toml — cannot deliver cron result");
         return;
     };
-
-    use crate::channels::telegram::handler::{markdown_to_telegram_html, split_message};
-    use crate::channels::telegram::rich;
-
-    // Telegram message_id of the delivered cron message, captured so a user who
-    // replies to it can have its content recovered exactly by id (cron messages
-    // were never stored before, so replying to one surfaced no context — the
-    // reply handler then guessed the wrong message, #234 follow-up).
-    let mut sent_id: Option<i32> = None;
-
-    // Render exactly like an interactive Telegram reply — never the fragile
-    // legacy `parse_mode: "Markdown"`, which breaks on '_', '[', etc. and
-    // routinely 400s. Honor the `channels.telegram.rich_messages` flag: when
-    // it's on AND the content has block structure (tables/headings/lists/math),
-    // deliver a native rich message through our parser; otherwise (and on any
-    // rich failure) fall back to the universal HTML rendering.
-    let chat_id_num = chat_id.parse::<i64>().ok();
-    let mut delivered_rich = false;
-    if let Some(cid) = chat_id_num
-        && rich::should_send_native_rich(message)
+    let Ok(cid) = chat_id.parse::<i64>() else {
+        tracing::warn!("Cron job '{job_name}': invalid Telegram chat id '{chat_id}'");
+        return;
+    };
+    let bot = teloxide::Bot::new(token);
+    // Thread stays None deliberately: cron has always delivered to the
+    // chat's default topic, and silently retargeting forum jobs to the
+    // last-active topic is a behavior change nobody asked for (#1085
+    // scope discipline).
+    let thread = None;
+    match crate::channels::telegram::send::send_markdown_outbox(
+        &bot,
+        teloxide::types::ChatId(cid),
+        thread,
+        message,
+        "cron",
+        job_name,
+    )
+    .await
     {
-        match rich::send_rich_with_mermaid_id(&token, cid, None, message).await {
-            Ok(id) => {
-                tracing::info!("Cron result delivered to Telegram chat {chat_id} (native rich)");
-                sent_id = Some(id);
-                delivered_rich = true;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Cron native-rich delivery to {chat_id} failed ({e}) — falling back to HTML"
-                );
-            }
-        }
-    }
-
-    if !delivered_rich {
-        let html = markdown_to_telegram_html(message);
-        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        let client = reqwest::Client::new();
-        let mut delivered = 0usize;
-        for chunk in split_message(&html, 4096) {
-            let body = serde_json::json!({
-                "chat_id": chat_id,
-                "text": chunk,
-                "parse_mode": "HTML",
-            });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    delivered += 1;
-                    // Capture the message_id of the last chunk — that's the
-                    // bubble a user would reply to.
-                    if let Ok(json) = resp.json::<serde_json::Value>().await
-                        && let Some(id) = json
-                            .get("result")
-                            .and_then(|r| r.get("message_id"))
-                            .and_then(|v| v.as_i64())
-                    {
-                        sent_id = Some(id as i32);
-                    }
-                }
-                Ok(resp) => {
-                    tracing::warn!(
-                        "Telegram delivery to {chat_id} failed ({}): {:?}",
-                        resp.status(),
-                        resp.text().await.unwrap_or_default()
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("Telegram delivery to {chat_id} HTTP error: {e}");
-                }
-            }
-        }
-        if delivered > 0 {
+        Ok(sent) => {
             tracing::info!(
-                "Cron result delivered to Telegram chat {chat_id} (HTML, {delivered} part(s))"
+                "Cron result for '{job_name}' delivered to Telegram chat {chat_id} ({} part(s))",
+                sent.len()
             );
+            // Persist keyed by message id so a reply to the cron post
+            // resolves to this exact content (#234).
+            crate::channels::telegram::send::record_outgoing(pool, cid, thread, &sent).await;
         }
-    }
-
-    // Persist the delivered message keyed by its Telegram id so a later reply
-    // resolves to this exact content instead of falling back to a wrong guess.
-    if let (Some(id), Some(pool)) = (sent_id, pool) {
-        let repo = crate::db::ChannelMessageRepository::new(pool);
-        let cm = crate::db::models::ChannelMessage::new(
-            "telegram".to_string(),
-            chat_id.to_string(),
-            None,
-            "bot:opencrabs".to_string(),
-            "OpenCrabs".to_string(),
-            message.to_string(),
-            "text".to_string(),
-            Some(id.to_string()),
-        );
-        if let Err(e) = repo.insert(&cm).await {
-            tracing::warn!("Cron: failed to record delivered message for reply recovery: {e}");
+        Err(e) => {
+            tracing::error!("Cron delivery for '{job_name}' to {chat_id} failed: {e}");
         }
     }
 }
