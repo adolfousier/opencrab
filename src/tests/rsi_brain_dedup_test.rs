@@ -311,6 +311,35 @@ fn test_scan_finds_duplicates_in_same_file() {
 }
 
 #[test]
+fn test_generate_dedup_proposals_does_not_panic_on_multibyte_char_at_truncation_boundary() {
+    // Regression test for a panic reported in production:
+    //   "byte index 80 is not a char boundary; it is inside '—' (bytes 79..82)"
+    // generate_dedup_proposals() built its rationale string with
+    // `&cluster.text[..cluster.text.len().min(80)]`, a byte-index slice that
+    // ignores UTF-8 char boundaries. A duplicated line with a multi-byte
+    // character (e.g. an em dash '—', 3 bytes in UTF-8) straddling byte 80
+    // made the slice panic. 79 ASCII bytes + '—' puts the dash at exactly
+    // bytes 79..82, reproducing the original crash precisely.
+    let dir = TempDir::new().unwrap();
+    let filler: String = std::iter::repeat('a').take(79).collect();
+    let shared_line = format!("{filler}— duplicated line with a multi-byte dash at the cut");
+    write_brain_file(
+        dir.path(),
+        "SOUL.md",
+        &format!("# SOUL.md\n\n{shared_line}\n\nUnique soul content.\n"),
+    );
+    write_brain_file(
+        dir.path(),
+        "AGENTS.md",
+        &format!("# AGENTS.md\n\n{shared_line}\n\nUnique agents content.\n"),
+    );
+
+    // Must not panic.
+    let proposals = generate_dedup_proposals(dir.path());
+    assert!(!proposals.is_empty(), "should still detect the duplicate");
+}
+
+#[test]
 fn test_scan_finds_duplicates_across_files() {
     let dir = TempDir::new().unwrap();
     let shared_line =
