@@ -2453,9 +2453,7 @@ path = "/home/u/docs"
 
     #[test]
     fn mixed_forms_parse_together() {
-        let cfg = parse(
-            r#"extra_paths = ["/a", { path = "/b", pattern = "**/*.org" }]"#,
-        );
+        let cfg = parse(r#"extra_paths = ["/a", { path = "/b", pattern = "**/*.org" }]"#);
         assert_eq!(cfg.extra_paths.len(), 2);
         assert_eq!(cfg.extra_paths[0].path(), "/a");
         assert_eq!(cfg.extra_paths[1].path(), "/b");
@@ -2473,10 +2471,24 @@ path = "/home/u/docs"
         assert_eq!(cfg.sweep_interval_secs, 300);
         let excl = &cfg.exclude;
         for secret in [".env*", "*.key", "*.pem", ".ssh/**", "*credential*"] {
-            assert!(excl.iter().any(|e| e == secret), "missing secret exclude {secret}");
+            assert!(
+                excl.iter().any(|e| e == secret),
+                "missing secret exclude {secret}"
+            );
         }
-        for noise in [".git", "node_modules", "target", "dist", "build", "vendor", "__pycache__"] {
-            assert!(excl.iter().any(|e| e == noise), "missing noise exclude {noise}");
+        for noise in [
+            ".git",
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+            "vendor",
+            "__pycache__",
+        ] {
+            assert!(
+                excl.iter().any(|e| e == noise),
+                "missing noise exclude {noise}"
+            );
         }
     }
 

@@ -84,11 +84,7 @@ fn expand_path(raw: &str) -> PathBuf {
         return home.join(rest);
     }
     let p = PathBuf::from(raw);
-    if p.is_absolute() {
-        p
-    } else {
-        home.join(p)
-    }
+    if p.is_absolute() { p } else { home.join(p) }
 }
 
 /// Resolve all configured extra paths into canonical roots.
@@ -135,7 +131,9 @@ pub(crate) fn resolve_roots() -> (Vec<ResolvedRoot>, ExternalReport) {
     // earlier root. Order of appearance wins, matching config order.
     let mut kept: Vec<ResolvedRoot> = Vec::new();
     for (raw, cand) in resolved {
-        let nested = kept.iter().any(|k| cand.root.starts_with(&k.root) && cand.root != k.root);
+        let nested = kept
+            .iter()
+            .any(|k| cand.root.starts_with(&k.root) && cand.root != k.root);
         if nested {
             report.skipped_nested.push(raw);
         } else {
@@ -268,7 +266,9 @@ mod tests {
     use super::*;
 
     fn pats(strs: &[&str]) -> Vec<glob::Pattern> {
-        strs.iter().map(|s| glob::Pattern::new(s).unwrap()).collect()
+        strs.iter()
+            .map(|s| glob::Pattern::new(s).unwrap())
+            .collect()
     }
 
     #[test]
@@ -318,15 +318,35 @@ mod tests {
         let found = walk_root(&resolved, &excludes);
         let names: Vec<String> = found
             .iter()
-            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"))
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
             .collect();
 
-        assert!(names.contains(&"top.md".to_string()), "top-level md: {names:?}");
-        assert!(names.contains(&"a/b/deep.md".to_string()), "nested md: {names:?}");
-        assert!(!names.contains(&"a/skip.txt".to_string()), "pattern mismatch");
+        assert!(
+            names.contains(&"top.md".to_string()),
+            "top-level md: {names:?}"
+        );
+        assert!(
+            names.contains(&"a/b/deep.md".to_string()),
+            "nested md: {names:?}"
+        );
+        assert!(
+            !names.contains(&"a/skip.txt".to_string()),
+            "pattern mismatch"
+        );
         assert!(!names.contains(&".git/config".to_string()), "excluded dir");
-        assert!(!names.iter().any(|n| n.contains("node_modules")), "excluded dir");
-        assert!(!names.contains(&"link.md".to_string()), "symlink must be skipped");
+        assert!(
+            !names.iter().any(|n| n.contains("node_modules")),
+            "excluded dir"
+        );
+        assert!(
+            !names.contains(&"link.md".to_string()),
+            "symlink must be skipped"
+        );
     }
 
     #[test]
@@ -345,7 +365,9 @@ mod tests {
             root: outer_c.clone(),
             pattern: glob::Pattern::new("**/*.md").unwrap(),
         }];
-        let nested = kept.iter().any(|k| inner_c.starts_with(&k.root) && inner_c != k.root);
+        let nested = kept
+            .iter()
+            .any(|k| inner_c.starts_with(&k.root) && inner_c != k.root);
         assert!(nested, "nested root must be detected");
     }
 }

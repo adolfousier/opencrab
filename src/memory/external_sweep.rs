@@ -9,8 +9,8 @@
 //! mtime is tier-1's job at search time, not the sweep's.
 
 use super::db::Store;
-use super::external::{excluded, resolve_roots, ResolvedRoot};
-use super::{external_excludes, COLLECTION_EXTERNAL};
+use super::external::{ResolvedRoot, excluded, resolve_roots};
+use super::{COLLECTION_EXTERNAL, external_excludes};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
@@ -184,10 +184,7 @@ pub(crate) fn sweep_external(store: &Store) -> SweepReport {
         .filter_map(|s| glob::Pattern::new(s).ok())
         .collect();
 
-    let prior = SWEEP_STATE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take();
+    let prior = SWEEP_STATE.lock().unwrap_or_else(|e| e.into_inner()).take();
     let prior_dirs = prior.map(|s| s.dir_mtimes);
 
     let (report, new_dirs) = sweep_external_with(store, &roots, &excludes, prior_dirs.as_ref());

@@ -192,7 +192,9 @@ async fn refresh_external_inner(paths: &[String]) -> usize {
             Err(_) => continue,
         };
         let seen = {
-            let guard = EXTERNAL_LAST_INDEXED.lock().unwrap_or_else(|e| e.into_inner());
+            let guard = EXTERNAL_LAST_INDEXED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             guard.as_ref().and_then(|m| m.get(key).copied())
         };
         let changed = match seen {
@@ -206,7 +208,9 @@ async fn refresh_external_inner(paths: &[String]) -> usize {
         }
         if index_external_one(store, key, path).await {
             refreshed += 1;
-            let mut guard = EXTERNAL_LAST_INDEXED.lock().unwrap_or_else(|e| e.into_inner());
+            let mut guard = EXTERNAL_LAST_INDEXED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             guard
                 .get_or_insert_with(HashMap::new)
                 .insert(key.clone(), disk_mtime);

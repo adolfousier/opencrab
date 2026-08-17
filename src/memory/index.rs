@@ -157,8 +157,7 @@ pub(crate) fn index_file_sync_keyed(
 ) -> Result<bool, String> {
     let hash = Store::hash_content(body);
 
-    if let Ok(Some((_id, existing_hash, _title))) =
-        store.find_active_document(collection, doc_key)
+    if let Ok(Some((_id, existing_hash, _title))) = store.find_active_document(collection, doc_key)
         && existing_hash == hash
     {
         return Ok(false);

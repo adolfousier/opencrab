@@ -39,7 +39,9 @@ pub(crate) use super::keyboards::*;
 // Crash-recovery resume moved to resume.rs (#471 phase 1).
 pub(crate) use super::resume::resume_session;
 // Final-response delivery moved to delivery.rs (#471 phase 4).
-pub(crate) use super::delivery::{bg_indicator_for, deliver_final_response, drain_remaining_display};
+pub(crate) use super::delivery::{
+    bg_indicator_for, deliver_final_response, drain_remaining_display,
+};
 
 /// Guard that cancels a CancellationToken on drop (used for typing loop).
 pub(crate) struct TypingGuard(pub(crate) CancellationToken);

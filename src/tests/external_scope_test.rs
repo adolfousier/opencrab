@@ -6,32 +6,38 @@
 //! FTS-only (no embedding engine) so it runs anywhere.
 
 use crate::memory::db::Store;
-use crate::memory::{is_session_shared, mark_session_shared, COLLECTION_EXTERNAL};
+use crate::memory::{COLLECTION_EXTERNAL, is_session_shared, mark_session_shared};
 
 fn seed(store: &Store) {
     let now = crate::utils::string::utc_timestamp();
     let mem_hash = Store::hash_content("daily log about rust async");
     let ext_hash = Store::hash_content("design notes on sqlite concurrency");
-    store.insert_content(&mem_hash, "daily log about rust async", &now).unwrap();
-    store.insert_document(
-        "memory",
-        "2026-08-14.md",
-        "2026-08-14",
-        &mem_hash,
-        &now,
-        &now,
-    )
-    .unwrap();
-    store.insert_content(&ext_hash, "design notes on sqlite concurrency", &now).unwrap();
-    store.insert_document(
-        COLLECTION_EXTERNAL,
-        "/home/u/notes/design.md",
-        "design.md",
-        &ext_hash,
-        &now,
-        &now,
-    )
-    .unwrap();
+    store
+        .insert_content(&mem_hash, "daily log about rust async", &now)
+        .unwrap();
+    store
+        .insert_document(
+            "memory",
+            "2026-08-14.md",
+            "2026-08-14",
+            &mem_hash,
+            &now,
+            &now,
+        )
+        .unwrap();
+    store
+        .insert_content(&ext_hash, "design notes on sqlite concurrency", &now)
+        .unwrap();
+    store
+        .insert_document(
+            COLLECTION_EXTERNAL,
+            "/home/u/notes/design.md",
+            "design.md",
+            &ext_hash,
+            &now,
+            &now,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -59,7 +65,10 @@ fn memory_scope_excludes_external_docs() {
     let hits = store
         .search_fts("\"sqlite\"", 5, Some("memory"))
         .expect("fts");
-    assert!(hits.iter().all(|h| h.doc.collection_name != COLLECTION_EXTERNAL));
+    assert!(
+        hits.iter()
+            .all(|h| h.doc.collection_name != COLLECTION_EXTERNAL)
+    );
 }
 
 #[test]
