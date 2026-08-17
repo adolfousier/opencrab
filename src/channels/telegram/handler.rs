@@ -2406,7 +2406,7 @@ pub(crate) async fn handle_message(
     let edit_loop_handle = stream_loop::spawn_edit_loop(
         &bot,
         msg.chat.id,
-        msg.id,
+        Some(msg.id),
         thread_id,
         is_dm,
         &streaming,

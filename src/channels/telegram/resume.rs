@@ -7,15 +7,13 @@
 use super::TelegramState;
 #[allow(unused_imports)]
 use super::handler::*;
-use super::send::{best_effort_delete, fire_chat_action, message_in_thread};
+use super::send::{best_effort_delete, fire_chat_action};
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
-use crate::utils::sanitize::redact_secrets;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::ChatAction;
-use teloxide::types::{MessageId, ParseMode};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -154,275 +152,25 @@ pub(crate) async fn resume_session(
 
     // Edit loop — same as handle_message
     // Store JoinHandle to await after cancellation (prevents duplicate race).
-    let edit_loop_handle = tokio::spawn({
-        let bot = bot.clone();
-        let st = streaming.clone();
-        let cancel = edit_cancel.clone();
-        let tg = telegram_state.clone();
-        let agent = agent.clone();
-        let sid = session_id;
-        async move {
-            loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(1500)) => {
-                        struct Snap {
-                            dirty: bool,
-                            recreate: bool,
-                            response_text: String,
-                            msg_id: Option<MessageId>,
-                            display_items: Vec<DisplayItem>,
-                            /// Any tool flipped status this tick (needs a flow re-render).
-                            tools_dirty: bool,
-                            has_active_tools: bool,
-                            tool_round_count: usize,
-                            processing: bool,
-                            thinking_excerpt: Option<String>,
-                        }
-
-                        let snap = {
-                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                            let has_display = !s.display_queue.is_empty();
-                            let any_tools_dirty = s.tool_msgs.iter().any(|t| t.dirty);
-                            let has_active_tools =
-                                s.tool_msgs.iter().any(|t| t.completed.is_none());
-                            let processing = s.processing;
-                            // Same wake conditions as the main handler loop, so a
-                            // resumed turn ticks its live header while tools run
-                            // instead of only waking on new display items.
-                            if !s.dirty
-                                && !s.recreate
-                                && !has_display
-                                && !any_tools_dirty
-                                && !has_active_tools
-                                && !processing
-                            {
-                                continue;
-                            }
-                            let items: Vec<DisplayItem> = s.display_queue.drain(..).collect();
-                            for t in s.tool_msgs.iter_mut().filter(|t| t.dirty) {
-                                t.dirty = false;
-                            }
-                            let response_text = s.render();
-                            let snap = Snap {
-                                dirty: s.dirty,
-                                recreate: s.recreate,
-                                response_text,
-                                msg_id: s.msg_id,
-                                display_items: items,
-                                tools_dirty: any_tools_dirty,
-                                has_active_tools,
-                                tool_round_count: s.tool_round_count,
-                                processing,
-                                thinking_excerpt: thinking_status_excerpt(&s.thinking),
-                            };
-                            s.dirty = false;
-                            s.recreate = false;
-                            snap
-                        };
-
-                        // A new round landed this tick iff there were display
-                        // items to fold in. Saved before the loop consumes them,
-                        // for the buried-block re-stick check below (#451).
-                        let had_round = !snap.display_items.is_empty();
-
-                        // Process display items (tools + intermediates)
-                        // Buffer consecutive tool calls to group them into collapsible blocks
-                        let mut tool_buffer: Vec<usize> = Vec::new();
-
-                        for item in snap.display_items {
-                            match item {
-                                DisplayItem::NewTool(idx) => {
-                                    tool_buffer.push(idx);
-                                }
-                                DisplayItem::Intermediate(text) => {
-                                    // Fold the intermediate into the open
-                                    // processing-log flow (#300). A resumed
-                                    // session has no inbound user message, so a
-                                    // <<react:>> directive is stripped but no
-                                    // reaction fires (#261).
-                                    append_tool_group(&bot, chat_id, thread_id, &st, &tool_buffer)
-                                        .await;
-                                    tool_buffer.clear();
-                                    let text = crate::utils::sanitize::strip_llm_artifacts(&text);
-                                    let text = redact_secrets(&text);
-                                    let (text, _img_paths) =
-                                        crate::utils::extract_img_markers(&text);
-                                    let (text, _react_emoji) =
-                                        crate::utils::extract_react_marker(&text);
-                                    // Surface a substantial rich report (a table)
-                                    // as its own rich message rather than burying
-                                    // it in the folded log (#582). This is the
-                                    // approval/execution turn's loop, where a plan
-                                    // report before `plan complete` was folded.
-                                    if super::intermediates::is_deliverable_rich_report(&text) {
-                                        super::intermediates::deliver_intermediate_message(
-                                            &bot, chat_id, thread_id, &st, &text,
-                                        )
-                                        .await;
-                                    } else {
-                                        append_intermediate_to_flow(
-                                            &bot, chat_id, thread_id, &st, &text,
-                                        )
-                                        .await;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Flush any remaining tools into the open group (kept open
-                        // so the next tick's tools append to this same message).
-                        append_tool_group(&bot, chat_id, thread_id, &st, &tool_buffer).await;
-
-                        // Re-stick the open block to the bottom if newer chatter
-                        // buried it (#451), only on a real round.
-                        if had_round {
-                            let newest = tg.newest_incoming_msg_id(chat_id.0);
-                            restick_flow_if_buried(&bot, chat_id, thread_id, &st, newest).await;
-                        }
-
-                        // ── Live flow header parity with the main handler ──
-                        // Resume rides the same shared tick: open the flow
-                        // early (header-only), roll the wall-clock duration,
-                        // thinking preview, and plan/goal/ctx sections. A
-                        // resumed turn has no fresh user message, so there is
-                        // no Working-on fallback.
-                        let show_status = snap.has_active_tools
-                            || (snap.tool_round_count > 0 && snap.response_text.is_empty())
-                            || snap.processing;
-                        let turn_done = snap.dirty && !snap.response_text.is_empty();
-                        let preview = snap
-                            .thinking_excerpt
-                            .as_deref()
-                            .map(|t| format!("🧠 {t}"));
-                        super::flow_chrome::tick_flow_header(
-                            &bot,
-                            chat_id,
-                            thread_id,
-                            &st,
-                            &agent,
-                            sid,
-                            show_status,
-                            turn_done,
-                            preview,
-                            snap.tools_dirty,
-                        )
-                        .await;
-
-                        // Update the persistent plan card in place (#580): the
-                        // checklist now lives on its own card, not in the flow
-                        // block, so it advances here as tasks complete.
-                        let plan_kb = {
-                            st.lock().unwrap_or_else(|e| e.into_inner()).sections.plan_kb
-                        };
-                        super::plan_card::refresh_plan_card(
-                            &bot, chat_id, thread_id, &tg, &agent, sid, plan_kb,
-                        )
-                        .await;
-
-                        // Response message (streaming). Stale-placeholder cleanup
-                        // runs unconditionally so a bubble opened before the first
-                        // tool call is still removed once a block opens.
-                        if snap.recreate
-                            && let Some(old_mid) = snap.msg_id
-                        {
-                            best_effort_delete(&bot, chat_id, old_mid, "recreate swap").await;
-                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                            s.msg_id = None;
-                        }
-                        // While a processing-log block is open, mid-turn narration
-                        // folds into it and the final answer is delivered by
-                        // deliver_final_response at turn end. Opening a standalone
-                        // streaming bubble here leaks the intermediate text as its
-                        // own message beneath the folded block (#490). handle_message
-                        // gained this guard; resume was missing it, so a resumed
-                        // turn with an open block still leaked the bubble.
-                        let open_block = {
-                            let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                            s.open_group_msg_id
-                        };
-                        if (snap.dirty || snap.recreate)
-                            && open_block.is_none()
-                            && !snap.response_text.is_empty()
-                        {
-                            let current_msg_id = {
-                                let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                s.msg_id
-                            };
-                            if current_msg_id.is_none() {
-                                // Review F10: streaming placeholder send, success-silent
-                                // until now (parity with the main handler).
-                                match message_in_thread(&bot, chat_id, thread_id, "\u{258b}").await {
-                                    Ok(m) => {
-                                        super::telemetry::log_send_success(
-                                            "turn",
-                                            "-",
-                                            "-",
-                                            "placeholder",
-                                            "new",
-                                            chat_id.0,
-                                            thread_id.map(|t| t.0.0),
-                                            m.id.0,
-                                            "\u{258b}".len(),
-                                            &super::telemetry::content_hash8("\u{258b}"),
-                                        );
-                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                        s.msg_id = Some(m.id);
-                                    }
-                                    Err(e) => {
-                                        super::telemetry::log_send_failure(
-                                            "turn",
-                                            "-",
-                                            "-",
-                                            "placeholder",
-                                            "new",
-                                            chat_id.0,
-                                            thread_id.map(|t| t.0.0),
-                                            "\u{258b}".len(),
-                                            &super::telemetry::content_hash8("\u{258b}"),
-                                            &e.to_string(),
-                                        );
-                                    }
-                                }
-                            }
-                            let msg_id = {
-                                let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                s.msg_id
-                            };
-                            if let Some(mid) = msg_id {
-                                // Strip any complete <<react:emoji>> directive from
-                                // the streaming snapshot so the raw marker never
-                                // flashes in the placeholder (#261). Reaction fires
-                                // from the intermediate/final paths.
-                                let (clean, _) =
-                                    crate::utils::extract_react_marker(&snap.response_text);
-                                let html = markdown_to_telegram_html(&clean);
-                                let display = format!("{}\u{258b}", html);
-                                // Twin of handler.rs's streaming placeholder
-                                // edit warn (review F10): resume.rs is the
-                                // second streaming-edit implementation; a
-                                // failing edit stream must be visible here too.
-                                if let Err(e) = bot
-                                    .edit_message_text(chat_id, mid, display)
-                                    .parse_mode(ParseMode::Html)
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        "Telegram: streaming placeholder edit failed (chat={} msg={}): {}",
-                                        chat_id.0,
-                                        mid.0,
-                                        e
-                                    );
-                                }
-                            }
-                        }
-
-                        fire_chat_action(&bot, chat_id, thread_id, ChatAction::Typing, "post-message typing").await;
-                    }
-                }
-            }
-        }
-    });
+    // The resumed turn drives the SAME streaming edit loop as handle_message
+    // (#1086 seam 5). This file used to carry a second implementation that
+    // drifted from the original: it missed the tool-message edit pass, the
+    // settle-flow handling and the reasoning excerpt, while the original
+    // missed the placeholder-send telemetry this one had. Both gaps close by
+    // sharing one loop. A resumed turn has no inbound message, so there is
+    // nothing to react to (#261).
+    let edit_loop_handle = super::stream_loop::spawn_edit_loop(
+        &bot,
+        chat_id,
+        None,
+        thread_id,
+        chat_id.0 > 0,
+        &streaming,
+        &edit_cancel,
+        &telegram_state,
+        &agent,
+        session_id,
+    );
 
     // Progress callback — same as handle_message
     let progress_cb: ProgressCallback = {

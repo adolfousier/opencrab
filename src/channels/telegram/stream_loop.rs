@@ -28,7 +28,7 @@ use crate::brain::AgentService;
 pub(crate) fn spawn_edit_loop(
     bot: &Bot,
     chat: ChatId,
-    msg_id: MessageId,
+    react_target: Option<MessageId>,
     thread_id: Option<ThreadId>,
     is_dm: bool,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
@@ -176,8 +176,13 @@ pub(crate) fn spawn_edit_loop(
                                         crate::utils::extract_img_markers(&text);
                                     let (text, react_emoji) =
                                         crate::utils::extract_react_marker(&text);
-                                    if let Some(ref emoji) = react_emoji {
-                                        fire_reaction(&bot, chat, msg_id, emoji).await;
+                                    // A resumed turn has no inbound message to
+                                    // react to: the marker is stripped above but
+                                    // nothing fires (#261).
+                                    if let Some(ref emoji) = react_emoji
+                                        && let Some(target) = react_target
+                                    {
+                                        fire_reaction(&bot, chat, target, emoji).await;
                                     }
 
                                     // A substantial rich report (a table) the
@@ -310,11 +315,44 @@ pub(crate) fn spawn_edit_loop(
                                 let s = st.lock().unwrap_or_else(|e| e.into_inner());
                                 s.msg_id
                             };
-                            if current_msg_id.is_none()
-                                && let Ok(m) = message_in_thread(&bot, chat, thread_id,  "\u{258b}").await
-                            {
-                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                s.msg_id = Some(m.id);
+                            if current_msg_id.is_none() {
+                                // Success-silent until #1085: the twin in
+                                // resume.rs logged both outcomes while this
+                                // one dropped the error, so a failing
+                                // placeholder send was invisible on the
+                                // handler path.
+                                match message_in_thread(&bot, chat, thread_id, "\u{258b}").await {
+                                    Ok(m) => {
+                                        super::telemetry::log_send_success(
+                                            "turn",
+                                            "-",
+                                            "-",
+                                            "placeholder",
+                                            "new",
+                                            chat.0,
+                                            thread_id.map(|t| t.0.0),
+                                            m.id.0,
+                                            "\u{258b}".len(),
+                                            &super::telemetry::content_hash8("\u{258b}"),
+                                        );
+                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                        s.msg_id = Some(m.id);
+                                    }
+                                    Err(e) => {
+                                        super::telemetry::log_send_failure(
+                                            "turn",
+                                            "-",
+                                            "-",
+                                            "placeholder",
+                                            "new",
+                                            chat.0,
+                                            thread_id.map(|t| t.0.0),
+                                            "\u{258b}".len(),
+                                            &super::telemetry::content_hash8("\u{258b}"),
+                                            &e.to_string(),
+                                        );
+                                    }
+                                }
                             }
                             let msg_id = {
                                 let s = st.lock().unwrap_or_else(|e| e.into_inner());
