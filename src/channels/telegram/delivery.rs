@@ -604,6 +604,23 @@ pub(crate) async fn deliver_final_response(
                         {
                             Ok(_) => {
                                 // Edited in place — the reply bubble keeps `mid`.
+                                // The final visible text is what a duplicate or
+                                // chatty-agent investigation needs: one line
+                                // closes "what actually landed in the mutated
+                                // message" (#1085 post-review). Failure arms
+                                // already log via the fallback sends' telemetry.
+                                super::telemetry::log_send_success(
+                                    "turn",
+                                    "-",
+                                    &session_id.to_string(),
+                                    "stream_edit_final",
+                                    "in_place_edit",
+                                    chat_id.0,
+                                    thread_id.map(|t| t.0.0),
+                                    mid.0,
+                                    chunks[0].len(),
+                                    &super::telemetry::content_hash8(&chunks[0]),
+                                );
                                 sent_reply_id = Some(mid.0);
                             }
                             Err(teloxide::RequestError::RetryAfter(secs)) => {
