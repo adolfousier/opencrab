@@ -5,7 +5,7 @@
 
 use super::TelegramState;
 use super::session_resolve;
-use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
+use crate::brain::agent::{AgentService, ProgressCallback};
 use crate::config::{Config, RespondTo};
 use crate::db::ChannelMessageRepository;
 use crate::db::models::ChannelMessage as DbChannelMessage;
@@ -29,6 +29,7 @@ use uuid::Uuid;
 use super::commands_tg;
 pub(crate) use super::flow::*;
 use super::member_events;
+use super::progress;
 // Markdown/HTML text transforms moved to markdown.rs (#471 phase 1).
 pub(crate) use super::markdown::*;
 // Incoming media/file helpers moved to media.rs (#471 phase 1).
@@ -3248,162 +3249,8 @@ pub(crate) async fn handle_message(
     });
 
     // Progress callback: accumulates streaming chunks + tool status into shared state
-    let progress_cb: ProgressCallback = {
-        let st = streaming.clone();
-        let bot_typing = bot.clone();
-        let chat_typing = msg.chat.id;
-        Arc::new(move |_sid, event| {
-            match event {
-                // Auto-compaction produces zero streaming chunks for 10-60s.
-                // The 4s typing pinger upstream stays alive, but fire an
-                // immediate refresh on entry so the indicator visibly resets
-                // the moment compaction starts. No text — just the native
-                // "is typing" dots stay continuous through the silent window.
-                ProgressEvent::Compacting => {
-                    let bot = bot_typing.clone();
-                    let chat = chat_typing;
-                    tokio::spawn(async move {
-                        fire_chat_action(
-                            &bot,
-                            chat,
-                            thread_id,
-                            ChatAction::Typing,
-                            "compacting typing refresh",
-                        )
-                        .await;
-                    });
-                }
-                ProgressEvent::ReasoningChunk { text } => {
-                    if let Ok(mut s) = st.lock() {
-                        s.thinking.push_str(&text);
-                        s.dirty = true;
-                    }
-                }
-                ProgressEvent::StreamingChunk { text } => {
-                    if let Ok(mut s) = st.lock() {
-                        if !s.thinking.is_empty() {
-                            s.thinking.clear();
-                        }
-                        s.response.push_str(&text);
-                        s.dirty = true;
-                        s.processing = false; // first real text = stop rolling messages
-                    }
-                }
-                ProgressEvent::ToolStarted {
-                    tool_name,
-                    tool_input,
-                } => {
-                    if let Ok(mut s) = st.lock() {
-                        s.thinking.clear();
-                        if s.tools_started_at.is_none() {
-                            s.tools_started_at = Some(std::time::Instant::now());
-                        }
-                        let ctx = tool_context(&tool_name, &tool_input);
-                        let raw_ctx = crate::utils::tool_status_source(&tool_name, &tool_input);
-                        let idx = s.tool_msgs.len();
-                        s.tool_msgs.push(ToolMsg {
-                            msg_id: None,
-                            name: tool_name,
-                            context: ctx,
-                            raw_context: raw_ctx,
-                            completed: None,
-                            dirty: true,
-                        });
-                        s.display_queue.push(DisplayItem::NewTool(idx));
-                    }
-                }
-                ProgressEvent::ToolCompleted {
-                    tool_name, success, ..
-                } => {
-                    if let Ok(mut s) = st.lock() {
-                        s.tool_round_count += 1;
-                        if let Some(tool) = s
-                            .tool_msgs
-                            .iter_mut()
-                            .rev()
-                            .find(|t| t.name == tool_name && t.completed.is_none())
-                        {
-                            tool.completed = Some(success);
-                            tool.dirty = true;
-                        }
-                        // No recreate here (#299): a completion only edits the
-                        // open group block in place — nothing new lands below
-                        // the placeholder. The re-post happens where a message
-                        // is actually SENT (fresh group in append_tool_group,
-                        // and the IntermediateText arm below).
-                    }
-                }
-                ProgressEvent::QueuedUserMessage { .. } => {
-                    // The user's own message is already visible in the chat;
-                    // the block just has to stop growing above it (#404).
-                    detach_flow_for_followup(&st);
-                }
-                ProgressEvent::IntermediateText { text, reasoning: _ } => {
-                    if let Ok(mut s) = st.lock() {
-                        s.thinking.clear();
-                        // Clear accumulated streaming response — it's now captured
-                        // as an intermediate message. Without this, text from
-                        // consecutive tool rounds gets concatenated without spacing.
-                        s.response.clear();
-                        // Delete the streaming message so stale text doesn't linger
-                        if s.msg_id.is_some() {
-                            s.recreate = true;
-                        }
-                        // Never push reasoning as a standalone intermediate — it
-                        // belongs in the streaming response's 💭 thinking block.
-                        // Using reasoning as a fallback here causes duplicate
-                        // messages on Telegram (reasoning intermediate + final
-                        // response that doesn't contain the reasoning text, so
-                        // dedup can't strip it).
-                        if !text.is_empty() {
-                            s.display_queue.push(DisplayItem::Intermediate(text));
-                        }
-                    }
-                }
-                ProgressEvent::SelfHealingAlert { message } => {
-                    if let Ok(mut s) = st.lock() {
-                        s.display_queue
-                            .push(DisplayItem::Intermediate(format!("🔧 {}", message)));
-                    }
-                }
-                ProgressEvent::RetryAttempt {
-                    attempt,
-                    max,
-                    reason,
-                } => {
-                    if let Ok(mut s) = st.lock() {
-                        s.display_queue.push(DisplayItem::Intermediate(format!(
-                            "⏳ Retry {}/{} — {}",
-                            attempt, max, reason
-                        )));
-                    }
-                }
-                ProgressEvent::ProviderSwitched {
-                    to_name, to_model, ..
-                } => {
-                    if let Ok(mut s) = st.lock() {
-                        s.display_queue.push(DisplayItem::Intermediate(format!(
-                            "🔄 Now using {}/{}",
-                            to_name, to_model
-                        )));
-                    }
-                }
-                // Optional follow-up suggestions (#597): post tap-to-send
-                // buttons under the response. Non-blocking — spawned like the
-                // other async arms; a tap injects the suggestion as a new turn.
-                ProgressEvent::SuggestedFollowups(options) => {
-                    // Buffer the options and render AFTER the final delivery so the
-                    // buttons are always the last thing in the chat, and the stash
-                    // is set fresh at turn end (#724 / #723). Only the latest set
-                    // is kept if the tool fires more than once.
-                    if let Ok(mut s) = st.lock() {
-                        s.pending_suggestions = Some(options);
-                    }
-                }
-                _ => {}
-            }
-        })
-    };
+    let progress_cb: ProgressCallback =
+        progress::build_progress_cb(&streaming, &bot, msg.chat.id, thread_id);
 
     // Build Telegram-native approval + follow-up-question callbacks
     // for this session
