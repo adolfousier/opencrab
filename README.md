@@ -2819,6 +2819,8 @@ The lifecycle is `NoPlan → Editing → Active → archived`, durable across re
 
 Autonomous feedback loop that tracks performance and enables the agent to improve its own brain files over time — **no human approval needed**. The agent identifies patterns, applies fixes, and logs everything to `~/.opencrabs/rsi/`.
 
+> **Headless daemons:** the autonomous RSI engine defaults to OFF when running headless (v0.3.81, #1063). Opt in with `[agent] rsi_enabled = true` in config.toml. The interactive TUI keeps it on.
+
 > ⚠️ **Experimental.** This feature is being tested and refined over the next few days. Brain file changes are logged and reversible, but monitor your `~/.opencrabs/rsi/improvements.md` to see what the agent is changing.
 
 | Tool | Description |
@@ -4108,7 +4110,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (6,383 tests across 600 test modules; 25 slower tests are
+# Run tests (6,688 tests across 651 test modules; 29 slower tests are
 # #[ignore]d to keep the default run fast — profile tests that touch
 # ~/.opencrabs, browser end-to-end tests, and opencode provider tests.
 # Opt in with `cargo test --all-features -- --ignored` when needed)

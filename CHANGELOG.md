@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.81] - 2026-08-17
+
+48 commits since v0.3.80. 157 files changed, +12,219 / -1,906 lines.
+
+### ✨ Features
+
+- `1f07010f` **Mermaid with native tables** (#1044): markdown+media route keeps tables native
+- `ddd0cad9` **Mermaid as images** (#1044): render mermaid fences as images in rich Telegram messages
+- `f5f4739d` **Early loop detection**: notice a repeating tool round before the provider rejects it
+- `41ac9db2` **Subagent result reporting** (#1036): finished agents report back to the spawning session
+- `f7696521` **Qwen effort tier default** (#1034): tiered family defaults to the recommended effort tier
+- `5559c793` **OSC 8 clickable paths** (#1031): emit OSC 8 so paths and wrapped URLs are clickable (dropped again by `76c03118` in this same release, see Fixes)
+- `9263422b` **External index paths** (#1051, #1055): memory search reads external index paths
+
+### 🔧 Fixes
+
+- `e23d112f` **Token-field rejection wording** (#1059): recognise every wording of a token-field rejection
+- `60ca68ac` **Reap dropped tool children** (#1046): reap the child process when a tool future is dropped
+- `8f43beff` **MemoryConfig test literals**: keep them valid after the external-paths merge
+- `597919e6` **Profile claim first** (#1072): claim the profile before any startup work
+- `6308707b` **Embedding health** (#1069, #1067): sweep for unembedded documents, show embedding health in doctor
+- `9507ea24` **RSI failure split** (#1068): environmental bash failures split out of the tool-defect count
+- `51d66a2b` **Stored-key marker ownership**: one owner, and heal keys already poisoned by it
+- `99a177c3` **Onboarding wizard**: reopened wizard no longer writes STT/TTS back to disabled
+- `65840ed1` **keys.toml key loss** (#1066): stop dropping four provider API keys at runtime
+- `f8a6c07f` **Dotted commands** (#1074): sentence split no longer tears them in half
+- `988fb636` **Wider command allowlist**: inspection claims become checkable
+- `0d3a3895` **Fact-based self-heal** (#1073): detectors fire the self-heal, not just gate it
+- `6801fcb6` **Reasoning-tag stripping**: stop eating message text
+- `6b35bcba` **No double answers** (#1070): stop delivering the same answer twice in one turn
+- `5cdc54d0` **Model picker order** (#1057): newest first
+- `6f91fe97` **Telegram rate-limit cap** (#1064): inline waits capped at 30s
+- `c952d867` **Embedding call hardening** (#1062): timeouts, a vector gate, non-blocking writes
+- `4211a0a8` **RSI engine gate** (#1063): autonomous engine behind rsi_enabled, off for headless daemons
+- `59602c14` **Rich blocks as typed AST** (#1058): decode rich message blocks as typed AST
+- `83201e76` **Unauthorised chats** (#1043): stop recording chats that were never authorised
+- `60232da5` **Owner-only group adds** (#1042): only the owner may add the bot to a group
+- `8684d0e9` **Bot-added detection** (#1041): tell being added apart from another bot arriving
+- `337dcd0a` **Hosted Qwen reachable** (#1040): outside Alibaba and vendor-prefixed model ids
+- `9b526673` **Voice dialog keys** (#1039): stop hiding and overwriting stored keys
+- `152d8ad4` **Session-routed recovery** (#1037): recovery reports route by session, not by whoever booted
+- `ba65e9de` **Orphaned status files** (#1038): reconcile at startup
+- `865b8c7f` **Family-gated thinking knobs** (#1034): each model gets the one it reads
+- `c420dd84` **preserve_thinking** (#1033): reasoning carries across turns
+- `76c03118` **OSC 8 dropped** (#1031): linkify corrupted the screen
+- `9547c362` **Telegram flow footer + section cap** (#1052, #1053, #1054, #1056)
+
+### 📖 Documentation
+
+- `ea429e1b` telegram: ground the owner-gate claim in the fix that made it true (#975)
+- `58863be9` follow the qmd drop and refresh counts after the merge
+- `cd2dcf48` refresh test counts and document memory_search scope
+
+### 🧹 Miscellaneous
+
+- `bd09c413` move the last inline test blocks into src/tests (#1076)
+- `82d48230` move three more inline test blocks into src/tests (#1076)
+- `33c368e8` move the memory module tests into src/tests (#1076)
+- `9eda6d1b` move the external-paths tests into src/tests (#1076)
+- `b3fb852f` cargo fmt the external-paths merge (#1051)
+- `df58616b` format test files left unformatted by 921cb9cf and b1d1994f
+- `07980fc3` cargo fmt the memory-store refactor (#1032)
+- `02f5ca7e` drop qmd dependency, own the memory store (#1032)
+
+### 📊 Stats
+
+- 48 commits since v0.3.80
+- 157 files changed, +12,219 / -1,906 lines
+- 6,688 tests (6,659 passed, 0 failed, 29 ignored)
+
 ## [0.3.80] - 2026-08-12
 
 96 commits since v0.3.79. 191 files changed, +12,486 / -1,472 lines.
@@ -7659,3 +7729,4 @@ fixes.
 [0.3.78]: https://github.com/adolfousier/opencrabs/compare/v0.3.77...v0.3.78
 [0.3.79]: https://github.com/adolfousier/opencrabs/compare/v0.3.78...v0.3.79
 [0.3.80]: https://github.com/adolfousier/opencrabs/compare/v0.3.79...v0.3.80
+[0.3.81]: https://github.com/adolfousier/opencrabs/compare/v0.3.80...v0.3.81
