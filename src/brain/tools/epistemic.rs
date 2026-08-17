@@ -126,8 +126,15 @@ impl EpistemicStore {
             // Extract old_value BEFORE mutable borrow
             let old_value = existing.value.clone();
 
-            // Mark existing belief as contradicted
+            // Archive the superseded belief under its OWN namespace (#1083).
+            // The archive key PREFIXES rather than extends the original: a
+            // `{key}:contradicted:{ts}` suffix still starts with the original
+            // key, so every superseded copy kept matching prefix queries
+            // forever and piled up in whatever surface reads them. The `key`
+            // field is set to the archive key too, so field and map key agree.
+            let archive_key = format!("contradicted:{}:{}", now.timestamp(), key);
             let mut contradicted = existing.clone();
+            contradicted.key = archive_key.clone();
             contradicted.confidence = Confidence::Contradicted;
             contradicted.notes = Some(format!(
                 "Contradicted by new value '{}' from {} at {}",
@@ -135,10 +142,7 @@ impl EpistemicStore {
                 origin,
                 now.format("%Y-%m-%d %H:%M:%S UTC")
             ));
-            self.beliefs.insert(
-                format!("{}:contradicted:{}", key, now.timestamp()),
-                contradicted,
-            );
+            self.beliefs.insert(archive_key, contradicted);
 
             // Insert new belief
             let belief = Belief {
