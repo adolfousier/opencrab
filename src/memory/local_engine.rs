@@ -172,20 +172,20 @@ pub fn format_query_for_embedding(query: &str) -> String {
 /// Model cache directory. Deliberately qmd's path: installs upgrading from a
 /// qmd-built release already have the ~300MB model here, and re-downloading
 /// it would be pure waste.
-fn model_cache_dir() -> PathBuf {
+pub(crate) fn model_cache_dir() -> PathBuf {
     let cache_dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("."));
     let model_dir = cache_dir.join("qmd").join("models");
     let _ = std::fs::create_dir_all(&model_dir);
     model_dir
 }
 
-struct HfRef {
-    repo: String,
-    file: String,
+pub(crate) struct HfRef {
+    pub(crate) repo: String,
+    pub(crate) file: String,
 }
 
 /// Parse a HuggingFace URI like "hf:user/repo/file.gguf".
-fn parse_hf_uri(uri: &str) -> Option<HfRef> {
+pub(crate) fn parse_hf_uri(uri: &str) -> Option<HfRef> {
     let without_prefix = uri.strip_prefix("hf:")?;
     let parts: Vec<&str> = without_prefix.splitn(3, '/').collect();
     if parts.len() < 3 {
@@ -326,46 +326,4 @@ pub fn pull_model(model_uri: &str, refresh: bool) -> Result<PullResult, String> 
         path: local_path,
         size_bytes,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn doc_template_is_stable() {
-        // These exact bytes produced every vector currently stored.
-        assert_eq!(
-            format_doc_for_embedding("hello world", Some("Test Title")),
-            "title: Test Title | text: hello world"
-        );
-        assert_eq!(
-            format_doc_for_embedding("hello world", None),
-            "title: none | text: hello world"
-        );
-    }
-
-    #[test]
-    fn query_template_is_stable() {
-        assert_eq!(
-            format_query_for_embedding("test query"),
-            "task: search result | query: test query"
-        );
-    }
-
-    #[test]
-    fn parse_hf_uri_shapes() {
-        let r = parse_hf_uri(DEFAULT_EMBED_MODEL_URI).unwrap();
-        assert_eq!(r.repo, "ggml-org/embeddinggemma-300M-GGUF");
-        assert_eq!(r.file, DEFAULT_EMBED_MODEL);
-        assert!(parse_hf_uri("not-a-uri").is_none());
-        assert!(parse_hf_uri("hf:only/two").is_none());
-    }
-
-    #[test]
-    fn cache_dir_is_qmds() {
-        // Upgrading installs must NOT re-download the model.
-        let dir = model_cache_dir();
-        assert!(dir.ends_with("qmd/models"), "got {}", dir.display());
-    }
 }
