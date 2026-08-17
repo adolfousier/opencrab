@@ -398,10 +398,22 @@ pub(crate) async fn resume_session(
                                     crate::utils::extract_react_marker(&snap.response_text);
                                 let html = markdown_to_telegram_html(&clean);
                                 let display = format!("{}\u{258b}", html);
-                                let _ = bot
+                                // Twin of handler.rs's streaming placeholder
+                                // edit warn (review F10): resume.rs is the
+                                // second streaming-edit implementation; a
+                                // failing edit stream must be visible here too.
+                                if let Err(e) = bot
                                     .edit_message_text(chat_id, mid, display)
                                     .parse_mode(ParseMode::Html)
-                                    .await;
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Telegram: streaming placeholder edit failed (chat={} msg={}): {}",
+                                        chat_id.0,
+                                        mid.0,
+                                        e
+                                    );
+                                }
                             }
                         }
 
