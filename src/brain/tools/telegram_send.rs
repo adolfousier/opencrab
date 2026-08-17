@@ -557,11 +557,18 @@ impl Tool for TelegramSendTool {
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let from_chat = pget!(get_id(&input, "from_chat_id"));
                 let message_id = pget!(get_id(&input, "message_id"));
+                // Route into the destination topic (#1079): forwards used to
+                // bypass thread resolution entirely and land in General.
+                let thread_id =
+                    resolve_thread_id(&input, to_chat, context.session_id, &self.telegram_state)
+                        .await;
                 match send_retrying_rate_limit("telegram_send forward", || {
-                    bot.forward_message(
+                    crate::channels::telegram::send::forward_in_thread(
+                        &bot,
                         ChatId(to_chat),
                         ChatId(from_chat),
                         MessageId(message_id as i32),
+                        thread_id,
                     )
                 })
                 .await
@@ -600,8 +607,19 @@ impl Tool for TelegramSendTool {
                 }
                 let file = pget!(resolve_input_file(&reference, "photo_url").await);
                 let reply_to = input.get("message_id").and_then(|v| v.as_i64());
+                // Route into the topic (#1079): photos landed in General in
+                // forum groups because this arm built its own request instead
+                // of the shared photo_in_thread helper.
+                let thread_id =
+                    resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
+                        .await;
                 match send_retrying_rate_limit("telegram_send send_photo", || {
-                    let mut req = bot.send_photo(ChatId(chat_id), file.clone());
+                    let mut req = crate::channels::telegram::send::photo_in_thread(
+                        &bot,
+                        ChatId(chat_id),
+                        thread_id,
+                        file.clone(),
+                    );
                     if let Some(ref c) = caption {
                         req = req.caption(c.clone());
                     }
@@ -647,8 +665,17 @@ impl Tool for TelegramSendTool {
                 }
                 let file = pget!(resolve_input_file(&reference, "document_url").await);
                 let reply_to = input.get("message_id").and_then(|v| v.as_i64());
+                // Route into the topic (#1079): documents landed in General.
+                let thread_id =
+                    resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
+                        .await;
                 match send_retrying_rate_limit("telegram_send send_document", || {
-                    let mut req = bot.send_document(ChatId(chat_id), file.clone());
+                    let mut req = crate::channels::telegram::send::document_in_thread(
+                        &bot,
+                        ChatId(chat_id),
+                        thread_id,
+                        file.clone(),
+                    );
                     if let Some(ref c) = caption {
                         req = req.caption(c.clone());
                     }
@@ -686,8 +713,18 @@ impl Tool for TelegramSendTool {
                         ));
                     }
                 };
+                // Route into the topic (#1079): locations landed in General.
+                let thread_id =
+                    resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
+                        .await;
                 match send_retrying_rate_limit("telegram_send send_location", || {
-                    bot.send_location(ChatId(chat_id), lat, lng)
+                    crate::channels::telegram::send::location_in_thread(
+                        &bot,
+                        ChatId(chat_id),
+                        thread_id,
+                        lat,
+                        lng,
+                    )
                 })
                 .await
                 {
@@ -721,8 +758,18 @@ impl Tool for TelegramSendTool {
                 }
                 let poll_opts: Vec<teloxide::types::InputPollOption> =
                     opts.into_iter().map(|s| s.into()).collect();
+                // Route into the topic (#1079): polls landed in General.
+                let thread_id =
+                    resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
+                        .await;
                 match send_retrying_rate_limit("telegram_send send_poll", || {
-                    bot.send_poll(ChatId(chat_id), question.clone(), poll_opts.clone())
+                    crate::channels::telegram::send::poll_in_thread(
+                        &bot,
+                        ChatId(chat_id),
+                        thread_id,
+                        question.clone(),
+                        poll_opts.clone(),
+                    )
                 })
                 .await
                 {
@@ -770,10 +817,19 @@ impl Tool for TelegramSendTool {
                     .register_callback_origins(context.session_id, origin_keys);
                 let keyboard = InlineKeyboardMarkup::new(rows);
                 let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
+                // Route into the topic (#1079): button messages landed in General.
+                let thread_id =
+                    resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
+                        .await;
                 match send_retrying_rate_limit("telegram_send send_buttons", || {
-                    bot.send_message(ChatId(chat_id), html.clone())
-                        .parse_mode(teloxide::types::ParseMode::Html)
-                        .reply_markup(keyboard.clone())
+                    crate::channels::telegram::send::message_in_thread(
+                        &bot,
+                        ChatId(chat_id),
+                        thread_id,
+                        html.clone(),
+                    )
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .reply_markup(keyboard.clone())
                 })
                 .await
                 {

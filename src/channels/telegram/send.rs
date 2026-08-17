@@ -15,9 +15,13 @@
 //! everywhere even in non-topic chats.
 
 use teloxide::Bot;
+use teloxide::payloads::ForwardMessageSetters;
 use teloxide::payloads::SendChatActionSetters;
+use teloxide::payloads::SendDocumentSetters;
+use teloxide::payloads::SendLocationSetters;
 use teloxide::payloads::SendMessageSetters;
 use teloxide::payloads::SendPhotoSetters;
+use teloxide::payloads::SendPollSetters;
 use teloxide::prelude::Requester;
 use teloxide::requests::JsonRequest;
 use teloxide::types::{ChatAction, ChatId, InputFile, MessageId, ThreadId};
@@ -76,6 +80,80 @@ where
     C: Into<ChatId>,
 {
     let req = bot.send_photo(chat_id.into(), photo);
+    match thread_id {
+        Some(t) => req.message_thread_id(t),
+        None => req,
+    }
+}
+
+/// `bot.send_document(chat_id, document)` with optional `message_thread_id`.
+/// Completes the `*_in_thread` family for #1079: documents landed in General
+/// in forum groups because the tool arm built its own request.
+pub fn document_in_thread<C>(
+    bot: &Bot,
+    chat_id: C,
+    thread_id: Option<ThreadId>,
+    document: InputFile,
+) -> teloxide::requests::MultipartRequest<teloxide::payloads::SendDocument>
+where
+    C: Into<ChatId>,
+{
+    let req = bot.send_document(chat_id.into(), document);
+    match thread_id {
+        Some(t) => req.message_thread_id(t),
+        None => req,
+    }
+}
+
+/// `bot.send_location(chat_id, lat, lng)` with optional `message_thread_id` (#1079).
+pub fn location_in_thread<C>(
+    bot: &Bot,
+    chat_id: C,
+    thread_id: Option<ThreadId>,
+    latitude: f64,
+    longitude: f64,
+) -> JsonRequest<teloxide::payloads::SendLocation>
+where
+    C: Into<ChatId>,
+{
+    let req = bot.send_location(chat_id.into(), latitude, longitude);
+    match thread_id {
+        Some(t) => req.message_thread_id(t),
+        None => req,
+    }
+}
+
+/// `bot.send_poll(chat_id, question, options)` with optional `message_thread_id` (#1079).
+pub fn poll_in_thread<C>(
+    bot: &Bot,
+    chat_id: C,
+    thread_id: Option<ThreadId>,
+    question: String,
+    options: Vec<teloxide::types::InputPollOption>,
+) -> JsonRequest<teloxide::payloads::SendPoll>
+where
+    C: Into<ChatId>,
+{
+    let req = bot.send_poll(chat_id.into(), question, options);
+    match thread_id {
+        Some(t) => req.message_thread_id(t),
+        None => req,
+    }
+}
+
+/// `bot.forward_message(to_chat, from_chat, message_id)` with optional
+/// `message_thread_id` (#1079): forwards landed in General in forum groups.
+pub fn forward_in_thread<C>(
+    bot: &Bot,
+    to_chat_id: C,
+    from_chat_id: ChatId,
+    message_id: MessageId,
+    thread_id: Option<ThreadId>,
+) -> JsonRequest<teloxide::payloads::ForwardMessage>
+where
+    C: Into<ChatId>,
+{
+    let req = bot.forward_message(to_chat_id.into(), from_chat_id, message_id);
     match thread_id {
         Some(t) => req.message_thread_id(t),
         None => req,
