@@ -22,10 +22,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const MAX_SNIPPETS: usize = 2;
 /// Per-snippet character cap. Defensive re-cap: `search_brain` already
 /// extracts ~200-char snippets, so this rarely bites.
-const SNIPPET_CHARS: usize = 500;
+pub(crate) const SNIPPET_CHARS: usize = 500;
 /// Hard cap on the whole hint block so a verbose brain file cannot bloat a
 /// tool result.
-const MAX_HINT_CHARS: usize = 900;
+pub(crate) const MAX_HINT_CHARS: usize = 900;
 /// Minimum BM25 rank to trust a match. Below this a hit is noise.
 const MIN_RANK: f64 = 0.1;
 
@@ -64,7 +64,7 @@ pub async fn hints_for(query: &str) -> Option<String> {
 /// Returns `None` when no result clears `MIN_RANK`. Caps the snippet count at
 /// `MAX_SNIPPETS`, each snippet at `SNIPPET_CHARS`, and the whole block at
 /// `MAX_HINT_CHARS`.
-fn format_hints(results: &[MemoryResult]) -> Option<String> {
+pub(crate) fn format_hints(results: &[MemoryResult]) -> Option<String> {
     let mut block = String::from("\n\n─── relevant brain notes ───\n");
     let mut count = 0usize;
     for r in results {
@@ -91,92 +91,4 @@ fn format_hints(results: &[MemoryResult]) -> Option<String> {
         return Some(capped);
     }
     Some(block)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn result(path: &str, snippet: &str, rank: f64) -> MemoryResult {
-        MemoryResult {
-            path: path.to_string(),
-            snippet: snippet.to_string(),
-            rank,
-        }
-    }
-
-    #[test]
-    fn empty_results_yield_none() {
-        assert_eq!(format_hints(&[]), None);
-    }
-
-    #[test]
-    fn all_below_threshold_yield_none() {
-        let results = vec![
-            result("TOOLS.md", "telegram_send routing", 0.05),
-            result("AGENTS.md", "github rules", 0.01),
-        ];
-        assert_eq!(format_hints(&results), None);
-    }
-
-    #[test]
-    fn relevant_results_yield_block() {
-        let results = vec![result("TOOLS.md", "telegram_send is canonical", 0.9)];
-        let block = format_hints(&results).expect("expected a hint block");
-        assert!(block.contains("relevant brain notes"));
-        assert!(block.contains("TOOLS.md"));
-        assert!(block.contains("telegram_send is canonical"));
-    }
-
-    #[test]
-    fn low_rank_results_are_filtered() {
-        let results = vec![
-            result("TOOLS.md", "good match", 0.8),
-            result("AGENTS.md", "noise", 0.02),
-        ];
-        let block = format_hints(&results).expect("expected a hint block");
-        assert!(block.contains("TOOLS.md"));
-        assert!(!block.contains("AGENTS.md"));
-    }
-
-    #[test]
-    fn caps_at_max_snippets() {
-        let results = vec![
-            result("TOOLS.md", "one", 0.9),
-            result("AGENTS.md", "two", 0.8),
-            result("CODE.md", "three", 0.7),
-        ];
-        let block = format_hints(&results).expect("expected a hint block");
-        assert!(block.contains("TOOLS.md"));
-        assert!(block.contains("AGENTS.md"));
-        assert!(!block.contains("CODE.md"));
-    }
-
-    #[test]
-    fn truncates_long_snippets() {
-        let long = "y".repeat(600);
-        let results = vec![result("TOOLS.md", &long, 0.9)];
-        let block = format_hints(&results).expect("expected a hint block");
-        let ys: usize = block.chars().filter(|c| *c == 'y').count();
-        assert_eq!(ys, SNIPPET_CHARS);
-    }
-
-    #[test]
-    fn caps_whole_block() {
-        let results = vec![
-            result("TOOLS.md", &"a".repeat(500), 0.9),
-            result("AGENTS.md", &"b".repeat(500), 0.8),
-        ];
-        let block = format_hints(&results).expect("expected a hint block");
-        // Whole-block cap: MAX_HINT_CHARS plus the trailing ellipsis.
-        assert!(block.chars().count() <= MAX_HINT_CHARS + 1);
-    }
-
-    #[test]
-    fn uses_file_name_not_full_path() {
-        let results = vec![result("/home/u/.opencrabs/TOOLS.md", "routing", 0.9)];
-        let block = format_hints(&results).expect("expected a hint block");
-        assert!(block.contains("TOOLS.md"));
-        assert!(!block.contains("/home/u"));
-    }
 }
