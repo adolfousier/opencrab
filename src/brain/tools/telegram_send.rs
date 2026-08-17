@@ -9,6 +9,7 @@ use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult};
 use crate::channels::telegram::TelegramState;
 use crate::channels::telegram::intermediates::send_retrying_rate_limit;
+use crate::channels::telegram::telemetry::{content_hash8, log_send_failure, log_send_success};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
@@ -510,6 +511,16 @@ impl TelegramSendTool {
         .await
         {
             Ok(m) => {
+                log_send_success(
+                    "tool",
+                    "reply",
+                    "html",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    m.id.0,
+                    html.len(),
+                    &content_hash8(&html),
+                );
                 // Persist for reply-recovery (a user can reply to this bot reply).
                 crate::channels::telegram::send::record_outgoing(
                     None,
@@ -522,7 +533,19 @@ impl TelegramSendTool {
                     "Reply sent to message {message_id}."
                 )))
             }
-            Err(e) => Ok(ToolResult::error(format!("Failed to reply: {e}"))),
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "reply",
+                    "html",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    html.len(),
+                    &content_hash8(&html),
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to reply: {e}")))
+            }
         }
     }
 
@@ -547,8 +570,32 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!("Message {message_id} edited."))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to edit: {e}"))),
+            Ok(_) => {
+                log_send_success(
+                    "tool",
+                    "edit",
+                    "html",
+                    chat_id,
+                    None,
+                    message_id as i32,
+                    html.len(),
+                    &content_hash8(&html),
+                );
+                Ok(ToolResult::success(format!("Message {message_id} edited.")))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "edit",
+                    "html",
+                    chat_id,
+                    None,
+                    html.len(),
+                    &content_hash8(&html),
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to edit: {e}")))
+            }
         }
     }
 
@@ -568,10 +615,34 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!(
-                "Message {message_id} deleted."
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to delete: {e}"))),
+            Ok(_) => {
+                log_send_success(
+                    "tool",
+                    "delete",
+                    "action",
+                    chat_id,
+                    None,
+                    message_id as i32,
+                    0,
+                    "-",
+                );
+                Ok(ToolResult::success(format!(
+                    "Message {message_id} deleted."
+                )))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "delete",
+                    "action",
+                    chat_id,
+                    None,
+                    0,
+                    "-",
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to delete: {e}")))
+            }
         }
     }
 
@@ -591,8 +662,32 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!("Message {message_id} pinned."))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to pin: {e}"))),
+            Ok(_) => {
+                log_send_success(
+                    "tool",
+                    "pin",
+                    "action",
+                    chat_id,
+                    None,
+                    message_id as i32,
+                    0,
+                    "-",
+                );
+                Ok(ToolResult::success(format!("Message {message_id} pinned.")))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "pin",
+                    "action",
+                    chat_id,
+                    None,
+                    0,
+                    "-",
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to pin: {e}")))
+            }
         }
     }
 
@@ -610,10 +705,25 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(
-                "Latest pinned message unpinned.".to_string(),
-            )),
-            Err(e) => Ok(ToolResult::error(format!("Failed to unpin: {e}"))),
+            Ok(_) => {
+                log_send_success("tool", "unpin", "action", chat_id, None, 0, 0, "-");
+                Ok(ToolResult::success(
+                    "Latest pinned message unpinned.".to_string(),
+                ))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "unpin",
+                    "action",
+                    chat_id,
+                    None,
+                    0,
+                    "-",
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to unpin: {e}")))
+            }
         }
     }
 
@@ -641,10 +751,34 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!(
-                "Message {message_id} forwarded from chat {from_chat} to {to_chat}."
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to forward: {e}"))),
+            Ok(m) => {
+                log_send_success(
+                    "tool",
+                    "forward",
+                    "action",
+                    to_chat,
+                    thread_id.map(|t| t.0.0),
+                    m.id.0,
+                    0,
+                    "-",
+                );
+                Ok(ToolResult::success(format!(
+                    "Message {message_id} forwarded from chat {from_chat} to {to_chat}."
+                )))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "forward",
+                    "action",
+                    to_chat,
+                    thread_id.map(|t| t.0.0),
+                    0,
+                    "-",
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to forward: {e}")))
+            }
         }
     }
 
@@ -697,10 +831,34 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!(
-                "Photo sent to chat {chat_id}."
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to send photo: {e}"))),
+            Ok(m) => {
+                log_send_success(
+                    "tool",
+                    "send_photo",
+                    "media",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    m.id.0,
+                    reference.len(),
+                    &content_hash8(&reference),
+                );
+                Ok(ToolResult::success(format!(
+                    "Photo sent to chat {chat_id}."
+                )))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "send_photo",
+                    "media",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    reference.len(),
+                    &content_hash8(&reference),
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to send photo: {e}")))
+            }
         }
     }
 
@@ -754,10 +912,34 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!(
-                "Document sent to chat {chat_id}."
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to send document: {e}"))),
+            Ok(m) => {
+                log_send_success(
+                    "tool",
+                    "send_document",
+                    "media",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    m.id.0,
+                    reference.len(),
+                    &content_hash8(&reference),
+                );
+                Ok(ToolResult::success(format!(
+                    "Document sent to chat {chat_id}."
+                )))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "send_document",
+                    "media",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    reference.len(),
+                    &content_hash8(&reference),
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to send document: {e}")))
+            }
         }
     }
 
@@ -786,6 +968,7 @@ impl TelegramSendTool {
                 ));
             }
         };
+        let coords = format!("{lat},{lng}");
         match send_retrying_rate_limit("telegram_send send_location", || {
             crate::channels::telegram::send::location_in_thread(
                 bot,
@@ -797,10 +980,34 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!(
-                "Location ({lat}, {lng}) sent to chat {chat_id}."
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to send location: {e}"))),
+            Ok(m) => {
+                log_send_success(
+                    "tool",
+                    "send_location",
+                    "media",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    m.id.0,
+                    coords.len(),
+                    &content_hash8(&coords),
+                );
+                Ok(ToolResult::success(format!(
+                    "Location ({lat}, {lng}) sent to chat {chat_id}."
+                )))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "send_location",
+                    "media",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    coords.len(),
+                    &content_hash8(&coords),
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to send location: {e}")))
+            }
         }
     }
 
@@ -843,8 +1050,32 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!("Poll sent to chat {chat_id}."))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to send poll: {e}"))),
+            Ok(m) => {
+                log_send_success(
+                    "tool",
+                    "send_poll",
+                    "media",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    m.id.0,
+                    question.len(),
+                    &content_hash8(&question),
+                );
+                Ok(ToolResult::success(format!("Poll sent to chat {chat_id}.")))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "send_poll",
+                    "media",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    question.len(),
+                    &content_hash8(&question),
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to send poll: {e}")))
+            }
         }
     }
 
@@ -903,12 +1134,36 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!(
-                "Message with buttons sent to chat {chat_id}."
-            ))),
-            Err(e) => Ok(ToolResult::error(format!(
-                "Failed to send message with buttons: {e}"
-            ))),
+            Ok(m) => {
+                log_send_success(
+                    "tool",
+                    "send_buttons",
+                    "html",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    m.id.0,
+                    html.len(),
+                    &content_hash8(&html),
+                );
+                Ok(ToolResult::success(format!(
+                    "Message with buttons sent to chat {chat_id}."
+                )))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "send_buttons",
+                    "html",
+                    chat_id,
+                    thread_id.map(|t| t.0.0),
+                    html.len(),
+                    &content_hash8(&html),
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!(
+                    "Failed to send message with buttons: {e}"
+                )))
+            }
         }
     }
 
@@ -1098,10 +1353,34 @@ impl TelegramSendTool {
         })
         .await
         {
-            Ok(_) => Ok(ToolResult::success(format!(
-                "Reaction {emoji} set on message {message_id}."
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to set reaction: {e}"))),
+            Ok(_) => {
+                log_send_success(
+                    "tool",
+                    "set_reaction",
+                    "action",
+                    chat_id,
+                    None,
+                    message_id as i32,
+                    emoji.len(),
+                    &content_hash8(&emoji),
+                );
+                Ok(ToolResult::success(format!(
+                    "Reaction {emoji} set on message {message_id}."
+                )))
+            }
+            Err(e) => {
+                log_send_failure(
+                    "tool",
+                    "set_reaction",
+                    "action",
+                    chat_id,
+                    None,
+                    emoji.len(),
+                    &content_hash8(&emoji),
+                    &e.to_string(),
+                );
+                Ok(ToolResult::error(format!("Failed to set reaction: {e}")))
+            }
         }
     }
 
