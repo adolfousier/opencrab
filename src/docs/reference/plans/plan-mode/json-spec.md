@@ -41,20 +41,17 @@ These are always overwritten on import:
 - `created_at` — ISO timestamp
 - `updated_at` — ISO timestamp
 - `approved_at` — `null` until user Approve on design track; then ISO timestamp
-- `context` — defaults to empty string
-- `risks` — defaults to `[]`
-- `technical_stack` — defaults to `[]`
-- `test_strategy` — defaults to empty string
 
 ### Task Level
 - `id` — UUID, auto-minted (do not provide — see Optional Fields note above)
 - `order` — 1-based; auto-assigned from array position if omitted (recommended to omit)
 - `status` — always `"Pending"`
 - `notes` — always `null`
-- `completed_at` — always `null`
 - `retry_count` — always `0`
-- `max_retries` — defaults to `3`
-- `artifacts` — always `[]`
+
+Legacy fields (`context`, `risks`, `technical_stack`, `test_strategy` at plan level;
+`completed_at`, `max_retries`, `artifacts` at task level) were removed
+from the schema. They are ignored on import of old plan JSON files.
 
 ## task_type Values
 

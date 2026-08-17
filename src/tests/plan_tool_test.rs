@@ -12,8 +12,8 @@
 //! so this file can reach them from outside the module.
 
 use crate::brain::tools::plan_tool::{
-    MAX_CONTEXT_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_PLAN_FILE_SIZE, MAX_TITLE_LENGTH, PlanTool,
-    default_complexity, validate_plan_file_path, validate_string,
+    MAX_DESCRIPTION_LENGTH, MAX_PLAN_FILE_SIZE, MAX_TITLE_LENGTH, PlanTool, default_complexity,
+    validate_plan_file_path, validate_string,
 };
 use crate::brain::tools::{Tool, ToolExecutionContext};
 use crate::config::profile::{home_for_profile, with_profile_home_async};
@@ -178,7 +178,6 @@ fn input_validation_limits() {
     // Verify limits are reasonable
     assert_eq!(MAX_TITLE_LENGTH, 200);
     assert_eq!(MAX_DESCRIPTION_LENGTH, 5000);
-    assert_eq!(MAX_CONTEXT_LENGTH, 5000);
 }
 
 #[test]
@@ -204,13 +203,6 @@ fn validate_title_one_over_limit() {
 fn validate_description_at_limit() {
     let desc = "a".repeat(MAX_DESCRIPTION_LENGTH);
     let result = validate_string(&desc, MAX_DESCRIPTION_LENGTH, "Description");
-    assert!(result.is_ok());
-}
-
-#[test]
-fn validate_context_at_limit() {
-    let context = "a".repeat(MAX_CONTEXT_LENGTH);
-    let result = validate_string(&context, MAX_CONTEXT_LENGTH, "Context");
     assert!(result.is_ok());
 }
 

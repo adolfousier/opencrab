@@ -27,8 +27,6 @@ fn test_plan_document_new() {
     assert_eq!(plan.description, "");
     assert_eq!(plan.status, PlanStatus::Editing);
     assert!(plan.tasks.is_empty());
-    assert!(plan.risks.is_empty());
-    assert_eq!(plan.context, "");
     assert!(plan.approved_at.is_none());
 }
 
@@ -326,7 +324,6 @@ fn test_task_state_transitions() {
     // InProgress -> Completed
     task.complete(Some("Task completed successfully".to_string()));
     assert_eq!(task.status, TaskStatus::Completed);
-    assert!(task.completed_at.is_some());
     assert_eq!(task.notes, Some("Task completed successfully".to_string()));
 }
 
@@ -337,7 +334,6 @@ fn test_task_failure() {
     task.fail("Error occurred".to_string());
     assert_eq!(task.status, TaskStatus::Failed);
     assert_eq!(task.notes, Some("Error occurred".to_string()));
-    assert!(task.completed_at.is_none());
 }
 
 #[test]
@@ -376,10 +372,7 @@ fn test_task_complexity_stars() {
         acceptance_criteria: vec![],
         status: TaskStatus::Pending,
         notes: None,
-        completed_at: None,
         retry_count: 0,
-        max_retries: 3,
-        artifacts: Vec::new(),
     };
     assert_eq!(task1.complexity_stars(), "★☆☆☆☆");
 

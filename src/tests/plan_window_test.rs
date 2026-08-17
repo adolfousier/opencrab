@@ -27,10 +27,7 @@ fn task(order: usize, status: TaskStatus) -> PlanTask {
         acceptance_criteria: Vec::new(),
         status,
         notes: None,
-        completed_at: None,
         retry_count: 0,
-        max_retries: 3,
-        artifacts: Vec::new(),
     }
 }
 

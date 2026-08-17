@@ -79,7 +79,6 @@ fn new_task_is_pending() {
     assert_eq!(task.title, "T");
     assert_eq!(task.description, "D");
     assert!(task.dependencies.is_empty());
-    assert!(task.completed_at.is_none());
 }
 
 #[test]

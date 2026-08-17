@@ -24,14 +24,6 @@ enum PlanOperation {
         /// Plan title (create mode). One of `title` / `file_path` is required.
         #[serde(default)]
         title: Option<String>,
-        #[serde(default)]
-        context: String,
-        #[serde(default)]
-        risks: Vec<String>,
-        #[serde(default)]
-        test_strategy: String,
-        #[serde(default)]
-        technical_stack: Vec<String>,
         /// Import mode: absolute path to a plan JSON file on disk. Takes
         /// precedence over `title` and `mode` when present.
         #[serde(default)]
@@ -416,7 +408,6 @@ pub(crate) const MAX_PLAN_FILE_SIZE: u64 = 10 * 1024 * 1024;
 /// Input validation limits
 pub(crate) const MAX_TITLE_LENGTH: usize = 200;
 pub(crate) const MAX_DESCRIPTION_LENGTH: usize = 5000;
-pub(crate) const MAX_CONTEXT_LENGTH: usize = 5000;
 
 // ── Ralph Loop: Mechanical verification gate ────────────────────────
 // Config resolved per-project (#947): a `ralph_loop.toml` at the
@@ -954,24 +945,6 @@ impl Tool for PlanTool {
                     "type": "string",
                     "description": "Task description (add_task)"
                 },
-                "context": {
-                    "type": "string",
-                    "description": "Context and assumptions (init create mode)"
-                },
-                "risks": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Identified risks and unknowns (init create mode)"
-                },
-                "test_strategy": {
-                    "type": "string",
-                    "description": "Testing strategy and approach (init create mode)"
-                },
-                "technical_stack": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Technologies, frameworks, and tools used (init create mode)"
-                },
                 "file_path": {
                     "type": "string",
                     "description": "Import mode: absolute path to a plan JSON file on disk (init). Takes precedence over title."
@@ -1087,10 +1060,6 @@ impl Tool for PlanTool {
         let result = match operation {
             PlanOperation::Init {
                 title,
-                context: ctx,
-                risks,
-                test_strategy,
-                technical_stack,
                 file_path,
                 mode,
                 tasks,
@@ -1246,7 +1215,6 @@ impl Tool for PlanTool {
                             task.complexity.clamp(1, 5)
                         };
                         task.status = TaskStatus::Pending;
-                        task.completed_at = None;
                         task.retry_count = 0;
                         task.notes = None;
                         task.dependencies = task
@@ -1293,9 +1261,6 @@ impl Tool for PlanTool {
                         )
                     })?;
                     validate_string(&title, MAX_TITLE_LENGTH, "Plan title")?;
-                    if !ctx.is_empty() {
-                        validate_string(&ctx, MAX_CONTEXT_LENGTH, "Plan context")?;
-                    }
 
                     // Track disambiguation: explicit mode wins; otherwise
                     // tasks present imply checklist and no tasks imply design.
@@ -1362,10 +1327,6 @@ impl Tool for PlanTool {
                     }
 
                     let mut new_plan = PlanDocument::new(plan_sid, title.clone());
-                    new_plan.context = ctx;
-                    new_plan.risks = risks;
-                    new_plan.test_strategy = test_strategy;
-                    new_plan.technical_stack = technical_stack;
                     new_plan.status = PlanStatus::Editing;
 
                     for it in tasks {

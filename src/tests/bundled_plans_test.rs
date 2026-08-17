@@ -142,8 +142,6 @@ fn test_minimal_format_with_no_optional_fields() {
     assert_eq!(plan.tasks[0].order, 0, "order defaults to 0 when omitted");
     assert!(plan.tasks[0].dependencies.is_empty());
     assert!(plan.tasks[0].acceptance_criteria.is_empty());
-    assert!(plan.risks.is_empty());
-    assert!(plan.context.is_empty());
 }
 
 #[test]
@@ -216,9 +214,6 @@ fn test_plan_document_default_values() {
         "session_id should be auto-generated"
     );
     assert_eq!(plan.status, PlanStatus::Editing);
-    assert_eq!(plan.context, "");
-    assert!(plan.risks.is_empty());
-    assert!(plan.technical_stack.is_empty());
 }
 
 #[test]
