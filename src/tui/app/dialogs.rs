@@ -1534,6 +1534,11 @@ async fn test_telegram_connection(
 
     // Step 3: Send greeting
     let greeting = crate::channels::generate_connection_greeting(&agent, "Telegram").await;
+    // Review F10: the onboarding greeting was the audit's named MISSING
+    // site — no tracing on any path. Errors go to the wizard UI; the
+    // telemetry line makes the send visible in logs too.
+    let greeting_len = greeting.len();
+    let greeting_hash8 = crate::channels::telegram::telemetry::content_hash8(greeting.as_str());
     bot.send_message(teloxide::types::ChatId(user_id), greeting)
         .await
         .map_err(|e| {
@@ -1552,6 +1557,18 @@ async fn test_telegram_connection(
                 format!("Telegram API error: {}", msg)
             }
         })?;
+    crate::channels::telegram::telemetry::log_send_success(
+        "system",
+        "onboarding_greeting",
+        "-",
+        "owner_dm",
+        "send",
+        user_id,
+        None,
+        0, // message id not captured by the wizard; chat correlation suffices
+        greeting_len,
+        &greeting_hash8,
+    );
 
     // Return detected user ID if we auto-detected it
     let detected_user_id = if trimmed.is_empty() {

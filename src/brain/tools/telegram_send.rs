@@ -514,6 +514,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "reply",
+                    "reply",
+                    &context.session_id.to_string(),
                     "html",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -537,6 +539,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "reply",
+                    "reply",
+                    &context.session_id.to_string(),
                     "html",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -574,6 +578,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "edit",
+                    "edit",
+                    &context.session_id.to_string(),
                     "html",
                     chat_id,
                     None,
@@ -587,6 +593,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "edit",
+                    "edit",
+                    &context.session_id.to_string(),
                     "html",
                     chat_id,
                     None,
@@ -619,6 +627,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "delete",
+                    "delete",
+                    &context.session_id.to_string(),
                     "action",
                     chat_id,
                     None,
@@ -634,6 +644,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "delete",
+                    "delete",
+                    &context.session_id.to_string(),
                     "action",
                     chat_id,
                     None,
@@ -666,6 +678,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "pin",
+                    "pin",
+                    &context.session_id.to_string(),
                     "action",
                     chat_id,
                     None,
@@ -679,6 +693,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "pin",
+                    "pin",
+                    &context.session_id.to_string(),
                     "action",
                     chat_id,
                     None,
@@ -706,7 +722,18 @@ impl TelegramSendTool {
         .await
         {
             Ok(_) => {
-                log_send_success("tool", "unpin", "action", chat_id, None, 0, 0, "-");
+                log_send_success(
+                    "tool",
+                    "unpin",
+                    "unpin",
+                    &context.session_id.to_string(),
+                    "action",
+                    chat_id,
+                    None,
+                    0,
+                    0,
+                    "-",
+                );
                 Ok(ToolResult::success(
                     "Latest pinned message unpinned.".to_string(),
                 ))
@@ -715,6 +742,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "unpin",
+                    "unpin",
+                    &context.session_id.to_string(),
                     "action",
                     chat_id,
                     None,
@@ -755,6 +784,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "forward",
+                    "forward",
+                    &context.session_id.to_string(),
                     "action",
                     to_chat,
                     thread_id.map(|t| t.0.0),
@@ -770,6 +801,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "forward",
+                    "forward",
+                    &context.session_id.to_string(),
                     "action",
                     to_chat,
                     thread_id.map(|t| t.0.0),
@@ -835,6 +868,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "send_photo",
+                    "send_photo",
+                    &context.session_id.to_string(),
                     "media",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -850,6 +885,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "send_photo",
+                    "send_photo",
+                    &context.session_id.to_string(),
                     "media",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -916,6 +953,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "send_document",
+                    "send_document",
+                    &context.session_id.to_string(),
                     "media",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -931,6 +970,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "send_document",
+                    "send_document",
+                    &context.session_id.to_string(),
                     "media",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -984,6 +1025,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "send_location",
+                    "send_location",
+                    &context.session_id.to_string(),
                     "media",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -999,6 +1042,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "send_location",
+                    "send_location",
+                    &context.session_id.to_string(),
                     "media",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -1054,6 +1099,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "send_poll",
+                    "send_poll",
+                    &context.session_id.to_string(),
                     "media",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -1067,6 +1114,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "send_poll",
+                    "send_poll",
+                    &context.session_id.to_string(),
                     "media",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -1138,6 +1187,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "send_buttons",
+                    "send_buttons",
+                    &context.session_id.to_string(),
                     "html",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -1153,6 +1204,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "send_buttons",
+                    "send_buttons",
+                    &context.session_id.to_string(),
                     "html",
                     chat_id,
                     thread_id.map(|t| t.0.0),
@@ -1357,6 +1410,8 @@ impl TelegramSendTool {
                 log_send_success(
                     "tool",
                     "set_reaction",
+                    "set_reaction",
+                    &context.session_id.to_string(),
                     "action",
                     chat_id,
                     None,
@@ -1372,6 +1427,8 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "set_reaction",
+                    "set_reaction",
+                    &context.session_id.to_string(),
                     "action",
                     chat_id,
                     None,

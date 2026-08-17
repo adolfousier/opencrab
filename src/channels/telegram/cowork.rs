@@ -9,7 +9,7 @@
 use crate::config::{Config, opencrabs_home};
 
 use super::TelegramState;
-use super::send::{message_in_thread, photo_in_thread};
+use super::send::{best_effort_note, message_in_thread, photo_in_thread};
 use teloxide::prelude::*;
 use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile};
 
@@ -224,7 +224,17 @@ pub async fn handle_cowork_group_join(
             3. Disable privacy mode: send `/setprivacy` to @BotFather, choose this bot, set to Disabled\n\n\
             Then send `/cowork` in your DM with me again to generate the invite link.";
 
-        let _ = message_in_thread(bot, ChatId(group_chat_id), thread_id, promote_msg).await;
+        best_effort_note(
+            bot,
+            ChatId(group_chat_id),
+            thread_id,
+            promote_msg,
+            None,
+            "system",
+            "cowork_promote_group",
+            "needs-admin notice",
+        )
+        .await;
 
         // Also notify the user in their DM
         if let Some(ref cowork_state) = cowork {
@@ -236,7 +246,17 @@ pub async fn handle_cowork_group_join(
                 3. Disable privacy mode: send `/setprivacy` to @BotFather, choose this bot, set to Disabled\n\n\
                 Then send `/cowork` here again to generate the invite link and QR code.";
 
-            let _ = message_in_thread(bot, user_chat, None, dm_msg).await;
+            best_effort_note(
+                bot,
+                user_chat,
+                None,
+                dm_msg,
+                None,
+                "system",
+                "cowork_promote_dm",
+                "needs-admin DM",
+            )
+            .await;
         }
 
         return Ok(());
@@ -253,38 +273,59 @@ pub async fn handle_cowork_group_join(
                 (build_invite_qr(invite_url), cowork.as_ref())
             {
                 let user_chat = ChatId(cowork_state.chat_id);
-                let _ = photo_in_thread(bot, user_chat, None, InputFile::file(qr_path)).await;
-                let _ = message_in_thread(
+                // Warn-only: a QR sidecar photo; failure visibility suffices.
+                if let Err(e) =
+                    photo_in_thread(bot, user_chat, None, InputFile::file(qr_path)).await
+                {
+                    tracing::warn!(
+                        "Telegram: cowork QR photo failed (chat={}): {e}",
+                        user_chat.0
+                    );
+                }
+                let invite_note = format!(
+                    "🦀 **All set!**\n\n\
+                     Invite link: {}\n\n\
+                     Share the QR or link. \
+                     Everyone auto-registers when they join and send a message.",
+                    invite_url
+                );
+                best_effort_note(
                     bot,
                     user_chat,
                     None,
-                    format!(
-                        "🦀 **All set!**\n\n\
-                         Invite link: {}\n\n\
-                         Share the QR or link. \
-                         Everyone auto-registers when they join and send a message.",
-                        invite_url
-                    ),
+                    &invite_note,
+                    None,
+                    "system",
+                    "cowork_invite_dm",
+                    "invite ready DM",
                 )
                 .await;
             }
 
-            let _ = message_in_thread(
+            best_effort_note(
                 bot,
                 ChatId(group_chat_id),
                 thread_id,
                 "🦀 I'm in! @mention me anytime to chat.\n\n\
                  Everyone here is auto-registered. No setup needed.",
+                None,
+                "system",
+                "cowork_joined_group",
+                "joined announcement",
             )
             .await;
         }
         Err(e) => {
             tracing::error!("Cowork: failed to create invite link: {}", e);
-            let _ = message_in_thread(
+            best_effort_note(
                 bot,
                 ChatId(group_chat_id),
                 thread_id,
                 "Failed to generate invite link. Make sure I'm an admin in this group.",
+                None,
+                "system",
+                "cowork_invite_failed",
+                "invite failure notice",
             )
             .await;
         }

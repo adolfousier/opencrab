@@ -190,13 +190,21 @@ pub async fn best_effort_delete<C>(bot: &Bot, chat_id: C, msg_id: MessageId, why
 where
     C: Into<ChatId>,
 {
-    if let Err(e) = bot.delete_message(chat_id.into(), msg_id).await {
+    let chat = chat_id.into();
+    if let Err(e) = bot.delete_message(chat, msg_id).await {
         let text = e.to_string();
-        let quiet = text.contains("message to delete not found")
-            || text.contains("message id is invalid")
-            || text.contains("message to forward not found");
+        let quiet =
+            text.contains("message to delete not found") || text.contains("message id is invalid");
         if !quiet {
-            tracing::warn!("Telegram: best-effort delete failed ({}): {}", why, e);
+            // Review F4: the ids are in hand — a delete warn that cannot be
+            // correlated to a chat is half a forensics record.
+            tracing::warn!(
+                "Telegram: best-effort delete failed ({}): chat={} msg={} err={}",
+                why,
+                chat.0,
+                msg_id.0,
+                e
+            );
         }
     }
 }
@@ -220,6 +228,54 @@ pub async fn fire_chat_action<C>(
         .map(|_| ())
     {
         tracing::warn!("Telegram: chat action failed ({}): {}", why, e);
+    }
+}
+
+/// Fire a message without breaking the caller, with correlation telemetry
+/// on both exits (#1085 review F10). Single attempt by design: these are
+/// system notices (welcomes, cowork setup, agent help replies) — the #297
+/// delay-never-drop contract covers command replies, not courtesy pings,
+/// and a single attempt can never stall a turn. Model: `best_effort_delete`.
+#[allow(clippy::too_many_arguments)]
+pub async fn best_effort_note<C>(
+    bot: &Bot,
+    chat_id: C,
+    thread_id: Option<ThreadId>,
+    text: &str,
+    parse_mode: Option<teloxide::types::ParseMode>,
+    origin: &str,
+    origin_detail: &str,
+    why: &str,
+) where
+    C: Into<ChatId>,
+{
+    let chat = chat_id.into();
+    let len = text.len();
+    let hash8 = super::telemetry::content_hash8(text);
+    let request = message_in_thread(bot, chat, thread_id, text);
+    let request = match parse_mode {
+        Some(mode) => request.parse_mode(mode),
+        None => request,
+    };
+    match request.await {
+        Ok(m) => super::telemetry::log_send_success(
+            origin,
+            origin_detail,
+            "-",
+            "note",
+            why,
+            chat.0,
+            thread_id.map(|t| t.0.0),
+            m.id.0,
+            len,
+            &hash8,
+        ),
+        Err(e) => {
+            tracing::warn!(
+                "Telegram: best-effort note failed ({origin}/{origin_detail} {why}): chat={} err={e}",
+                chat.0
+            );
+        }
     }
 }
 
@@ -248,20 +304,22 @@ pub(crate) async fn send_markdown_outbox(
     origin_detail: &str,
 ) -> std::result::Result<Vec<(i32, String)>, String> {
     let thread = thread_id.map(|t| t.0.0);
-    let hash8 = super::telemetry::content_hash8(markdown);
-    let len = markdown.len();
 
-    // 1. Native rich, as a whole message.
+    // 1. Native rich, as a whole message. `post_rich` owns the telemetry
+    // line for this send (with origin + detail threaded through), so the
+    // outbox does not double-log the rich success (review F3/F8).
     if super::rich::should_send_native_rich(markdown) {
-        match super::rich::send_rich_with_mermaid_id(bot.token(), chat_id.0, thread_id, markdown)
-            .await
+        match super::rich::send_rich_with_mermaid_id(
+            bot.token(),
+            chat_id.0,
+            thread_id,
+            markdown,
+            origin,
+            origin_detail,
+        )
+        .await
         {
-            Ok(id) => {
-                super::telemetry::log_send_success(
-                    origin, "outbox", "rich", chat_id.0, thread, id, len, &hash8,
-                );
-                return Ok(vec![(id, markdown.to_string())]);
-            }
+            Ok(id) => return Ok(vec![(id, markdown.to_string())]),
             Err(e) => {
                 tracing::warn!(
                     "{origin}/{origin_detail}: native rich send failed ({e}) — falling back to HTML"
@@ -276,10 +334,13 @@ pub(crate) async fn send_markdown_outbox(
     let total = chunks.len();
     let mut sent: Vec<(i32, String)> = Vec::new();
     for (i, chunk) in chunks.into_iter().enumerate() {
-        match super::intermediates::send_html_or_plain(bot, chat_id, thread_id, chunk).await {
+        match super::intermediates::send_html_or_plain(bot, chat_id, thread_id, chunk, origin).await
+        {
             Ok(mid) => {
                 super::telemetry::log_send_success(
                     origin,
+                    origin_detail,
+                    "-",
                     "outbox",
                     "html_chunk",
                     chat_id.0,

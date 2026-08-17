@@ -370,6 +370,8 @@ pub(crate) async fn refresh_plan_card(
                 mid.0,
                 &rich_html,
                 kb_val.as_ref(),
+                "turn",
+                "-",
             )
             .await
             {
@@ -404,6 +406,8 @@ pub(crate) async fn refresh_plan_card(
             thread_id,
             &rich_html,
             kb_val.as_ref(),
+            "turn",
+            "-",
         )
         .await
         {

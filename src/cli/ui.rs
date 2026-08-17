@@ -1556,9 +1556,32 @@ async fn cmd_chat_inner(
                     use teloxide::prelude::Requester;
                     if let (Some(bot), Some(owner)) =
                         (state.bot().await, state.owner_chat_id().await)
-                        && let Err(e) = bot.send_message(teloxide::types::ChatId(owner), msg).await
                     {
-                        tracing::warn!("ConfigWatcher: owner DM of config alert failed: {e}");
+                        // Review F10: failure warn had no chat id and success
+                        // was invisible — the audit's named WEAK site.
+                        let len = msg.len();
+                        let hash8 = crate::channels::telegram::telemetry::content_hash8(&msg);
+                        match bot.send_message(teloxide::types::ChatId(owner), msg).await {
+                            Ok(m) => {
+                                crate::channels::telegram::telemetry::log_send_success(
+                                    "system",
+                                    "config_alert",
+                                    "-",
+                                    "owner_dm",
+                                    "send",
+                                    owner,
+                                    None,
+                                    m.id.0,
+                                    len,
+                                    &hash8,
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "ConfigWatcher: owner DM of config alert failed (chat={owner}): {e}"
+                                );
+                            }
+                        }
                     }
                 });
             }

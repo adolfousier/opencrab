@@ -20,7 +20,7 @@ use teloxide::types::{
     ReplyParameters,
 };
 
-use super::send::{best_effort_delete, chat_action_in_thread, fire_chat_action, message_in_thread};
+use super::send::{best_effort_delete, fire_chat_action, message_in_thread};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -758,11 +758,15 @@ pub(crate) async fn handle_message(
                             shout-outs.)",
                         );
                     }
-                    let _ = crate::channels::telegram::send::message_in_thread(
+                    crate::channels::telegram::send::best_effort_note(
                         &bot,
                         teloxide::types::ChatId(chat_id),
                         None,
-                        welcome,
+                        &welcome,
+                        None,
+                        "system",
+                        "member_welcome",
+                        "new member welcome",
                     )
                     .await;
                 }
@@ -792,11 +796,17 @@ pub(crate) async fn handle_message(
                         if let Some(owner_id_str) = cfg.channels.telegram.allowed_users.first()
                             && let Ok(owner_id) = owner_id_str.parse::<i64>()
                         {
-                            let _ = crate::channels::telegram::send::message_in_thread(
+                            let join_note =
+                                format!("✅ New member joined workspace: {} ({})", name, uid);
+                            crate::channels::telegram::send::best_effort_note(
                                 &bot,
                                 teloxide::types::ChatId(owner_id),
                                 None,
-                                format!("✅ New member joined workspace: {} ({})", name, uid),
+                                &join_note,
+                                None,
+                                "system",
+                                "member_join_owner_notify",
+                                "owner join notification",
                             )
                             .await;
                         }
@@ -2643,9 +2653,8 @@ pub(crate) async fn handle_message(
         .await;
 
         tracing::info!(
-            "Telegram: handle_command returned {:?} for text {:?} (chat={}, is_dm={})",
+            "Telegram: handle_command returned {:?} (chat={}, is_dm={})",
             std::mem::discriminant(&cmd),
-            text,
             msg.chat.id.0,
             is_dm
         );
@@ -2686,7 +2695,7 @@ pub(crate) async fn handle_message(
             }
             if let Err(e) = req.await {
                 tracing::warn!("Telegram: model-switch reply failed: {e}");
-                send_html_or_plain(&bot, msg.chat.id, thread_id, reply).await?;
+                send_html_or_plain(&bot, msg.chat.id, thread_id, reply, "turn").await?;
             }
             return Ok(());
         }
@@ -2724,7 +2733,7 @@ pub(crate) async fn handle_message(
                     // A short delivery finishes publicly: dropping the tail
                     // would truncate the reply with nothing to show for it.
                     for chunk in chunks.iter().skip(delivered) {
-                        send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await?;
+                        send_html_or_plain(&bot, msg.chat.id, thread_id, chunk, "turn").await?;
                     }
                     return Ok(());
                 }
@@ -2739,6 +2748,8 @@ pub(crate) async fn handle_message(
                     msg.chat.id.0,
                     thread_id,
                     &reply,
+                    "turn",
+                    "-",
                 )
                 .await
                 {
@@ -2752,7 +2763,7 @@ pub(crate) async fn handle_message(
             if !sent_rich {
                 let html = command_md_to_html(&reply);
                 for chunk in split_message(&html, 4096) {
-                    send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await?;
+                    send_html_or_plain(&bot, msg.chat.id, thread_id, chunk, "turn").await?;
                 }
             }
             return Ok(());
@@ -3880,10 +3891,20 @@ pub(crate) async fn handle_message(
                                     crate::utils::extract_react_marker(&snap.response_text);
                                 let html = markdown_to_telegram_html(&clean);
                                 let display = format!("{}\u{258b}", html); // ▋ cursor
-                                let _ = bot
+                                if let Err(e) = bot
                                     .edit_message_text(chat, mid, display)
                                     .parse_mode(ParseMode::Html)
-                                    .await;
+                                    .await
+                                {
+                                    // Review F10: placeholder edits were fully
+                                    // silent; a failing edit stream is now visible.
+                                    tracing::warn!(
+                                        "Telegram: streaming placeholder edit failed (chat={} msg={}): {}",
+                                        chat.0,
+                                        mid.0,
+                                        e
+                                    );
+                                }
                             }
                         }
 
@@ -3911,8 +3932,14 @@ pub(crate) async fn handle_message(
                     let bot = bot_typing.clone();
                     let chat = chat_typing;
                     tokio::spawn(async move {
-                        let _ =
-                            chat_action_in_thread(&bot, chat, thread_id, ChatAction::Typing).await;
+                        fire_chat_action(
+                            &bot,
+                            chat,
+                            thread_id,
+                            ChatAction::Typing,
+                            "compacting typing refresh",
+                        )
+                        .await;
                     });
                 }
                 ProgressEvent::ReasoningChunk { text } => {
@@ -4354,7 +4381,9 @@ pub(crate) async fn handle_message(
                 }
                 if !txt.trim().is_empty() {
                     let html = markdown_to_telegram_html(&txt);
-                    if let Err(e) = send_html_or_plain(&bot, msg.chat.id, thread_id, &html).await {
+                    if let Err(e) =
+                        send_html_or_plain(&bot, msg.chat.id, thread_id, &html, "turn").await
+                    {
                         tracing::warn!("Telegram: failed to deliver flushed reaction reply: {e}");
                     }
                 }

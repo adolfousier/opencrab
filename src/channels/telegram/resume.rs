@@ -349,11 +349,41 @@ pub(crate) async fn resume_session(
                                 let s = st.lock().unwrap_or_else(|e| e.into_inner());
                                 s.msg_id
                             };
-                            if current_msg_id.is_none()
-                                && let Ok(m) = message_in_thread(&bot, chat_id, thread_id,  "\u{258b}").await
-                            {
-                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                s.msg_id = Some(m.id);
+                            if current_msg_id.is_none() {
+                                // Review F10: streaming placeholder send, success-silent
+                                // until now (parity with the main handler).
+                                match message_in_thread(&bot, chat_id, thread_id, "\u{258b}").await {
+                                    Ok(m) => {
+                                        super::telemetry::log_send_success(
+                                            "turn",
+                                            "-",
+                                            "-",
+                                            "placeholder",
+                                            "new",
+                                            chat_id.0,
+                                            thread_id.map(|t| t.0.0),
+                                            m.id.0,
+                                            "\u{258b}".len(),
+                                            &super::telemetry::content_hash8("\u{258b}"),
+                                        );
+                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                        s.msg_id = Some(m.id);
+                                    }
+                                    Err(e) => {
+                                        super::telemetry::log_send_failure(
+                                            "turn",
+                                            "-",
+                                            "-",
+                                            "placeholder",
+                                            "new",
+                                            chat_id.0,
+                                            thread_id.map(|t| t.0.0),
+                                            "\u{258b}".len(),
+                                            &super::telemetry::content_hash8("\u{258b}"),
+                                            &e.to_string(),
+                                        );
+                                    }
+                                }
                             }
                             let msg_id = {
                                 let s = st.lock().unwrap_or_else(|e| e.into_inner());

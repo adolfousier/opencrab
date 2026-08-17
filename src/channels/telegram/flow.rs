@@ -971,7 +971,9 @@ pub(crate) async fn refresh_flow_rich_details(
         freeze_flow_block_and_strip_kb(bot, chat, streaming, mid, "rich size limit reached").await;
         return;
     }
-    match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details, None).await {
+    match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details, None, "turn", "-")
+        .await
+    {
         // The plan Approve/Discard keyboard now rides the persistent plan card,
         // not the flow block (#580), so the flow block carries no reply_markup.
         Ok(_) => {}
@@ -1211,6 +1213,8 @@ pub(crate) async fn open_flow(
                 thread_id,
                 &details,
                 None,
+                "turn",
+                "-",
             )
             .await
             {
@@ -1238,7 +1242,7 @@ pub(crate) async fn open_flow(
     if html.is_empty() {
         return;
     }
-    if let Ok(mid) = send_html_or_plain(bot, chat, thread_id, &html).await {
+    if let Ok(mid) = send_html_or_plain(bot, chat, thread_id, &html, "turn").await {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.open_group_msg_id = Some(mid);
         s.flow_rich = false;
@@ -1394,8 +1398,16 @@ pub(crate) async fn restick_flow_if_buried(
         if details.is_empty() {
             return;
         }
-        match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details, None)
-            .await
+        match super::rich::api::send_rich_html_id(
+            bot.token(),
+            chat.0,
+            thread_id,
+            &details,
+            None,
+            "turn",
+            "-",
+        )
+        .await
         {
             Ok(mid) => Some(MessageId(mid)),
             Err(e) => {
@@ -1413,7 +1425,7 @@ pub(crate) async fn restick_flow_if_buried(
         if html.is_empty() {
             return;
         }
-        match send_html_or_plain(bot, chat, thread_id, &html).await {
+        match send_html_or_plain(bot, chat, thread_id, &html, "turn").await {
             Ok(mid) => Some(mid),
             Err(e) => {
                 tracing::warn!(

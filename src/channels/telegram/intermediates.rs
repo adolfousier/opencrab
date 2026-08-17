@@ -78,7 +78,7 @@ pub(crate) async fn flush_intermediates(
             let mut sent_ids: Vec<MessageId> = Vec::new();
             let mut all_ok = true;
             for chunk in &chunks {
-                match send_html_or_plain(bot, chat, thread_id, chunk).await {
+                match send_html_or_plain(bot, chat, thread_id, chunk, "turn").await {
                     Ok(id) => sent_ids.push(id),
                     Err(e) => {
                         tracing::warn!(
@@ -155,7 +155,16 @@ pub(crate) async fn try_send_intermediate_rich(
     if !super::rich::should_send_native_rich(text) {
         return None;
     }
-    match super::rich::api::send_rich_markdown_id(bot.token(), chat_id.0, thread_id, text).await {
+    match super::rich::api::send_rich_markdown_id(
+        bot.token(),
+        chat_id.0,
+        thread_id,
+        text,
+        "turn",
+        "-",
+    )
+    .await
+    {
         Ok(id) => Some(MessageId(id)),
         Err(e) => {
             tracing::warn!("Telegram: intermediate rich send failed, using HTML: {e}");
@@ -214,7 +223,7 @@ pub(crate) async fn deliver_intermediate_message(
     }
     let mut sent_ids: Vec<MessageId> = Vec::new();
     for chunk in split_message(&html, 4096) {
-        match send_html_or_plain(bot, chat, thread_id, chunk).await {
+        match send_html_or_plain(bot, chat, thread_id, chunk, "turn").await {
             Ok(id) => sent_ids.push(id),
             Err(e) => {
                 tracing::warn!("Telegram: rich-intermediate send failed ({e})");
@@ -247,7 +256,6 @@ where
 {
     const MAX_RETRIES: u32 = 3;
     let mut attempt = 0u32;
-    let started = std::time::Instant::now();
     loop {
         match send().await {
             Err(teloxide::RequestError::RetryAfter(secs)) if attempt < MAX_RETRIES => {
@@ -266,16 +274,10 @@ where
                 );
                 return Err(teloxide::RequestError::RetryAfter(secs));
             }
-            other => {
-                if other.is_ok() {
-                    tracing::debug!(
-                        "Telegram send ok: kind=retrying what={what} elapsed_ms={} attempts={}",
-                        started.elapsed().as_millis(),
-                        attempt + 1
-                    );
-                }
-                return other;
-            }
+            // No success line here (review F1): the wrapper is generic and
+            // has no correlation fields, so its line carried nothing the
+            // chokepoint telemetry doesn't already say with full fields.
+            other => return other,
         }
     }
 }
@@ -285,23 +287,28 @@ pub(crate) async fn send_html_or_plain(
     chat_id: ChatId,
     thread_id: Option<teloxide::types::ThreadId>,
     html: &str,
+    origin: &str,
 ) -> std::result::Result<MessageId, teloxide::RequestError> {
-    // Correlation telemetry (#1085 P1a): this is the chokepoint carrying
-    // chunked final replies, command acks and error notices. Every exit
-    // logs; metadata only, never content.
+    // Correlation telemetry (#1085 P1a, review F8): this is the chokepoint
+    // carrying chunked final replies, command acks and error notices.
+    // `origin` is threaded by the caller (turn | tool | cron | system) so
+    // an outbox/cron send is never mislabeled "turn". Every exit logs;
+    // metadata only, never content.
     let thread = thread_id.map(|t| t.0.0);
     let hash8 = super::telemetry::content_hash8(html);
     let len = html.len();
-    let log_ok = |path: &str, m: &MessageId| {
+    let log_ok = |path: &str, m: &MessageId, len: usize, hash8: &str| {
         super::telemetry::log_send_success(
-            "turn",
+            origin,
+            "-",
+            "-",
             "html_or_plain",
             path,
             chat_id.0,
             thread,
             m.0,
             len,
-            &hash8,
+            hash8,
         );
     };
     // HTML rides the shared retry ladder (#1085 P1b R1): up to 3 attempts
@@ -315,30 +322,37 @@ pub(crate) async fn send_html_or_plain(
     .await
     {
         Ok(m) => {
-            log_ok("html", &m.id);
+            log_ok("html", &m.id, len, &hash8);
             Ok(m.id)
         }
         Err(e) => {
             tracing::warn!("Telegram: HTML send failed after retries ({e}), sending as plain text");
             let plain = strip_html_tags(html);
+            // Review F2: hash and len must describe the text that actually
+            // landed on the wire (the stripped plain text), not the HTML
+            // source — a duplicate-correlation query must match payloads.
+            let plain_hash8 = super::telemetry::content_hash8(&plain);
+            let plain_len = plain.len();
             match send_retrying_rate_limit("plain fallback", || {
                 message_in_thread(bot, chat_id, thread_id, plain.as_str())
             })
             .await
             {
                 Ok(m) => {
-                    log_ok("plain_fallback", &m.id);
+                    log_ok("plain_fallback", &m.id, plain_len, &plain_hash8);
                     Ok(m.id)
                 }
                 Err(e2) => {
                     super::telemetry::log_send_failure(
-                        "turn",
+                        origin,
+                        "-",
+                        "-",
                         "html_or_plain",
                         "plain_fallback",
                         chat_id.0,
                         thread,
-                        len,
-                        &hash8,
+                        plain_len,
+                        &plain_hash8,
                         &e2.to_string(),
                     );
                     Err(e2)

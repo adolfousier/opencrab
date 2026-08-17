@@ -384,6 +384,8 @@ pub(crate) async fn deliver_final_response(
                     chat_id.0,
                     thread_id,
                     &rich_md,
+                    "turn",
+                    "-",
                 )
                 .await
                 {
@@ -490,10 +492,9 @@ pub(crate) async fn deliver_final_response(
             // settled flow message, not here.
             let display_html = html.clone();
             tracing::info!(
-                "Telegram deliver: html.len={}, ctx footer on flow='{}', text_only ends_with={:?}",
+                "Telegram deliver: html.len={}, ctx footer on flow='{}'",
                 html.len(),
-                footer,
-                text_only.lines().last()
+                footer
             );
             // Telegram message_id of the FINAL reply bubble. Captured across the
             // delivery paths (rich send, in-place edit, chunked send) so we can
@@ -563,6 +564,8 @@ pub(crate) async fn deliver_final_response(
                             chat_id.0,
                             thread_id,
                             &rich_md,
+                            "turn",
+                            "-",
                         )
                         .await
                         {
@@ -619,9 +622,10 @@ pub(crate) async fn deliver_final_response(
                                     // The edit already failed and was logged; if the
                                     // resend fails too the message is gone entirely,
                                     // so the recovery path must not be the quiet one.
-                                    if let Err(e) =
-                                        send_html_or_plain(bot, chat_id, thread_id, &chunks[0])
-                                            .await
+                                    if let Err(e) = send_html_or_plain(
+                                        bot, chat_id, thread_id, &chunks[0], "turn",
+                                    )
+                                    .await
                                     {
                                         tracing::error!(
                                             "Telegram: delete+send fallback failed in chat {chat_id}, \
@@ -636,7 +640,8 @@ pub(crate) async fn deliver_final_response(
                                 );
                                 best_effort_delete(bot, chat_id, mid, "edit-final fallback").await;
                                 let _ =
-                                    send_html_or_plain(bot, chat_id, thread_id, &chunks[0]).await;
+                                    send_html_or_plain(bot, chat_id, thread_id, &chunks[0], "turn")
+                                        .await;
                             }
                         }
                     } else {
@@ -647,7 +652,7 @@ pub(crate) async fn deliver_final_response(
                         for chunk in &chunks {
                             // Last chunk wins — that's the bubble a user replies to.
                             if let Ok(sent) =
-                                send_html_or_plain(bot, chat_id, thread_id, chunk).await
+                                send_html_or_plain(bot, chat_id, thread_id, chunk, "turn").await
                             {
                                 sent_reply_id = Some(sent.0);
                             }

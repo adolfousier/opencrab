@@ -1021,29 +1021,38 @@ async fn deliver_telegram(
     // last-active topic is a behavior change nobody asked for (#1085
     // scope discipline).
     let thread = None;
-    match crate::channels::telegram::send::send_markdown_outbox(
-        &bot,
-        teloxide::types::ChatId(cid),
-        thread,
-        message,
-        "cron",
-        job_name,
-    )
-    .await
-    {
-        Ok(sent) => {
-            tracing::info!(
-                "Cron result for '{job_name}' delivered to Telegram chat {chat_id} ({} part(s))",
-                sent.len()
-            );
-            // Persist keyed by message id so a reply to the cron post
-            // resolves to this exact content (#234).
-            crate::channels::telegram::send::record_outgoing(pool, cid, thread, &sent).await;
+    // Delivery runs detached (review F18): the shared outbox ladder can
+    // legally wait out 429 windows (up to ~90s total per send). Awaiting
+    // that inline would stall the whole scheduler tick — one flood-banned
+    // chat must not delay every other job. The outbox telemetry carries
+    // the outcome either way.
+    let message = message.to_string();
+    let job_name = job_name.to_string();
+    tokio::spawn(async move {
+        match crate::channels::telegram::send::send_markdown_outbox(
+            &bot,
+            teloxide::types::ChatId(cid),
+            thread,
+            &message,
+            "cron",
+            &job_name,
+        )
+        .await
+        {
+            Ok(sent) => {
+                tracing::info!(
+                    "Cron result for '{job_name}' delivered to Telegram chat {cid} ({} part(s))",
+                    sent.len()
+                );
+                // Persist keyed by message id so a reply to the cron post
+                // resolves to this exact content (#234).
+                crate::channels::telegram::send::record_outgoing(pool, cid, thread, &sent).await;
+            }
+            Err(e) => {
+                tracing::error!("Cron delivery for '{job_name}' to chat {cid} failed: {e}");
+            }
         }
-        Err(e) => {
-            tracing::error!("Cron delivery for '{job_name}' to {chat_id} failed: {e}");
-        }
-    }
+    });
 }
 
 /// Deliver via Discord Bot API (direct HTTP POST to the channel-messages

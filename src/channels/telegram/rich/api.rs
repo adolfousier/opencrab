@@ -19,13 +19,15 @@ pub(crate) async fn send_rich_html_id(
     thread_id: Option<ThreadId>,
     html: &str,
     reply_markup: Option<&serde_json::Value>,
+    origin: &str,
+    origin_detail: &str,
 ) -> anyhow::Result<i32> {
     let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
     let mut body = build_body_html(chat_id, thread_id, html);
     if let Some(kb) = reply_markup {
         body["reply_markup"] = kb.clone();
     }
-    let result = post_rich(&url, &body).await?;
+    let result = post_rich(&url, &body, origin, origin_detail).await?;
     result
         .get("message_id")
         .and_then(serde_json::Value::as_i64)
@@ -41,6 +43,8 @@ pub(crate) async fn edit_rich_html(
     message_id: i32,
     html: &str,
     reply_markup: Option<&serde_json::Value>,
+    origin: &str,
+    origin_detail: &str,
 ) -> anyhow::Result<()> {
     let url = format!("https://api.telegram.org/bot{token}/editMessageText");
     let mut body = serde_json::json!({
@@ -51,7 +55,7 @@ pub(crate) async fn edit_rich_html(
     if let Some(kb) = reply_markup {
         body["reply_markup"] = kb.clone();
     }
-    post_and_check(&url, &body).await
+    post_and_check(&url, &body, origin, origin_detail).await
 }
 
 /// Send `markdown` as a native rich message and return the new message id.
@@ -62,9 +66,17 @@ pub(crate) async fn send_rich_markdown_id(
     chat_id: i64,
     thread_id: Option<ThreadId>,
     markdown: &str,
+    origin: &str,
+    origin_detail: &str,
 ) -> anyhow::Result<i32> {
     let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
-    let result = post_rich(&url, &build_body(chat_id, thread_id, markdown)).await?;
+    let result = post_rich(
+        &url,
+        &build_body(chat_id, thread_id, markdown),
+        origin,
+        origin_detail,
+    )
+    .await?;
     result
         .get("message_id")
         .and_then(serde_json::Value::as_i64)
@@ -120,7 +132,12 @@ fn rich_send_fields<'a>(
     )
 }
 
-async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+async fn post_rich(
+    url: &str,
+    body: &serde_json::Value,
+    origin: &str,
+    origin_detail: &str,
+) -> anyhow::Result<serde_json::Value> {
     let client = reqwest::Client::new();
     let mut attempt = 0u32;
 
@@ -137,15 +154,28 @@ async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_
                 .get("result")
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
-            // Correlation telemetry (#1085 P1a): every rich send that lands
-            // gets one line with full correlation fields.
+            // Correlation telemetry (#1085 P1a, review F5/F8): every rich
+            // send that lands gets one line with full correlation fields.
+            // Edits are NOT new sends — they must not pollute the
+            // duplicate-attribution grep — so they log under their own kind.
             let (method, chat_id, thread, len, hash8) = rich_send_fields(url, body);
+            let is_edit = url.contains("editMessage");
+            let kind = if is_edit { "rich_edit" } else { "rich_api" };
             let msg_id = result
                 .get("message_id")
                 .and_then(serde_json::Value::as_i64)
                 .unwrap_or(0) as i32;
             crate::channels::telegram::telemetry::log_send_success(
-                "turn", "rich_api", method, chat_id, thread, msg_id, len, &hash8,
+                origin,
+                origin_detail,
+                "-",
+                kind,
+                method,
+                chat_id,
+                thread,
+                msg_id,
+                len,
+                &hash8,
             );
             return Ok(result);
         }
@@ -182,7 +212,9 @@ async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_
             // carry the same fields a successful one does.
             let (method, chat_id, thread, len, hash8) = rich_send_fields(url, body);
             crate::channels::telegram::telemetry::log_send_failure(
-                "turn",
+                origin,
+                origin_detail,
+                "-",
                 "rich_api",
                 method,
                 chat_id,
@@ -197,8 +229,15 @@ async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_
 }
 
 /// POST `body` and discard the result — for calls where only success matters.
-async fn post_and_check(url: &str, body: &serde_json::Value) -> anyhow::Result<()> {
-    post_rich(url, body).await.map(|_| ())
+async fn post_and_check(
+    url: &str,
+    body: &serde_json::Value,
+    origin: &str,
+    origin_detail: &str,
+) -> anyhow::Result<()> {
+    post_rich(url, body, origin, origin_detail)
+        .await
+        .map(|_| ())
 }
 
 /// Build the `sendRichMessage` JSON request body. Split out so the request
@@ -248,11 +287,15 @@ pub(crate) async fn send_rich_markdown_media_id(
     thread_id: Option<ThreadId>,
     markdown: &str,
     media: &[super::mermaid::MediaEntry],
+    origin: &str,
+    origin_detail: &str,
 ) -> anyhow::Result<i32> {
     let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
     let result = post_rich(
         &url,
         &build_body_markdown_media(chat_id, thread_id, markdown, media),
+        origin,
+        origin_detail,
     )
     .await?;
     result

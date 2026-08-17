@@ -439,13 +439,16 @@ impl TelegramAgent {
                                 if let Some(msg_ref) = query.message.as_ref() {
                                     let chat_id = msg_ref.chat().id;
                                     let thread_id = msg_ref.regular_message().and_then(|m| m.thread_id);
-                                    let _ = crate::channels::telegram::send::message_in_thread(
+                                    crate::channels::telegram::send::best_effort_note(
                                         &bot,
                                         chat_id,
                                         thread_id,
-                                        crate::channels::telegram::handler::md_to_html(&help),
+                                        &crate::channels::telegram::handler::md_to_html(&help),
+                                        Some(teloxide::types::ParseMode::Html),
+                                        "system",
+                                        "model_switch_help",
+                                        "unconfigured provider help",
                                     )
-                                    .parse_mode(teloxide::types::ParseMode::Html)
                                     .await;
                                 }
                                 crate::channels::telegram::keyboards::ack_callback(&bot, &query, "model switch").await;
@@ -516,10 +519,13 @@ impl TelegramAgent {
                                                 Ok(resp) => {
                                                     let clean = crate::utils::sanitize::strip_llm_artifacts(&resp.content);
                                                     let html = crate::channels::telegram::handler::md_to_html(&clean);
-                                                    let _ = crate::channels::telegram::send::message_in_thread(
-                                                        &bot_clone, chat_id, thread_id, html,
+                                                    crate::channels::telegram::send::best_effort_note(
+                                                        &bot_clone, chat_id, thread_id, &html,
+                                                        Some(teloxide::types::ParseMode::Html),
+                                                        "system",
+                                                        "agent_followup",
+                                                        "agent follow-up reply",
                                                     )
-                                                    .parse_mode(teloxide::types::ParseMode::Html)
                                                     .await;
                                                 }
                                                 Err(e) => {
@@ -532,10 +538,13 @@ impl TelegramAgent {
                                 }
 
                                 if resp.models.is_empty() {
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .answer_callback_query(query.id.clone())
                                         .text("No models available for this provider")
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                     return ResponseResult::Ok(());
                                 }
                                 crate::channels::telegram::keyboards::ack_callback(&bot, &query, "callback").await;
@@ -578,11 +587,14 @@ impl TelegramAgent {
                                         .collect();
                                     let keyboard = InlineKeyboardMarkup::new(rows);
                                     let text = crate::channels::telegram::handler::md_to_html(&resp.text);
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .edit_message_text(msg.chat().id, msg.id(), &text)
                                         .parse_mode(teloxide::types::ParseMode::Html)
                                         .reply_markup(keyboard)
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                 }
                                 return ResponseResult::Ok(());
                             }
@@ -683,13 +695,16 @@ impl TelegramAgent {
                                 if let Some(msg) = &query.message {
                                     use teloxide::payloads::EditMessageTextSetters;
                                     use teloxide::prelude::Requester;
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .edit_message_text(msg.chat().id, msg.id(), &display_text)
                                         .parse_mode(teloxide::types::ParseMode::Html)
                                         .reply_markup(
                                             teloxide::types::InlineKeyboardMarkup::default(),
                                         )
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                 }
                                 if !switch_ok {
                                     tracing::warn!("Telegram model switch failed: {}", display_text);
@@ -735,14 +750,17 @@ impl TelegramAgent {
                                         let _ = session_svc.update_session(&s).await;
                                     }
 
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .answer_callback_query(query.id.clone())
                                         .text("Session switched")
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                     if let Some(msg) = &query.message {
                                         use teloxide::payloads::EditMessageTextSetters;
                                         use teloxide::prelude::Requester;
-                                        let _ = bot
+                                        if let Err(e) = bot
                                             .edit_message_text(
                                                 msg.chat().id,
                                                 msg.id(),
@@ -758,13 +776,19 @@ impl TelegramAgent {
                                             .reply_markup(
                                                 teloxide::types::InlineKeyboardMarkup::default(),
                                             )
-                                            .await;
+                                            .await
+                                        {
+                                            tracing::warn!("Telegram: callback UI update failed: {e}");
+                                        }
                                     }
                                 } else {
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .answer_callback_query(query.id.clone())
                                         .text("Invalid session ID")
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                 }
                                 return ResponseResult::Ok(());
                             }
@@ -830,11 +854,14 @@ impl TelegramAgent {
                                     .telegram
                                     .is_owner(&query.from.id.0.to_string());
                                 if !caller_is_owner {
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .answer_callback_query(query.id.clone())
                                         .text("🔒 Owner only")
                                         .show_alert(true)
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                     return ResponseResult::Ok(());
                                 }
                                 let chat_id = query.message.as_ref().map(|m| m.chat().id.0).unwrap_or(0);
@@ -1101,11 +1128,14 @@ impl TelegramAgent {
                                                 use teloxide::payloads::EditMessageTextSetters;
                                                 use teloxide::prelude::Requester;
                                                 let html = crate::channels::telegram::handler::md_to_html(&text);
-                                                let _ = bot
+                                                if let Err(e) = bot
                                                     .edit_message_text(msg.chat().id, msg.id(), &html)
                                                     .parse_mode(teloxide::types::ParseMode::Html)
                                                     .reply_markup(InlineKeyboardMarkup::default())
-                                                    .await;
+                                                    .await
+                                                {
+                                                    tracing::warn!("Telegram: callback UI update failed: {e}");
+                                                }
                                             }
                                         }
                                         Err(e) => {
@@ -1168,11 +1198,14 @@ impl TelegramAgent {
                                                 use teloxide::payloads::EditMessageTextSetters;
                                                 use teloxide::prelude::Requester;
                                                 let html = crate::channels::telegram::handler::md_to_html(&text);
-                                                let _ = bot
+                                                if let Err(e) = bot
                                                     .edit_message_text(msg.chat().id, msg.id(), &html)
                                                     .parse_mode(teloxide::types::ParseMode::Html)
                                                     .reply_markup(InlineKeyboardMarkup::default())
-                                                    .await;
+                                                    .await
+                                                {
+                                                    tracing::warn!("Telegram: callback UI update failed: {e}");
+                                                }
                                             }
                                         }
                                         Err(e) => {
@@ -1180,10 +1213,13 @@ impl TelegramAgent {
                                             if let Some(msg) = &query.message {
                                                 use teloxide::payloads::EditMessageTextSetters;
                                                 use teloxide::prelude::Requester;
-                                                let _ = bot
+                                                if let Err(e) = bot
                                                     .edit_message_text(msg.chat().id, msg.id(), &text)
                                                     .reply_markup(InlineKeyboardMarkup::default())
-                                                    .await;
+                                                    .await
+                                                {
+                                                    tracing::warn!("Telegram: callback UI update failed: {e}");
+                                                }
                                             }
                                         }
                                     }
@@ -1230,20 +1266,26 @@ impl TelegramAgent {
                                     .telegram
                                     .is_owner(&query.from.id.0.to_string());
                                 if !caller_is_owner {
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .answer_callback_query(query.id.clone())
                                         .text("🔒 Owner only")
                                         .show_alert(true)
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                     return ResponseResult::Ok(());
                                 }
                                 let Some(session_id) =
                                     resolve_callback_session(&query, &state, &shared_session).await
                                 else {
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .answer_callback_query(query.id.clone())
                                         .text("No session for this chat.")
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                     return ResponseResult::Ok(());
                                 };
                                 let (chat_id, thread_id) = match query.message.as_ref() {
@@ -1270,10 +1312,13 @@ impl TelegramAgent {
                                         reply =
                                             format!("⏹️ Cancelled the running turn. {reply}");
                                     }
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .answer_callback_query(query.id.clone())
                                         .text("Plan discarded")
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                     // The Approve/Discard keyboard rides the plan
                                     // card (#580); discard removes the whole card.
                                     crate::channels::telegram::plan_card::remove_plan_card(
@@ -1283,8 +1328,12 @@ impl TelegramAgent {
                                         session_id,
                                     )
                                     .await;
-                                    let _ = crate::channels::telegram::send::message_in_thread(
-                                        &bot, chat_id, thread_id, reply,
+                                    crate::channels::telegram::send::best_effort_note(
+                                        &bot, chat_id, thread_id, &reply,
+                                        None,
+                                        "system",
+                                        "agent_plan_reply",
+                                        "plan callback reply",
                                     )
                                     .await;
                                     return ResponseResult::Ok(());
@@ -1292,14 +1341,17 @@ impl TelegramAgent {
 
                                 // plan:ok — Approve / seed retry.
                                 if state.is_turn_active(session_id) {
-                                    let _ = bot
+                                    if let Err(e) = bot
                                         .answer_callback_query(query.id.clone())
                                         .text(
                                             "⛔ A turn is running. Approve is refused while \
                                              busy; try again when it finishes.",
                                         )
                                         .show_alert(true)
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: callback UI update failed: {e}");
+                                    }
                                     return ResponseResult::Ok(());
                                 }
                                 match crate::utils::plan_mode::try_approve(session_id).await {
@@ -1315,23 +1367,31 @@ impl TelegramAgent {
                                     crate::utils::plan_mode::ApproveOutcome::SeedTurn {
                                         prompt,
                                     } => {
-                                        let _ = bot
+                                        if let Err(e) = bot
                                             .answer_callback_query(query.id.clone())
                                             .text("✅ Plan approved")
-                                            .await;
-                                        if let Some(mid) = kb_msg_id {
-                                            let _ = bot
-                                                .edit_message_reply_markup(chat_id, mid)
-                                                .await;
+                                            .await
+                                        {
+                                            tracing::warn!("Telegram: callback UI update failed: {e}");
                                         }
-                                        let _ =
-                                            crate::channels::telegram::send::message_in_thread(
-                                                &bot,
-                                                chat_id,
-                                                thread_id,
-                                                "✅ Plan approved — starting now…".to_string(),
-                                            )
-                                            .await;
+                                        if let Some(mid) = kb_msg_id
+                                            && let Err(e) = bot
+                                                .edit_message_reply_markup(chat_id, mid)
+                                                .await
+                                        {
+                                            tracing::warn!("Telegram: callback UI update failed: {e}");
+                                        }
+                                        crate::channels::telegram::send::best_effort_note(
+                                            &bot,
+                                            chat_id,
+                                            thread_id,
+                                            "✅ Plan approved — starting now…",
+                                            None,
+                                            "system",
+                                            "plan_approved_notice",
+                                            "plan approve notice",
+                                        )
+                                        .await;
                                         // Visible seed turn, spawned so the
                                         // callback answers fast. The turn guard
                                         // keeps concurrent messages from forking a
