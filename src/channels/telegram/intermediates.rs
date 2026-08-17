@@ -252,23 +252,12 @@ where
         match send().await {
             Err(teloxide::RequestError::RetryAfter(secs)) if attempt < MAX_RETRIES => {
                 attempt += 1;
-                let (wait, capped) = super::rate_limit::clamp_inline_wait(secs.duration());
-                if capped {
-                    tracing::warn!(
-                        "Telegram: {what} rate-limited with {}s window (>{}s cap) — \
-                         waiting {}s before retry ({attempt}/{MAX_RETRIES}); window capped inline, \
-                         chat is likely flood-banned",
-                        secs.seconds(),
-                        super::rate_limit::MAX_INLINE_RATE_LIMIT_WAIT.as_secs(),
-                        wait.as_secs()
-                    );
-                } else {
-                    tracing::warn!(
-                        "Telegram: {what} rate-limited, waiting {}s before retry ({attempt}/{MAX_RETRIES})",
-                        wait.as_secs()
-                    );
-                }
-                tokio::time::sleep(wait).await;
+                super::rate_limit::wait_out(
+                    what,
+                    secs.duration(),
+                    &format!(" (attempt {attempt}/{MAX_RETRIES})"),
+                )
+                .await;
             }
             Err(teloxide::RequestError::RetryAfter(secs)) => {
                 tracing::error!(
@@ -315,78 +304,37 @@ pub(crate) async fn send_html_or_plain(
             &hash8,
         );
     };
-    match message_in_thread(bot, chat_id, thread_id, html)
-        .parse_mode(ParseMode::Html)
-        .await
+    // HTML rides the shared retry ladder (#1085 P1b R1): up to 3 attempts
+    // with `rate_limit::wait_out` between them (#297 delay-never-drop),
+    // matching every other send path — previously this hand-rolled a single
+    // retry. Only a final failure falls back to plain text, and the
+    // fallback rides the same ladder so a 429 cannot drop it either.
+    match send_retrying_rate_limit("HTML send", || {
+        message_in_thread(bot, chat_id, thread_id, html).parse_mode(ParseMode::Html)
+    })
+    .await
     {
         Ok(m) => {
-            log_ok("html_first", &m.id);
+            log_ok("html", &m.id);
             Ok(m.id)
         }
-        Err(teloxide::RequestError::RetryAfter(secs)) => {
-            let (wait, capped) = super::rate_limit::clamp_inline_wait(secs.duration());
-            if capped {
-                tracing::warn!(
-                    "Telegram: HTML send rate-limited with {}s window (>{}s cap) — \
-                     waiting {}s before retry; window capped inline (#1064)",
-                    secs.seconds(),
-                    super::rate_limit::MAX_INLINE_RATE_LIMIT_WAIT.as_secs(),
-                    wait.as_secs()
-                );
-            } else {
-                tracing::warn!(
-                    "Telegram: HTML send rate-limited, waiting {}s before retry",
-                    wait.as_secs()
-                );
-            }
-            tokio::time::sleep(wait).await;
-            // Retry as HTML after waiting
-            match message_in_thread(bot, chat_id, thread_id, html)
-                .parse_mode(ParseMode::Html)
-                .await
+        Err(e) => {
+            tracing::warn!("Telegram: HTML send failed after retries ({e}), sending as plain text");
+            let plain = strip_html_tags(html);
+            match send_retrying_rate_limit("plain fallback", || {
+                message_in_thread(bot, chat_id, thread_id, plain.as_str())
+            })
+            .await
             {
                 Ok(m) => {
-                    log_ok("html_retry", &m.id);
-                    Ok(m.id)
-                }
-                Err(e) => {
-                    tracing::warn!("Telegram: HTML retry failed ({e}), sending as plain text");
-                    let plain = strip_html_tags(html);
-                    match message_in_thread(bot, chat_id, thread_id, plain).await {
-                        Ok(m) => {
-                            log_ok("plain_fallback_retry", &m.id);
-                            Ok(m.id)
-                        }
-                        Err(e2) => {
-                            super::telemetry::log_send_failure(
-                                "turn",
-                                "html_or_plain",
-                                "plain_fallback_retry",
-                                chat_id.0,
-                                thread,
-                                len,
-                                &hash8,
-                                &e2.to_string(),
-                            );
-                            Err(e2)
-                        }
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Telegram: HTML send failed ({e}), retrying as plain text");
-            let plain = strip_html_tags(html);
-            match message_in_thread(bot, chat_id, thread_id, plain).await {
-                Ok(m) => {
-                    log_ok("plain_fallback_outer", &m.id);
+                    log_ok("plain_fallback", &m.id);
                     Ok(m.id)
                 }
                 Err(e2) => {
                     super::telemetry::log_send_failure(
                         "turn",
                         "html_or_plain",
-                        "plain_fallback_outer",
+                        "plain_fallback",
                         chat_id.0,
                         thread,
                         len,

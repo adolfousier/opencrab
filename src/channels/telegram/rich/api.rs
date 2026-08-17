@@ -78,10 +78,6 @@ pub(crate) async fn send_rich_markdown_id(
 /// wait for and the send is abandoned while still rate limited.
 const RICH_MAX_RETRIES: u32 = 3;
 
-/// Longest single wait honoured. Telegram can ask for minutes; blocking a
-/// delivery that long is worse than falling back to HTML now.
-const RICH_MAX_RETRY_WAIT_SECS: u64 = 30;
-
 /// POST `body` to `url`, treating anything other than `{"ok":true,...}` as an
 /// error (surfacing Telegram's `description`). Returns the `result` object.
 ///
@@ -159,13 +155,14 @@ async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_
                 .get("parameters")
                 .and_then(|p| p.get("retry_after"))
                 .and_then(|r| r.as_u64())
-                .unwrap_or(5)
-                .min(RICH_MAX_RETRY_WAIT_SECS);
+                .unwrap_or(5);
             attempt += 1;
-            tracing::warn!(
-                "Rich API rate limited, retrying after {retry_after}s (attempt {attempt}/{RICH_MAX_RETRIES})"
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
+            crate::channels::telegram::rate_limit::wait_out(
+                "rich API",
+                std::time::Duration::from_secs(retry_after),
+                &format!(" (attempt {attempt}/{RICH_MAX_RETRIES})"),
+            )
+            .await;
             continue;
         }
 

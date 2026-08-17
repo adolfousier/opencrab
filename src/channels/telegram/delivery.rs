@@ -604,22 +604,7 @@ pub(crate) async fn deliver_final_response(
                                 sent_reply_id = Some(mid.0);
                             }
                             Err(teloxide::RequestError::RetryAfter(secs)) => {
-                                let (wait, capped) =
-                                    super::rate_limit::clamp_inline_wait(secs.duration());
-                                if capped {
-                                    tracing::warn!(
-                                        "Telegram: edit rate-limited with {}s window (>{}s cap) — waiting {}s; capped inline (#1064)",
-                                        secs.seconds(),
-                                        super::rate_limit::MAX_INLINE_RATE_LIMIT_WAIT.as_secs(),
-                                        wait.as_secs()
-                                    );
-                                } else {
-                                    tracing::warn!(
-                                        "Telegram: edit rate-limited, waiting {}s",
-                                        wait.as_secs()
-                                    );
-                                }
-                                tokio::time::sleep(wait).await;
+                                super::rate_limit::wait_out("edit", secs.duration(), "").await;
                                 if let Err(e) = bot
                                     .edit_message_text(chat_id, mid, &chunks[0])
                                     .parse_mode(ParseMode::Html)

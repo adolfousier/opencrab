@@ -51,8 +51,8 @@ pub(crate) const RETRY_MARGIN: Duration = Duration::from_secs(2);
 /// (placeholder-edit churn, command bursts) are seconds and stay under the
 /// cap, so their behavior is unchanged. Oversized windows are slept up to
 /// the cap, the retry fails again, and the existing never-silent error
-/// paths (#1019) take over. Same policy as `post_rich`'s
-/// `RICH_MAX_RETRY_WAIT_SECS`.
+/// paths (#1019) take over. Every send path shares this policy through
+/// [`wait_out`].
 pub(crate) const MAX_INLINE_RATE_LIMIT_WAIT: Duration = Duration::from_secs(30);
 
 /// The inline wait for a 429: the requested window, clamped to
@@ -65,4 +65,30 @@ pub(crate) fn clamp_inline_wait(requested: Duration) -> (Duration, bool) {
     } else {
         (requested, false)
     }
+}
+
+/// Clamp the requested 429 window and sleep it, logging one standardized
+/// line (#1085 P1b R1 — this warn+sleep block was copy-pasted at four send
+/// sites with drifting wording). `what` names the send ("HTML send",
+/// "edit", ...); `extra` carries per-site context such as an attempt
+/// counter or message id into the line. The capped branch's wording is
+/// forensic, do not soften it: a window over the cap means the chat is
+/// flood-banned, not merely throttled (#1064).
+pub(crate) async fn wait_out(what: &str, window: Duration, extra: &str) {
+    let (wait, capped) = clamp_inline_wait(window);
+    if capped {
+        tracing::warn!(
+            "Telegram: {what} rate-limited{extra}: {}s window exceeds {}s inline cap \
+             — waiting {}s; capped inline, chat likely flood-banned (#1064)",
+            window.as_secs(),
+            MAX_INLINE_RATE_LIMIT_WAIT.as_secs(),
+            wait.as_secs()
+        );
+    } else {
+        tracing::warn!(
+            "Telegram: {what} rate-limited{extra} — waiting {}s",
+            wait.as_secs()
+        );
+    }
+    tokio::time::sleep(wait).await;
 }
