@@ -446,6 +446,8 @@ impl Config {
         "image",
         "cron",
         "memory",
+        "brain",
+        "browser",
     ];
 
     /// Check for unknown top-level keys and log warnings.
