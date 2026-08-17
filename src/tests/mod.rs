@@ -674,6 +674,7 @@ pub mod telegram_send_input_file_test;
 pub mod telegram_send_thread_id_override_test;
 pub mod telegram_split_message_test;
 pub mod telegram_status_message_test;
+pub mod telegram_stream_loop_resume_test;
 pub mod telegram_target_resolver_test;
 pub mod telegram_thread_id_lookup_test;
 pub mod telegram_tool_group_test;
