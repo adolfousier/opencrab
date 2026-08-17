@@ -28,6 +28,7 @@ fn api_cfg() -> MemoryConfig {
             dimensions: None,
         }),
         backfill_interval_secs: 300,
+        ..Default::default()
     }
 }
 
@@ -125,6 +126,7 @@ fn a_local_model_needs_no_key_line() {
         vector_enabled: true,
         embedding: None,
         backfill_interval_secs: 300,
+        ..Default::default()
     };
     let out = joined(health_lines(
         &cfg,

@@ -18,6 +18,7 @@ fn cfg(vector_enabled: bool, interval: u64) -> MemoryConfig {
         vector_enabled,
         embedding: None,
         backfill_interval_secs: interval,
+        ..Default::default()
     }
 }
 
