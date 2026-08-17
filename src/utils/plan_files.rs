@@ -575,7 +575,7 @@ pub async fn create_design_md(session_id: Uuid, title: &str) -> std::io::Result<
          - **Target state:** \n\
          - **Intent:** \n\n\
          ## Implementation steps\n\
-         1. \n"
+         1. \n   - Done when: \n"
     );
     std::fs::write(&path, scaffold)?;
     Ok(path)

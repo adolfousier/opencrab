@@ -236,7 +236,7 @@ While Editing, the agent writes `<session_dir>/.opencrabs_plan_{session}.md`:
 ```
 
 - **Approve gate:** non-empty Problem, Target state, Intent; ≥1 numbered step under Implementation steps.
-- **Seed turn:** model maps numbered steps → `add_tasks` (1:1); optional `Done when:` → `acceptance_criteria`; **dependencies omitted by default** unless prose requires ordering.
+- **Seed turn:** model maps numbered steps → `add_tasks` (1:1); optional `Done when:` → `acceptance_criteria`; steps lacking `Done when:` get a derived checkable criterion (criteria-less tasks complete as Uncertain under the Ralph gate); **dependencies omitted by default** unless prose requires ordering.
 - **Auto-start:** seed turn calls `start` immediately after `add_tasks`.
 - Full `.md` body syncs to JSON `description`; `tasks` stay empty until Approve seed.
 

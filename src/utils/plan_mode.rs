@@ -42,12 +42,17 @@ pub fn validate_for_approve(md_body: &str) -> Result<(), String> {
 /// The locked implement-turn prompt dispatched as a synthetic, visible
 /// user message after Approve. History and compaction can recover the
 /// intent from it.
-fn seed_prompt(md_path: &std::path::Path) -> String {
+pub(crate) fn seed_prompt(md_path: &std::path::Path) -> String {
     format!(
         "[SYSTEM: PLAN APPROVED] The user approved the SESSION PLAN at {}. \
          Read its ## Implementation steps section. Emit exactly ONE `plan` \
          add_tasks call with ALL tasks, 1:1 with the numbered steps. Map \
-         'Done when:' bullets to acceptance_criteria when present. Omit \
+         'Done when:' bullets to acceptance_criteria when present; prefer \
+         criteria that name a runnable command and their expected outcome. \
+         For steps without a 'Done when:' bullet, derive one checkable \
+         criterion from the step's verifiable outcome instead of seeding \
+         none (criteria-less completions log Uncertain under the Ralph \
+         verification gate). Omit \
          dependencies unless step prose explicitly requires ordering \
          (depends on / after / blocked by). Then call `plan` start and \
          continue executing the checklist in this same turn. Do NOT edit \

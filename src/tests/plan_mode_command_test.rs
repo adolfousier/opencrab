@@ -13,7 +13,7 @@ use crate::utils::plan_files::{
     set_pre_init_editing,
 };
 use crate::utils::plan_mode::{
-    ApproveOutcome, discard, enter_plan_mode, in_seed_window, show_plan, try_approve,
+    ApproveOutcome, discard, enter_plan_mode, in_seed_window, seed_prompt, show_plan, try_approve,
     validate_for_approve,
 };
 use uuid::Uuid;
@@ -28,6 +28,17 @@ const GOLDEN_MD: &str = "# Add session plan Approve gate\n\n\
 1. Add Approve validator — implement Rust scan in Phase 6 harness.\n\
 2. Wire seed turn — synthetic user message, add_tasks, start.\n\
    - Done when: empty tasks triggers idle retry via /execute (forbidden while turn running).\n";
+
+#[test]
+fn seed_prompt_carries_the_done_when_contract() {
+    let p = seed_prompt(std::path::Path::new("/tmp/plan.md"));
+    assert!(p.contains("Map 'Done when:' bullets to acceptance_criteria when present"));
+    assert!(
+        p.contains("derive one checkable criterion"),
+        "steps without a Done when bullet must not silently seed empty criteria"
+    );
+    assert!(p.contains("runnable command and their expected outcome"));
+}
 
 async fn in_temp_home<F, T>(f: F) -> T
 where

@@ -276,6 +276,10 @@ async fn design_md_scaffold_and_mirror() {
         assert!(scaffold.starts_with("# Design doc"));
         assert!(scaffold.contains("## Context"));
         assert!(scaffold.contains("## Implementation steps"));
+        assert!(
+            scaffold.contains("1. \n   - Done when: "),
+            "scaffold must model the per-step Done when convention"
+        );
 
         // Edit the .md, then mirror: the JSON description follows the body
         // and tasks stay empty (Editing cannot persist a checklist).
