@@ -108,6 +108,41 @@ fn detects_max_completion_tokens_unsupported_error() {
 }
 
 #[test]
+fn detects_scaleway_style_cap_wording() {
+    // #1059: names the field but never says "unsupported", so the original
+    // matcher missed it and the swap-and-retry never fired.
+    assert!(is_token_field_mismatch(
+        "payload validation: max_completion_tokens is limited to 16384 for qwen3.5-397b-a17b"
+    ));
+}
+
+#[test]
+fn detects_an_explicit_instruction_to_use_the_other_field() {
+    assert!(is_token_field_mismatch(
+        "'max_tokens' is not supported; use max_completion_tokens instead"
+    ));
+}
+
+#[test]
+fn a_rejection_signal_alone_is_not_enough() {
+    // The field name has to be present too, or any capped parameter would
+    // trigger a pointless token-field swap.
+    assert!(!is_token_field_mismatch(
+        "temperature is limited to 2.0 for this model"
+    ));
+    assert!(!is_token_field_mismatch("top_p is not supported"));
+}
+
+#[test]
+fn the_field_name_alone_is_not_enough() {
+    // A message that merely mentions the field, with no sign of rejection,
+    // must not send us into a retry.
+    assert!(!is_token_field_mismatch(
+        "request accepted with max_tokens=4096"
+    ));
+}
+
+#[test]
 fn ignores_unrelated_errors() {
     assert!(!is_token_field_mismatch("Rate limit exceeded"));
     assert!(!is_token_field_mismatch("Invalid API key"));

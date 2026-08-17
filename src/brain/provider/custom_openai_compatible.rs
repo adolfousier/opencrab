@@ -4804,9 +4804,35 @@ impl OpenAIRequest {
 }
 
 /// Returns true if the error message indicates a max_tokens / max_completion_tokens mismatch.
+///
+/// Providers word this rejection differently and only some say "unsupported".
+/// Scaleway answers `max_completion_tokens is limited to 16384 for <model>`,
+/// which names the field but not the word, so the swap-and-retry above never
+/// fired and the request failed outright (#1059). The phrasing is the only
+/// thing that varies; the meaning is always "you sent the wrong token field".
+///
+/// Deliberately keyed on the field name plus a rejection signal rather than on
+/// any single vendor's sentence. A provider-specific config switch would put
+/// the burden on every user of every such endpoint to discover a setting for
+/// something the response already states.
 pub(crate) fn is_token_field_mismatch(msg: &str) -> bool {
     let m = msg.to_lowercase();
-    (m.contains("max_tokens") || m.contains("max_completion_tokens")) && m.contains("unsupported")
+    if !(m.contains("max_tokens") || m.contains("max_completion_tokens")) {
+        return false;
+    }
+    // "limited to" is a cap complaint, which providers emit both when the value
+    // is too high AND when the wrong field was used. Swapping is safe either
+    // way: the retry re-sends the same value under the other name, so a genuine
+    // over-cap still fails and surfaces its own error rather than being masked.
+    [
+        "unsupported",
+        "not supported",
+        "limited to",
+        "use max_completion_tokens",
+        "instead",
+    ]
+    .iter()
+    .any(|sig| m.contains(sig))
 }
 
 #[derive(Debug, Clone, Serialize)]
