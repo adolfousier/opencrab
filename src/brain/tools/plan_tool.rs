@@ -237,26 +237,46 @@ pub(crate) fn task_outcome_confidence(verb: &str) -> super::epistemic::Confidenc
     }
 }
 
-/// Stable belief key for a plan task (order + title hash) so a retry that
-/// later succeeds supersedes the earlier failure on the same key rather than
-/// duplicating it. Pure — unit-testable without store access.
-pub(crate) fn task_outcome_key(task_order: usize, title: &str) -> String {
+/// Belief key prefix owning every task outcome of ONE plan (#1083).
+///
+/// The plan id is part of the key because the belief store is profile-global
+/// and long-lived: without it, task #1 of every plan ever run shares one key,
+/// so an unrelated plan's failure surfaces in a fresh plan's Orient gate and
+/// two same-titled tasks in different plans mark each other Contradicted.
+/// `PlanDocument.id` (not the session id) is the scope: two plans created and
+/// completed sequentially in ONE session have distinct ids, while a retry in a
+/// later session reloads the same plan file and keeps the same id — which is
+/// exactly the cross-session warning #886 was built for.
+pub(crate) fn plan_belief_prefix(plan_id: uuid::Uuid) -> String {
+    format!("plan:{plan_id}:task:")
+}
+
+/// Stable belief key for a plan task (plan id + order + title hash) so a retry
+/// that later succeeds supersedes the earlier failure on the same key rather
+/// than duplicating it. Pure — unit-testable without store access.
+pub(crate) fn task_outcome_key(plan_id: uuid::Uuid, task_order: usize, title: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     title.hash(&mut hasher);
-    format!("plan:task:{}:{:016x}", task_order, hasher.finish())
+    format!(
+        "{}{}:{:016x}",
+        plan_belief_prefix(plan_id),
+        task_order,
+        hasher.finish()
+    )
 }
 
 /// Epistemic engine integration (#862): log a plan task's outcome as a
 /// belief, letting the engine record fail→success transitions across retries.
 fn log_task_outcome_belief(
+    plan_id: uuid::Uuid,
     task_order: usize,
     title: &str,
     verb: &str,
     output: &Option<String>,
     confidence_override: Option<super::epistemic::Confidence>,
 ) {
-    let key = task_outcome_key(task_order, title);
+    let key = task_outcome_key(plan_id, task_order, title);
     // A criteria-aware downgrade (#870) logs a success as Uncertain instead of
     // Verified when nothing mechanically checked the declared criteria.
     let confidence = confidence_override.unwrap_or_else(|| task_outcome_confidence(verb));
@@ -1646,7 +1666,7 @@ impl Tool for PlanTool {
                                         order,
                                         &snapshot,
                                         &context.working_dir(),
-                                        &epistemic_task_flags(),
+                                        &epistemic_task_flags(current_plan.id, order),
                                     );
                                     // Persist InProgress BEFORE the spawn so
                                     // the worker, the TUI and any observer
@@ -1722,7 +1742,7 @@ impl Tool for PlanTool {
                         // Epistemic Orient gate (#886): surface relevant
                         // low-confidence beliefs so the agent sees prior
                         // failures / uncertain outcomes before starting work.
-                        let epistemic_note = epistemic_task_flags();
+                        let epistemic_note = epistemic_task_flags(current_plan.id, order);
 
                         let result = if already_done {
                             format!(
@@ -1875,7 +1895,14 @@ impl Tool for PlanTool {
                 // A criteria-aware downgrade (#870) records Uncertain, not Verified.
                 let confidence_override =
                     criteria_downgraded.then_some(super::epistemic::Confidence::Uncertain);
-                log_task_outcome_belief(task_order, &title, verb, &out, confidence_override);
+                log_task_outcome_belief(
+                    current_plan.id,
+                    task_order,
+                    &title,
+                    verb,
+                    &out,
+                    confidence_override,
+                );
                 let mut msg = format!("{emoji} Task #{task_order} ({title}) {verb}.");
                 if criteria_downgraded {
                     msg.push_str(
@@ -2029,12 +2056,30 @@ impl Tool for PlanTool {
     }
 }
 
-/// Epistemic Orient gate (#886): collect contradicted / uncertain plan-task
-/// beliefs so the agent sees prior failures before starting work. Used by
-/// both inline starts and the isolated-worker brief.
-fn epistemic_task_flags() -> String {
-    let relevant: Vec<String> = super::epistemic::list_by_prefix("plan:task:")
-        .into_iter()
+/// Cap on the flags surfaced in one task brief (#1083). Even scoped to a
+/// single plan, a long checklist with retries accumulates outcomes; an
+/// uncapped list crowds out the task itself in every brief.
+pub(crate) const MAX_EPISTEMIC_FLAGS: usize = 5;
+
+/// Epistemic Orient gate (#886): collect contradicted / uncertain task
+/// beliefs *of this plan* so the agent sees prior failures before starting
+/// work. Used by both inline starts and the isolated-worker brief.
+fn epistemic_task_flags(plan_id: uuid::Uuid, task_order: usize) -> String {
+    let beliefs = super::epistemic::list_by_prefix(&plan_belief_prefix(plan_id));
+    render_epistemic_flags(&beliefs, plan_id, task_order)
+}
+
+/// Pure renderer for the Orient-gate block: confidence filter, this-task-first
+/// ordering, and the cap. Split out so the selection logic is testable without
+/// touching the process-global belief store.
+pub(crate) fn render_epistemic_flags(
+    beliefs: &[super::epistemic::Belief],
+    plan_id: uuid::Uuid,
+    task_order: usize,
+) -> String {
+    let this_task = format!("{}{}:", plan_belief_prefix(plan_id), task_order);
+    let mut actionable: Vec<&super::epistemic::Belief> = beliefs
+        .iter()
         .filter(|b| {
             matches!(
                 b.confidence,
@@ -2042,13 +2087,30 @@ fn epistemic_task_flags() -> String {
                     | super::epistemic::Confidence::Uncertain
             )
         })
+        .collect();
+    if actionable.is_empty() {
+        return String::new();
+    }
+    // This task's own history first — it is the only flag guaranteed relevant
+    // to the work about to start. Stable within each group so the rest keeps
+    // the store's order.
+    actionable.sort_by_key(|b| !b.key.starts_with(&this_task));
+
+    let total = actionable.len();
+    let lines: Vec<String> = actionable
+        .iter()
+        .take(MAX_EPISTEMIC_FLAGS)
         .map(|b| format!("  ⚠ [{}] {}: {}", b.confidence.label(), b.key, b.value))
         .collect();
-    if relevant.is_empty() {
-        String::new()
-    } else {
-        format!("\n\nEpistemic flags ({}):", relevant.len()) + "\n" + &relevant.join("\n")
+    let mut block = format!("\n\nEpistemic flags ({total}):\n") + &lines.join("\n");
+    if total > lines.len() {
+        block.push_str(&format!(
+            "\n  … {} more suppressed (showing the {} most relevant)",
+            total - lines.len(),
+            lines.len()
+        ));
     }
+    block
 }
 
 // ── #908 option A: isolated plan-task execution ───────────────────────────
