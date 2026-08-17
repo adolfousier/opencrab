@@ -18,7 +18,12 @@ use teloxide::prelude::*;
 use uuid::Uuid;
 
 /// Longest plan-title / goal text shown in flow chrome before truncation.
-const SECTION_TEXT_CAP: usize = 60;
+/// Raised from 60 to 150 (#1053): 60 clipped meaningful plan titles and
+/// checklist items mid-phrase. 150 shows near-full text for realistic titles
+/// without making the card heavy with many long items. One cap for both
+/// title and checklist rows — a separate per-surface cap was considered and
+/// deferred until a real case asks for it.
+const SECTION_TEXT_CAP: usize = 150;
 
 /// Which plan keyboard the latest flow message owns. Keyboards attach only
 /// after `plan init` succeeds: Approve + Discard while the design plan is
@@ -306,14 +311,14 @@ pub(crate) struct FooterParts<'a> {
     /// Settled outcome `(icon, verb)` (e.g. `("✅", "Finished")`) once the turn
     /// ends; `None` while live. Drives segment 1 and drops the in-flight cog.
     pub(crate) outcome: Option<(&'a str, &'a str)>,
-    /// Plan-mode status line (Decision 7) when in Plan mode; leads segment 1
-    /// on a live turn.
+    /// Plan-mode status line (Decision 7) when in Plan mode; second segment on
+    /// a live turn (after the activity, #1052).
     pub(crate) plan_state: Option<&'a str>,
-    /// Non-plan "Working on …" / thinking preview; segment 1 fallback on a live
-    /// turn with no plan status.
+    /// Non-plan "Working on …" / thinking preview; live-turn fallback for the
+    /// reasoning segment (#1052: after the activity, not before it).
     pub(crate) working_on: Option<&'a str>,
-    /// Latest-activity preview for the in-flight progress-log summary
-    /// (segment 2); shown only while live and only when a log exists.
+    /// Latest-activity preview; LEADS the live footer (#1052). Shown only
+    /// while live and only when a log exists.
     pub(crate) activity: Option<&'a str>,
     /// Count of tool entries in the log (`N tool calls` when `>= 1`).
     pub(crate) tool_count: usize,
@@ -323,14 +328,21 @@ pub(crate) struct FooterParts<'a> {
     pub(crate) ctx: Option<&'a str>,
     /// Elapsed wall-clock seconds for the segment-4 clock glyph.
     pub(crate) elapsed_secs: u64,
+    /// Background-work indicator (#1054): `Some(label)` when detached tasks
+    /// are still running at settle time. Renders as the final footer segment
+    /// `🔧 <label> running` (or `🔧 N tasks running`) after the clock.
+    pub(crate) bg: Option<&'a str>,
 }
 
-/// Build the merged flow footer: one ` • `-joined string in the locked order
-/// status → progress-log summary → ctx → clock (ADR 0005 Decision 12). The
-/// renderer wraps it: rich as `<sub>` (plain footer line, or the processing-log
-/// `<summary>`); classic as a plain final line. In-flight the log summary
-/// carries the `⚙️` cog; a settled footer never does (segment 1 carries the
-/// `✅`/`❌` outcome instead).
+/// Build the merged flow footer: one ` • `-joined string (ADR 0005 Decision
+/// 12, amended by #1052). Settled: outcome → tool count → ctx → clock. Live:
+/// latest activity → reasoning/status → tool count → ctx → clock, because the
+/// narration (what the agent is DOING) is the progress signal and the
+/// reasoning excerpt is supplementary (#1052). The renderer wraps it: rich as
+/// `<sub>` (plain footer line, or the processing-log `<summary>`); classic as
+/// a plain final line. In-flight the log summary carries the `⚙️` cog; a
+/// settled footer never does (segment 1 carries the `✅`/`❌` outcome
+/// instead).
 pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String {
     let esc = |s: &str| match markup {
         HeaderMarkup::Html => escape_html(s),
@@ -339,39 +351,43 @@ pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String
     let settled = parts.outcome.is_some();
     let mut segs: Vec<String> = Vec::new();
 
-    // Segment 1 — status: settled outcome, else plan state, else Working-on.
+    // Segment 1 — settled outcome leads. LIVE turns lead with the latest
+    // activity (#1052), then the reasoning/status. Strip a leading cog from
+    // the activity so the prefix is never doubled (#509 follow-up).
+    let mut live_activity = String::new();
     if let Some((icon, verb)) = parts.outcome {
         segs.push(format!("{icon} {}", esc(verb)));
-    } else if let Some(ps) = parts.plan_state {
-        segs.push(esc(ps));
-    } else if let Some(w) = parts.working_on {
-        segs.push(esc(w));
-    }
-
-    // Segment 2 — progress-log summary, only when a log exists. Live turns lead
-    // with the cog + activity; settled turns show a bare tool-call count with
-    // no cog (the stale narration is dropped, #498). Strip a leading cog from
-    // the activity so the prefix is never doubled (#509 follow-up).
-    if parts.has_log {
-        let mut seg2 = String::new();
-        if !settled && let Some(act) = parts.activity {
+    } else {
+        if parts.has_log
+            && let Some(act) = parts.activity
+        {
             let act = act.trim_start_matches(['⚙', '\u{fe0f}']).trim_start();
             if !act.is_empty() {
-                seg2 = format!("⚙️ {}", esc(act));
+                live_activity = format!("⚙️ {}", esc(act));
+                segs.push(live_activity.clone());
             }
         }
+        if let Some(ps) = parts.plan_state {
+            segs.push(esc(ps));
+        } else if let Some(w) = parts.working_on {
+            segs.push(esc(w));
+        }
+    }
+
+    // Segment 2 — progress-log summary, only when a log exists. Settled turns
+    // show a bare tool-call count with no cog (the stale narration is dropped,
+    // #498). Live turns show the count alone when the activity segment already
+    // carries the cog, else the cog rides the count (#1052 split).
+    if parts.has_log {
+        let mut seg2 = String::new();
         if parts.tool_count >= 1 {
             let count = format!("{} tool calls", parts.tool_count);
-            if seg2.is_empty() {
-                seg2 = if settled {
-                    count
-                } else {
-                    format!("⚙️ {count}")
-                };
+            seg2 = if settled || !live_activity.is_empty() {
+                count
             } else {
-                seg2 = format!("{seg2} • {count}");
-            }
-        } else if !settled && seg2.is_empty() {
+                format!("⚙️ {count}")
+            };
+        } else if !settled && live_activity.is_empty() {
             // In-flight log with no tools and no activity preview yet: a bare
             // cog beats an empty segment so the footer still reads as active.
             seg2 = "⚙️".to_string();
@@ -386,8 +402,16 @@ pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String
         segs.push(esc(c));
     }
 
-    // Segment 4 — clock, always last.
+    // Segment 4 — clock, always last (the #1054 background-task indicator
+    // appends after it when present).
     segs.push(clock_glyph(parts.elapsed_secs));
+
+    // Segment 5 — background-work indicator (#1054): a settled turn that ends
+    // with detached work looks identical to a complete one without this, and
+    // the typing indicator staying alive is too easy to miss.
+    if let Some(bg) = parts.bg {
+        segs.push(format!("🔧 {}", esc(bg)));
+    }
 
     segs.join(" • ")
 }
