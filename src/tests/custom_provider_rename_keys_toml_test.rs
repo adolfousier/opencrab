@@ -24,57 +24,16 @@
 //!    `raw_config_custom_provider_names()` so the orphan check is true.
 
 use crate::config::Config;
+use crate::config::profile::{home_for_profile, with_profile_home};
 
-struct HomeGuard {
-    prev_home: Option<std::ffi::OsString>,
-    prev_userprofile: Option<std::ffi::OsString>,
-    _lock: std::sync::MutexGuard<'static, ()>,
+fn write_profile_home(home: &std::path::Path, config_toml: &str, keys_toml: &str) {
+    std::fs::create_dir_all(home).expect("create profile home");
+    std::fs::write(home.join("config.toml"), config_toml).expect("write config");
+    std::fs::write(home.join("keys.toml"), keys_toml).expect("write keys");
 }
 
-impl HomeGuard {
-    fn new(temp_home: &std::path::Path) -> Self {
-        let lock = crate::tests::HOME_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let prev_home = std::env::var_os("HOME");
-        let prev_userprofile = std::env::var_os("USERPROFILE");
-        unsafe {
-            std::env::set_var("HOME", temp_home);
-            std::env::set_var("USERPROFILE", temp_home);
-        }
-        Self {
-            prev_home,
-            prev_userprofile,
-            _lock: lock,
-        }
-    }
-}
-
-impl Drop for HomeGuard {
-    fn drop(&mut self) {
-        match self.prev_home.take() {
-            Some(v) => unsafe { std::env::set_var("HOME", v) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        match self.prev_userprofile.take() {
-            Some(v) => unsafe { std::env::set_var("USERPROFILE", v) },
-            None => unsafe { std::env::remove_var("USERPROFILE") },
-        }
-    }
-}
-
-fn write_temp_home(config_toml: &str, keys_toml: &str) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let opencrabs = dir.path().join(".opencrabs");
-    std::fs::create_dir_all(&opencrabs).expect("create .opencrabs");
-    std::fs::write(opencrabs.join("config.toml"), config_toml).expect("write config");
-    std::fs::write(opencrabs.join("keys.toml"), keys_toml).expect("write keys");
-    dir
-}
-
-fn read_keys_toml(temp: &tempfile::TempDir) -> String {
-    std::fs::read_to_string(temp.path().join(".opencrabs").join("keys.toml"))
-        .expect("read keys.toml")
+fn read_keys_toml(home: &std::path::Path) -> String {
+    std::fs::read_to_string(home.join("keys.toml")).expect("read keys.toml")
 }
 
 // ── remove_secret_section unit (the source fix's primitive) ──────────
@@ -82,61 +41,69 @@ fn read_keys_toml(temp: &tempfile::TempDir) -> String {
 #[cfg(unix)]
 #[test]
 fn remove_secret_section_drops_named_provider_only() {
-    let temp = write_temp_home(
+    let profile = format!("test_rename_drop_{}", uuid::Uuid::new_v4());
+    let home = home_for_profile(Some(&profile));
+    write_profile_home(
+        &home,
         "",
         "[providers.custom.modelscope-qwen]\napi_key = \"old\"\n\n\
          [providers.custom.modelscope]\napi_key = \"new\"\n",
     );
-    let _guard = HomeGuard::new(temp.path());
 
-    Config::remove_secret_section("providers.custom.modelscope-qwen")
-        .expect("remove_secret_section succeeds");
+    with_profile_home(Some(&profile), || {
+        Config::remove_secret_section("providers.custom.modelscope-qwen")
+            .expect("remove_secret_section succeeds");
 
-    let after = read_keys_toml(&temp);
-    assert!(
-        !after.contains("modelscope-qwen"),
-        "old-name section must be gone from keys.toml after remove_secret_section; got:\n{}",
-        after
-    );
-    assert!(
-        after.contains("[providers.custom.modelscope]"),
-        "new-name section must survive untouched; got:\n{}",
-        after
-    );
-    assert!(
-        after.contains("api_key = \"new\""),
-        "new section's api_key must survive untouched; got:\n{}",
-        after
-    );
+        let after = read_keys_toml(&home);
+        assert!(
+            !after.contains("modelscope-qwen"),
+            "old-name section must be gone from keys.toml after remove_secret_section; got:\n{}",
+            after
+        );
+        assert!(
+            after.contains("[providers.custom.modelscope]"),
+            "new-name section must survive untouched; got:\n{}",
+            after
+        );
+        assert!(
+            after.contains("api_key = \"new\""),
+            "new section's api_key must survive untouched; got:\n{}",
+            after
+        );
+    });
 }
 
 #[cfg(unix)]
 #[test]
 fn remove_secret_section_missing_file_is_ok() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let _guard = HomeGuard::new(temp.path());
-    // No keys.toml file at all. Must succeed silently — same shape as
-    // remove_section, so callers can fire-and-forget on rename whether
-    // keys.toml exists or not.
-    Config::remove_secret_section("providers.custom.whatever")
-        .expect("missing keys.toml must not error");
+    let profile = format!("test_rename_nofile_{}", uuid::Uuid::new_v4());
+    let home = home_for_profile(Some(&profile));
+    std::fs::create_dir_all(&home).expect("create profile home");
+    // No keys.toml file at all. Must succeed silently.
+    with_profile_home(Some(&profile), || {
+        Config::remove_secret_section("providers.custom.whatever")
+            .expect("missing keys.toml must not error");
+    });
 }
 
 #[cfg(unix)]
 #[test]
 fn remove_secret_section_missing_section_is_ok() {
-    let temp = write_temp_home("", "[providers.custom.other]\napi_key = \"key\"\n");
-    let _guard = HomeGuard::new(temp.path());
+    let profile = format!("test_rename_nosec_{}", uuid::Uuid::new_v4());
+    let home = home_for_profile(Some(&profile));
+    write_profile_home(&home, "", "[providers.custom.other]\napi_key = \"key\"\n");
 
-    Config::remove_secret_section("providers.custom.does-not-exist")
-        .expect("missing section must not error");
+    with_profile_home(Some(&profile), || {
+        Config::remove_secret_section("providers.custom.does-not-exist")
+            .expect("missing section must not error");
 
-    let after = read_keys_toml(&temp);
-    assert!(
-        after.contains("[providers.custom.other]"),
-        "unrelated sections must survive a noop remove; got:\n{}",
-        after
-    );
+        let after = read_keys_toml(&home);
+        assert!(
+            after.contains("[providers.custom.other]"),
+            "unrelated sections must survive a noop remove; got:\n{}",
+            after
+        );
+    });
 }
 
 // ── cleanup_keys_custom_providers (the defensive fix) ────────────────
@@ -144,72 +111,76 @@ fn remove_secret_section_missing_section_is_ok() {
 #[cfg(unix)]
 #[test]
 fn cleanup_drops_orphan_keys_when_config_has_no_matching_entry() {
-    // The pre-fix shape: config.toml has only the renamed provider;
-    // keys.toml carries BOTH the old and the new entries. Before the
-    // fix, the cleanup would consult Config::load(), which
-    // merge_provider_keys would inflate to include the old name (from
-    // keys.toml itself!), the orphan check would pass, and nothing
-    // would get cleaned.
-    let temp = write_temp_home(
+    let profile = format!("test_cleanup_orphan_{}", uuid::Uuid::new_v4());
+    let home = home_for_profile(Some(&profile));
+    write_profile_home(
+        &home,
         "[providers.custom.modelscope]\nenabled = true\nbase_url = \"https://api/v1\"\ndefault_model = \"m\"\n",
         "[providers.custom.modelscope-qwen]\napi_key = \"orphan\"\n\n\
          [providers.custom.modelscope]\napi_key = \"current\"\n",
     );
-    let _guard = HomeGuard::new(temp.path());
 
-    Config::cleanup_keys_custom_providers();
+    with_profile_home(Some(&profile), || {
+        Config::cleanup_keys_custom_providers();
 
-    let after = read_keys_toml(&temp);
-    assert!(
-        !after.contains("modelscope-qwen"),
-        "orphan keys.toml entry (no config.toml counterpart) must be removed by cleanup. \
-         If this assertion fires, the cleanup is back to consulting the merged config \
-         loader instead of `raw_config_custom_provider_names`, and the circular bug is back. \
-         Got keys.toml:\n{}",
-        after
-    );
-    assert!(
-        after.contains("[providers.custom.modelscope]"),
-        "non-orphan entry must survive cleanup; got:\n{}",
-        after
-    );
+        let after = read_keys_toml(&home);
+        assert!(
+            !after.contains("modelscope-qwen"),
+            "orphan keys.toml entry (no config.toml counterpart) must be removed by cleanup. \
+             If this assertion fires, the cleanup is back to consulting the merged config \
+             loader instead of `raw_config_custom_provider_names`, and the circular bug is back. \
+             Got keys.toml:\n{}",
+            after
+        );
+        assert!(
+            after.contains("[providers.custom.modelscope]"),
+            "non-orphan entry must survive cleanup; got:\n{}",
+            after
+        );
+    });
 }
 
 #[cfg(unix)]
 #[test]
 fn cleanup_preserves_keys_when_every_entry_has_config_counterpart() {
-    let temp = write_temp_home(
+    let profile = format!("test_cleanup_preserve_{}", uuid::Uuid::new_v4());
+    let home = home_for_profile(Some(&profile));
+    write_profile_home(
+        &home,
         "[providers.custom.a]\nenabled = true\nbase_url = \"u\"\ndefault_model = \"m\"\n\n\
          [providers.custom.b]\nenabled = true\nbase_url = \"u\"\ndefault_model = \"m\"\n",
         "[providers.custom.a]\napi_key = \"key-a\"\n\n\
          [providers.custom.b]\napi_key = \"key-b\"\n",
     );
-    let _guard = HomeGuard::new(temp.path());
 
-    Config::cleanup_keys_custom_providers();
+    with_profile_home(Some(&profile), || {
+        Config::cleanup_keys_custom_providers();
 
-    let after = read_keys_toml(&temp);
-    assert!(after.contains("[providers.custom.a]"));
-    assert!(after.contains("[providers.custom.b]"));
-    assert!(after.contains("api_key = \"key-a\""));
-    assert!(after.contains("api_key = \"key-b\""));
+        let after = read_keys_toml(&home);
+        assert!(after.contains("[providers.custom.a]"));
+        assert!(after.contains("[providers.custom.b]"));
+        assert!(after.contains("api_key = \"key-a\""));
+        assert!(after.contains("api_key = \"key-b\""));
+    });
 }
 
 #[cfg(unix)]
 #[test]
 fn cleanup_no_op_when_keys_toml_does_not_exist() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    std::fs::create_dir_all(temp.path().join(".opencrabs")).unwrap();
+    let profile = format!("test_cleanup_nokeys_{}", uuid::Uuid::new_v4());
+    let home = home_for_profile(Some(&profile));
+    std::fs::create_dir_all(&home).expect("create profile home");
     // No keys.toml file at all.
-    let _guard = HomeGuard::new(temp.path());
 
-    // Must not panic, must not create keys.toml as a side effect.
-    Config::cleanup_keys_custom_providers();
+    with_profile_home(Some(&profile), || {
+        // Must not panic, must not create keys.toml as a side effect.
+        Config::cleanup_keys_custom_providers();
 
-    assert!(
-        !temp.path().join(".opencrabs").join("keys.toml").exists(),
-        "cleanup must not create keys.toml as a side effect when it didn't exist"
-    );
+        assert!(
+            !home.join("keys.toml").exists(),
+            "cleanup must not create keys.toml as a side effect when it didn't exist"
+        );
+    });
 }
 
 // ── Source-level invariant on the rename path ────────────────────────

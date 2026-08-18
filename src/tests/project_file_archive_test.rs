@@ -9,47 +9,11 @@
 
 use crate::db::Database;
 use crate::services::{FileService, ProjectService, ServiceContext, SessionService};
+use crate::config::profile::{home_for_profile, with_profile_home_async};
 use uuid::Uuid;
 
-/// HOME-override harness so `project_files_dir` and the `~/.opencrabs/tmp/`
-/// ephemeral check resolve under a temp home instead of the real `~/.opencrabs/`.
-struct HomeGuard {
-    prev_home: Option<std::ffi::OsString>,
-    prev_userprofile: Option<std::ffi::OsString>,
-    _lock: std::sync::MutexGuard<'static, ()>,
-}
-
-impl HomeGuard {
-    fn new(temp: &std::path::Path) -> Self {
-        let lock = crate::tests::HOME_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let prev_home = std::env::var_os("HOME");
-        let prev_userprofile = std::env::var_os("USERPROFILE");
-        // SAFETY: HOME_ENV_LOCK serializes HOME mutation across the suite.
-        unsafe {
-            std::env::set_var("HOME", temp);
-            std::env::set_var("USERPROFILE", temp);
-        }
-        Self {
-            prev_home,
-            prev_userprofile,
-            _lock: lock,
-        }
-    }
-}
-
-impl Drop for HomeGuard {
-    fn drop(&mut self) {
-        match self.prev_home.take() {
-            Some(v) => unsafe { std::env::set_var("HOME", v) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        match self.prev_userprofile.take() {
-            Some(v) => unsafe { std::env::set_var("USERPROFILE", v) },
-            None => unsafe { std::env::remove_var("USERPROFILE") },
-        }
-    }
+fn setup_profile_home(home: &std::path::Path) {
+    std::fs::create_dir_all(home).expect("create profile home");
 }
 
 async fn project_session(ctx: &ServiceContext) -> Uuid {
@@ -114,79 +78,87 @@ async fn repo_code_is_tracked_in_place_not_archived() {
 
 #[tokio::test]
 async fn ephemeral_share_is_copied_into_project() {
-    let temp = tempfile::tempdir().unwrap();
-    let _home = HomeGuard::new(temp.path());
+    let profile = format!("test_archive_ephemeral_{}", uuid::Uuid::new_v4());
+    let home = home_for_profile(Some(&profile));
+    setup_profile_home(&home);
 
-    let db = Database::connect_in_memory().await.unwrap();
-    db.run_migrations().await.unwrap();
-    let ctx = ServiceContext::new(db.pool().clone());
-    let files = FileService::new(ctx.clone());
-    let sid = project_session(&ctx).await;
+    with_profile_home_async(Some(&profile), async {
+        let db = Database::connect_in_memory().await.unwrap();
+        db.run_migrations().await.unwrap();
+        let ctx = ServiceContext::new(db.pool().clone());
+        let files = FileService::new(ctx.clone());
+        let sid = project_session(&ctx).await;
 
-    // A channel / clipboard / web download lands under ~/.opencrabs/tmp/.
-    let tmp_dir = crate::config::opencrabs_home().join("tmp");
-    std::fs::create_dir_all(&tmp_dir).unwrap();
-    let src = tmp_dir.join("photo.png");
-    std::fs::write(&src, b"PNGDATA").unwrap();
+        // A channel / clipboard / web download lands under ~/.opencrabs/tmp/.
+        let tmp_dir = crate::config::opencrabs_home().join("tmp");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let src = tmp_dir.join("photo.png");
+        std::fs::write(&src, b"PNGDATA").unwrap();
 
-    let tracked = files
-        .get_or_create_file(sid, src.clone(), None)
-        .await
-        .unwrap();
+        let tracked = files
+            .get_or_create_file(sid, src.clone(), None)
+            .await
+            .unwrap();
 
-    let projects_root = crate::config::opencrabs_home().join("projects");
-    assert!(
-        tracked.path.starts_with(&projects_root),
-        "ephemeral share must be archived into the project dir: {:?}",
-        tracked.path
-    );
-    assert!(
-        !std::fs::symlink_metadata(&tracked.path)
-            .unwrap()
-            .file_type()
-            .is_symlink(),
-        "ephemeral share must be COPIED, not symlinked"
-    );
-    assert_eq!(std::fs::read(&tracked.path).unwrap(), b"PNGDATA");
+        let projects_root = crate::config::opencrabs_home().join("projects");
+        assert!(
+            tracked.path.starts_with(&projects_root),
+            "ephemeral share must be archived into the project dir: {:?}",
+            tracked.path
+        );
+        assert!(
+            !std::fs::symlink_metadata(&tracked.path)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "ephemeral share must be COPIED, not symlinked"
+        );
+        assert_eq!(std::fs::read(&tracked.path).unwrap(), b"PNGDATA");
+    })
+    .await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn persistent_local_file_is_symlinked_into_project() {
-    let temp = tempfile::tempdir().unwrap();
-    let _home = HomeGuard::new(temp.path());
+    let profile = format!("test_archive_symlink_{}", uuid::Uuid::new_v4());
+    let home = home_for_profile(Some(&profile));
+    setup_profile_home(&home);
 
-    let db = Database::connect_in_memory().await.unwrap();
-    db.run_migrations().await.unwrap();
-    let ctx = ServiceContext::new(db.pool().clone());
-    let files = FileService::new(ctx.clone());
-    let sid = project_session(&ctx).await;
+    with_profile_home_async(Some(&profile), async {
+        let db = Database::connect_in_memory().await.unwrap();
+        db.run_migrations().await.unwrap();
+        let ctx = ServiceContext::new(db.pool().clone());
+        let files = FileService::new(ctx.clone());
+        let sid = project_session(&ctx).await;
 
-    // A persistent local file the user shared — NOT under ~/.opencrabs/tmp/ and
-    // not inside a git repo.
-    let local = crate::config::opencrabs_home().join("shared");
-    std::fs::create_dir_all(&local).unwrap();
-    let src = local.join("doc.pdf");
-    std::fs::write(&src, b"PDFDATA").unwrap();
+        // A persistent local file the user shared — NOT under ~/.opencrabs/tmp/ and
+        // not inside a git repo.
+        let local = crate::config::opencrabs_home().join("shared");
+        std::fs::create_dir_all(&local).unwrap();
+        let src = local.join("doc.pdf");
+        std::fs::write(&src, b"PDFDATA").unwrap();
 
-    let tracked = files
-        .get_or_create_file(sid, src.clone(), None)
-        .await
-        .unwrap();
+        let tracked = files
+            .get_or_create_file(sid, src.clone(), None)
+            .await
+            .unwrap();
 
-    let projects_root = crate::config::opencrabs_home().join("projects");
-    assert!(
-        tracked.path.starts_with(&projects_root),
-        "local file must be archived into the project dir: {:?}",
-        tracked.path
-    );
-    assert!(
-        std::fs::symlink_metadata(&tracked.path)
-            .unwrap()
-            .file_type()
-            .is_symlink(),
-        "persistent local file must be SYMLINKED into the project, not copied"
-    );
-    // The symlink resolves to the original content.
-    assert_eq!(std::fs::read(&tracked.path).unwrap(), b"PDFDATA");
+        let projects_root = crate::config::opencrabs_home().join("projects");
+        assert!(
+            tracked.path.starts_with(&projects_root),
+            "local file must be archived into the project dir: {:?}",
+            tracked.path
+        );
+        assert!(
+            std::fs::symlink_metadata(&tracked.path)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "persistent local file must be SYMLINKED into the project, not copied"
+        );
+        // The symlink resolves to the original content.
+        assert_eq!(std::fs::read(&tracked.path).unwrap(), b"PDFDATA");
+    })
+    .await;
 }
