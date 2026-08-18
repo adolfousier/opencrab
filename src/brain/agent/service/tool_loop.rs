@@ -476,8 +476,28 @@ impl AgentService {
         let approval_callback: Option<ApprovalCallback> =
             override_approval_callback.or_else(|| self.approval_callback.clone());
         let has_progress_override = override_progress_callback.is_some();
+        // A channel passes its own callback per message, and `or_else` picked
+        // exactly one — so a Telegram-driven turn never reached the
+        // service-level callback the TUI installs, and every counter the TUI
+        // derives from progress events sat frozen while the turn ran (#1092).
+        //
+        // Only non-textual telemetry is mirrored. Events carrying text
+        // (StreamingChunk, IntermediateText) also drive the TUI's own display
+        // through `cli/ui.rs`, so forwarding them would render the mirrored
+        // turn's content a second time. Counters are safe; content is not.
         let progress_callback: Option<ProgressCallback> =
-            override_progress_callback.or_else(|| self.progress_callback.clone());
+            match (override_progress_callback, self.progress_callback.clone()) {
+                (Some(channel_cb), Some(service_cb)) => {
+                    Some(Arc::new(move |sid: Uuid, event: ProgressEvent| {
+                        if matches!(event, ProgressEvent::TokenCount(_)) {
+                            service_cb(sid, event.clone());
+                        }
+                        channel_cb(sid, event);
+                    }) as ProgressCallback)
+                }
+                (Some(channel_cb), None) => Some(channel_cb),
+                (None, service_cb) => service_cb,
+            };
         // Effective question callback: per-call override wins over the
         // service-level fallback. Channels with native button surfaces
         // pass their own callback per message; everyone else passes
