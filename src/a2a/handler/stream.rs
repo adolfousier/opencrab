@@ -90,7 +90,9 @@ pub async fn handle_stream_message(
     let (tx, rx) = mpsc::channel::<StreamEvent>(32);
 
     // Send initial Task object as first SSE event
-    let _ = tx.send(StreamEvent::Task(task)).await;
+    if let Err(e) = tx.send(StreamEvent::Task(task)).await {
+        tracing::warn!(error = %e, "failed to send A2A task event");
+    }
 
     let pool = service_context.pool();
     tokio::spawn(async move {

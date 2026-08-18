@@ -2525,7 +2525,9 @@ pub(crate) async fn handle_message(
     edit_cancel.cancel();
     // Await edit loop termination to prevent race where it sends a NEW
     // message after we grab streaming_msg_id (causes duplicate completion).
-    let _ = edit_loop_handle.await;
+    if let Err(e) = edit_loop_handle.await {
+        tracing::warn!(error = %e, "Telegram edit loop task panicked");
+    }
     // _typing_guard drop cancels typing loop
 
     // Grab streaming message id and drain queued display items

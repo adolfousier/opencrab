@@ -7,9 +7,9 @@
 //! - **Repository code** (inside a git repo) is tracked at its real path, never
 //!   archived.
 
+use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::db::Database;
 use crate::services::{FileService, ProjectService, ServiceContext, SessionService};
-use crate::config::profile::{home_for_profile, with_profile_home_async};
 use uuid::Uuid;
 
 fn setup_profile_home(home: &std::path::Path) {

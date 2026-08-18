@@ -453,7 +453,9 @@ impl Provider for CodexCliProvider {
                     biased;
                     _ = tx.closed() => {
                         tracing::info!("codex CLI stream cancelled — killing subprocess");
-                        let _ = child.kill().await;
+                        if let Err(e) = child.kill().await {
+                        tracing::warn!(error = %e, "failed to kill Codex CLI child process");
+                    }
                         break;
                     }
                     result = lines.next_line() => result,
@@ -689,7 +691,9 @@ impl Provider for CodexCliProvider {
                                 },
                             }))
                             .await;
-                        let _ = tx.send(Ok(StreamEvent::MessageStop)).await;
+                        if let Err(e) = tx.send(Ok(StreamEvent::MessageStop)).await {
+                            tracing::warn!(error = %e, "failed to send MessageStop event");
+                        }
                         break;
                     }
 

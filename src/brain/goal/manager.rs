@@ -27,7 +27,9 @@ impl GoalManager {
         channel_chat_id: Option<String>,
     ) -> Result<GoalState, String> {
         // Clear any existing goal for this session first
-        let _ = self.clear_goal(session_id).await;
+        if let Err(e) = self.clear_goal(session_id).await {
+            tracing::warn!(error = %e, session_id = %session_id, "failed to clear goal");
+        }
 
         let goal = GoalState::new(session_id, goal_text, channel, channel_chat_id);
         let pool = self.ctx.pool();
@@ -254,7 +256,9 @@ impl GoalManager {
                 goal.turns_used,
                 goal.max_turns
             );
-            let _ = self.set_state(session_id, "failed").await;
+            if let Err(e) = self.set_state(session_id, "failed").await {
+                tracing::warn!(error = %e, session_id = %session_id, "failed to set goal state to failed");
+            }
             return GoalDecision::Paused {
                 reason: format!(
                     "turn budget exhausted after {}/{} turns",
@@ -269,7 +273,9 @@ impl GoalManager {
                 "Goal auto-paused after {} consecutive parse failures",
                 goal.consecutive_parse_failures
             );
-            let _ = self.set_state(session_id, "paused").await;
+            if let Err(e) = self.set_state(session_id, "paused").await {
+                tracing::warn!(error = %e, session_id = %session_id, "failed to set goal state to paused");
+            }
             return GoalDecision::Paused {
                 reason: format!(
                     "auto-paused after {} consecutive judge parse failures",
@@ -289,11 +295,15 @@ impl GoalManager {
         // Increment turns and track parse failures
         let is_parse_issue = decision.reason.starts_with("judge parse error")
             || decision.reason.starts_with("judge returned empty");
-        let _ = self.increment_turns(session_id, is_parse_issue).await;
+        if let Err(e) = self.increment_turns(session_id, is_parse_issue).await {
+            tracing::warn!(error = %e, session_id = %session_id, "failed to increment goal turns");
+        }
 
         match decision.verdict {
             GoalVerdict::Done => {
-                let _ = self.set_state(session_id, "completed").await;
+                if let Err(e) = self.set_state(session_id, "completed").await {
+                    tracing::warn!(error = %e, session_id = %session_id, "failed to set goal state to completed");
+                }
                 GoalDecision::Done {
                     reason: decision.reason,
                 }

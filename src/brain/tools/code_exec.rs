@@ -221,23 +221,31 @@ impl Tool for CodeExecTool {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 // Clean up temp file
-                let _ = fs::remove_file(&temp_file).await;
+                if let Err(e) = fs::remove_file(&temp_file).await {
+                    tracing::warn!(error = %e, "failed to remove temp file");
+                }
                 return Ok(ToolResult::error(format!("Code execution failed: {}", e)));
             }
             Err(_) => {
                 // Clean up temp file
-                let _ = fs::remove_file(&temp_file).await;
+                if let Err(e) = fs::remove_file(&temp_file).await {
+                    tracing::warn!(error = %e, "failed to remove temp file");
+                }
                 return Err(ToolError::Timeout(input.timeout_secs));
             }
         };
 
         // Clean up temp file
-        let _ = fs::remove_file(&temp_file).await;
+        if let Err(e) = fs::remove_file(&temp_file).await {
+            tracing::warn!(error = %e, "failed to remove temp file");
+        }
 
         // For Rust, also clean up the compiled binary
         if input.language == "rust" {
             let binary_name = temp_file.with_extension("");
-            let _ = fs::remove_file(&binary_name).await;
+            if let Err(e) = fs::remove_file(&binary_name).await {
+                tracing::warn!(error = %e, "failed to remove compiled binary");
+            }
         }
 
         // Convert output to strings

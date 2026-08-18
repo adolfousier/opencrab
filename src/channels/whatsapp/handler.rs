@@ -528,8 +528,11 @@ pub(crate) async fn handle_message(
     tracing::info!("WhatsApp: message from {}: {}", phone, text_preview);
 
     // Audio/voice note → show typing immediately and transcribe
-    if has_aud && voice_config.stt_enabled {
-        let _ = client.chatstate().send_composing(&info.source.chat).await;
+    if has_aud
+        && voice_config.stt_enabled
+        && let Err(e) = client.chatstate().send_composing(&info.source.chat).await
+    {
+        tracing::warn!(error = %e, "failed to send WhatsApp composing indicator");
     }
     let mut content;
     if has_aud
@@ -731,7 +734,9 @@ pub(crate) async fn handle_message(
                     )),
                     ..Default::default()
                 };
-                let _ = client.send_message(reply_target.clone(), reply).await;
+                if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+                    tracing::warn!(error = %e, "failed to send WhatsApp message");
+                }
                 return;
             }
         }
@@ -782,7 +787,9 @@ pub(crate) async fn handle_message(
             conversation: Some("Operation cancelled.".to_string()),
             ..Default::default()
         };
-        let _ = client.send_message(reply_target.clone(), reply).await;
+        if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+            tracing::warn!(error = %e, "failed to send WhatsApp message");
+        }
         return;
     }
 
@@ -811,7 +818,9 @@ pub(crate) async fn handle_message(
                 conversation: Some(reply_text),
                 ..Default::default()
             };
-            let _ = client.send_message(reply_target.clone(), reply).await;
+            if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+                tracing::warn!(error = %e, "failed to send WhatsApp message");
+            }
             return;
         }
 
@@ -822,7 +831,9 @@ pub(crate) async fn handle_message(
                     conversation: Some(resp.text),
                     ..Default::default()
                 };
-                let _ = client.send_message(reply_target.clone(), reply).await;
+                if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+                    tracing::warn!(error = %e, "failed to send WhatsApp message");
+                }
                 return;
             }
             ChannelCommand::NewSession => {
@@ -875,7 +886,9 @@ pub(crate) async fn handle_message(
                             conversation: Some(msg_text),
                             ..Default::default()
                         };
-                        let _ = client.send_message(reply_target.clone(), reply).await;
+                        if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+                            tracing::warn!(error = %e, "failed to send WhatsApp message");
+                        }
                         tracing::info!(
                             "WhatsApp /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
                             footer,
@@ -889,7 +902,9 @@ pub(crate) async fn handle_message(
                             conversation: Some("Failed to create session.".to_string()),
                             ..Default::default()
                         };
-                        let _ = client.send_message(reply_target.clone(), reply).await;
+                        if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+                            tracing::warn!(error = %e, "failed to send WhatsApp message");
+                        }
                     }
                 }
                 return;
@@ -900,7 +915,9 @@ pub(crate) async fn handle_message(
                     conversation: Some(resp.text),
                     ..Default::default()
                 };
-                let _ = client.send_message(reply_target.clone(), reply).await;
+                if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+                    tracing::warn!(error = %e, "failed to send WhatsApp message");
+                }
                 return;
             }
             ChannelCommand::Stop => {
@@ -914,7 +931,9 @@ pub(crate) async fn handle_message(
                     conversation: Some(text.to_string()),
                     ..Default::default()
                 };
-                let _ = client.send_message(reply_target.clone(), reply).await;
+                if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+                    tracing::warn!(error = %e, "failed to send WhatsApp message");
+                }
                 return;
             }
             ChannelCommand::Compact => {
@@ -922,7 +941,9 @@ pub(crate) async fn handle_message(
                     conversation: Some("⏳ Compacting context...".to_string()),
                     ..Default::default()
                 };
-                let _ = client.send_message(reply_target.clone(), status).await;
+                if let Err(e) = client.send_message(reply_target.clone(), status).await {
+                    tracing::warn!(error = %e, "failed to send WhatsApp message");
+                }
                 content =
                     "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                         .to_string();
@@ -938,7 +959,9 @@ pub(crate) async fn handle_message(
                     conversation: Some(resp.text.clone()),
                     ..Default::default()
                 };
-                let _ = client.send_message(reply_target.clone(), reply).await;
+                if let Err(e) = client.send_message(reply_target.clone(), reply).await {
+                    tracing::warn!(error = %e, "failed to send WhatsApp message");
+                }
                 return;
             }
             _ => {}
@@ -1041,7 +1064,9 @@ pub(crate) async fn handle_message(
         let background = agent.background_manager();
         async move {
             loop {
-                let _ = client.chatstate().send_composing(&chat_jid).await;
+                if let Err(e) = client.chatstate().send_composing(&chat_jid).await {
+                    tracing::warn!(error = %e, "failed to send WhatsApp composing indicator");
+                }
                 tokio::select! {
                     _ = cancel.cancelled() => break,
                     _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
@@ -1053,11 +1078,15 @@ pub(crate) async fn handle_message(
             // user most needs a sign that something is happening.
             if let Some(manager) = background {
                 while manager.running_for(session_id) > 0 {
-                    let _ = client.chatstate().send_composing(&chat_jid).await;
+                    if let Err(e) = client.chatstate().send_composing(&chat_jid).await {
+                        tracing::warn!(error = %e, "failed to send WhatsApp composing indicator");
+                    }
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             }
-            let _ = client.chatstate().send_paused(&chat_jid).await;
+            if let Err(e) = client.chatstate().send_paused(&chat_jid).await {
+                tracing::warn!(error = %e, "failed to send WhatsApp paused indicator");
+            }
         }
     });
 
@@ -1184,7 +1213,9 @@ pub(crate) async fn handle_message(
                         conversation: Some(body),
                         ..Default::default()
                     };
-                    let _ = client.send_message(jid, msg).await;
+                    if let Err(e) = client.send_message(jid, msg).await {
+                        tracing::warn!(error = %e, "failed to send WhatsApp message");
+                    }
                 });
             }
             _ => {}
@@ -1284,7 +1315,9 @@ pub(crate) async fn handle_message(
                             )),
                             ..Default::default()
                         };
-                        let _ = client.send_message(chat_jid, timeout_msg).await;
+                        if let Err(e) = client.send_message(chat_jid, timeout_msg).await {
+                            tracing::warn!(error = %e, "failed to send WhatsApp message");
+                        }
                         Ok((false, false))
                     }
                 }
@@ -1330,7 +1363,9 @@ pub(crate) async fn handle_message(
             std::mem::take(&mut *g)
         };
         for h in pending {
-            let _ = h.await;
+            if let Err(e) = h.await {
+                tracing::warn!(error = %e, "WhatsApp message task panicked");
+            }
         }
     }
 
@@ -1537,7 +1572,9 @@ pub(crate) async fn handle_message(
                 )),
                 ..Default::default()
             };
-            let _ = client.send_message(reply_target.clone(), error_msg).await;
+            if let Err(e) = client.send_message(reply_target.clone(), error_msg).await {
+                tracing::warn!(error = %e, "failed to send WhatsApp message");
+            }
         }
     }
 }

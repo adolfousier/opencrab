@@ -380,7 +380,9 @@ impl Provider for CommandCodeCliProvider {
                         e
                     ))))
                     .await;
-                let _ = child.kill().await;
+                if let Err(e) = child.kill().await {
+                    tracing::warn!(error = %e, "failed to kill code CLI child process");
+                }
                 return;
             }
 
@@ -402,8 +404,12 @@ impl Provider for CommandCodeCliProvider {
                 || lower.contains("too many tokens")
                 || lower.contains("prompt is too long")
             {
-                let _ = tx.send(Err(ProviderError::ContextLengthExceeded(0))).await;
-                let _ = child.wait().await;
+                if let Err(e) = tx.send(Err(ProviderError::ContextLengthExceeded(0))).await {
+                    tracing::warn!(error = %e, "failed to send context length error");
+                }
+                if let Err(e) = child.wait().await {
+                    tracing::warn!(error = %e, "failed to wait for code CLI child process");
+                }
                 return;
             }
 
@@ -452,7 +458,9 @@ impl Provider for CommandCodeCliProvider {
                         usage: TokenUsage::default(),
                     }))
                     .await;
-                let _ = tx.send(Ok(StreamEvent::MessageStop)).await;
+                if let Err(e) = tx.send(Ok(StreamEvent::MessageStop)).await {
+                    tracing::warn!(error = %e, "failed to send MessageStop event");
+                }
             } else if saw_error {
                 let _ = tx
                     .send(Ok(StreamEvent::MessageStart {

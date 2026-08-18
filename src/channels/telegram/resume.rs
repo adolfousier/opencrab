@@ -341,7 +341,9 @@ pub(crate) async fn resume_session(
     edit_cancel.cancel();
     // Await edit loop to prevent race where it sends a NEW message after
     // we grab streaming_msg_id (causes duplicate completion).
-    let _ = edit_loop_handle.await;
+    if let Err(e) = edit_loop_handle.await {
+        tracing::warn!(error = %e, "Telegram resume edit loop task panicked");
+    }
 
     // ── Final delivery ─────────────────────────────────────────────────────
     let (streaming_msg_id, remaining_display) = {

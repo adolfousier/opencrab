@@ -561,7 +561,9 @@ impl Provider for OpenCodeCliProvider {
                                     },
                                 }))
                                 .await;
-                            let _ = tx.send(Ok(StreamEvent::MessageStop)).await;
+                            if let Err(e) = tx.send(Ok(StreamEvent::MessageStop)).await {
+                                tracing::warn!(error = %e, "failed to send MessageStop event");
+                            }
                             break;
                         } else {
                             // Mid-loop step (tool-calls) — opencode will continue
@@ -705,7 +707,9 @@ impl Provider for OpenCodeCliProvider {
                         },
                     }))
                     .await;
-                let _ = tx.send(Ok(StreamEvent::MessageStop)).await;
+                if let Err(e) = tx.send(Ok(StreamEvent::MessageStop)).await {
+                    tracing::warn!(error = %e, "failed to send MessageStop event");
+                }
             }
 
             // Wait for process exit

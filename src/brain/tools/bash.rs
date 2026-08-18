@@ -507,7 +507,9 @@ impl Tool for BashTool {
 
                 // Write password to stdin and close it
                 if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(format!("{}\n", password).as_bytes()).await;
+                    if let Err(e) = stdin.write_all(format!("{}\n", password).as_bytes()).await {
+                        tracing::warn!(error = %e, "failed to write password to bash stdin");
+                    }
                     drop(stdin);
                 }
 

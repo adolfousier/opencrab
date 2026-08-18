@@ -563,7 +563,9 @@ impl EventHandler for Handler {
                         tokio::spawn(async move {
                             match agent_clone.send_message(sid, prompt, None).await {
                                 Ok(r) => {
-                                    let _ = channel_id.say(&http, &r.content).await;
+                                    if let Err(e) = channel_id.say(&http, &r.content).await {
+                                        tracing::warn!(error = %e, "failed to send Discord agent message");
+                                    }
                                 }
                                 Err(e) => tracing::error!("Agent follow-up failed: {}", e),
                             }

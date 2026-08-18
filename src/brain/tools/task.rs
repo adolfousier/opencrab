@@ -97,7 +97,9 @@ impl FileLock {
                         std::process::id(),
                         Utc::now().to_rfc3339()
                     );
-                    let _ = file.write_all(lock_info.as_bytes()).await;
+                    if let Err(e) = file.write_all(lock_info.as_bytes()).await {
+                        tracing::warn!(error = %e, "failed to write task lock info");
+                    }
                     return Ok(Self { lock_path });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -112,7 +114,9 @@ impl FileLock {
                             if age > Duration::from_secs(60) {
                                 // Stale lock, force remove it
                                 tracing::warn!("Removing stale lock file (age: {:?})", age);
-                                let _ = fs::remove_file(&lock_path).await;
+                                if let Err(e) = fs::remove_file(&lock_path).await {
+                                    tracing::warn!(error = %e, "failed to remove task lock file");
+                                }
                                 continue;
                             }
                         }
@@ -205,7 +209,9 @@ impl TaskStore {
         store.save(path).await?;
 
         // Release lock explicitly (also released on drop)
-        let _ = lock.release().await;
+        if let Err(e) = lock.release().await {
+            tracing::warn!(error = %e, "failed to release task lock");
+        }
 
         Ok(result)
     }
@@ -394,7 +400,9 @@ impl Tool for TaskTool {
                 // Read-only: acquire lock briefly just for reading
                 let lock = FileLock::acquire(&store_path).await?;
                 let store = TaskStore::load(&store_path).await?;
-                let _ = lock.release().await;
+                if let Err(e) = lock.release().await {
+                    tracing::warn!(error = %e, "failed to release task lock");
+                }
 
                 let mut filtered_tasks: Vec<_> = store
                     .tasks
@@ -471,7 +479,9 @@ impl Tool for TaskTool {
                 // Read-only: acquire lock briefly just for reading
                 let lock = FileLock::acquire(&store_path).await?;
                 let store = TaskStore::load(&store_path).await?;
-                let _ = lock.release().await;
+                if let Err(e) = lock.release().await {
+                    tracing::warn!(error = %e, "failed to release task lock");
+                }
 
                 let task = store.tasks.get(&task_id).ok_or_else(|| {
                     ToolError::InvalidInput(format!("Task not found: {}", task_id))

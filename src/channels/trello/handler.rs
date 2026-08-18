@@ -97,7 +97,9 @@ pub async fn process_comment(
                 let elapsed = (chrono::Utc::now() - session.updated_at).num_seconds();
                 elapsed > (h * 3600.0) as i64
             }) {
-                let _ = session_svc.archive_session(session.id).await;
+                if let Err(e) = session_svc.archive_session(session.id).await {
+                    tracing::warn!(error = %e, "failed to archive Trello session");
+                }
                 match crate::channels::session_init::create_channel_session(
                     &session_svc,
                     Some(session_title),

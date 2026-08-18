@@ -1139,7 +1139,9 @@ async fn cmd_chat_inner(
                     requests.len()
                 );
                 // Clear the table so these don't resume again if THIS run also crashes
-                let _ = pending_repo.clear_all().await;
+                if let Err(e) = pending_repo.clear_all().await {
+                    tracing::warn!(error = %e, "failed to clear pending items");
+                }
                 let agent = app.agent_service().clone();
                 let session_repo = crate::db::SessionRepository::new(db.pool().clone());
                 // Dedup by session_id — only resume each session once
@@ -1307,7 +1309,11 @@ async fn cmd_chat_inner(
                                             {
                                                 let channel =
                                                     serenity::model::id::ChannelId::new(ch_id);
-                                                let _ = channel.say(&http, &response.content).await;
+                                                if let Err(e) =
+                                                    channel.say(&http, &response.content).await
+                                                {
+                                                    tracing::warn!(error = %e, "failed to send Discord response");
+                                                }
                                             }
                                         }
                                         #[cfg(feature = "whatsapp")]
@@ -1321,7 +1327,10 @@ async fn cmd_chat_inner(
                                                     conversation: Some(response.content.clone()),
                                                     ..Default::default()
                                                 };
-                                                let _ = client.send_message(jid, msg).await;
+                                                if let Err(e) = client.send_message(jid, msg).await
+                                                {
+                                                    tracing::warn!(error = %e, "failed to send WhatsApp response");
+                                                }
                                             }
                                         }
                                         "slack" => {
@@ -1338,7 +1347,11 @@ async fn cmd_chat_inner(
                                                     slack_morphism::prelude::SlackMessageContent::new()
                                                         .with_text(response.content.clone()),
                                                 );
-                                                let _ = session.chat_post_message(&req).await;
+                                                if let Err(e) =
+                                                    session.chat_post_message(&req).await
+                                                {
+                                                    tracing::warn!(error = %e, "failed to send Slack response");
+                                                }
                                             }
                                         }
                                         other => {

@@ -467,8 +467,9 @@ impl Provider for GeminiProvider {
         // Create cachedContent on first request if system prompt exists
         if let (Some(system), Some(tools)) = (request.system_full(), request.tools.as_ref())
             && !tools.is_empty()
+            && let Err(e) = self.ensure_cached_content(&system, tools).await
         {
-            let _ = self.ensure_cached_content(&system, tools).await;
+            tracing::warn!(error = %e, "failed to ensure cached content for Gemini");
         }
 
         let body = self.build_gemini_request(&request);
@@ -528,8 +529,9 @@ impl Provider for GeminiProvider {
         // Create cachedContent on first request if system prompt exists
         if let (Some(system), Some(tools)) = (request.system_full(), request.tools.as_ref())
             && !tools.is_empty()
+            && let Err(e) = self.ensure_cached_content(&system, tools).await
         {
-            let _ = self.ensure_cached_content(&system, tools).await;
+            tracing::warn!(error = %e, "failed to ensure cached content for Gemini");
         }
 
         let body = self.build_gemini_request(&request);

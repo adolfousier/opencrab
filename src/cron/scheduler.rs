@@ -69,7 +69,9 @@ pub async fn schedule_background_rebuild(
     // Remove any stale rebuild job first so we never stack two builds.
     if let Ok(existing) = repo.list_all().await {
         for j in existing.iter().filter(|j| j.name == REBUILD_JOB_NAME) {
-            let _ = repo.delete(&j.id.to_string()).await;
+            if let Err(e) = repo.delete(&j.id.to_string()).await {
+                tracing::warn!(error = %e, job_id = %j.id, "failed to delete cron job");
+            }
         }
     }
     let now = Utc::now();

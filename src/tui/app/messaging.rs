@@ -1095,7 +1095,9 @@ impl App {
                 true
             }
             "/cd" => {
-                let _ = self.open_directory_picker().await;
+                if let Err(e) = self.open_directory_picker().await {
+                    tracing::warn!(error = %e, "failed to open directory picker");
+                }
                 true
             }
             "/goal" => {

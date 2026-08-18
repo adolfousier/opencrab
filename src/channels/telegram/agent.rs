@@ -478,8 +478,16 @@ impl TelegramAgent {
                                             None => agent.swap_provider(new_provider),
                                         }
                                     }
-                                    if !resp.current_model.is_empty() {
-                                        let _ = crate::channels::commands::switch_model(&agent, &resp.current_model, session_id, Some(provider_name)).await;
+                                    if !resp.current_model.is_empty()
+                                        && let Err(e) = crate::channels::commands::switch_model(
+                                            &agent,
+                                            &resp.current_model,
+                                            session_id,
+                                            Some(provider_name),
+                                        )
+                                        .await
+                                    {
+                                        tracing::warn!(error = %e, "failed to switch model in Telegram handler");
                                     }
                                     crate::channels::telegram::keyboards::ack_callback(&bot, &query, "model switch").await;
                                     // Send synthetic message to agent so it handles follow-up
@@ -746,8 +754,10 @@ impl TelegramAgent {
                                         .await;
 
                                     // Touch updated_at so find_session_by_title_suffix returns this session on next message
-                                    if let Ok(Some(s)) = session_svc.get_session(new_id).await {
-                                        let _ = session_svc.update_session(&s).await;
+                                    if let Ok(Some(s)) = session_svc.get_session(new_id).await
+                                        && let Err(e) = session_svc.update_session(&s).await
+                                    {
+                                        tracing::warn!(error = %e, "failed to update Telegram session");
                                     }
 
                                     if let Err(e) = bot
@@ -905,7 +915,9 @@ impl TelegramAgent {
                                         *wd.write().expect("working_directory lock poisoned") = std::path::PathBuf::from(&current_path);
                                         // Persist to session DB
                                         let svc = crate::services::SessionService::new(agent.context().clone());
-                                        let _ = svc.update_session_working_directory(sid, Some(current_path.clone())).await;
+                                        if let Err(e) = svc.update_session_working_directory(sid, Some(current_path.clone())).await {
+                                            tracing::warn!(error = %e, "failed to update session working directory");
+                                        }
                                     }
                                     state.clear_dir_browser(chat_id, topic_id).await;
                                     // Edit the message to confirm

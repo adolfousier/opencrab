@@ -87,7 +87,9 @@ pub async fn on_interaction(
                                 SlackMessageContent::new()
                                     .with_text(format!("\u{25b6}\u{fe0f} {text}")),
                             );
-                            let _ = session.chat_post_message(&echo).await;
+                            if let Err(e) = session.chat_post_message(&echo).await {
+                                tracing::warn!(error = %e, "failed to post Slack message");
+                            }
                             match agent_clone.send_message(sid, text, None).await {
                                 Ok(r) => {
                                     let clean =
@@ -96,7 +98,9 @@ pub async fn on_interaction(
                                         channel_id_clone,
                                         SlackMessageContent::new().with_text(clean),
                                     );
-                                    let _ = session.chat_post_message(&request).await;
+                                    if let Err(e) = session.chat_post_message(&request).await {
+                                        tracing::warn!(error = %e, "failed to post Slack message");
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::error!("Slack follow-up tap turn failed: {e}")
@@ -138,14 +142,16 @@ pub async fn on_interaction(
                                     None => state.agent.swap_provider(new_provider),
                                 }
                             }
-                            if !resp.current_model.is_empty() {
-                                let _ = crate::channels::commands::switch_model(
+                            if !resp.current_model.is_empty()
+                                && let Err(e) = crate::channels::commands::switch_model(
                                     &state.agent,
                                     &resp.current_model,
                                     session_id,
                                     Some(provider_name),
                                 )
-                                .await;
+                                .await
+                            {
+                                tracing::warn!(error = %e, "failed to switch model in Slack handler");
                             }
                             if let Some(sid) = session_id {
                                 let prompt = if resp.current_model.is_empty() {
@@ -186,7 +192,11 @@ pub async fn on_interaction(
                                                 channel_id_clone,
                                                 SlackMessageContent::new().with_text(r.content),
                                             );
-                                            let _ = session.chat_post_message(&request).await;
+                                            if let Err(e) =
+                                                session.chat_post_message(&request).await
+                                            {
+                                                tracing::warn!(error = %e, "failed to post Slack message");
+                                            }
                                         }
                                         Err(e) => tracing::error!("Agent follow-up failed: {}", e),
                                     }
@@ -228,7 +238,9 @@ pub async fn on_interaction(
                             channel.id.clone(),
                             SlackMessageContent::new().with_blocks(blocks),
                         );
-                        let _ = session.chat_post_message(&request).await;
+                        if let Err(e) = session.chat_post_message(&request).await {
+                            tracing::warn!(error = %e, "failed to post Slack message");
+                        }
                     }
                     continue;
                 }
@@ -301,7 +313,9 @@ pub async fn on_interaction(
                             channel.id.clone(),
                             SlackMessageContent::new().with_text(reply),
                         );
-                        let _ = session.chat_post_message(&request).await;
+                        if let Err(e) = session.chat_post_message(&request).await {
+                            tracing::warn!(error = %e, "failed to post Slack message");
+                        }
                     }
                     continue;
                 }
@@ -346,7 +360,9 @@ pub async fn on_interaction(
                                 SlackMessageContent::new()
                                     .with_text(format!("✅ Switched to session `{}`", display)),
                             );
-                            let _ = session.chat_post_message(&request).await;
+                            if let Err(e) = session.chat_post_message(&request).await {
+                                tracing::warn!(error = %e, "failed to post Slack message");
+                            }
                         }
                     }
                     continue;
@@ -1029,7 +1045,9 @@ async fn handle_message(
                          /new if you deliberately want a fresh session."
                     )),
                 );
-                let _ = session.chat_post_message(&request).await;
+                if let Err(e) = session.chat_post_message(&request).await {
+                    tracing::warn!(error = %e, "failed to post Slack message");
+                }
                 return;
             }
         }
@@ -1216,7 +1234,9 @@ async fn handle_message(
                 SlackChannelId::new(channel_id),
                 SlackMessageContent::new().with_text(reply),
             );
-            let _ = session.chat_post_message(&request).await;
+            if let Err(e) = session.chat_post_message(&request).await {
+                tracing::warn!(error = %e, "failed to post Slack message");
+            }
             return;
         }
 
@@ -1258,7 +1278,9 @@ async fn handle_message(
                     SlackChannelId::new(channel_id),
                     SlackMessageContent::new().with_blocks(blocks),
                 );
-                let _ = session.chat_post_message(&request).await;
+                if let Err(e) = session.chat_post_message(&request).await {
+                    tracing::warn!(error = %e, "failed to post Slack message");
+                }
                 return;
             }
             ChannelCommand::NewSession => {
@@ -1353,7 +1375,9 @@ async fn handle_message(
                             SlackChannelId::new(channel_id),
                             SlackMessageContent::new().with_text(msg_text),
                         );
-                        let _ = session.chat_post_message(&request).await;
+                        if let Err(e) = session.chat_post_message(&request).await {
+                            tracing::warn!(error = %e, "failed to post Slack message");
+                        }
                         tracing::info!(
                             "Slack /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
                             footer,
@@ -1371,7 +1395,9 @@ async fn handle_message(
                             SlackMessageContent::new()
                                 .with_text("Failed to create session.".to_string()),
                         );
-                        let _ = session.chat_post_message(&request).await;
+                        if let Err(e) = session.chat_post_message(&request).await {
+                            tracing::warn!(error = %e, "failed to post Slack message");
+                        }
                     }
                 }
                 return;
@@ -1406,7 +1432,9 @@ async fn handle_message(
                     SlackChannelId::new(channel_id),
                     SlackMessageContent::new().with_blocks(blocks),
                 );
-                let _ = session.chat_post_message(&request).await;
+                if let Err(e) = session.chat_post_message(&request).await {
+                    tracing::warn!(error = %e, "failed to post Slack message");
+                }
                 return;
             }
             ChannelCommand::Stop => {
@@ -1422,7 +1450,9 @@ async fn handle_message(
                     SlackChannelId::new(channel_id),
                     SlackMessageContent::new().with_text(reply.to_string()),
                 );
-                let _ = session.chat_post_message(&request).await;
+                if let Err(e) = session.chat_post_message(&request).await {
+                    tracing::warn!(error = %e, "failed to post Slack message");
+                }
                 return;
             }
             ChannelCommand::Compact => {
@@ -1432,7 +1462,9 @@ async fn handle_message(
                     SlackChannelId::new(channel_id.clone()),
                     SlackMessageContent::new().with_text("⏳ Compacting context...".to_string()),
                 );
-                let _ = session.chat_post_message(&request).await;
+                if let Err(e) = session.chat_post_message(&request).await {
+                    tracing::warn!(error = %e, "failed to post Slack message");
+                }
                 content =
                     "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                         .to_string();
@@ -1450,7 +1482,9 @@ async fn handle_message(
                     SlackChannelId::new(channel_id),
                     SlackMessageContent::new().with_text(resp.text.clone()),
                 );
-                let _ = session.chat_post_message(&request).await;
+                if let Err(e) = session.chat_post_message(&request).await {
+                    tracing::warn!(error = %e, "failed to post Slack message");
+                }
                 return;
             }
             _ => {}
@@ -1494,7 +1528,9 @@ async fn handle_message(
             SlackChannelId::new(channel_id),
             SlackMessageContent::new().with_text("Operation cancelled.".to_string()),
         );
-        let _ = session.chat_post_message(&request).await;
+        if let Err(e) = session.chat_post_message(&request).await {
+            tracing::warn!(error = %e, "failed to post Slack message");
+        }
         return;
     }
 
@@ -1768,7 +1804,9 @@ async fn handle_message(
                         if let Some(ref ts) = thread_ts_heal {
                             req = req.with_thread_ts(ts.clone());
                         }
-                        let _ = session.chat_post_message(&req).await;
+                        if let Err(e) = session.chat_post_message(&req).await {
+                            tracing::warn!(error = %e, "failed to post Slack message");
+                        }
                     });
                 }
                 ProgressEvent::IntermediateText { text, .. } => {
@@ -1845,7 +1883,9 @@ async fn handle_message(
                         if let Some(ref ts) = thread_ts_retry {
                             req = req.with_thread_ts(ts.clone());
                         }
-                        let _ = session.chat_post_message(&req).await;
+                        if let Err(e) = session.chat_post_message(&req).await {
+                            tracing::warn!(error = %e, "failed to post Slack message");
+                        }
                     });
                 }
                 ProgressEvent::ProviderSwitched {
@@ -1862,7 +1902,9 @@ async fn handle_message(
                         if let Some(ref ts) = thread_ts_switch {
                             req = req.with_thread_ts(ts.clone());
                         }
-                        let _ = session.chat_post_message(&req).await;
+                        if let Err(e) = session.chat_post_message(&req).await {
+                            tracing::warn!(error = %e, "failed to post Slack message");
+                        }
                     });
                 }
                 // Optional follow-up suggestions (#599): post tap-to-send
@@ -1984,7 +2026,9 @@ async fn handle_message(
                     pending.len()
                 );
                 for h in pending {
-                    let _ = h.await;
+                    if let Err(e) = h.await {
+                        tracing::warn!(error = %e, "Slack intermediate post task panicked");
+                    }
                 }
             }
 
@@ -2235,7 +2279,9 @@ async fn handle_message(
                 std::mem::take(&mut *g)
             };
             for h in late_pending {
-                let _ = h.await;
+                if let Err(e) = h.await {
+                    tracing::warn!(error = %e, "Slack late intermediate post task panicked");
+                }
             }
             let final_intermediates = sent_intermediate_ts_final.lock().await.clone();
             let already_seen: std::collections::HashSet<String> = matching_keep
@@ -2343,7 +2389,9 @@ async fn handle_message(
             if let Some(ref ts) = thread_ts {
                 request = request.with_thread_ts(ts.clone());
             }
-            let _ = session.chat_post_message(&request).await;
+            if let Err(e) = session.chat_post_message(&request).await {
+                tracing::warn!(error = %e, "failed to post Slack message");
+            }
         }
     }
 }

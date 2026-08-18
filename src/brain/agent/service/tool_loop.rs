@@ -771,7 +771,9 @@ impl AgentService {
             // Mark auto_title_attempted BEFORE spawning to prevent race
             // conditions where the next message arrives before the
             // background task completes. The Err arm resets it.
-            let _ = session_svc.mark_auto_title_attempted(session_id).await;
+            if let Err(e) = session_svc.mark_auto_title_attempted(session_id).await {
+                tracing::warn!(error = %e, "failed to mark auto title attempted");
+            }
             // Capture the old title to preserve channel prefix
             let old_title = session.title.clone().unwrap_or_default();
             tokio::spawn(async move {
@@ -841,7 +843,10 @@ impl AgentService {
                         } else {
                             // Empty/unusable title — allow the next message
                             // to retry. Same recovery path as the Err arm.
-                            let _ = session_svc.reset_auto_title_attempted(session_id).await;
+                            if let Err(e) = session_svc.reset_auto_title_attempted(session_id).await
+                            {
+                                tracing::warn!(error = %e, "failed to reset auto title attempted");
+                            }
                         }
                     }
                     Err(e) => {
@@ -850,7 +855,9 @@ impl AgentService {
                             session_id,
                             e,
                         );
-                        let _ = session_svc.reset_auto_title_attempted(session_id).await;
+                        if let Err(e) = session_svc.reset_auto_title_attempted(session_id).await {
+                            tracing::warn!(error = %e, "failed to reset auto title attempted");
+                        }
                     }
                 }
             });

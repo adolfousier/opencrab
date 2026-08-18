@@ -53,18 +53,22 @@ impl DeviceStore for Store {
                             "WhatsApp: clearing incompatible legacy device data — re-pair required"
                         );
                         let did2 = self.device_id;
-                        let _ = self.pool.get().await.ok().map(|conn| {
+                        // Best-effort cleanup: if pool.get() fails, skip the delete.
+                        if let Ok(conn) = self.pool.get().await {
                             tokio::spawn(async move {
-                                let _ = conn
+                                if let Err(e) = conn
                                     .interact(move |conn| {
                                         conn.execute(
                                             "DELETE FROM wa_device WHERE id = ?1",
                                             params![did2],
                                         )
                                     })
-                                    .await;
+                                    .await
+                                {
+                                    tracing::warn!(error = %e, "failed to delete legacy WhatsApp device data");
+                                }
                             });
-                        });
+                        }
                         return Ok(None);
                     }
                 };
