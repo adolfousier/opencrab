@@ -103,3 +103,42 @@ async fn spawn_command_enqueues_on_completion() {
     // Running count drops back to zero after completion.
     assert_eq!(mgr.running_for(sid), 0);
 }
+
+// A marker that is merely MENTIONED is not a long command: writing a report
+// that names a build step, grepping for the phrase, or feeding an edit script
+// a source line that contains one. Detaching those ends the turn on a command
+// that finishes in milliseconds, and each completion comes back as an injected
+// message that starts another turn.
+#[test]
+fn mentioning_a_marker_in_data_is_not_a_long_command() {
+    // Heredoc body: the report text names the command, the shell never runs it.
+    assert!(!is_known_long(
+        "cat > /tmp/note.md <<'EOF'\nRun cargo test --all-features to verify.\nEOF"
+    ));
+    // A marker alone on a body line must not read as a command position.
+    assert!(!is_known_long(
+        "cat >> src/tests/x.rs <<'RUST'\ncargo test --lib\nRUST"
+    ));
+    // Quoted grep pattern.
+    assert!(!is_known_long(
+        r#"grep -c -i "cargo test\|cargo clippy" src/tests/x.rs"#
+    ));
+    // Interpreter heredoc whose body inserts the phrase into a source file.
+    assert!(!is_known_long(
+        "python3 - <<'PY'\ns = \"cargo clippy --all-features\"\nPY"
+    ));
+    // Here-strings are not heredocs, and this one is still only data.
+    assert!(!is_known_long("echo \"cargo build --release\""));
+}
+
+// Command position still detaches, including the shapes the earlier substring
+// match got right by accident.
+#[test]
+fn markers_in_command_position_still_background() {
+    assert!(is_known_long("cargo test --all-features --lib plan_tool"));
+    assert!(is_known_long("cd ~/proj && cargo build --release"));
+    assert!(is_known_long("cargo fmt; echo done; cargo clippy --locked"));
+    assert!(is_known_long("W=$(cargo clippy --all-features 2>&1)"));
+    assert!(is_known_long("cargo fmt\ncargo test --lib"));
+    assert!(is_known_long("for f in a b; do cargo test --lib; done"));
+}
