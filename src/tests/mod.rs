@@ -221,6 +221,7 @@ pub mod instance_lock_test;
 pub mod intermediate_text_strip_guard_test;
 pub mod logging_log_files_test;
 pub mod logging_logger_test;
+pub mod logger_mutex_contention_test;
 pub mod long_command_test;
 pub mod markdown_render_test;
 pub mod memory_backfill_sweep_test;

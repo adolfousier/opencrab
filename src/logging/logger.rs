@@ -205,6 +205,24 @@ impl ResilientFileWriter {
         }
     }
 
+    /// Test-only: create a writer with a temporary directory (#1077).
+    #[cfg(test)]
+    pub(crate) fn new_for_test() -> Self {
+        let temp_dir = std::env::temp_dir().join(format!("opencrabs_log_test_{}", std::process::id()));
+        Self::new(temp_dir, "test".to_string())
+    }
+
+    /// Test-only: acquire the inner mutex to simulate a blocked write (#1077).
+    #[cfg(test)]
+    pub(crate) fn appender_lock_for_test(
+        &self,
+    ) -> Result<
+        std::sync::MutexGuard<'_, Option<tracing_appender::rolling::RollingFileAppender>>,
+        std::sync::TryLockError<()>,
+    > {
+        self.appender.lock().map_err(|_| std::sync::TryLockError::WouldBlock)
+    }
+
     /// Create the log directory (+ a `.gitignore` covering all runtime files)
     /// and open the daily rolling appender. Called on the first write and on
     /// self-heal after a write failure.
@@ -231,36 +249,56 @@ impl ResilientFileWriter {
 impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for ResilientFileWriter {
     type Writer = ResilientFileGuard<'a>;
     fn make_writer(&'a self) -> Self::Writer {
+        // Use try_lock with a short timeout to prevent a blocked write from
+        // silencing all logging (#1077). If the mutex is held by a thread
+        // stuck on a slow/blocking write (NFS timeout, disk failure), other
+        // threads would otherwise block here indefinitely. Dropping the event
+        // is better than parking the entire process.
+        let appender = match self.appender.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                // Mutex held by another thread (likely stuck on a write).
+                // Drop this event to avoid blocking all logging.
+                eprintln!("[logger] mutex contention — dropping event");
+                return ResilientFileGuard {
+                    parent: self,
+                    appender: None,
+                };
+            }
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+        };
         ResilientFileGuard {
             parent: self,
-            appender: self.appender.lock().unwrap_or_else(|e| e.into_inner()),
+            appender: Some(appender),
         }
     }
 }
 
 pub(crate) struct ResilientFileGuard<'a> {
     parent: &'a ResilientFileWriter,
-    appender: std::sync::MutexGuard<'a, Option<tracing_appender::rolling::RollingFileAppender>>,
+    appender: Option<std::sync::MutexGuard<'a, Option<tracing_appender::rolling::RollingFileAppender>>>,
 }
 
 impl std::io::Write for ResilientFileGuard<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // If the guard is None (mutex contention), discard the write (#1077).
+        let guard = match self.appender.as_mut() {
+            Some(g) => g,
+            None => return Ok(buf.len()), // pretend success to avoid error spam
+        };
         // Lazily open the appender on the first write (see `ResilientFileWriter`).
-        if self.appender.is_none() {
-            *self.appender = Some(ResilientFileWriter::build(
+        if guard.is_none() {
+            **guard = Some(ResilientFileWriter::build(
                 &self.parent.log_dir,
                 &self.parent.prefix,
             ));
         }
-        let appender = self
-            .appender
-            .as_mut()
-            .expect("appender was just materialized");
+        let appender = guard.as_mut().expect("appender was just materialized");
         let result = appender.write(buf);
         if result.is_err() {
             // Self-heal: rebuild the appender so the next event reopens the file
             // instead of every subsequent write hitting the same dead handle.
-            *self.appender = Some(ResilientFileWriter::build(
+            **guard = Some(ResilientFileWriter::build(
                 &self.parent.log_dir,
                 &self.parent.prefix,
             ));
@@ -270,7 +308,10 @@ impl std::io::Write for ResilientFileGuard<'_> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self.appender.as_mut() {
-            Some(appender) => appender.flush(),
+            Some(guard) => match guard.as_mut() {
+                Some(appender) => appender.flush(),
+                None => Ok(()),
+            },
             None => Ok(()),
         }
     }
