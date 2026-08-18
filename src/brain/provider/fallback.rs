@@ -369,12 +369,31 @@ impl Provider for FallbackProvider {
         self.primary.supports_vision()
     }
 
+    /// Reports the **active** entry, not the primary (#1100).
+    ///
+    /// This flag decides who executes tool calls. An agentic CLI provider
+    /// runs the tools itself inside its own subprocess, so the tool loop
+    /// must render its `tool_use` blocks without executing them. Answering
+    /// for the primary meant a chain that started on an API provider and
+    /// failed over to `claude-cli` kept reporting `false`: the CLI ran each
+    /// command and OpenCrabs ran it a second time. Non-idempotent calls
+    /// duplicated (two commits, two `gh issue create`s, a `sed -i` applied
+    /// twice into code that no longer compiled).
+    ///
+    /// The mirror case is just as broken: a chain whose primary is a CLI,
+    /// after failing over to an API provider, kept reporting `true` and no
+    /// one executed the tools at all.
     fn cli_handles_tools(&self) -> bool {
-        self.primary.cli_handles_tools()
+        self.active_provider().cli_handles_tools()
     }
 
+    /// Reports the **active** entry for the same reason as
+    /// [`Self::cli_handles_tools`]: whoever owns the conversation history
+    /// owns compaction. Compacting on OpenCrabs' side for a CLI that
+    /// persists its own session (or skipping compaction for an API provider
+    /// that does not) both corrupt the turn.
     fn cli_manages_context(&self) -> bool {
-        self.primary.cli_manages_context()
+        self.active_provider().cli_manages_context()
     }
 
     fn name(&self) -> &str {

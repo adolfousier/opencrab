@@ -69,6 +69,45 @@ fn emit_retry_notices(
     }
 }
 
+/// Re-read the two flags that decide **who executes tool calls** and **who
+/// owns the conversation history** for the entry that is active right now.
+///
+/// Both are cached once per turn because they cannot change for a plain
+/// provider. A `FallbackProvider` breaks that assumption: a sticky swap
+/// mid-turn can move the chain between an API provider (OpenCrabs executes
+/// the tools) and an agentic CLI (the subprocess already executed them).
+/// Acting on the pre-swap value ran every tool twice: two commits, two
+/// `gh issue create`s, one `sed -i` applied twice into code that no longer
+/// compiled (#1100).
+pub(crate) fn refresh_cli_flags(
+    provider: &std::sync::Arc<dyn crate::brain::provider::Provider>,
+    is_cli_provider: &mut bool,
+    cli_owns_context: &mut bool,
+) {
+    let now_cli = provider.cli_handles_tools();
+    let now_owns_context = provider.cli_manages_context();
+    if now_cli != *is_cli_provider || now_owns_context != *cli_owns_context {
+        tracing::info!(
+            "Provider swap changed tool ownership: cli_handles_tools {} -> {}, \
+             cli_manages_context {} -> {} (active '{}'). Tool calls will be {} this turn.",
+            *is_cli_provider,
+            now_cli,
+            *cli_owns_context,
+            now_owns_context,
+            provider
+                .active_subprovider_name()
+                .unwrap_or_else(|| provider.name().to_string()),
+            if now_cli {
+                "rendered only (the CLI ran them)"
+            } else {
+                "executed by OpenCrabs"
+            },
+        );
+    }
+    *is_cli_provider = now_cli;
+    *cli_owns_context = now_owns_context;
+}
+
 /// What to do with a provider-reported input-token count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenReport {
@@ -817,17 +856,23 @@ impl AgentService {
             });
         }
 
-        // Detect CLI + local provider once (neither changes during the loop).
+        // Detect CLI + local provider up front.
         //
         // `is_cli_provider` controls TWO unrelated behaviors:
         //   1. Skip local tool execution (CLI runs tools internally)
         //   2. Skip OpenCrabs-side context compaction (CLI persists session)
         //
+        // Both are re-read whenever a sticky fallback swap fires mid-turn
+        // (see `refresh_cli_flags` at the swap site below): a chain that
+        // rotates between an API provider and an agentic CLI changes who
+        // executes the tools, and a stale `false` means both sides run them
+        // (#1100).
+        //
         // `is_local_provider` relaxes the phantom-tool-call detector so
         // local llama.cpp/MLX models that answer in prose when they should
         // have called a tool get re-prompted, matching what Unsloth Studio
         // does out of the box.
-        let (is_cli_provider, cli_owns_context, is_dialagram, is_local_provider) = {
+        let (mut is_cli_provider, mut cli_owns_context, is_dialagram, is_local_provider) = {
             let p = self.provider_for_session(session_id);
             let base = p.base_url();
             // Detect dialagram by base_url — users add it as a custom
@@ -3451,6 +3496,24 @@ impl AgentService {
             // Surface any sticky-fallback swap that the FallbackProvider
             // performed during this turn so the user sees which provider/model
             // is now active. Fires at most once per swap.
+            // Re-read who owns tool execution and context for THIS iteration,
+            // before the tool-execution decision below (#1100).
+            //
+            // Six sites can move this session onto a different provider
+            // mid-turn: the rate-limit walk, the stream-fallback walk, the
+            // 5xx walk, the empty-response rescue, a `FallbackProvider`
+            // sticky promotion, and `force_next_fallback`. Refreshing at each
+            // of them is how the bug happened. The rate-limit walk already
+            // refreshes `model_name` for exactly this reason and simply did
+            // not know there were two more bindings to carry. One refresh at
+            // the single point every path converges on cannot be forgotten by
+            // the seventh site.
+            refresh_cli_flags(
+                &self.provider_for_session(session_id),
+                &mut is_cli_provider,
+                &mut cli_owns_context,
+            );
+
             let rotated_this_iteration = self.provider_for_session(session_id).take_swap_event();
             if let Some(ref swap) = rotated_this_iteration {
                 let reason = if swap.reason.is_empty() {
