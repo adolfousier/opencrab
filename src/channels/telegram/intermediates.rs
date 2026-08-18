@@ -156,6 +156,7 @@ pub(crate) async fn try_send_intermediate_rich(
         return None;
     }
     match super::rich::api::send_rich_markdown_id(
+        bot.api_url().as_str(),
         bot.token(),
         chat_id.0,
         thread_id,

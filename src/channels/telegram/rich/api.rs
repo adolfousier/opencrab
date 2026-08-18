@@ -13,7 +13,9 @@ use teloxide::types::ThreadId;
 /// blocks, so `<details><summary>` becomes a native RichBlockDetails
 /// collapsible, which the markdown input mode cannot express.
 /// `reply_markup` is optional — pass `None` for no keyboard.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_html_id(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
@@ -22,7 +24,7 @@ pub(crate) async fn send_rich_html_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let url = format!("{api_url}/bot{token}/sendRichMessage");
     let mut body = build_body_html(chat_id, thread_id, html);
     if let Some(kb) = reply_markup {
         body["reply_markup"] = kb.clone();
@@ -37,7 +39,9 @@ pub(crate) async fn send_rich_html_id(
 
 /// Edit an existing rich message with HTML input (#420 path A).
 /// `reply_markup` is optional — pass `None` to leave the keyboard unchanged.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn edit_rich_html(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     message_id: i32,
@@ -46,7 +50,7 @@ pub(crate) async fn edit_rich_html(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<()> {
-    let url = format!("https://api.telegram.org/bot{token}/editMessageText");
+    let url = format!("{api_url}/bot{token}/editMessageText");
     let mut body = serde_json::json!({
         "chat_id": chat_id,
         "message_id": message_id,
@@ -62,6 +66,7 @@ pub(crate) async fn edit_rich_html(
 /// Used for intermediate streamed segments, which must be tracked for later
 /// footer-append / dedup. Returns `Err` so the caller can fall back to HTML.
 pub(crate) async fn send_rich_markdown_id(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
@@ -69,7 +74,7 @@ pub(crate) async fn send_rich_markdown_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let url = format!("{api_url}/bot{token}/sendRichMessage");
     let result = post_rich(
         &url,
         &build_body(chat_id, thread_id, markdown),
@@ -281,7 +286,9 @@ pub(crate) fn build_body_html(
 /// `tg://photo?id=<id>`; the `media` array maps each id to a renderer URL
 /// Telegram fetches server-side. This is the mode that embeds images while
 /// keeping pipe tables native. Returns the new message id.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_markdown_media_id(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
@@ -290,7 +297,7 @@ pub(crate) async fn send_rich_markdown_media_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let url = format!("{api_url}/bot{token}/sendRichMessage");
     let result = post_rich(
         &url,
         &build_body_markdown_media(chat_id, thread_id, markdown, media),

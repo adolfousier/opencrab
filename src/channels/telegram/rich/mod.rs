@@ -146,6 +146,7 @@ pub(crate) async fn markdown_to_html_mermaid(text: &str) -> String {
 /// byte-identical to the plain rich-markdown path. Returns `Err` on
 /// transport failure so the caller can fall back.
 pub(crate) async fn send_rich_with_mermaid(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<teloxide::types::ThreadId>,
@@ -153,13 +154,14 @@ pub(crate) async fn send_rich_with_mermaid(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<()> {
-    send_rich_with_mermaid_id(token, chat_id, thread_id, markdown, origin, origin_detail)
+    send_rich_with_mermaid_id(api_url, token, chat_id, thread_id, markdown, origin, origin_detail)
         .await
         .map(|_| ())
 }
 
 /// Same as [`send_rich_with_mermaid`] but returns the new message id.
 pub(crate) async fn send_rich_with_mermaid_id(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<teloxide::types::ThreadId>,
@@ -169,6 +171,7 @@ pub(crate) async fn send_rich_with_mermaid_id(
 ) -> anyhow::Result<i32> {
     if !mermaid::should_render_mermaid(markdown) {
         return api::send_rich_markdown_id(
+            api_url,
             token,
             chat_id,
             thread_id,
@@ -188,6 +191,7 @@ pub(crate) async fn send_rich_with_mermaid_id(
     // embed; send it as plain rich markdown (no `media` field).
     if media.is_empty() {
         return api::send_rich_markdown_id(
+            api_url,
             token,
             chat_id,
             thread_id,
@@ -200,6 +204,7 @@ pub(crate) async fn send_rich_with_mermaid_id(
 
     // Primary: markdown dialect + media array keeps pipe tables native.
     match api::send_rich_markdown_media_id(
+        api_url,
         token,
         chat_id,
         thread_id,
@@ -217,6 +222,7 @@ pub(crate) async fn send_rich_with_mermaid_id(
             tracing::warn!("rich markdown+media send failed ({e}); falling back to html dialect");
             let html = markdown_to_html_mermaid(markdown).await;
             api::send_rich_html_id(
+                api_url,
                 token,
                 chat_id,
                 thread_id,

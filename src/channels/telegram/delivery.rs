@@ -380,6 +380,7 @@ pub(crate) async fn deliver_final_response(
             {
                 let rich_md = pre_dedup_text.clone();
                 match super::rich::send_rich_with_mermaid_id(
+                    bot.api_url().as_str(),
                     bot.token(),
                     chat_id.0,
                     thread_id,
@@ -560,6 +561,7 @@ pub(crate) async fn deliver_final_response(
                         // are routed to the rich-HTML image path inside the sender
                         // (#1044), everything else stays on markdown.
                         match super::rich::send_rich_with_mermaid_id(
+                            bot.api_url().as_str(),
                             bot.token(),
                             chat_id.0,
                             thread_id,

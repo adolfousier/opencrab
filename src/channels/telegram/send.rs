@@ -310,6 +310,7 @@ pub(crate) async fn send_markdown_outbox(
     // outbox does not double-log the rich success (review F3/F8).
     if super::rich::should_send_native_rich(markdown) {
         match super::rich::send_rich_with_mermaid_id(
+            bot.api_url().as_str(),
             bot.token(),
             chat_id.0,
             thread_id,
