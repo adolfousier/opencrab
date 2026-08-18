@@ -279,6 +279,74 @@ async fn import_sample_plan_succeeds() {
 }
 
 #[tokio::test]
+async fn import_under_auto_approve_goes_active() {
+    let json = include_str!("../brain/tools/test_data/sample-coding-plan.json");
+    let tmp_dir = TempDir::new().unwrap();
+    let plan_file = tmp_dir.path().join("sample-coding-plan.json");
+    std::fs::write(&plan_file, json).unwrap();
+
+    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
+    let tool = PlanTool;
+
+    let input = serde_json::json!({
+        "operation": "init",
+        "file_path": plan_file.to_str().unwrap(),
+    });
+
+    let result = tool.execute(input, &ctx).await.unwrap();
+    assert!(result.success);
+    // #581 parity with the create arm: under tool auto-approve there is no
+    // user Approve step, so the imported plan must go Active, not stall in
+    // Editing with a "call 'start'" message that the Editing gate refuses.
+    assert!(
+        result.output.contains("Active — auto-approve"),
+        "expected Active message, got: {}",
+        result.output
+    );
+    assert!(
+        !result.output.contains("Editing"),
+        "must not report Editing under auto-approve: {}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn import_without_auto_approve_waits_in_editing() {
+    let json = include_str!("../brain/tools/test_data/sample-coding-plan.json");
+    let tmp_dir = TempDir::new().unwrap();
+    let plan_file = tmp_dir.path().join("sample-coding-plan.json");
+    std::fs::write(&plan_file, json).unwrap();
+
+    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+    let tool = PlanTool;
+
+    let input = serde_json::json!({
+        "operation": "init",
+        "file_path": plan_file.to_str().unwrap(),
+    });
+
+    let result = tool.execute(input, &ctx).await.unwrap();
+    assert!(result.success);
+    assert!(
+        result.output.contains("Editing"),
+        "default import stays Editing: {}",
+        result.output
+    );
+    // The old message said "Call 'start' to begin" while start is refused in
+    // Editing — the message must direct the agent to WAIT for approval.
+    assert!(
+        result.output.contains("WAIT"),
+        "message must say WAIT: {}",
+        result.output
+    );
+    assert!(
+        !result.output.contains("Call 'start'"),
+        "lying start instruction must be gone: {}",
+        result.output
+    );
+}
+
+#[tokio::test]
 async fn import_rejects_file_over_size_cap() {
     // 10 MB + 1 byte triggers the size check before parse. This guards
     // against a malicious or runaway plan file blowing up memory on

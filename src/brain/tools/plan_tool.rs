@@ -926,7 +926,9 @@ impl Tool for PlanTool {
          retry. `complete` takes action=\"success\" (default), \"fail\", or \"skip\". Ordering of \
          dependencies is by task order number (1-based). A started task's acceptance criteria \
          become the session goal until it completes. Completing the last task archives the plan. \
-         \n\nIMPORT: `init` with an absolute `file_path` (non-empty tasks required) goes Active. \
+         \n\nIMPORT: `init` with an absolute `file_path` (non-empty tasks required) goes to \
+         Editing for user review; under tool auto-approve it goes Active immediately \
+         (mirrors the create arm, #581). \
          BUNDLED REFERENCE PLANS: source at `src/docs/reference/plans/` (embedded), runtime at \
          `~/.opencrabs/profiles/<profile>/plans/`. See `coding-plans/rust-fast.json` etc. and \
          `plan-json-spec.md`. \
@@ -1184,10 +1186,11 @@ impl Tool for PlanTool {
 
                     imported.id = uuid::Uuid::new_v4();
                     imported.session_id = plan_sid;
-                    // Import is checklist-track: tasks are already structured,
-                    // but the plan still goes to Editing first so the user can
-                    // review before execution starts (start/complete are blocked
-                    // until approval).
+                    // Import is checklist-track: tasks are already structured.
+                    // Default is Editing first so the user can review before
+                    // execution starts (start/complete are blocked until
+                    // approval); under tool auto-approve the plan goes Active
+                    // immediately instead (mirrors the create arm, #581).
                     imported.status = PlanStatus::Editing;
                     imported.created_at = Utc::now();
                     imported.updated_at = Utc::now();
@@ -1255,15 +1258,32 @@ impl Tool for PlanTool {
                         ));
                     }
 
+                    // #581 parity with the create arm: under tool auto-approve
+                    // (yolo / cron / run / a2a) there is no user Approve step,
+                    // so the imported checklist goes live now instead of
+                    // stalling in Editing with nobody to approve it.
+                    let auto_active = context.auto_approve;
+                    if auto_active {
+                        imported.approve();
+                    }
+
                     let count = imported.tasks.len();
                     let plan_title = imported.title.clone();
                     let list = render_task_list(&imported);
                     plan = Some(imported);
 
-                    format!(
-                        "📋 Imported plan: {plan_title} ({count} tasks)\n\n{list}\n\n\
-                         Call 'start' to begin — it returns the first task's full details."
-                    )
+                    if auto_active {
+                        format!(
+                            "📋 Imported plan: {plan_title} ({count} tasks, Active — auto-approve). \
+                             No user Approve step in this mode; call 'start' to begin executing."
+                        )
+                    } else {
+                        format!(
+                            "📋 Imported plan: {plan_title} ({count} tasks, Editing).\n\n{list}\n\n\
+                             WAIT for the user to approve before calling 'start': checklist \
+                             operations stay blocked until the plan is Active."
+                        )
+                    }
                 } else {
                     // ===== create mode =====
                     let title = title.ok_or_else(|| {
