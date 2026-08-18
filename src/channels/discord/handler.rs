@@ -728,12 +728,13 @@ pub(crate) async fn handle_message(
         .register_session_channel(session_id, msg.channel_id.get())
         .await;
 
-    // Claim this session's background-task completions for Discord (#940),
-    // so a completion is delivered by the surface that owns the session
-    // rather than by whichever service happened to run the command.
-    if let Some(enqueue) = agent.message_enqueue_callback() {
-        crate::brain::agent::service::session_routes::register_session_route(session_id, enqueue);
-    }
+    // Claim this session's background-task completions for Discord: a completion
+    // must be delivered by the surface that OWNS the session, not by whichever
+    // service happened to run the command (#940).
+    crate::brain::agent::service::session_routes::claim_for_channel(
+        session_id,
+        agent.message_enqueue_callback(),
+    );
     let approval_cb = make_approval_callback(discord_state.clone());
 
     let cancel_token = tokio_util::sync::CancellationToken::new();

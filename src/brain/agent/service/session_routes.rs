@@ -139,3 +139,15 @@ pub fn session_route(session_id: Uuid) -> Option<MessageEnqueueCallback> {
         }
     }
 }
+
+/// Claim `session_id`'s background-task completions for a channel.
+///
+/// Every channel handler did this inline, with four copies of the same
+/// rationale comment above four copies of the same `if let`. `enqueue` is
+/// `None` on a surface with no enqueue callback wired, which is simply nothing
+/// to claim with. Idempotent, so calling it on every inbound message is free.
+pub fn claim_for_channel(session_id: Uuid, enqueue: Option<MessageEnqueueCallback>) {
+    if let Some(enqueue) = enqueue {
+        register_session_route(session_id, enqueue);
+    }
+}
