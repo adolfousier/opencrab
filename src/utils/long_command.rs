@@ -1,4 +1,4 @@
-//! Which shell commands are long enough to run detached (#722, #1093).
+//! Which shell commands are long enough to run detached (#722).
 //!
 //! A command is detached when it *starts* one of the known long tasks. It is
 //! deliberately not enough for the text to contain one: a heredoc writing a

@@ -1,4 +1,4 @@
-//! Which commands detach (#722) and, since #1093, which only look like they
+//! Which commands detach (#722) and which only look like they
 //! should. A marker in a heredoc body or a quoted argument is data: detaching
 //! on it ends the turn on a command that takes milliseconds, and every
 //! completion comes back as an injected message that starts another turn.
