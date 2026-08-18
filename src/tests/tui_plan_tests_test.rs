@@ -546,3 +546,111 @@ fn test_complex_dependency_chain() {
     assert!(task4_pos > task2_pos);
     assert!(task4_pos > task3_pos);
 }
+
+// ── checklist quality glyphs ──────────────────────────────────────────
+
+#[test]
+fn verifiable_needs_a_command_and_an_expectation() {
+    // Both halves present.
+    assert!(is_verifiable("run `cargo test` and it exits 0"));
+    // Command with no stated outcome is a wish.
+    assert!(!is_verifiable("run cargo test"));
+    // Outcome with nothing runnable behind it is also a wish.
+    assert!(!is_verifiable("the suite passes"));
+}
+
+#[test]
+fn verifiable_matches_stems_not_literals() {
+    // "exits" must match the "exit" stem: the v1 literal list missed this
+    // and flagged a perfectly checkable criterion.
+    assert!(is_verifiable("cargo clippy exits 0"));
+    // Third-person "shows" must match the "show" stem.
+    assert!(is_verifiable("gh issue view 1091 shows state CLOSED"));
+    // Plural "matches" must match the "match" stem.
+    assert!(is_verifiable("grep finds 2 matches"));
+}
+
+#[test]
+fn verifiable_accepts_a_backticked_command() {
+    // Backticks name something runnable even when the binary is not on the
+    // RUNNABLE list.
+    assert!(is_verifiable("`./scripts/smoke.sh` prints OK"));
+}
+
+#[test]
+fn receipt_accepts_recheckable_evidence_only() {
+    assert!(has_receipt("committed as fbd93fd5"));
+    assert!(has_receipt("75 passed, 0 failed"));
+    assert!(has_receipt("clippy exit 0"));
+    assert!(has_receipt("wrote src/tui/plan.rs"));
+    // A claim is not a receipt.
+    assert!(!has_receipt("Done"));
+    assert!(!has_receipt("finished the task as requested"));
+}
+
+#[test]
+fn glyph_flags_a_task_with_no_criteria() {
+    let task = create_test_task(1, "no criteria");
+    assert_eq!(quality_glyph(&task), Some("⚠️"));
+}
+
+#[test]
+fn glyph_flags_criteria_nobody_can_run() {
+    let mut task = create_test_task(1, "soft criteria");
+    task.acceptance_criteria = vec!["the code is clean and well factored".to_string()];
+    assert_eq!(quality_glyph(&task), Some("🔓"));
+}
+
+#[test]
+fn glyph_flags_a_completion_with_no_receipt() {
+    let mut task = create_test_task(1, "claimed done");
+    task.acceptance_criteria = vec!["`cargo test` passes".to_string()];
+    task.status = TaskStatus::Completed;
+    task.notes = Some("all good".to_string());
+    assert_eq!(quality_glyph(&task), Some("❔"));
+}
+
+#[test]
+fn glyph_stays_silent_on_a_well_formed_task() {
+    let mut task = create_test_task(1, "honest work");
+    task.acceptance_criteria = vec!["`cargo test` passes".to_string()];
+    task.status = TaskStatus::Completed;
+    task.notes = Some("75 passed, commit fbd93fd5".to_string());
+    assert_eq!(quality_glyph(&task), None);
+}
+
+#[test]
+fn glyph_never_asks_a_skipped_task_for_a_receipt() {
+    // Skipped does not claim the work was done, so it owes no receipt.
+    // Only Completed does.
+    let mut task = create_test_task(1, "skipped");
+    task.acceptance_criteria = vec!["`cargo test` passes".to_string()];
+    task.status = TaskStatus::Skipped;
+    assert_eq!(quality_glyph(&task), None);
+
+    let mut failed = create_test_task(2, "failed");
+    failed.acceptance_criteria = vec!["`cargo test` passes".to_string()];
+    failed.status = TaskStatus::Failed;
+    assert_eq!(quality_glyph(&failed), None);
+}
+
+#[test]
+fn glyph_severity_order_shows_the_worst_problem_only() {
+    // A completed task with NO criteria is both criteria-less and
+    // receipt-less; the criteria gap is the more damning one and only one
+    // glyph renders.
+    let mut task = create_test_task(1, "worst case");
+    task.status = TaskStatus::Completed;
+    task.notes = Some("done".to_string());
+    assert_eq!(quality_glyph(&task), Some("⚠️"));
+}
+
+#[test]
+fn glyph_suffix_is_a_space_plus_glyph_or_nothing() {
+    let bare = create_test_task(1, "bare");
+    assert_eq!(quality_glyph_suffix(&bare), " ⚠️");
+
+    let mut good = create_test_task(2, "good");
+    good.acceptance_criteria = vec!["`cargo test` passes".to_string()];
+    assert_eq!(quality_glyph_suffix(&good), "");
+}

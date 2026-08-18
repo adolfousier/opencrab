@@ -310,7 +310,15 @@ async fn clear_task_goal(context: &ToolExecutionContext, session_id: uuid::Uuid)
 fn render_task_list(plan: &PlanDocument) -> String {
     plan.tasks
         .iter()
-        .map(|t| format!("  {}. {} [{}]", t.order, t.title, t.task_type))
+        .map(|t| {
+            format!(
+                "  {}. {} [{}]{}",
+                t.order,
+                t.title,
+                t.task_type,
+                crate::tui::plan::quality_glyph_suffix(t)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }

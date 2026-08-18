@@ -448,7 +448,10 @@ pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Opt
                     '☐'
                 };
                 let title = crate::utils::truncate_str(t.title.trim(), SECTION_TEXT_CAP);
-                format!("{mark} {title}")
+                format!(
+                    "{mark} {title}{}",
+                    crate::tui::plan::quality_glyph_suffix(t)
+                )
             })
             .collect()
     });

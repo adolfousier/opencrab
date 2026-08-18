@@ -801,3 +801,98 @@ impl TaskStatus {
         }
     }
 }
+
+// ── checklist quality glyphs ──────────────────────────────────────────
+//
+// A checklist row can look finished and mean nothing: a task with no
+// acceptance criteria, criteria nobody can actually run, or a Completed
+// box whose notes carry no receipt. These predicates mark that absence on
+// the row itself, where the reader already looks, rather than in a summary
+// line nobody reads.
+//
+// Absence-only, one glyph per task: the glyph reports what is MISSING, so
+// a well-formed task renders exactly as it did before.
+
+/// A criterion is mechanically verifiable when it names something runnable
+/// AND states what the run must produce. Either half alone is a wish.
+pub fn is_verifiable(criterion: &str) -> bool {
+    let lower = criterion.to_lowercase();
+
+    const RUNNABLE: &[&str] = &[
+        "cargo", "git ", "gh ", "npm ", "pnpm ", "make ", "curl ", "pytest", "python", "node ",
+        "grep", "rg ", "sed ", "awk ", "docker", "psql", "sqlite3", "stat ", "ls ", "wc ",
+    ];
+    let has_command = criterion.contains('`') || RUNNABLE.iter().any(|p| lower.contains(p));
+
+    // Stems, not full forms. Matching the literal "exit 0" misses "exits 0"
+    // and "report" misses "shows", so trim the plural / third-person ending
+    // before comparing and let one stem cover the whole family.
+    const EXPECT_STEM: &[&str] = &[
+        "exit",
+        "pass",
+        "fail",
+        "return",
+        "print",
+        "output",
+        "show",
+        "report",
+        "match",
+        "contain",
+        "clean",
+        "green",
+        "no warning",
+        "0 error",
+    ];
+    let stems: Vec<String> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .map(|w| w.trim_end_matches("es").trim_end_matches('s').to_string())
+        .collect();
+    let has_expectation = EXPECT_STEM
+        .iter()
+        .any(|p| stems.iter().any(|w| w == p) || lower.contains(p));
+
+    has_command && has_expectation
+}
+
+/// A receipt is something a third party can re-check: a sha, an exit code,
+/// a test count, or a path. "Done" is not a receipt.
+pub fn has_receipt(notes: &str) -> bool {
+    let lower = notes.to_lowercase();
+    let sha = notes
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|w| w.len() >= 7 && w.len() <= 40 && w.chars().all(|c| c.is_ascii_hexdigit()));
+    let counted = lower.contains("passed") || lower.contains("exit 0") || lower.contains("failed");
+    let path = notes.contains('/') && notes.contains('.');
+    sha || counted || path
+}
+
+/// The single glyph a task has earned, or `None` when nothing is missing.
+///
+/// Ordered by severity because only one renders: no criteria at all beats
+/// unrunnable criteria, which beats a completion with no receipt.
+///
+/// `Skipped`, `Failed` and `Blocked` never earn `❔`. Only `Completed`
+/// claims the work is done, so only `Completed` owes a receipt.
+pub fn quality_glyph(task: &PlanTask) -> Option<&'static str> {
+    if task.acceptance_criteria.is_empty() {
+        return Some("⚠️");
+    }
+    if !task.acceptance_criteria.iter().any(|c| is_verifiable(c)) {
+        return Some("🔓");
+    }
+    if task.status == TaskStatus::Completed
+        && !task.notes.as_deref().map(has_receipt).unwrap_or(false)
+    {
+        return Some("❔");
+    }
+    None
+}
+
+/// [`quality_glyph`] as a render-ready suffix: a leading space plus the
+/// glyph, or the empty string. Both surfaces append it verbatim, so the
+/// spacing can never drift between the tool output and the chat card.
+pub fn quality_glyph_suffix(task: &PlanTask) -> String {
+    quality_glyph(task)
+        .map(|g| format!(" {g}"))
+        .unwrap_or_default()
+}
