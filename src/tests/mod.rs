@@ -221,6 +221,7 @@ pub mod instance_lock_test;
 pub mod intermediate_text_strip_guard_test;
 pub mod logging_log_files_test;
 pub mod logging_logger_test;
+pub mod long_command_test;
 pub mod markdown_render_test;
 pub mod memory_backfill_sweep_test;
 pub mod memory_chunk_vector_test;
@@ -294,6 +295,7 @@ pub mod services_file_test;
 pub mod services_message_test;
 pub mod services_project_test;
 pub mod services_session_test;
+pub mod shell_scan_test;
 #[cfg(feature = "telegram")]
 pub mod start_gate_allowed_user_test;
 pub mod stored_key_test;

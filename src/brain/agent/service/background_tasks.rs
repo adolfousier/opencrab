@@ -229,6 +229,16 @@ impl BackgroundTaskManager {
         let this = std::sync::Arc::clone(&self);
         let task_id = Uuid::new_v4();
         tokio::spawn(async move {
+            // Log the START as well as the finish. Only completions were
+            // logged, so a task that never finished left no trace of having
+            // begun, and reconstructing which commands got detached meant
+            // inferring it from the completions that did arrive.
+            tracing::info!(
+                target: "background_task",
+                "Background task '{label}' started for session {session_id} \
+                 (id={task_id}, cwd={})",
+                cwd.display()
+            );
             // Persist BEFORE running: a restart mid-command must find a row to
             // report as interrupted, otherwise the session waits forever on a
             // resume that can no longer come (#763).
@@ -397,177 +407,6 @@ async fn run_detached(command: &str, cwd: &std::path::Path) -> CmdResult {
             output: format!("failed to launch: {e}"),
         },
     }
-}
-
-/// Command substrings that mark a genuinely long-running task (#722). When bash
-/// sees one AND a background manager is wired, it runs the command detached and
-/// resumes the session on completion instead of blocking toward the 600s cap.
-/// Matched as a substring so `cd x && cargo test` still counts.
-const KNOWN_LONG_MARKERS: &[&str] = &[
-    "cargo test",
-    "cargo build",
-    "cargo run",
-    "cargo clippy",
-    "npm test",
-    "npm run build",
-    "pnpm test",
-    "pnpm build",
-    "yarn test",
-    "yarn build",
-    "npx remotion render",
-    "remotion render",
-    "gh run watch",
-    "gh pr checks --watch",
-];
-
-/// Is `command` a known long-running task that should run in the background?
-///
-/// The marker only counts in *command position*. A plain substring test over
-/// the whole command detaches anything that merely MENTIONS a long command:
-/// a heredoc writing a report that names a build step, a `grep` for the phrase,
-/// a `python3` edit script whose body inserts one into a source file. Those
-/// finish in milliseconds, so each false detach buys nothing and costs a turn:
-/// the tool returns "started in the background" immediately, and the completion
-/// comes back as an injected message that starts another turn (on a chat
-/// channel, another auto-sent message). Detaching a file-writing heredoc is
-/// worse than useless, because the turn ends before the write lands.
-///
-/// So strip what is not shell code (heredoc bodies, quoted literals), then
-/// require the marker to START a command: beginning of input, or right after
-/// `;`, `&&`, `||`, `|`, a newline, `(`, `$(`, a backtick, or a `do`/`then`/
-/// `else`/`time`/`exec`/`nohup` keyword. Anything ambiguous stays inline, which
-/// is the pre-#722 behaviour and the safe direction to fail in.
-pub(crate) fn is_known_long(command: &str) -> bool {
-    let shell = strip_quoted(&strip_heredoc_bodies(command)).to_lowercase();
-    KNOWN_LONG_MARKERS
-        .iter()
-        .any(|m| marker_starts_a_command(&shell, m))
-}
-
-/// Drop heredoc bodies, keeping the line that opens them. The body is data
-/// written to a file or fed to an interpreter, never a command this shell runs.
-fn strip_heredoc_bodies(command: &str) -> String {
-    let mut out: Vec<&str> = Vec::new();
-    let mut lines = command.lines();
-    while let Some(line) = lines.next() {
-        out.push(line);
-        let Some(delim) = heredoc_delimiter(line) else {
-            continue;
-        };
-        for body in lines.by_ref() {
-            if body.trim() == delim {
-                break;
-            }
-        }
-    }
-    out.join("\n")
-}
-
-/// The delimiter word of the first heredoc opened on `line`, if any. Handles
-/// `<<EOF`, `<<-EOF`, `<<'EOF'` and `<<"EOF"`; `<<<` is a here-string, not one.
-fn heredoc_delimiter(line: &str) -> Option<String> {
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] != b'<' || bytes[i + 1] != b'<' {
-            i += 1;
-            continue;
-        }
-        if bytes.get(i + 2) == Some(&b'<') {
-            i += 3;
-            continue;
-        }
-        let mut j = i + 2;
-        if bytes.get(j) == Some(&b'-') {
-            j += 1;
-        }
-        while matches!(bytes.get(j), Some(&b' ') | Some(&b'\t')) {
-            j += 1;
-        }
-        let quote = match bytes.get(j) {
-            Some(&b'\'') => Some(b'\''),
-            Some(&b'"') => Some(b'"'),
-            _ => None,
-        };
-        if quote.is_some() {
-            j += 1;
-        }
-        let start = j;
-        while let Some(&c) = bytes.get(j) {
-            match quote {
-                Some(q) if c == q => break,
-                Some(_) => j += 1,
-                None if c.is_ascii_alphanumeric() || c == b'_' => j += 1,
-                None => break,
-            }
-        }
-        if j > start {
-            return Some(line[start..j].to_string());
-        }
-        i = j.max(i + 2);
-    }
-    None
-}
-
-/// Replace quoted spans with a space. A marker inside quotes is an argument
-/// (a `grep` pattern, an `echo` line), not a command this shell will run.
-fn strip_quoted(command: &str) -> String {
-    let mut out = String::with_capacity(command.len());
-    let mut chars = command.chars().peekable();
-    let mut quote: Option<char> = None;
-    while let Some(c) = chars.next() {
-        match quote {
-            None => match c {
-                '\'' | '"' => {
-                    quote = Some(c);
-                    out.push(' ');
-                }
-                '\\' => {
-                    chars.next();
-                    out.push(' ');
-                }
-                _ => out.push(c),
-            },
-            Some(q) => {
-                if c == '\\' && q == '"' {
-                    chars.next();
-                } else if c == q {
-                    quote = None;
-                    out.push(' ');
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Does `marker` appear at the start of a command inside `shell`?
-fn marker_starts_a_command(shell: &str, marker: &str) -> bool {
-    let mut from = 0;
-    while let Some(rel) = shell[from..].find(marker) {
-        let at = from + rel;
-        if is_command_position(&shell[..at]) {
-            return true;
-        }
-        from = at + marker.len().min(1);
-    }
-    false
-}
-
-/// Is the text preceding a marker the end of a command boundary?
-fn is_command_position(prefix: &str) -> bool {
-    let trimmed = prefix.trim_end_matches([' ', '\t']);
-    let Some(last) = trimmed.chars().last() else {
-        return true;
-    };
-    if matches!(last, ';' | '&' | '|' | '(' | '{' | '\n' | '`') {
-        return true;
-    }
-    let last_word = trimmed.rsplit([' ', '\t', '\n']).next().unwrap_or_default();
-    matches!(
-        last_word,
-        "do" | "then" | "else" | "time" | "exec" | "nohup"
-    )
 }
 
 /// A short human label for a command (first meaningful token sequence), for the

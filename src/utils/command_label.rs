@@ -59,32 +59,32 @@ fn is_bare_cd(segment: &str) -> bool {
 ///
 /// Quote tracking is what makes this safe to run on arbitrary commands: a
 /// naive `split(';')` would cut `echo "a; b"` in half and invent a segment.
+/// The scan itself lives in `shell_scan` because the background-task
+/// classifier needs the same distinction between syntax and data.
 fn split_segments(command: &str) -> Vec<String> {
+    let scanned = crate::utils::shell_scan::scan(command);
+    let is_syntax = |c: &crate::utils::shell_scan::ShellChar| !c.literal && !c.quote_mark;
+
     let mut segments = Vec::new();
     let mut current = String::new();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut chars = command.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' if !in_double => {
-                in_single = !in_single;
-                current.push(c);
-            }
-            '"' if !in_single => {
-                in_double = !in_double;
-                current.push(c);
-            }
-            '\n' | ';' if !in_single && !in_double => {
-                segments.push(std::mem::take(&mut current));
-            }
-            '&' if !in_single && !in_double && chars.peek() == Some(&'&') => {
-                chars.next();
-                segments.push(std::mem::take(&mut current));
-            }
-            _ => current.push(c),
+    let mut i = 0;
+    while let Some(c) = scanned.get(i) {
+        let double_amp = c.ch == '&'
+            && is_syntax(c)
+            && scanned
+                .get(i + 1)
+                .is_some_and(|n| n.ch == '&' && is_syntax(n));
+        if double_amp {
+            segments.push(std::mem::take(&mut current));
+            i += 2;
+            continue;
         }
+        if is_syntax(c) && (c.ch == '\n' || c.ch == ';') {
+            segments.push(std::mem::take(&mut current));
+        } else {
+            current.push(c.ch);
+        }
+        i += 1;
     }
     segments.push(current);
 
