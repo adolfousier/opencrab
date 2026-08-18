@@ -1810,7 +1810,7 @@ pub(crate) async fn handle_message(
     // asked for the work — was left waiting on a reply that never arrived.
     // Idempotent, so re-registering on every inbound message is free.
     if let Some(enqueue) = agent.message_enqueue_callback() {
-        crate::brain::agent::service::background_tasks::register_session_route(session_id, enqueue);
+        crate::brain::agent::service::session_routes::register_session_route(session_id, enqueue);
     }
 
     // Archive any shared images under the session's project files dir (when the

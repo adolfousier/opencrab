@@ -1070,7 +1070,7 @@ async fn cmd_chat_inner(
     // reached from a tool with no service context, so unlike a detached
     // command it carries no callback of its own and resolves this instead
     // (#1036).
-    crate::brain::agent::service::background_tasks::register_local_route(
+    crate::brain::agent::service::session_routes::register_local_route(
         message_enqueue_callback.clone(),
     );
 

@@ -732,7 +732,7 @@ pub(crate) async fn handle_message(
     // so a completion is delivered by the surface that owns the session
     // rather than by whichever service happened to run the command.
     if let Some(enqueue) = agent.message_enqueue_callback() {
-        crate::brain::agent::service::background_tasks::register_session_route(session_id, enqueue);
+        crate::brain::agent::service::session_routes::register_session_route(session_id, enqueue);
     }
     let approval_cb = make_approval_callback(discord_state.clone());
 
