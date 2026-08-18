@@ -322,7 +322,7 @@ pub fn generate_dedup_proposals(brain_path: &Path) -> Vec<(ProposedBrainDedup, S
             let rationale = format!(
                 "Found '{}' appearing {} times across brain files. \
                  Keeping canonical copy at {}, removing duplicate(s).",
-                &cluster.text[..cluster.text.len().min(80)],
+                &cluster.text[..cluster.text.floor_char_boundary(80)],
                 cluster.total_count,
                 proposal.duplicate_of,
             );
