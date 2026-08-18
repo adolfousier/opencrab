@@ -9,6 +9,7 @@
 
 use crate::channels::ChannelFactory;
 use crate::config::Config;
+use tracing::Instrument;
 use crate::db::CronJobRepository;
 use crate::db::CronJobRunRepository;
 use crate::db::models::{CronJob, CronJobRun};
@@ -427,7 +428,10 @@ impl CronScheduler {
                 let ctx = self.service_context.clone();
                 let run_repo = self.run_repo.clone();
                 let notifier = self.session_notifier.clone();
-                tokio::spawn(async move {
+                let job_name = job.name.clone();
+                let job_id = job.id;
+                tokio::spawn(
+                    async move {
                     // For foreign-profile jobs, wrap the ENTIRE execution in a
                     // task-local profile home scope. This means every tool call
                     // the agent makes (memory writes, config reads, file ops,
@@ -489,7 +493,7 @@ impl CronScheduler {
                     if let Err(e) = result {
                         tracing::error!("Cron job '{}' failed: {e}", job.name);
                     }
-                });
+                }.instrument(tracing::info_span!("job", name = %job_name, id = %job_id)));
             }
         }
 

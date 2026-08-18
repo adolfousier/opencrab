@@ -462,6 +462,7 @@ impl AgentService {
     /// still receives the full `user_message` (typically wrapped with
     /// channel/sender/reply metadata for context).
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, fields(session_id = %session_id, channel))]
     pub(super) async fn run_tool_loop(
         &self,
         session_id: Uuid,

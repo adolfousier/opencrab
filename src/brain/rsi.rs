@@ -9,6 +9,7 @@
 //! and `[agent].self_improvement_model`, falling back to the active provider.
 
 use crate::config::Config;
+use tracing::Instrument;
 use crate::db::repository::FeedbackLedgerRepository;
 use std::io::Write;
 use std::path::PathBuf;
@@ -1634,5 +1635,5 @@ pub fn spawn_rsi_engine(
             // Stamp last_cycle so restarts resume from here, not from scratch
             let _ = std::fs::write(&last_cycle_path, "");
         }
-    });
+    }.instrument(tracing::info_span!("rsi_engine")));
 }

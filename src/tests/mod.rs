@@ -696,6 +696,7 @@ pub mod voice_local_tts_test;
 pub mod voice_local_whisper_test;
 pub mod voice_service_test;
 pub mod whatsapp_handler_test;
+pub mod tracing_session_id_test;
 pub mod whatsapp_owner_filter_test;
 pub mod whatsapp_photo_batching_test;
 pub mod whatsapp_qr_replay_test;
