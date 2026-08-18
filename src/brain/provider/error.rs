@@ -125,12 +125,18 @@ const QUOTA_EXHAUSTION_PHRASES: &[&str] = &[
     "reached your monthly",
     "billing_hard_limit",
     "hard limit reached",
+    // Modelscope's monthly-dead wording (#1084).
+    "month's quota",
+    "try again next month",
 ];
 
 /// True when an error/message body describes a HARD quota or billing
 /// limit rather than a transient throttle (#952).
 pub fn is_quota_exhausted_message(msg: &str) -> bool {
-    let l = msg.to_lowercase();
+    let l = msg
+        .to_lowercase()
+        // Normalize curly apostrophes so "month\u{2019}s" matches "month's" (#1084).
+        .replace(['\u{2018}', '\u{2019}'], "'");
     QUOTA_EXHAUSTION_PHRASES.iter().any(|p| l.contains(p))
 }
 
