@@ -245,11 +245,41 @@ async fn run_rebuild_job(
                 "Background rebuild succeeded: {} — reloading",
                 built_path.display()
             );
-            deliver_rebuild_status(
+            let handles = deliver_rebuild_status(
                 job,
                 "✅ Rebuilt from source — reloading into the new binary now.",
             )
             .await;
+            // Await all delivery tasks before exec() replaces the process (#1105).
+            // Without this, the detached Telegram send is killed mid-flight and
+            // the completion message never arrives.
+            if !handles.is_empty() {
+                tracing::info!(
+                    "Awaiting {} delivery handle(s) before exec()",
+                    handles.len()
+                );
+                futures::future::join_all(handles).await;
+            }
+            // Persist the completion report to the session DB so the agent
+            // sees it on the next turn after the exec restart (#1105).
+            // Without this, the hot-reload wake-up message is orphaned —
+            // the agent responds but has no context about what triggered it.
+            if !session_id.is_nil() {
+                let msg_svc = crate::services::MessageService::new(ctx.clone());
+                let report = format!(
+                    "✅ Background rebuild succeeded — binary at {}. Hot-reloading now.",
+                    built_path.display()
+                );
+                match msg_svc
+                    .create_message(session_id, "assistant".to_string(), report)
+                    .await
+                {
+                    Ok(_) => tracing::info!(
+                        "Persisted rebuild completion report to session {session_id}"
+                    ),
+                    Err(e) => tracing::error!("Failed to persist rebuild completion report: {e}"),
+                }
+            }
             // exec() replaces the entire process (this scheduler task too).
             if let Err(e) = SelfUpdater::restart_into(&built_path, session_id) {
                 tracing::error!("Background rebuild restart failed: {e}");
@@ -266,14 +296,16 @@ async fn run_rebuild_job(
             if let Some(notify) = session_notifier {
                 notify(session_id, msg.clone());
             }
-            deliver_rebuild_status(job, &msg).await;
+            let _ = deliver_rebuild_status(job, &msg).await; // detached — no exec follows
             Ok(())
         }
     }
 }
 
 /// Deliver a rebuild status line to the job's configured channels (if any).
-async fn deliver_rebuild_status(job: &CronJob, msg: &str) {
+/// Returns spawn handles so the caller can await delivery before exec() (#1105).
+async fn deliver_rebuild_status(job: &CronJob, msg: &str) -> Vec<tokio::task::JoinHandle<()>> {
+    let mut handles = Vec::new();
     if let Some(ref deliver_to) = job.deliver_to {
         for target in deliver_to
             .split(',')
@@ -281,9 +313,14 @@ async fn deliver_rebuild_status(job: &CronJob, msg: &str) {
             .filter(|s| !s.is_empty())
         {
             // Rebuild status messages aren't worth reply recovery — no pool.
-            deliver_result(target, &job.name, msg, job.deliver_api_key.as_deref(), None).await;
+            if let Some(h) =
+                deliver_result(target, &job.name, msg, job.deliver_api_key.as_deref(), None).await
+            {
+                handles.push(h);
+            }
         }
     }
+    handles
 }
 
 /// Callback for surfacing scheduler events into a live session UI (the TUI).
@@ -769,7 +806,7 @@ async fn execute_job(
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    deliver_result(
+                    let _ = deliver_result(
                         target,
                         &job.name,
                         &clean,
@@ -797,7 +834,7 @@ async fn execute_job(
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    deliver_result(
+                    let _ = deliver_result(
                         target,
                         &job.name,
                         &msg,
@@ -837,7 +874,7 @@ async fn deliver_result(
     content: &str,
     api_key: Option<&str>,
     pool: Option<crate::db::Pool>,
-) {
+) -> Option<tokio::task::JoinHandle<()>> {
     // Only the Telegram delivery arm uses the pool (to record the message for
     // reply recovery); other targets ignore it.
     #[cfg(not(feature = "telegram"))]
@@ -845,7 +882,7 @@ async fn deliver_result(
     // HTTP(S) URL — generic webhook delivery
     if deliver_to.starts_with("http://") || deliver_to.starts_with("https://") {
         deliver_http(deliver_to, job_name, content, api_key).await;
-        return;
+        return None;
     }
 
     let parts: Vec<&str> = deliver_to.splitn(2, ':').collect();
@@ -855,7 +892,7 @@ async fn deliver_result(
             deliver_to,
             job_name
         );
-        return;
+        return None;
     }
 
     let (channel, target_id) = (parts[0], parts[1]);
@@ -878,7 +915,7 @@ async fn deliver_result(
             #[cfg(feature = "telegram")]
             {
                 tracing::info!("Delivering cron result to Telegram chat {target_id}");
-                deliver_telegram(target_id, job_name, &delivery_msg, pool.clone()).await;
+                return deliver_telegram(target_id, job_name, &delivery_msg, pool.clone()).await;
             }
             #[cfg(not(feature = "telegram"))]
             {
@@ -911,6 +948,7 @@ async fn deliver_result(
             tracing::warn!("Unknown delivery channel '{other}' for job '{job_name}'");
         }
     }
+    None
 }
 
 /// Deliver cron result via HTTP POST to a generic webhook URL.
@@ -1006,14 +1044,14 @@ async fn deliver_telegram(
     job_name: &str,
     message: &str,
     pool: Option<crate::db::Pool>,
-) {
+) -> Option<tokio::task::JoinHandle<()>> {
     let Some(token) = read_channel_secret("telegram", "token") else {
         tracing::warn!("No Telegram bot token found in keys.toml — cannot deliver cron result");
-        return;
+        return None;
     };
     let Ok(cid) = chat_id.parse::<i64>() else {
         tracing::warn!("Cron job '{job_name}': invalid Telegram chat id '{chat_id}'");
-        return;
+        return None;
     };
     let bot = teloxide::Bot::new(token);
     // Thread stays None deliberately: cron has always delivered to the
@@ -1026,9 +1064,13 @@ async fn deliver_telegram(
     // that inline would stall the whole scheduler tick — one flood-banned
     // chat must not delay every other job. The outbox telemetry carries
     // the outcome either way.
+    //
+    // Returns the spawn handle so rebuild jobs can await delivery before
+    // exec() replaces the process (#1105). Normal cron jobs discard the
+    // handle — their delivery survives the tick regardless.
     let message = message.to_string();
     let job_name = job_name.to_string();
-    tokio::spawn(async move {
+    Some(tokio::spawn(async move {
         match crate::channels::telegram::send::send_markdown_outbox(
             &bot,
             teloxide::types::ChatId(cid),
@@ -1052,7 +1094,7 @@ async fn deliver_telegram(
                 tracing::error!("Cron delivery for '{job_name}' to chat {cid} failed: {e}");
             }
         }
-    });
+    }))
 }
 
 /// Deliver via Discord Bot API (direct HTTP POST to the channel-messages
