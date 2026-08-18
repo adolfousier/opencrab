@@ -915,6 +915,13 @@ impl Tool for PlanTool {
          written, tests/clippy pass), immediately call `complete` for it before moving on. The TUI \
          progress widget counts only completed tasks, so a stale 0/N while work is done means a \
          `complete` was skipped, not that progress is tracked some other way. \
+         \n\nACCEPTANCE CRITERIA: criteria are the contract a completion is judged \
+         against. Each criterion must name a runnable command and the outcome it \
+         must produce, e.g. 'cargo test --all-features --lib backfill_sweep reports \
+         4 passed, 0 failed'. Prose outcomes ('works correctly', 'edge cases \
+         handled') cannot be re-checked by a third party. 1-3 checkable criteria \
+         per task. A task with no criteria can still complete, but the Ralph \
+         verification gate logs it as Uncertain: silence is not proof. \
          \n\nDETAILS: `start` is idempotent on an in-progress task and resets a failed task for \
          retry. `complete` takes action=\"success\" (default), \"fail\", or \"skip\". Ordering of \
          dependencies is by task order number (1-based). A started task's acceptance criteria \
@@ -979,7 +986,7 @@ impl Tool for PlanTool {
                 "acceptance_criteria": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Acceptance criteria for task completion (add_task)"
+                    "description": "Checkable acceptance criteria: each names a runnable command and its expected outcome, e.g. 'cargo test --lib <filter> reports 0 failed' (init tasks + add_tasks)"
                 },
                 "task_order": {
                     "type": "integer",
