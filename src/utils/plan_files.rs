@@ -578,7 +578,64 @@ pub async fn create_design_md(session_id: Uuid, title: &str) -> std::io::Result<
          1. \n   - Done when: \n"
     );
     std::fs::write(&path, scaffold)?;
+    clear_template_nudge(session_id);
     Ok(path)
+}
+
+/// Plans that already spent their single template-retry nudge (#1103).
+///
+/// Bounded to ONE per plan on purpose: a non-emptiness validator plus an
+/// unbounded retry teaches the model to write non-empty noise
+/// (`**Problem:** the code needs improvement`) that passes the check while
+/// being worth less than the empty label, because nothing blocks it
+/// afterwards. `create_design_md` clears the mark so the next plan gets its
+/// own single retry.
+static TEMPLATE_NUDGED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<Uuid>>> =
+    std::sync::OnceLock::new();
+
+fn template_nudged() -> &'static std::sync::Mutex<std::collections::HashSet<Uuid>> {
+    TEMPLATE_NUDGED.get_or_init(Default::default)
+}
+
+/// Clear the one-shot nudge mark so a freshly scaffolded plan gets its own
+/// single retry (#1103).
+pub fn clear_template_nudge(session_id: Uuid) {
+    template_nudged()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&session_id);
+}
+
+/// The one-shot retry nudge for a plan `.md` written with empty template
+/// labels (#1103), or `None` when nothing is missing or this plan already
+/// spent its single retry.
+///
+/// Carries the validator's own wording plus one instruction: the answers
+/// are already in the conversation. The three labels are a transcription of
+/// decisions the user already made, not new questions, which is what makes
+/// the retry mechanical. Deliberately no worked example (few-shot pressure
+/// toward the example's problem rather than the user's) and no question back
+/// to the user (who would be restating what they just discussed). When a
+/// field genuinely never came up, saying so plainly beats filler.
+pub fn template_nudge(session_id: Uuid, warnings: &[String]) -> Option<String> {
+    if warnings.is_empty() {
+        return None;
+    }
+    if !template_nudged()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(session_id)
+    {
+        return None;
+    }
+    Some(format!(
+        "PLAN TEMPLATE INCOMPLETE - rewrite the .md now, before asking for approval: {}. \
+         The answers are already in this conversation: those labels are a transcription \
+         of what was discussed, not new questions to research. If one genuinely never \
+         came up, write that plainly instead of filler - text that only passes the \
+         non-empty check is worse than an empty label, because nothing blocks it after.",
+        warnings.join("; ")
+    ))
 }
 
 /// Sync the session `.md` body into the plan JSON `description` (the

@@ -367,7 +367,7 @@ impl ToolRegistry {
             .capabilities()
             .contains(&crate::brain::tools::r#trait::ToolCapability::WriteFiles)
             && super::plan_gate::write_targets_session_md(plan_sid, &input).await;
-        let result = tool.execute(input, context).await?;
+        let mut result = tool.execute(input, context).await?;
 
         // Editing mirror: a successful write to the session plan .md syncs
         // the full body into the JSON `description` (tasks stay empty), so
@@ -381,6 +381,17 @@ impl ToolRegistry {
                     "Plan .md template warnings after write: {}",
                     warnings.join("; ")
                 );
+                // #1103: these warnings used to stop at that debug line, so the
+                // agent wrote a skeleton plan, saw `success`, and only the human
+                // discovered the empty labels at the approval gate. Surface the
+                // validator's own words in the result the agent reads, once per
+                // plan, so the fix happens in the next write instead of after a
+                // refusal.
+                if let Some(nudge) = crate::utils::plan_files::template_nudge(plan_sid, &warnings) {
+                    tracing::info!("Plan .md template nudge emitted (#1103)");
+                    result.output.push_str("\n\n");
+                    result.output.push_str(&nudge);
+                }
             }
         }
 
