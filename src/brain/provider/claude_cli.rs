@@ -1243,6 +1243,7 @@ impl Provider for ClaudeCliProvider {
                             // so the FallbackProvider can trigger the next provider in the chain.
                             if error_lower.contains("rate limit")
                                 || error_lower.contains("hit your limit")
+                                || error_lower.contains("session limit")
                                 || error_lower.contains("overloaded")
                                 || error_lower.contains("too many requests")
                                 || error_lower.contains("capacity")
