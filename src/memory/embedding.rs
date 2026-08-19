@@ -160,7 +160,9 @@ pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
 
         // Check if this chunk needs re-embedding (skip if unchanged).
         let needs_embed = {
-            let store_lock = store.lock().map_err(|e| format!("Store lock poisoned: {e}"))?;
+            let store_lock = store
+                .lock()
+                .map_err(|e| format!("Store lock poisoned: {e}"))?;
             store_lock.chunk_needs_embedding(&hash, seq, &chunk_hash)?
         };
 
@@ -188,7 +190,15 @@ pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
         store
             .lock()
             .map_err(|e| format!("Store lock poisoned: {e}"))?
-            .insert_embedding(&hash, seq, chunk.pos, &emb.embedding, &emb.model, &now, Some(&chunk_hash))
+            .insert_embedding(
+                &hash,
+                seq,
+                chunk.pos,
+                &emb.embedding,
+                &emb.model,
+                &now,
+                Some(&chunk_hash),
+            )
             .map_err(|e| format!("Failed to store embedding: {e}"))?;
     }
 
@@ -262,7 +272,9 @@ pub(super) async fn run_api_backfill(store: &'static Mutex<Store>) -> (usize, us
                 Ok(s) => match s.chunk_needs_embedding(hash, seq, &chunk_hash) {
                     Ok(needs) => needs,
                     Err(e) => {
-                        tracing::warn!("API backfill: chunk_needs_embedding failed for chunk {seq}: {e}");
+                        tracing::warn!(
+                            "API backfill: chunk_needs_embedding failed for chunk {seq}: {e}"
+                        );
                         true // Assume needs embedding on error
                     }
                 },
@@ -282,8 +294,16 @@ pub(super) async fn run_api_backfill(store: &'static Mutex<Store>) -> (usize, us
                 Ok(embedding) => {
                     let now = crate::utils::string::utc_timestamp();
                     if let Ok(s) = store.lock()
-                        && s.insert_embedding(hash, seq, chunk.pos, &embedding, &model_name, &now, Some(&chunk_hash))
-                            .is_ok()
+                        && s.insert_embedding(
+                            hash,
+                            seq,
+                            chunk.pos,
+                            &embedding,
+                            &model_name,
+                            &now,
+                            Some(&chunk_hash),
+                        )
+                        .is_ok()
                     {
                         chunks_stored += 1;
                     }
@@ -393,7 +413,9 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
                 Ok(s) => match s.chunk_needs_embedding(hash, seq, &chunk_hash) {
                     Ok(needs) => needs,
                     Err(e) => {
-                        tracing::warn!("Backfill: chunk_needs_embedding failed for chunk {seq}: {e}");
+                        tracing::warn!(
+                            "Backfill: chunk_needs_embedding failed for chunk {seq}: {e}"
+                        );
                         true // Assume needs embedding on error
                     }
                 },
@@ -432,8 +454,16 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
             // Store lock: insert embedding → release
             if let Some(emb) = emb
                 && let Ok(s) = store.lock()
-                && s.insert_embedding(hash, seq, chunk.pos, &emb.embedding, &emb.model, &now, Some(&chunk_hash))
-                    .is_ok()
+                && s.insert_embedding(
+                    hash,
+                    seq,
+                    chunk.pos,
+                    &emb.embedding,
+                    &emb.model,
+                    &now,
+                    Some(&chunk_hash),
+                )
+                .is_ok()
             {
                 chunks_stored += 1;
             }
@@ -559,7 +589,9 @@ pub async fn embed_content_api(store: &'static Mutex<Store>, body: &str) -> Resu
 
         // Check if this chunk needs re-embedding (skip if unchanged).
         let needs_embed = {
-            let store_lock = store.lock().map_err(|e| format!("Store lock poisoned: {e}"))?;
+            let store_lock = store
+                .lock()
+                .map_err(|e| format!("Store lock poisoned: {e}"))?;
             store_lock.chunk_needs_embedding(&hash, seq, &chunk_hash)?
         };
 
@@ -572,7 +604,15 @@ pub async fn embed_content_api(store: &'static Mutex<Store>, body: &str) -> Resu
         store
             .lock()
             .map_err(|e| format!("Store lock poisoned: {e}"))?
-            .insert_embedding(&hash, seq, chunk.pos, &embedding, &model_name, &now, Some(&chunk_hash))
+            .insert_embedding(
+                &hash,
+                seq,
+                chunk.pos,
+                &embedding,
+                &model_name,
+                &now,
+                Some(&chunk_hash),
+            )
             .map_err(|e| format!("Failed to store API embedding: {e}"))?;
     }
 

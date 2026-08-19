@@ -208,7 +208,8 @@ impl ResilientFileWriter {
     /// Test-only: create a writer with a temporary directory (#1077).
     #[cfg(test)]
     pub(crate) fn new_for_test() -> Self {
-        let temp_dir = std::env::temp_dir().join(format!("opencrabs_log_test_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("opencrabs_log_test_{}", std::process::id()));
         Self::new(temp_dir, "test".to_string())
     }
 
@@ -220,7 +221,9 @@ impl ResilientFileWriter {
         std::sync::MutexGuard<'_, Option<tracing_appender::rolling::RollingFileAppender>>,
         std::sync::TryLockError<()>,
     > {
-        self.appender.lock().map_err(|_| std::sync::TryLockError::WouldBlock)
+        self.appender
+            .lock()
+            .map_err(|_| std::sync::TryLockError::WouldBlock)
     }
 
     /// Create the log directory (+ a `.gitignore` covering all runtime files)
@@ -276,7 +279,8 @@ impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for ResilientFileWriter
 
 pub(crate) struct ResilientFileGuard<'a> {
     parent: &'a ResilientFileWriter,
-    appender: Option<std::sync::MutexGuard<'a, Option<tracing_appender::rolling::RollingFileAppender>>>,
+    appender:
+        Option<std::sync::MutexGuard<'a, Option<tracing_appender::rolling::RollingFileAppender>>>,
 }
 
 impl std::io::Write for ResilientFileGuard<'_> {

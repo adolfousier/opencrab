@@ -5,10 +5,10 @@
 //! Retrying the send ladder burns 90 seconds (3 × 30s clamped wait) for
 //! no gain. This test pins the fix: long rate-limits bail immediately.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use teloxide::types::Seconds;
+use std::sync::atomic::{AtomicU32, Ordering};
 use teloxide::RequestError;
+use teloxide::types::Seconds;
 
 /// Long rate-limit (>1 hour) bails immediately without retrying.
 #[tokio::test]
@@ -64,7 +64,10 @@ async fn short_rate_limit_retries_normally() {
     .await;
 
     // Should succeed after retries
-    assert!(result.is_ok(), "Short rate-limit should succeed after retries");
+    assert!(
+        result.is_ok(),
+        "Short rate-limit should succeed after retries"
+    );
     assert_eq!(
         attempts.load(Ordering::SeqCst),
         4,

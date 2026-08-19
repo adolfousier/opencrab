@@ -514,7 +514,7 @@ impl Store {
             .map_err(|e| format!("chunk_needs_embedding: {e}"))?;
 
         match stored_hash {
-            None => Ok(true), // No embedding exists yet
+            None => Ok(true),                         // No embedding exists yet
             Some(stored) => Ok(stored != chunk_hash), // Re-embed if hash changed
         }
     }

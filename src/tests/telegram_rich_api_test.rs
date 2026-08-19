@@ -115,7 +115,11 @@ async fn send_rich_markdown_media_id_uses_custom_api_url() {
     )
     .await;
 
-    assert!(result.is_ok(), "media send should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "media send should succeed: {:?}",
+        result.err()
+    );
     assert_eq!(result.unwrap(), 77);
     mock.assert_async().await;
 }

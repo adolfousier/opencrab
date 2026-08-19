@@ -9,13 +9,13 @@
 
 use crate::channels::ChannelFactory;
 use crate::config::Config;
-use tracing::Instrument;
 use crate::db::CronJobRepository;
 use crate::db::CronJobRunRepository;
 use crate::db::models::{CronJob, CronJobRun};
 use crate::services::{ServiceContext, SessionService};
 use chrono::Utc;
 use std::sync::Arc;
+use tracing::Instrument;
 use uuid::Uuid;
 
 /// Whether `job_profile` is the active process profile (so the cheap, already
@@ -432,31 +432,48 @@ impl CronScheduler {
                 let job_id = job.id;
                 tokio::spawn(
                     async move {
-                    // For foreign-profile jobs, wrap the ENTIRE execution in a
-                    // task-local profile home scope. This means every tool call
-                    // the agent makes (memory writes, config reads, file ops,
-                    // brain reads) resolves to the job's profile home, not the
-                    // process profile. The scope lives until the task ends, so
-                    // it persists across every .await inside the agent loop.
-                    //
-                    // This spawned task does NOT inherit the scheduler's own
-                    // task-local home (tokio::spawn drops it), so it defaults to
-                    // the process global. We therefore scope whenever the job's
-                    // profile differs from the process global, which is exactly
-                    // the multi-profile daemon case: a per-profile scheduler's
-                    // jobs are stamped with a non-global profile and get scoped
-                    // here.
-                    let profile = job.profile_name.as_deref();
-                    let active = crate::config::profile::active_profile().unwrap_or("default");
-                    let needs_scope = profile.is_some() && profile != Some(active);
+                        // For foreign-profile jobs, wrap the ENTIRE execution in a
+                        // task-local profile home scope. This means every tool call
+                        // the agent makes (memory writes, config reads, file ops,
+                        // brain reads) resolves to the job's profile home, not the
+                        // process profile. The scope lives until the task ends, so
+                        // it persists across every .await inside the agent loop.
+                        //
+                        // This spawned task does NOT inherit the scheduler's own
+                        // task-local home (tokio::spawn drops it), so it defaults to
+                        // the process global. We therefore scope whenever the job's
+                        // profile differs from the process global, which is exactly
+                        // the multi-profile daemon case: a per-profile scheduler's
+                        // jobs are stamped with a non-global profile and get scoped
+                        // here.
+                        let profile = job.profile_name.as_deref();
+                        let active = crate::config::profile::active_profile().unwrap_or("default");
+                        let needs_scope = profile.is_some() && profile != Some(active);
 
-                    let result = if needs_scope {
-                        crate::config::profile::with_profile_home_async(profile, async {
-                            tracing::info!(
-                                "Cron job '{}' — task-local profile home set to {:?}",
-                                job.name,
-                                crate::config::opencrabs_home()
-                            );
+                        let result = if needs_scope {
+                            crate::config::profile::with_profile_home_async(profile, async {
+                                tracing::info!(
+                                    "Cron job '{}' — task-local profile home set to {:?}",
+                                    job.name,
+                                    crate::config::opencrabs_home()
+                                );
+                                match resolve_or_create_cron_session(&ctx).await {
+                                    Ok(cron_sid) => {
+                                        execute_job(
+                                            &job,
+                                            &factory,
+                                            &ctx,
+                                            cron_sid,
+                                            &run_repo,
+                                            notifier.as_ref(),
+                                        )
+                                        .await
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            })
+                            .await
+                        } else {
                             match resolve_or_create_cron_session(&ctx).await {
                                 Ok(cron_sid) => {
                                     execute_job(
@@ -471,29 +488,14 @@ impl CronScheduler {
                                 }
                                 Err(e) => Err(e),
                             }
-                        })
-                        .await
-                    } else {
-                        match resolve_or_create_cron_session(&ctx).await {
-                            Ok(cron_sid) => {
-                                execute_job(
-                                    &job,
-                                    &factory,
-                                    &ctx,
-                                    cron_sid,
-                                    &run_repo,
-                                    notifier.as_ref(),
-                                )
-                                .await
-                            }
-                            Err(e) => Err(e),
-                        }
-                    };
+                        };
 
-                    if let Err(e) = result {
-                        tracing::error!("Cron job '{}' failed: {e}", job.name);
+                        if let Err(e) = result {
+                            tracing::error!("Cron job '{}' failed: {e}", job.name);
+                        }
                     }
-                }.instrument(tracing::info_span!("job", name = %job_name, id = %job_id)));
+                    .instrument(tracing::info_span!("job", name = %job_name, id = %job_id)),
+                );
             }
         }
 

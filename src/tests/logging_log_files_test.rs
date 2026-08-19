@@ -111,9 +111,7 @@ fn make_writer_does_not_block_on_contended_mutex() {
     let writer2 = Arc::clone(&writer);
     let handle = std::thread::spawn(move || {
         // Acquire the inner mutex and hold it for 500ms.
-        let _guard = writer2
-            .appender_lock_for_test()
-            .expect("must acquire lock");
+        let _guard = writer2.appender_lock_for_test().expect("must acquire lock");
         std::thread::sleep(Duration::from_millis(500));
     });
 

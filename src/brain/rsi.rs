@@ -9,12 +9,12 @@
 //! and `[agent].self_improvement_model`, falling back to the active provider.
 
 use crate::config::Config;
-use tracing::Instrument;
 use crate::db::repository::FeedbackLedgerRepository;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 /// Base interval between RSI cycles (analyze + improve) — the first rung
 /// of the backoff ladder (#977).

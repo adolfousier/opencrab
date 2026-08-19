@@ -5,10 +5,10 @@
 //! 2. Source-level check: key turn entry points have `#[instrument]`
 
 use std::sync::{Arc, Mutex};
-use tracing::span;
 use tracing::Instrument;
-use tracing_subscriber::layer::SubscriberExt;
+use tracing::span;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::SubscriberExt;
 
 /// Captures span names and field values from tracing events.
 #[derive(Clone, Default)]
@@ -131,33 +131,28 @@ async fn job_span_carries_name_and_id() {
         fields.contains("name"),
         "job span missing name field: {fields}"
     );
-    assert!(
-        fields.contains("id"),
-        "job span missing id field: {fields}"
-    );
+    assert!(fields.contains("id"), "job span missing id field: {fields}");
 }
 
 /// Source-level check: the key turn entry points must have #[instrument] or
 /// .instrument() so session_id propagates to every log line.
 #[test]
 fn turn_entry_points_are_instrumented() {
-    let tool_loop = std::fs::read_to_string("src/brain/agent/service/tool_loop.rs")
-        .expect("read tool_loop.rs");
+    let tool_loop =
+        std::fs::read_to_string("src/brain/agent/service/tool_loop.rs").expect("read tool_loop.rs");
     assert!(
-        tool_loop.contains("#[tracing::instrument(")
-            && tool_loop.contains("session_id"),
+        tool_loop.contains("#[tracing::instrument(") && tool_loop.contains("session_id"),
         "run_tool_loop must have #[instrument] with session_id field"
     );
 
-    let messaging = std::fs::read_to_string("src/brain/agent/service/messaging.rs")
-        .expect("read messaging.rs");
+    let messaging =
+        std::fs::read_to_string("src/brain/agent/service/messaging.rs").expect("read messaging.rs");
     assert!(
         messaging.contains("#[tracing::instrument("),
         "messaging.rs entry points must have #[instrument]"
     );
 
-    let scheduler =
-        std::fs::read_to_string("src/cron/scheduler.rs").expect("read scheduler.rs");
+    let scheduler = std::fs::read_to_string("src/cron/scheduler.rs").expect("read scheduler.rs");
     assert!(
         scheduler.contains(".instrument(tracing::info_span!(\"job\""),
         "cron scheduler spawn must use .instrument() with a job span"

@@ -8,8 +8,8 @@
 
 use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::utils::plan_files::{
-    plan_mode_state, pre_init_marker_path, set_pre_init_editing, PlanModeState,
-    PRE_INIT_STALE_THRESHOLD,
+    PRE_INIT_STALE_THRESHOLD, PlanModeState, plan_mode_state, pre_init_marker_path,
+    set_pre_init_editing,
 };
 use std::time::SystemTime;
 use uuid::Uuid;
@@ -59,8 +59,8 @@ async fn stale_marker_allows_plan_creation() {
         let marker_path = pre_init_marker_path(session_id).await;
         assert!(marker_path.exists(), "Marker should exist after creation");
 
-        let six_minutes_ago = SystemTime::now()
-            - (PRE_INIT_STALE_THRESHOLD + std::time::Duration::from_secs(60));
+        let six_minutes_ago =
+            SystemTime::now() - (PRE_INIT_STALE_THRESHOLD + std::time::Duration::from_secs(60));
         let file = std::fs::File::open(&marker_path).unwrap();
         file.set_modified(six_minutes_ago).unwrap();
 
@@ -72,10 +72,7 @@ async fn stale_marker_allows_plan_creation() {
         );
 
         // Verify the marker file was actually deleted
-        assert!(
-            !marker_path.exists(),
-            "Stale marker file should be deleted"
-        );
+        assert!(!marker_path.exists(), "Stale marker file should be deleted");
     })
     .await;
 }

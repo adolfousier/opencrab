@@ -154,9 +154,17 @@ pub(crate) async fn send_rich_with_mermaid(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<()> {
-    send_rich_with_mermaid_id(api_url, token, chat_id, thread_id, markdown, origin, origin_detail)
-        .await
-        .map(|_| ())
+    send_rich_with_mermaid_id(
+        api_url,
+        token,
+        chat_id,
+        thread_id,
+        markdown,
+        origin,
+        origin_detail,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// Same as [`send_rich_with_mermaid`] but returns the new message id.
