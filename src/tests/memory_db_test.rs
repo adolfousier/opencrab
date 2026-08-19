@@ -92,7 +92,7 @@ fn embedding_roundtrip_and_backfill_list() {
 
     store.ensure_vector_table(4).unwrap();
     store
-        .insert_embedding(&hash, 0, 0, &[0.1, 0.2, 0.3, 0.4], "test-model", "now")
+        .insert_embedding(&hash, 0, 0, &[0.1, 0.2, 0.3, 0.4], "test-model", "now", None)
         .unwrap();
 
     assert!(store.get_hashes_needing_embedding().unwrap().is_empty());

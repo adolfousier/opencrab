@@ -56,7 +56,7 @@ fn test_vector_search_returns_results() {
     embedding[0] = 1.0;
     embedding[1] = 0.5;
     store
-        .insert_embedding(&hash, 0, 0, &embedding, "test-model", now)
+        .insert_embedding(&hash, 0, 0, &embedding, "test-model", now, None)
         .unwrap();
 
     // Query with a similar vector — should find the document
@@ -135,7 +135,7 @@ fn test_hashes_needing_embedding() {
     // Embed only the second document
     let emb = vec![0.1f32; 768];
     store
-        .insert_embedding(&hash2, 0, 0, &emb, "test", now)
+        .insert_embedding(&hash2, 0, 0, &emb, "test", now, None)
         .unwrap();
 
     // Only the first should need embedding
@@ -170,7 +170,7 @@ fn test_rrf_merges_fts_and_vector() {
     let mut emb_a = vec![0.0f32; 768];
     emb_a[0] = 1.0;
     store
-        .insert_embedding(&hash_a, 0, 0, &emb_a, "test", now)
+        .insert_embedding(&hash_a, 0, 0, &emb_a, "test", now, None)
         .unwrap();
 
     // Doc B: different content, different embedding direction
@@ -190,7 +190,7 @@ fn test_rrf_merges_fts_and_vector() {
     let mut emb_b = vec![0.0f32; 768];
     emb_b[1] = 1.0;
     store
-        .insert_embedding(&hash_b, 0, 0, &emb_b, "test", now)
+        .insert_embedding(&hash_b, 0, 0, &emb_b, "test", now, None)
         .unwrap();
 
     // FTS finds doc A for "authentication"
