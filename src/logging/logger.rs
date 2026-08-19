@@ -252,23 +252,24 @@ impl ResilientFileWriter {
 impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for ResilientFileWriter {
     type Writer = ResilientFileGuard<'a>;
     fn make_writer(&'a self) -> Self::Writer {
-        // Use try_lock with a short timeout to prevent a blocked write from
-        // silencing all logging (#1077). If the mutex is held by a thread
-        // stuck on a slow/blocking write (NFS timeout, disk failure), other
-        // threads would otherwise block here indefinitely. Dropping the event
-        // is better than parking the entire process.
-        let appender = match self.appender.try_lock() {
+        // Block on the lock rather than skipping the event.
+        //
+        // This used `try_lock` and dropped the event on `WouldBlock`, on the
+        // reasoning that a held lock meant a thread stuck on a slow write.
+        // `WouldBlock` only means some other thread holds it right now, which
+        // in an agent logging from tool execution, streaming, channels and the
+        // TUI at once is the normal case. The guard fired constantly and threw
+        // log lines away under ordinary load (#1115).
+        //
+        // Appender writes are fast and every other consumer of this mutex
+        // already blocks on it, so blocking here is both correct and what the
+        // rest of the code assumes.
+        //
+        // Poisoning recovery below is the part that fixes #1077: a panic while
+        // holding the lock must not silence logging for the rest of the run.
+        let appender = match self.appender.lock() {
             Ok(guard) => guard,
-            Err(std::sync::TryLockError::WouldBlock) => {
-                // Mutex held by another thread (likely stuck on a write).
-                // Drop this event to avoid blocking all logging.
-                eprintln!("[logger] mutex contention — dropping event");
-                return ResilientFileGuard {
-                    parent: self,
-                    appender: None,
-                };
-            }
-            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(poisoned) => poisoned.into_inner(),
         };
         ResilientFileGuard {
             parent: self,

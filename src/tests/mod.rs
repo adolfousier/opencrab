@@ -220,6 +220,7 @@ pub mod goal_manage_test;
 pub mod install_homebrew_test;
 pub mod instance_lock_test;
 pub mod intermediate_text_strip_guard_test;
+pub mod logger_lock_recovery_test;
 pub mod logger_mutex_contention_test;
 pub mod logging_log_files_test;
 pub mod logging_logger_test;
