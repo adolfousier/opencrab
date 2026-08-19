@@ -73,10 +73,9 @@ async fn first_try_success_sends_once() {
 
 // --- #1064: oversized windows are capped inline, never slept in full ---
 
-/// The observed field case: every attempt 429s with an 8288s window. The
-/// turn must exhaust its retries in ~3x30s of capped waits, not 3x8288s of
-/// inline sleep. Paused clock: sleeps resolve instantly, elapsed measures
-/// what WOULD have been slept.
+/// The observed field case: every attempt 429s with an 8288s window. With
+/// the #1110 fix, windows > 1 hour bail immediately without retrying (1 attempt
+/// total), since retrying burns 90s for no gain when the window is hours long.
 #[tokio::test(start_paused = true)]
 async fn oversized_windows_are_capped_not_slept_in_full() {
     let calls = Cell::new(0u32);
@@ -93,12 +92,12 @@ async fn oversized_windows_are_capped_not_slept_in_full() {
     let elapsed = start.elapsed();
     assert!(
         matches!(out, Err(teloxide::RequestError::RetryAfter(_))),
-        "exhausted retries still propagate the error"
+        "long rate-limit (>1 hour) bails immediately with error"
     );
-    assert_eq!(calls.get(), 4, "1 initial attempt + 3 retries");
+    assert_eq!(calls.get(), 1, "long rate-limit bails immediately, no retries (#1110)");
     assert_eq!(
         elapsed,
-        Duration::from_secs(90),
+        Duration::from_secs(0),
         "3 capped waits of 30s, not the 3x8288s inline hostage of #1064"
     );
 }

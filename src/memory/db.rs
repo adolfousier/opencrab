@@ -139,6 +139,7 @@ impl Store {
                 pos INTEGER NOT NULL DEFAULT 0,
                 model TEXT NOT NULL,
                 embedded_at TEXT NOT NULL,
+                chunk_hash TEXT,
                 PRIMARY KEY (hash, seq)
             );
             ",
