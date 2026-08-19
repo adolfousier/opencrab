@@ -18,9 +18,10 @@ fn channels_from_toml(text: &str) -> ChannelsConfig {
 }
 
 fn base_channels() -> ChannelsConfig {
-    let mut c = ChannelsConfig::default();
-    c.telegram = TelegramConfig::default();
-    c
+    ChannelsConfig {
+        telegram: TelegramConfig::default(),
+        ..Default::default()
+    }
 }
 
 #[test]
