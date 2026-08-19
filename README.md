@@ -1242,6 +1242,8 @@ port = 18790          # Gateway port
 # allowed_origins = ["http://localhost:3000"]  # CORS (empty = blocked)
 ```
 
+> **The section is `[a2a]`.** Older configs spell it `[gateway]` and still load — the two are the same setting, not two features. A file containing both is folded into one rather than rejected, but write `[a2a]` and keep a single section.
+
 ### Endpoints
 
 | Endpoint | Method | Description |
