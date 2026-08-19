@@ -112,3 +112,156 @@ fn the_whole_config_deserializes_with_both_sections_present() {
         cfg.err()
     );
 }
+
+// ── On-disk migration (#1116) ────────────────────────────────────────
+//
+// The fold above keeps both spellings loading, but leaves the file as
+// written, so an old config keeps the legacy name forever. Migration
+// renames it once so the two names actually converge.
+
+use crate::config::alias_merge::migrate_file;
+
+fn write_tmp(name: &str, body: &str) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(format!(
+        "opencrabs-alias-migrate-{}-{}.toml",
+        name,
+        std::process::id()
+    ));
+    std::fs::write(&p, body).expect("write temp config");
+    p
+}
+
+#[test]
+fn the_legacy_section_is_renamed_on_disk() {
+    let p = write_tmp("rename", "[gateway]\nenabled = true\nport = 18790\n");
+
+    let renamed = migrate_file(&p).expect("migrate");
+
+    assert_eq!(renamed, vec!["gateway"]);
+    let after = std::fs::read_to_string(&p).unwrap();
+    assert!(after.contains("[a2a]"), "renamed to the current name");
+    assert!(!after.contains("[gateway]"), "legacy name is gone");
+    assert!(
+        after.contains("port = 18790"),
+        "settings survive the rename"
+    );
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn comments_survive_the_migration() {
+    // These files are mostly comments. Losing them would cost the user every
+    // note they had written, which is worse than the problem being fixed.
+    let p = write_tmp(
+        "comments",
+        "# top of file\n\n# what this section does\n[gateway]\nenabled = true  # inline note\n",
+    );
+
+    migrate_file(&p).expect("migrate");
+
+    let after = std::fs::read_to_string(&p).unwrap();
+    assert!(after.contains("# top of file"));
+    assert!(after.contains("# what this section does"));
+    assert!(after.contains("# inline note"));
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn a_file_with_both_sections_is_merged_into_one_on_disk() {
+    let p = write_tmp(
+        "both",
+        "[gateway]\nenabled = true\nport = 1111\n\n[a2a]\nport = 2222\n",
+    );
+
+    let renamed = migrate_file(&p).expect("migrate");
+
+    assert_eq!(renamed, vec!["gateway"]);
+    let after = std::fs::read_to_string(&p).unwrap();
+    assert!(!after.contains("[gateway]"));
+    assert!(after.contains("enabled = true"), "legacy-only key is kept");
+    assert!(after.contains("2222"), "canonical value wins the conflict");
+    assert!(!after.contains("1111"), "legacy value loses the conflict");
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn a_file_already_using_the_current_name_is_left_alone() {
+    let body = "[a2a]\nenabled = true\n";
+    let p = write_tmp("noop", body);
+
+    let renamed = migrate_file(&p).expect("migrate");
+
+    assert!(renamed.is_empty(), "nothing renamed, so nothing reported");
+    assert_eq!(
+        std::fs::read_to_string(&p).unwrap(),
+        body,
+        "an untouched file must be byte-identical, not reformatted"
+    );
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn an_unparseable_file_is_not_rewritten() {
+    // Not ours to mangle: the loader reports the parse error instead.
+    let body = "[gateway\nenabled = true\n";
+    let p = write_tmp("broken", body);
+
+    let renamed = migrate_file(&p).expect("migrate must not error");
+
+    assert!(renamed.is_empty());
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), body);
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn migrating_twice_is_a_no_op_the_second_time() {
+    let p = write_tmp("idempotent", "[gateway]\nenabled = true\n");
+
+    assert_eq!(migrate_file(&p).expect("first"), vec!["gateway"]);
+    let after_first = std::fs::read_to_string(&p).unwrap();
+    assert!(migrate_file(&p).expect("second").is_empty());
+    assert_eq!(
+        std::fs::read_to_string(&p).unwrap(),
+        after_first,
+        "a second run must not touch the file again"
+    );
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn a_real_world_config_migrates_without_losing_anything() {
+    // Guards the shape that actually ships: many sections, many comments,
+    // one legacy section among them. A rename that quietly dropped unrelated
+    // content would be far worse than the naming problem it fixes.
+    let body = "\
+# OpenCrabs config\n\
+\n\
+[agent]\n\
+max_tokens = 65536  # keep\n\
+\n\
+# ========================================\n\
+# Agent-to-Agent (A2A) Protocol\n\
+# ========================================\n\
+[gateway]\n\
+enabled = false\n\
+port = 18790\n\
+\n\
+[channels.telegram]\n\
+enabled = true\n";
+    let p = write_tmp("realworld", body);
+
+    let renamed = migrate_file(&p).expect("migrate");
+    assert_eq!(renamed, vec!["gateway"]);
+
+    let after = std::fs::read_to_string(&p).unwrap();
+    // The rename happened.
+    assert!(after.contains("[a2a]") && !after.contains("[gateway]"));
+    // Every other section survived, in place.
+    assert!(after.contains("[agent]"));
+    assert!(after.contains("max_tokens = 65536"));
+    assert!(after.contains("[channels.telegram]"));
+    // And so did the banner comments around the renamed section.
+    assert!(after.contains("# Agent-to-Agent (A2A) Protocol"));
+    assert!(after.contains("# keep"));
+    let _ = std::fs::remove_file(&p);
+}

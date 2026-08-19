@@ -530,6 +530,33 @@ impl Config {
         // Hold lock to prevent races between main thread and config watcher
         let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
+        // Converge the legacy section name onto the current one, on disk.
+        // The read-time fold keeps both spellings working, but leaves the file
+        // as written, so an old config keeps its old name forever and the two
+        // names persist. Renaming it once means nobody carries the legacy
+        // spelling afterwards (#1116).
+        //
+        // Its own read/write via toml_edit rather than joining the
+        // `toml::Value` pass below, because that round-trip discards comments
+        // and these files are mostly comments.
+        match crate::config::alias_merge::migrate_file(path) {
+            Ok(renamed) if !renamed.is_empty() => {
+                tracing::info!(
+                    "Config migration: renamed section(s) {} to their current names in {}",
+                    renamed.join(", "),
+                    path.display()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                // Not fatal: the read-time fold still makes the file load.
+                tracing::warn!(
+                    "Config migration: could not rename legacy section(s) in {}: {e}",
+                    path.display()
+                );
+            }
+        }
+
         let Ok(content) = fs::read_to_string(path) else {
             return;
         };

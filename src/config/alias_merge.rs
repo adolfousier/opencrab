@@ -67,3 +67,58 @@ fn merge_into(into: &mut toml::Value, from: toml::Value) {
         }
     }
 }
+
+/// Rewrite a config file so the legacy section carries its current name.
+///
+/// The read-time fold above keeps both spellings working, but it leaves the
+/// file untouched, so a config written years ago keeps its old section name
+/// forever and the two names persist in the wild. This converges them: after
+/// one run nobody has the legacy spelling, and the alias becomes dead weight
+/// that can eventually be deleted.
+///
+/// Uses `toml_edit` rather than a `toml::Value` round-trip because the latter
+/// discards comments, and these files are almost entirely comments — rewriting
+/// one would cost the user every note they had written in it.
+///
+/// Returns the sections that were renamed, empty if the file already used the
+/// current names. Only writes when something actually changed.
+pub(crate) fn migrate_file(path: &std::path::Path) -> std::io::Result<Vec<&'static str>> {
+    let contents = std::fs::read_to_string(path)?;
+    let mut doc = match contents.parse::<toml_edit::DocumentMut>() {
+        Ok(doc) => doc,
+        // A file we cannot parse is not ours to rewrite. The loader reports
+        // the parse error; silently mangling it here would be worse.
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let mut renamed = Vec::new();
+    for (legacy, canonical) in ALIASES {
+        let Some(legacy_item) = doc.as_table_mut().remove(legacy) else {
+            continue;
+        };
+        renamed.push(*legacy);
+        match doc.as_table_mut().get_mut(canonical) {
+            // Both present: fold the legacy keys in, canonical winning, so
+            // nothing the user wrote under either name is lost.
+            Some(existing) => {
+                if let (Some(into), Some(from)) = (existing.as_table_mut(), legacy_item.as_table())
+                {
+                    for (k, v) in from.iter() {
+                        if !into.contains_key(k) {
+                            into.insert(k, v.clone());
+                        }
+                    }
+                }
+            }
+            // The ordinary case: a straight rename, contents and comments kept.
+            None => {
+                doc.as_table_mut().insert(canonical, legacy_item);
+            }
+        }
+    }
+
+    if !renamed.is_empty() {
+        std::fs::write(path, doc.to_string())?;
+    }
+    Ok(renamed)
+}
