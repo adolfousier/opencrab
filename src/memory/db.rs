@@ -459,6 +459,7 @@ impl Store {
     /// `hash` is the hash of the WHOLE document (foreign key to `content` table).
     /// `seq` is the chunk sequence number within the document.
     /// `chunk_hash` is the hash of THIS chunk's content (for cache invalidation).
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_embedding(
         &self,
         hash: &str,
