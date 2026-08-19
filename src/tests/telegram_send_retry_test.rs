@@ -94,7 +94,11 @@ async fn oversized_windows_are_capped_not_slept_in_full() {
         matches!(out, Err(teloxide::RequestError::RetryAfter(_))),
         "long rate-limit (>1 hour) bails immediately with error"
     );
-    assert_eq!(calls.get(), 1, "long rate-limit bails immediately, no retries (#1110)");
+    assert_eq!(
+        calls.get(),
+        1,
+        "long rate-limit bails immediately, no retries (#1110)"
+    );
     assert_eq!(
         elapsed,
         Duration::from_secs(0),
