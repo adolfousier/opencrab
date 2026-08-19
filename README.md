@@ -4500,7 +4500,7 @@ cargo test
 
 ## Star History Chart
 
-[![Star History Chart](https://api.star-history.com/svg?repos=adolfousier/opencrabs&type=date&legend=top-left)](https://www.star-history.com/#adolfousier/opencrabs)
+[![Star History Chart](https://star-history.dera.page/svg?repos=adolfousier/opencrabs&type=date&legend=top-left)](https://star-history.dera.page/#adolfousier/opencrabs&type=date)
 
 ## ✨ Stay Tuned
 
