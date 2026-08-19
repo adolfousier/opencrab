@@ -566,6 +566,29 @@ pub(crate) async fn handle_message(
         return Ok(());
     }
 
+    // ── Native /userbot-login flow (owner-only, telegram-userbot feature) ──
+    // Intercepts the command and its follow-ups (credentials / 2FA password)
+    // while a login flow is active; everything else falls through untouched.
+    #[cfg(feature = "telegram-userbot")]
+    if let Some(text) = msg.text()
+        && crate::channels::telegram::userbot::chat_login::wants(text, user_id, msg.chat.id.0)
+    {
+        let chat = crate::channels::telegram::userbot::chat_login::ChatRef {
+            chat_id: msg.chat.id.0,
+            thread_id,
+        };
+        let is_private = matches!(msg.chat.kind, teloxide::types::ChatKind::Private { .. });
+        match crate::channels::telegram::userbot::chat_login::intercept(
+            &bot, chat, user_id, is_private, text, &cfg,
+        )
+        .await
+        {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => tracing::warn!("Telegram: userbot-login flow error: {e:#}"),
+        }
+    }
+
     // ── Service message: member join detection ──────────────────────────
     // Capture new_chat_members BEFORE the allowlist check so bot/user IDs
     // are logged and the owner is notified even when the joining user

@@ -4,7 +4,7 @@
 //! (docs lag two majors — trust this file and the compiler, not the docs).
 //!
 //! Grammers 0.10 construction (differs from every published example):
-//!   SqliteSession::open(path) -> SenderPool::new(session, api_id) ->
+//!   FileSession::load(path) -> SenderPool::new(session, api_id) ->
 //!   destructure {runner, handle, updates} -> Client::new(handle) ->
 //!   spawn runner.run() to drive connections on demand.
 //!
@@ -22,10 +22,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use grammers_client::{Client, SignInError, tl};
 use grammers_mtsender::SenderPool;
 use grammers_session::Session as _;
-use grammers_session::storages::SqliteSession;
 use grammers_session::types::{PeerAuth, PeerInfo, UpdateState, UpdatesState};
 use tokio::sync::mpsc;
 
+use super::session::FileSession;
 use super::{UserbotCreds, resolve_creds, session_file};
 use crate::config::types::{Config, TelegramUserbotConfig};
 
@@ -36,7 +36,7 @@ pub(crate) async fn connect(
     cfg: &TelegramUserbotConfig,
 ) -> Result<(
     Client,
-    Arc<SqliteSession>,
+    Arc<FileSession>,
     mpsc::UnboundedReceiver<grammers_session::updates::UpdatesLike>,
 )> {
     let creds = resolve_creds(cfg)?;
@@ -44,11 +44,13 @@ pub(crate) async fn connect(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let session = Arc::new(
-        SqliteSession::open(&path)
-            .await
-            .context("opening userbot session")?,
-    );
+    let session = Arc::new(FileSession::load(&path)?);
+    // The session file IS the logged-in account — same belt keys.toml wears.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
     let SenderPool {
         runner,
         handle,
@@ -86,8 +88,11 @@ fn render_qr_terminal(token: &[u8]) -> Result<()> {
 
 /// Cloud-password (SRP) completion — raw-TL replication of grammers' private
 /// `check_password`: account.GetPassword -> calculate_2fa -> auth.CheckPassword.
-/// `pass` is prompted, never echoed into logs.
-async fn password_step(client: &Client, pass: String) -> Result<tl::enums::auth::Authorization> {
+/// `pass` is collected by the caller, never echoed into logs.
+pub(crate) async fn password_step(
+    client: &Client,
+    pass: String,
+) -> Result<tl::enums::auth::Authorization> {
     let tl::enums::account::Password::Password(pw) = client
         .invoke(&tl::functions::account::GetPassword {})
         .await
@@ -131,9 +136,9 @@ async fn password_step(client: &Client, pass: String) -> Result<tl::enums::auth:
 }
 
 /// Post-authorization persistence — replicates grammers' private complete_login.
-async fn finish(
+pub(crate) async fn finish(
     client: &Client,
-    session: &Arc<SqliteSession>,
+    session: &Arc<FileSession>,
     authorization: tl::enums::auth::Authorization,
 ) -> Result<String> {
     let tl::enums::auth::Authorization::Authorization(auth) = authorization else {
@@ -170,12 +175,62 @@ async fn finish(
     Ok(u.first_name.clone().unwrap_or_default())
 }
 
-/// QR login: render the token in the terminal, poll until scanned; on
-/// SESSION_PASSWORD_NEEDED finish via SRP. No codes, nothing in any chat —
-/// immune to the anti-phishing tripwire that invalidates pasted codes.
+/// One QR polling round-trip. Owns the subtle MTProto parts — export, DC
+/// migration + import, password-needed sniffing — exactly once, shared by the
+/// terminal CLI flow and the chat-driven flow in [`super::chat_login`].
+pub(crate) enum QrStep {
+    /// Scanned and authorized (directly or after DC migration).
+    Success(Box<tl::enums::auth::Authorization>),
+    /// The account has a cloud password: the caller must collect it and run
+    /// [`password_step`].
+    PasswordNeeded,
+    /// Current token bytes; re-render only when they changed.
+    Token(Vec<u8>),
+}
+
+pub(crate) async fn qr_poll_once(client: &Client, creds: &UserbotCreds) -> Result<QrStep> {
+    let res = match client
+        .invoke(&tl::functions::auth::ExportLoginToken {
+            api_id: creds.api_id,
+            api_hash: creds.api_hash.clone(),
+            except_ids: Vec::new(),
+        })
+        .await
+    {
+        Ok(res) => res,
+        Err(e) if e.is("SESSION_PASSWORD_NEEDED") => return Ok(QrStep::PasswordNeeded),
+        Err(e) => return Err(e.into()),
+    };
+    match res {
+        tl::enums::auth::LoginToken::Success(s) => Ok(QrStep::Success(Box::new(s.authorization))),
+        tl::enums::auth::LoginToken::Token(t) => Ok(QrStep::Token(t.token)),
+        tl::enums::auth::LoginToken::MigrateTo(m) => {
+            println!("migrating to DC {}…", m.dc_id);
+            match client
+                .invoke_in_dc(
+                    m.dc_id,
+                    &tl::functions::auth::ImportLoginToken { token: m.token },
+                )
+                .await
+            {
+                Ok(tl::enums::auth::LoginToken::Success(s)) => {
+                    Ok(QrStep::Success(Box::new(s.authorization)))
+                }
+                Ok(other) => anyhow::bail!("import after migrate: unexpected {other:?}"),
+                Err(e) if e.is("SESSION_PASSWORD_NEEDED") => Ok(QrStep::PasswordNeeded),
+                Err(e) => Err(e.into()),
+            }
+        }
+    }
+}
+
+/// QR login (terminal flavor): render the token in the terminal, poll until
+/// scanned; on SESSION_PASSWORD_NEEDED finish via SRP. No codes, nothing in
+/// any chat — immune to the anti-phishing tripwire that invalidates pasted
+/// codes.
 pub(crate) async fn qr_login(
     client: Client,
-    session: Arc<SqliteSession>,
+    session: Arc<FileSession>,
     creds: &UserbotCreds,
 ) -> Result<String> {
     let mut last: Vec<u8> = Vec::new();
@@ -185,52 +240,17 @@ pub(crate) async fn qr_login(
             tokio::time::Instant::now() < deadline,
             "timed out waiting for QR scan"
         );
-        let res = match client
-            .invoke(&tl::functions::auth::ExportLoginToken {
-                api_id: creds.api_id,
-                api_hash: creds.api_hash.clone(),
-                except_ids: Vec::new(),
-            })
-            .await
-        {
-            Ok(res) => res,
-            Err(e) if e.is("SESSION_PASSWORD_NEEDED") => {
+        match qr_poll_once(&client, creds).await? {
+            QrStep::Success(auth) => return finish(&client, &session, *auth).await,
+            QrStep::PasswordNeeded => {
                 let pass = prompt("2FA password (cloud password) — input is NOT hidden:").await?;
                 let auth = password_step(&client, pass).await?;
                 return finish(&client, &session, auth).await;
             }
-            Err(e) => return Err(e.into()),
-        };
-        match res {
-            tl::enums::auth::LoginToken::Success(s) => {
-                return finish(&client, &session, s.authorization).await;
-            }
-            tl::enums::auth::LoginToken::MigrateTo(m) => {
-                println!("migrating to DC {}…", m.dc_id);
-                match client
-                    .invoke_in_dc(
-                        m.dc_id,
-                        &tl::functions::auth::ImportLoginToken { token: m.token },
-                    )
-                    .await
-                {
-                    Ok(tl::enums::auth::LoginToken::Success(s)) => {
-                        return finish(&client, &session, s.authorization).await;
-                    }
-                    Ok(other) => anyhow::bail!("import after migrate: unexpected {other:?}"),
-                    Err(e) if e.is("SESSION_PASSWORD_NEEDED") => {
-                        let pass =
-                            prompt("2FA password (cloud password) — input is NOT hidden:").await?;
-                        let auth = password_step(&client, pass).await?;
-                        return finish(&client, &session, auth).await;
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            }
-            tl::enums::auth::LoginToken::Token(t) => {
-                if t.token != last {
-                    last = t.token.clone();
-                    render_qr_terminal(&t.token)?;
+            QrStep::Token(t) => {
+                if t != last {
+                    last = t.clone();
+                    render_qr_terminal(&t)?;
                     println!(
                         "Scan with your phone: Telegram > Settings > Devices > Link Desktop Device\n(valid ~3 min; re-renders automatically)"
                     );
@@ -246,7 +266,7 @@ pub(crate) async fn qr_login(
 /// invalidated by Telegram's anti-phishing tripwire.
 pub(crate) async fn code_login(
     client: Client,
-    _session: Arc<SqliteSession>,
+    _session: Arc<FileSession>,
     creds: &UserbotCreds,
 ) -> Result<String> {
     let token = client
@@ -282,10 +302,13 @@ pub(crate) async fn cmd_userbot_login(config: &Config, use_code: bool) -> Result
         return Ok(());
     }
     let name = if use_code {
-        code_login(client, session, &creds).await?
+        code_login(client.clone(), session.clone(), &creds).await?
     } else {
-        qr_login(client, session, &creds).await?
+        qr_login(client.clone(), session.clone(), &creds).await?
     };
+    // finish() only mutated in-memory state; the CLI exits here, so persist
+    // the freshly-earned session NOW or it is lost.
+    session.save()?;
     println!("✅ authorized as {name}");
     println!(
         "The session file grants full account access — treat it like keys.toml.\n\

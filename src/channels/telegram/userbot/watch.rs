@@ -52,7 +52,7 @@ pub(crate) async fn spawn(deps: UserbotDeps) -> anyhow::Result<tokio::task::Join
     let ub = &cfg.channels.telegram.userbot;
     let allowed = ub.allowed_chats.clone();
 
-    let (client, _session, updates) = connect(ub).await?;
+    let (client, session, updates) = connect(ub).await?;
     if !client.is_authorized().await? {
         anyhow::bail!(
             "userbot session exists but is not authorized — run `opencrabs channel userbot-login`"
@@ -77,8 +77,13 @@ pub(crate) async fn spawn(deps: UserbotDeps) -> anyhow::Result<tokio::task::Join
             }
         };
         let mut stream = stream;
+        // Persist session drift (auth keys, peer cache, update state) on a
+        // lazy ticker — a no-op unless the session was mutated.
+        let mut save_ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+        save_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            match stream.next().await {
+            tokio::select! {
+                update = stream.next() => { match update {
                 Ok(Update::NewMessage(m)) => {
                     if m.outgoing() || m.via_bot_id().is_some() {
                         continue; // our own or bot-plane traffic: never loop it back
@@ -124,6 +129,12 @@ pub(crate) async fn spawn(deps: UserbotDeps) -> anyhow::Result<tokio::task::Join
                 Err(e) => {
                     tracing::error!("Telegram userbot: stream error, exiting for restart: {e}");
                     break;
+                }
+                } },
+                _ = save_ticker.tick() => {
+                    if let Err(e) = session.save_if_dirty() {
+                        tracing::warn!("Telegram userbot: session save failed: {e}");
+                    }
                 }
             }
         }

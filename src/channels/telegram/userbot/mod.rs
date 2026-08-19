@@ -7,8 +7,11 @@
 //! handler; see the map at `~/.opencrabs/research/telegram-userbot-map.md`
 //! for the verified grammers 0.10 wiring notes.
 
+pub(crate) mod chat_login;
 pub(crate) mod convert;
 pub(crate) mod login;
+pub(crate) mod session;
+pub(crate) mod setup;
 pub(crate) mod watch;
 
 use std::path::PathBuf;
@@ -16,7 +19,7 @@ use std::path::PathBuf;
 use crate::config::opencrabs_home;
 use crate::config::types::TelegramUserbotConfig;
 
-/// Where the grammers SQLite session lives.
+/// Where the userbot session lives (JSON; see [`session::FileSession`]).
 ///
 /// The session file IS the logged-in account: anyone holding it can act as
 /// the user without any further auth. It belongs next to keys.toml in the
@@ -24,7 +27,7 @@ use crate::config::types::TelegramUserbotConfig;
 pub(crate) fn session_file(cfg: &TelegramUserbotConfig) -> PathBuf {
     match cfg.session_path.as_deref() {
         Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => opencrabs_home().join("telegram_userbot.session"),
+        _ => opencrabs_home().join("telegram_userbot.session.json"),
     }
 }
 

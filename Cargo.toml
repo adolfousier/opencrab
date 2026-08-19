@@ -103,7 +103,7 @@ teloxide = { version = "0.17", features = ["macros"], optional = true }
 # Same crate family the spike validated: QR login, 2FA SRP, DC migration,
 # persistent SQLite session (map: ~/.opencrabs/research/telegram-userbot-map.md).
 grammers-client = { version = "0.10", optional = true }
-grammers-session = { version = "0.10", optional = true }
+grammers-session = { version = "0.10", default-features = false, features = ["serde"], optional = true }
 grammers-mtsender = { version = "0.10", optional = true }
 grammers-crypto = { version = "0.10", optional = true }
 
