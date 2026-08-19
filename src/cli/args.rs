@@ -292,6 +292,13 @@ pub enum ChannelCommands {
     List,
     /// Run health checks on all enabled channels
     Doctor,
+    /// Log the Telegram userbot in (MTProto user session; QR by default)
+    #[command(name = "userbot-login")]
+    UserbotLogin {
+        /// Use the phone-code flow instead of QR
+        #[arg(long)]
+        code: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
