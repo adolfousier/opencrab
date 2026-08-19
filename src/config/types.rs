@@ -366,9 +366,42 @@ where
     }))
 }
 
+/// Telegram userbot configuration — the MTProto user session (grammers).
+///
+/// A read-plane companion to the bot: logs in as the user's own account
+/// (QR or code+2FA via `opencrabs userbot-login`), receives updates in
+/// chats the bot may not be a member of, and forwards `allowed_chats`
+/// through the SAME bot handler — replies still exit as the bot, so the
+/// user session never speaks on its own unless a chat is explicitly
+/// listed in `outbound_allowlist` (empty = read-only, by design).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelegramUserbotConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Telegram app api_id (my.telegram.org → API development tools).
+    pub api_id: Option<i64>,
+    /// Telegram app api_hash — a secret; belongs in keys.toml.
+    pub api_hash: Option<String>,
+    /// Login phone in international format (e.g. +2547…).
+    pub phone: Option<String>,
+    /// grammers SQLite session path. Default: <opencrabs home>/telegram_userbot.session
+    pub session_path: Option<String>,
+    /// Chat IDs whose inbound messages forward to the agent. Empty = dry
+    /// (session connects and receives, but nothing is forwarded).
+    #[serde(default)]
+    pub allowed_chats: Vec<String>,
+    /// Chat IDs the user session may send to AS THE USER. Empty = strictly
+    /// read-only. This is the irreversible-action gate: sending as the user
+    /// is visible to others and scored by Telegram's spam heuristics.
+    #[serde(default)]
+    pub outbound_allowlist: Vec<String>,
+}
+
 /// Telegram channel configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelegramConfig {
+    #[serde(default)]
+    pub userbot: TelegramUserbotConfig,
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]

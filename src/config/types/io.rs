@@ -697,6 +697,26 @@ pub(crate) fn merge_channel_keys(mut base: ChannelsConfig, keys: ChannelsConfig)
         base.telegram.token = Some(token.clone());
     }
 
+    // Telegram userbot (MTProto secrets from keys.toml override config.toml)
+    if let Some(ref ub) = keys.telegram.userbot.api_hash
+        && !ub.is_empty()
+    {
+        base.telegram.userbot.api_hash =
+            crate::config::stored_key::real_key(ub).map(str::to_string);
+    }
+    if keys.telegram.userbot.api_id.is_some() {
+        base.telegram.userbot.api_id = keys.telegram.userbot.api_id;
+    }
+    if keys
+        .telegram
+        .userbot
+        .phone
+        .as_ref()
+        .is_some_and(|p| !p.is_empty())
+    {
+        base.telegram.userbot.phone = keys.telegram.userbot.phone.clone();
+    }
+
     // Discord
     if let Some(ref token) = keys.discord.token
         && !token.is_empty()
