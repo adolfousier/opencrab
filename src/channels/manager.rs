@@ -98,6 +98,9 @@ impl ChannelManager {
         #[cfg(feature = "telegram")]
         self.reconcile_telegram(config, &mut handles).await;
 
+        #[cfg(feature = "telegram-userbot")]
+        self.reconcile_telegram_userbot(config, &mut handles).await;
+
         #[cfg(feature = "whatsapp")]
         self.reconcile_whatsapp(config, &mut handles).await;
 
@@ -186,6 +189,91 @@ impl ChannelManager {
             ChannelAction::Stop => {
                 if let Some(handle) = handles.remove("telegram") {
                     tracing::info!("ChannelManager: stopping Telegram bot");
+                    handle.abort();
+                }
+            }
+            ChannelAction::Noop => {}
+        }
+    }
+
+    /// Telegram userbot — the MTProto read plane. Runs only when the bot can
+    /// (replies exit as the bot), a session file exists (login is a CLI
+    /// action, not an agent task), and `channels.telegram.userbot.enabled`.
+    /// Keyed separately from "telegram" so either plane restarts on its own.
+    #[cfg(feature = "telegram-userbot")]
+    async fn reconcile_telegram_userbot(
+        &self,
+        config: &Config,
+        handles: &mut HashMap<String, JoinHandle<()>>,
+    ) {
+        let tg = &config.channels.telegram;
+        let has_valid_token = tg
+            .token
+            .as_ref()
+            .is_some_and(|t| !t.is_empty() && t.contains(':'));
+        let should_run = tg.enabled && tg.userbot.enabled && has_valid_token;
+        match channel_action(should_run, handle_alive(handles, "telegram-userbot")) {
+            ChannelAction::Start => {
+                let ub = &tg.userbot;
+                if !crate::channels::telegram::userbot::login::session_exists(ub) {
+                    tracing::info!(
+                        "ChannelManager: Telegram userbot enabled but no session file — \
+                         run `opencrabs channel userbot-login` to log in"
+                    );
+                    return;
+                }
+                let Some(token) = tg.token.clone() else {
+                    return;
+                };
+                let bot = teloxide::Bot::new(token.clone());
+                // Same resume/reaction wiring as the bot plane: the userbot's
+                // AgentService gets the reaction queue and background-task
+                // resume producer, with the weak-holder dance for the latter.
+                let reaction_cb = self.telegram_state.reaction_queue_callback();
+                let agent_holder: std::sync::Arc<
+                    std::sync::Mutex<Option<std::sync::Weak<crate::brain::agent::AgentService>>>,
+                > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                let enqueue_cb = crate::channels::telegram::resume::build_enqueue_callback(
+                    self.telegram_state.clone(),
+                    agent_holder.clone(),
+                );
+                let agent_service = self
+                    .channel_factory
+                    .create_agent_service_full(Some(reaction_cb), Some(enqueue_cb))
+                    .await;
+                if let Ok(mut h) = agent_holder.lock() {
+                    *h = Some(std::sync::Arc::downgrade(&agent_service));
+                }
+                let deps = crate::channels::telegram::userbot::watch::UserbotDeps {
+                    bot,
+                    agent: agent_service,
+                    session_svc: crate::services::SessionService::new(
+                        self.channel_factory.service_context(),
+                    ),
+                    bot_token: std::sync::Arc::new(token),
+                    shared_session: self.channel_factory.shared_session_id(),
+                    telegram_state: self.telegram_state.clone(),
+                    config_rx: self.channel_factory.config_rx(),
+                    channel_msg_repo: crate::db::ChannelMessageRepository::new(
+                        self.db_pool.clone(),
+                    ),
+                };
+                match crate::channels::telegram::userbot::watch::spawn(deps).await {
+                    Ok(handle) => {
+                        tracing::info!(
+                            "ChannelManager: spawning Telegram userbot (read plane, \
+                             forwards allowed_chats as inbound)"
+                        );
+                        handles.insert("telegram-userbot".to_string(), handle);
+                    }
+                    Err(e) => {
+                        tracing::error!("ChannelManager: Telegram userbot failed to start: {e}")
+                    }
+                }
+            }
+            ChannelAction::Stop => {
+                if let Some(handle) = handles.remove("telegram-userbot") {
+                    tracing::info!("ChannelManager: stopping Telegram userbot");
                     handle.abort();
                 }
             }

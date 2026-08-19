@@ -308,6 +308,7 @@ pub mod telegram_menu_scope_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_table_render_test;
 pub mod telegram_userbot_config_test;
+pub mod telegram_userbot_reconcile_test;
 pub mod tools_md_regression_test;
 pub mod write_opencrabs_file_inline_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows
