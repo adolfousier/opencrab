@@ -1,38 +1,49 @@
-/// Regression test for #1077: when the file appender mutex is held by one
-/// thread (e.g., a blocking write), other threads must not block indefinitely
-/// on `make_writer()`. The `try_lock()` with contention handling ensures
-/// that a contended lock returns quickly and the event is discarded rather
-/// than blocking the caller.
+//! Appender-mutex behaviour under contention (#1077, #1115).
+//!
+//! #1077: a panic while holding the appender lock poisoned it and silenced
+//! logging for the rest of the run. Recovery via `into_inner` fixes that.
+//!
+//! #1115: the same change also swapped `lock()` for `try_lock()` and discarded
+//! the event on `WouldBlock`. `WouldBlock` only means another thread holds the
+//! lock right now, which under concurrent logging is routine, so log lines were
+//! thrown away under ordinary load — and each drop was announced with
+//! `eprintln!`, which corrupts a TUI that owns the terminal.
+//!
+//! The contract is now: wait for the lock, then write. This file asserts that,
+//! where it previously asserted the opposite.
+
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tracing_subscriber::fmt::MakeWriter;
 
 #[test]
-fn try_lock_contention_returns_quickly() {
+fn a_contended_writer_waits_rather_than_discarding_the_event() {
     use crate::logging::logger::ResilientFileWriter;
 
     let writer = Arc::new(ResilientFileWriter::new_for_test());
 
-    // Acquire the lock on the appender to simulate contention
-    let _guard = writer.appender_lock_for_test();
+    // Hold the lock, then release it while a second thread is waiting.
+    let guard = writer.appender_lock_for_test();
 
-    // Spawn a thread that tries to make a writer while the lock is held
     let writer_clone = Arc::clone(&writer);
     let handle = thread::spawn(move || {
         let start = std::time::Instant::now();
         let _w = writer_clone.make_writer();
-        let elapsed = start.elapsed();
-
-        // The try_lock should return quickly (within 100ms), not block indefinitely
+        // It waited for the holder instead of skipping the event. This test
+        // previously asserted the reverse — that make_writer returns inside
+        // 100ms with a guard that throws the write away — which was the
+        // defect, not the requirement (#1115).
         assert!(
-            elapsed < Duration::from_millis(100),
-            "make_writer() blocked for {:?}, expected < 100ms",
-            elapsed
+            start.elapsed() >= Duration::from_millis(100),
+            "make_writer must wait for the lock rather than drop the event"
         );
     });
 
-    // Wait for the thread to complete
+    // Give the waiter time to block on the lock, then let it through.
+    thread::sleep(Duration::from_millis(150));
+    drop(guard);
+
     handle.join().expect("thread panicked");
 }
 
