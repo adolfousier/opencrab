@@ -238,6 +238,19 @@ pub(crate) async fn deliver_intermediate_message(
     true
 }
 
+/// Threshold for treating a Telegram 429 as a "long rate-limit" (#1110).
+///
+/// When Telegram returns `Retry-After: N` where N > this threshold, the chat
+/// is flood-banned for hours (28442s = 7.9 hours observed). Retrying the
+/// send ladder burns 90 seconds (3 × 30s clamped wait) for no gain: the
+/// window won't clear in that time. Instead, bail immediately and let the
+/// caller surface the rate-limit to the user.
+///
+/// One hour is the boundary: typical flood windows (placeholder-edit churn,
+/// command bursts) are seconds and stay under the inline cap. Anything over
+/// an hour is a multi-hour ban, not a throttle.
+const LONG_RATE_LIMIT_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(3600);
+
 /// Run a Telegram send, waiting out `RetryAfter` (429) up to 3 attempts.
 ///
 /// Command replies are programmatic: a per-chat rate limit (typically a
@@ -247,6 +260,8 @@ pub(crate) async fn deliver_intermediate_message(
 /// single error log line — /models looked "stuck" while a turn streamed
 /// and worked right after it completed (#297). Non-429 errors and
 /// exhausted retries still propagate to the caller.
+///
+/// Long rate-limits (>1 hour) bail immediately without retrying (#1110).
 pub(crate) async fn send_retrying_rate_limit<T, F, Fut>(
     what: &str,
     mut send: F,
@@ -259,21 +274,34 @@ where
     let mut attempt = 0u32;
     loop {
         match send().await {
-            Err(teloxide::RequestError::RetryAfter(secs)) if attempt < MAX_RETRIES => {
-                attempt += 1;
-                super::rate_limit::wait_out(
-                    what,
-                    secs.duration(),
-                    &format!(" (attempt {attempt}/{MAX_RETRIES})"),
-                )
-                .await;
-            }
             Err(teloxide::RequestError::RetryAfter(secs)) => {
-                tracing::error!(
-                    "Telegram: {what} still rate-limited after {MAX_RETRIES} retries ({}s) — giving up",
-                    secs.seconds()
-                );
-                return Err(teloxide::RequestError::RetryAfter(secs));
+                let requested = secs.duration();
+                // Long rate-limit (>1 hour): bail immediately, don't retry (#1110).
+                // The chat is flood-banned for hours; retrying burns 90s for no gain.
+                if requested > LONG_RATE_LIMIT_THRESHOLD {
+                    tracing::error!(
+                        "Telegram: {what} long rate-limit ({}s > {}s threshold) — bailing immediately, \
+                         no retry ladder (#1110)",
+                        requested.as_secs(),
+                        LONG_RATE_LIMIT_THRESHOLD.as_secs()
+                    );
+                    return Err(teloxide::RequestError::RetryAfter(secs));
+                }
+                if attempt < MAX_RETRIES {
+                    attempt += 1;
+                    super::rate_limit::wait_out(
+                        what,
+                        requested,
+                        &format!(" (attempt {attempt}/{MAX_RETRIES})"),
+                    )
+                    .await;
+                } else {
+                    tracing::error!(
+                        "Telegram: {what} still rate-limited after {MAX_RETRIES} retries ({}s) — giving up",
+                        requested.as_secs()
+                    );
+                    return Err(teloxide::RequestError::RetryAfter(secs));
+                }
             }
             // No success line here (review F1): the wrapper is generic and
             // has no correlation fields, so its line carried nothing the
