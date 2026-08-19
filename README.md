@@ -5,6 +5,9 @@
 [![CI](https://github.com/adolfousier/opencrabs/actions/workflows/ci.yml/badge.svg)](https://github.com/adolfousier/opencrabs/actions/workflows/ci.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/adolfousier/opencrabs?style=social)](https://github.com/adolfousier/opencrabs)
 
+<a href="https://trendshift.io/repositories/22468?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-22468" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/22468/daily?language=Rust" alt="adolfousier/opencrabs — Trendshift #3 Repository Of The Day, Rust" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/22468?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-22468" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/22468/weekly?language=Rust" alt="adolfousier/opencrabs — Trendshift #20 Repository Of The Week, Rust" width="250" height="55"/></a>
+
 # 🦀 OpenCrabs
 
 **The autonomous, self-improving AI agent. Single Rust binary. Every channel.**
