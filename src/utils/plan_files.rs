@@ -24,6 +24,7 @@
 
 use crate::tui::plan::{PlanDocument, PlanStatus};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use uuid::Uuid;
 
 /// The session's data directory, resolved by what the session is bound to
@@ -217,6 +218,34 @@ impl PlanModeState {
     }
 }
 
+/// Threshold for treating a pre-init marker as stale (#1109).
+///
+/// When plan creation fails mid-flight (provider timeout, network error), the
+/// marker file is left behind with no cleanup path. Without staleness, the
+/// session is locked out of plan operations indefinitely (6.6 hours observed
+/// in Adi's audit). Five minutes is generous for a plan-init round-trip;
+/// anything older is a failed attempt, not an in-flight one.
+pub const PRE_INIT_STALE_THRESHOLD: Duration = Duration::from_secs(300);
+
+/// Whether the pre-init marker at `path` is older than [`PRE_INIT_STALE_THRESHOLD`].
+///
+/// Returns `true` when the marker should be treated as stale (session is not
+/// actually pre-init, the previous attempt failed). Returns `false` for a
+/// fresh marker or when the mtime cannot be read (conservative: treat as
+/// fresh rather than silently clearing an in-flight marker).
+fn is_marker_stale(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    let Ok(age) = modified.elapsed() else {
+        return false;
+    };
+    age > PRE_INIT_STALE_THRESHOLD
+}
+
 /// Derive the session's plan-mode state from disk.
 pub async fn plan_mode_state(session_id: Uuid) -> PlanModeState {
     let json = plan_json_read_path(session_id).await;
@@ -229,10 +258,22 @@ pub async fn plan_mode_state(session_id: Uuid) -> PlanModeState {
     let state = plan_mode_state_of(plan.as_ref(), md_exists);
     // Pre-init is a durable MARKER file, not a stored PlanDocument (#569). When
     // no real plan resolves, an existing marker means Plan-mode intent without
-    // an approvable document yet. (Legacy on-disk stub JSONs still resolve to
-    // PreInitEditing inside plan_mode_state_of, so both representations work.)
-    if state == PlanModeState::NoPlan && pre_init_marker_read_path(session_id).await.exists() {
-        return PlanModeState::PreInitEditing;
+    // an approvable document yet. Stale markers (>5 min old) are treated as
+    // failed attempts and map to NoPlan instead of locking the session (#1109).
+    if state == PlanModeState::NoPlan {
+        let marker_path = pre_init_marker_read_path(session_id).await;
+        if marker_path.exists() {
+            if is_marker_stale(&marker_path) {
+                tracing::warn!(
+                    "Plan: clearing stale pre-init marker at {} (>{:?} old, #1109)",
+                    marker_path.display(),
+                    PRE_INIT_STALE_THRESHOLD
+                );
+                let _ = std::fs::remove_file(&marker_path);
+                return PlanModeState::NoPlan;
+            }
+            return PlanModeState::PreInitEditing;
+        }
     }
     state
 }
