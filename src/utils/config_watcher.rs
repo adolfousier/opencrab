@@ -144,13 +144,23 @@ pub fn spawn(
                             .recovery_reason
                             .clone()
                             .unwrap_or_else(|| "no reason recorded".to_string());
-                        // "line 1, column 1" is the signature of reading an
-                        // EMPTY file, not of a syntax error in the user's
-                        // content. Config writes are not atomic, so a reader
-                        // that lands between truncate and write sees zero bytes.
-                        // Telling the user to fix a file that is already valid
-                        // sends them hunting for a typo that does not exist.
-                        let transient = reason.contains("line 1, column 1");
+                        // Config writes are not atomic, so a reader that lands
+                        // between truncate and write sees zero bytes — harmless
+                        // and self-healing. This used to be detected by matching
+                        // "line 1, column 1", which serde ALSO reports for a
+                        // field error against the struct, so `duplicate field`
+                        // was announced as a write race with the assurance that
+                        // the file was fine (#1116). The classifier now requires
+                        // positive evidence of an empty read and treats anything
+                        // unrecognised as real.
+                        let path_for_check = base.join("config.toml");
+                        let file_is_empty_now = std::fs::metadata(&path_for_check)
+                            .map(|m| m.len() == 0)
+                            .unwrap_or(false);
+                        let transient = crate::utils::config_reload_reason::is_transient_read_race(
+                            &reason,
+                            file_is_empty_now,
+                        );
                         tracing::warn!(
                             "ConfigWatcher: load fell back to last-known-good                              (transient={transient}) — snapshot left untouched. Reason: {reason}"
                         );
@@ -158,15 +168,21 @@ pub fn spawn(
                             let path = base.join("config.toml");
                             notify(if transient {
                                 format!(
-                                    "⚠️ Config reload{} read {} mid-write and saw an empty file,                                      so it is running on the previous config for now. Your file                                      is almost certainly fine — this is a write race, not a typo.                                      Touch the file to retry. Details: {reason}",
+                                    "⚠️ Config reload{} read {} while it was being written \
+                                     and saw an empty file, so it is running on the previous \
+                                     config for now. This is a write race, not a problem with \
+                                     your file — it clears on the next save.",
                                     profile_suffix(),
                                     path.display(),
                                 )
                             } else {
                                 format!(
-                                    "⚠️ Config reload{} failed — running on the previous config,                                      so your on-disk edits are NOT active.\n\nFile: {}\nError:                                      {reason}\n\nFix that and save; hot-reload applies                                      automatically.",
+                                    "⚠️ Config reload{} failed, so your edits to {} are NOT \
+                                     active — it is still running on the previous config.\n\n\
+                                     {}\n\nFix that and save; hot-reload applies automatically.",
                                     profile_suffix(),
                                     path.display(),
+                                    reason,
                                 )
                             });
                         }

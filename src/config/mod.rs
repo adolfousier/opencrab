@@ -2,6 +2,7 @@
 //!
 //! Handles application configuration loading, validation, and management.
 
+pub(crate) mod alias_merge;
 mod current;
 pub mod guard;
 pub mod health;

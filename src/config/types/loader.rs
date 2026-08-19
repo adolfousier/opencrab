@@ -822,7 +822,24 @@ impl Config {
         let contents = fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {:?}", path))?;
 
-        let file_config: Self = toml::from_str(&contents)
+        // Fold a legacy section name into its canonical one before serde sees
+        // the document. A file carrying both `[gateway]` and `[a2a]` is one
+        // feature written twice, and serde reads an alias as a second spelling
+        // of the same field rather than a second field — so it failed with
+        // `duplicate field` pointing at line 1, and the load path then treated
+        // that like a syntax error and fell back to a stale snapshot (#1116).
+        let mut doc: toml::Value = toml::from_str(&contents)
+            .with_context(|| format!("Failed to parse config file: {:?}", path))?;
+        let folded = crate::config::alias_merge::fold_legacy_sections(&mut doc);
+        if !folded.is_empty() {
+            tracing::info!(
+                "Config: folded legacy section(s) {} into their current names — \
+                 both spellings configure one feature",
+                folded.join(", ")
+            );
+        }
+        let file_config: Self = doc
+            .try_into()
             .with_context(|| format!("Failed to parse config file: {:?}", path))?;
 
         Ok(Self::merge(base, file_config))

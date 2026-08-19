@@ -609,7 +609,11 @@ allowed_users = []                      # Trello member IDs allowed to @mention 
 # ========================================
 # Enables HTTP gateway for peer-to-peer agent communication.
 # Other A2A-compatible agents can send tasks, collaborate, and debate.
-[gateway]
+#
+# The section is [a2a]. Older configs spell it [gateway] and still load — both
+# names configure this one feature, and a file carrying both is folded into one
+# rather than rejected. New configs should use [a2a] only.
+[a2a]
 enabled = false
 bind = "127.0.0.1"     # Loopback only by default for security
 port = 18790            # A2A gateway port

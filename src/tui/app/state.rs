@@ -1383,12 +1383,21 @@ impl App {
         }
 
         // Notify user if config was recovered from last-known-good snapshot
-        if crate::config::Config::first_load_status().recovered {
-            self.push_system_message(
-                "🔧 Config recovered from last-known-good snapshot. \
-                 Review ~/.opencrabs/config.toml for issues."
-                    .to_string(),
-            );
+        let load_status = crate::config::Config::first_load_status();
+        if load_status.recovered {
+            // Name the cause. `recovery_reason` has been captured since #909
+            // precisely so the user is told WHAT failed, and this notice threw
+            // it away — leaving people to find a cryptic parse error in the
+            // debug log while every config edit silently did nothing (#1116).
+            let why = load_status
+                .recovery_reason
+                .as_deref()
+                .unwrap_or("cause not recorded");
+            self.push_system_message(format!(
+                "🔧 Config failed to load and was recovered from the \
+                 last-known-good snapshot, so edits to ~/.opencrabs/config.toml \
+                 are NOT in effect until this is fixed.\n\nCause: {why}"
+            ));
         }
 
         // Notify user about unknown config keys (possible typos)
