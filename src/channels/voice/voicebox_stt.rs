@@ -15,7 +15,9 @@ use super::openai_tts::build_endpoint_url;
 /// a dead voicebox doesn't block the STT dispatcher's fallback chain.
 const LIVENESS_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// OGG container magic bytes: "OggS"
+/// OGG container magic bytes: "OggS". Only consulted on the OGG->WAV
+/// conversion path, which is itself gated behind local-stt.
+#[cfg(feature = "local-stt")]
 const OGG_MAGIC: &[u8; 4] = b"OggS";
 
 /// Quick liveness probe so a dead voicebox process fails in ~2s instead of
