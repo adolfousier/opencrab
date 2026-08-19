@@ -22,7 +22,11 @@ async fn append_skips_unchanged_chunks() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let store = Store::open(&db_path).expect("Failed to create test store");
-    let store = Box::leak(Box::new(Mutex::new(store)));
+    // Bound as a shared reference on purpose. `Box::leak` yields `&'static
+    // mut`, which makes every `lock()` below look redundant to clippy
+    // (`mut_mutex_lock`) even though the code genuinely wants the mutex
+    // semantics — `embed_content` takes it shared and locks internally.
+    let store: &'static Mutex<Store> = Box::leak(Box::new(Mutex::new(store)));
 
     // Create a 3-paragraph document (will be chunked into 3 chunks)
     let body_v1 = "Paragraph one content here.\n\nParagraph two content here.\n\nParagraph three content here.";
@@ -68,7 +72,11 @@ async fn modify_chunk_triggers_reembed() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let store = Store::open(&db_path).expect("Failed to create test store");
-    let store = Box::leak(Box::new(Mutex::new(store)));
+    // Bound as a shared reference on purpose. `Box::leak` yields `&'static
+    // mut`, which makes every `lock()` below look redundant to clippy
+    // (`mut_mutex_lock`) even though the code genuinely wants the mutex
+    // semantics — `embed_content` takes it shared and locks internally.
+    let store: &'static Mutex<Store> = Box::leak(Box::new(Mutex::new(store)));
 
     // Create a document with one chunk
     let body_v1 = "Original paragraph content.";
@@ -98,7 +106,11 @@ async fn identical_content_skips_reembed() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let store = Store::open(&db_path).expect("Failed to create test store");
-    let store = Box::leak(Box::new(Mutex::new(store)));
+    // Bound as a shared reference on purpose. `Box::leak` yields `&'static
+    // mut`, which makes every `lock()` below look redundant to clippy
+    // (`mut_mutex_lock`) even though the code genuinely wants the mutex
+    // semantics — `embed_content` takes it shared and locks internally.
+    let store: &'static Mutex<Store> = Box::leak(Box::new(Mutex::new(store)));
 
     let body = "Same content repeated.";
 

@@ -123,3 +123,68 @@ async fn send_rich_markdown_media_id_uses_custom_api_url() {
     assert_eq!(result.unwrap(), 77);
     mock.assert_async().await;
 }
+
+// ── Base-URL normalisation (#1117) ───────────────────────────────────
+//
+// The tests above pass `mockito::Server::url()`, which has no trailing
+// slash. Production passes `Bot::api_url().as_str()`, and the URL spec
+// normalises an empty path to `/`, so that value DOES end in one. String
+// concatenation then produced `https://api.telegram.org//bot<token>/method`,
+// Telegram rejected it, and every rich send fell back to plain HTML — tool
+// blocks stopped rendering rich and completions arrived as separate
+// messages. These pin the shape production actually uses.
+
+#[tokio::test]
+async fn a_base_with_a_trailing_slash_does_not_double_the_separator() {
+    let mut server = mockito::Server::new_async().await;
+    // Exactly what `Bot::api_url().as_str()` yields: a trailing slash.
+    let base_with_slash = format!("{}/", server.url());
+
+    let hit = server
+        .mock("POST", "/botTOKEN/sendRichMessage")
+        .with_status(200)
+        .with_body(r#"{"ok":true,"result":{"message_id":1}}"#)
+        .create_async()
+        .await;
+
+    let _ = api::send_rich_html_id(
+        &base_with_slash,
+        "TOKEN",
+        123,
+        None,
+        "<b>hi</b>",
+        None,
+        "test",
+        "-",
+    )
+    .await;
+
+    // Asserts the single-slash path. A double slash would miss this mock.
+    hit.assert_async().await;
+}
+
+#[tokio::test]
+async fn a_base_without_a_trailing_slash_still_works() {
+    // The mockito shape, kept so trimming cannot regress the other direction.
+    let mut server = mockito::Server::new_async().await;
+    let hit = server
+        .mock("POST", "/botTOKEN/sendRichMessage")
+        .with_status(200)
+        .with_body(r#"{"ok":true,"result":{"message_id":1}}"#)
+        .create_async()
+        .await;
+
+    let _ = api::send_rich_html_id(
+        &server.url(),
+        "TOKEN",
+        123,
+        None,
+        "<b>hi</b>",
+        None,
+        "test",
+        "-",
+    )
+    .await;
+
+    hit.assert_async().await;
+}

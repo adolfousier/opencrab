@@ -24,7 +24,7 @@ pub(crate) async fn send_rich_html_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("{api_url}/bot{token}/sendRichMessage");
+    let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let mut body = build_body_html(chat_id, thread_id, html);
     if let Some(kb) = reply_markup {
         body["reply_markup"] = kb.clone();
@@ -50,7 +50,7 @@ pub(crate) async fn edit_rich_html(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<()> {
-    let url = format!("{api_url}/bot{token}/editMessageText");
+    let url = format!("{}/bot{token}/editMessageText", api_base(api_url));
     let mut body = serde_json::json!({
         "chat_id": chat_id,
         "message_id": message_id,
@@ -74,7 +74,7 @@ pub(crate) async fn send_rich_markdown_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("{api_url}/bot{token}/sendRichMessage");
+    let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let result = post_rich(
         &url,
         &build_body(chat_id, thread_id, markdown),
@@ -297,7 +297,7 @@ pub(crate) async fn send_rich_markdown_media_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("{api_url}/bot{token}/sendRichMessage");
+    let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let result = post_rich(
         &url,
         &build_body_markdown_media(chat_id, thread_id, markdown, media),
@@ -339,4 +339,21 @@ pub(crate) fn build_body_markdown_media(
         body["message_thread_id"] = serde_json::json!(t.0.0);
     }
     body
+}
+
+/// The API base with any trailing separator removed.
+///
+/// `Bot::api_url()` returns a parsed `Url`, and the URL spec normalises an
+/// empty path to `/`, so `as_str()` yields `https://api.telegram.org/`.
+/// Concatenating that produced `https://api.telegram.org//bot<token>/method`,
+/// which Telegram rejects — every rich send failed and silently fell back to
+/// plain HTML, so tool blocks stopped rendering as rich and completions
+/// arrived as separate messages (#1117).
+///
+/// The tests that shipped with the parameterisation could not catch it:
+/// mockito's `server.url()` has no trailing slash, so they exercised a shape
+/// production never uses. teloxide builds these with `path_segments_mut()`
+/// for the same reason.
+fn api_base(api_url: &str) -> &str {
+    api_url.trim_end_matches('/')
 }

@@ -88,13 +88,21 @@ fn old_extension_check_would_have_missed_the_real_files() {
 /// `make_writer()` must NOT block indefinitely. It should return a guard
 /// that discards writes (via `try_lock()` + `WouldBlock` path).
 #[test]
-fn make_writer_does_not_block_on_contended_mutex() {
+fn make_writer_waits_for_the_lock_instead_of_discarding_the_event() {
     use crate::logging::ResilientFileWriter;
     use std::io::Write;
     use std::sync::Arc;
     use std::time::Duration;
     use tracing_subscriber::fmt::writer::MakeWriter;
 
+    // This test previously asserted the opposite: that `make_writer` returns
+    // immediately under contention with a guard that silently discards the
+    // write. That contract was the defect (#1115). `WouldBlock` only means
+    // another thread holds the lock right now, which under concurrent logging
+    // is routine, so the writer threw log lines away under ordinary load and
+    // announced each one on stderr, corrupting the TUI's frame.
+    //
+    // The contract is now: wait for the lock, then write. Nothing is lost.
     let dir = std::env::temp_dir().join(format!(
         "opencrabs-log-contention-test-{}",
         std::process::id()
@@ -107,31 +115,36 @@ fn make_writer_does_not_block_on_contended_mutex() {
         "opencrabs".to_string(),
     ));
 
-    // Hold the mutex from another thread to simulate a blocked write.
+    // Hold the mutex from another thread, then release it.
     let writer2 = Arc::clone(&writer);
     let handle = std::thread::spawn(move || {
-        // Acquire the inner mutex and hold it for 500ms.
         let _guard = writer2.appender_lock_for_test().expect("must acquire lock");
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(200));
     });
 
     // Give the spawned thread time to acquire the lock.
     std::thread::sleep(Duration::from_millis(50));
 
-    // This call must NOT block for 500ms — it should return immediately
-    // with a guard that discards writes.
+    // Blocks until the holder releases, rather than giving up on the event.
     let start = std::time::Instant::now();
     let mut w = writer.make_writer();
     let elapsed = start.elapsed();
     assert!(
-        elapsed < Duration::from_millis(100),
-        "make_writer must return quickly under contention, took {elapsed:?}"
+        elapsed >= Duration::from_millis(100),
+        "make_writer must wait for the lock rather than skip the event, returned after {elapsed:?}"
     );
 
-    // Writing to the contended guard should succeed (discarded silently).
-    let result = w.write_all(b"this should be discarded\n");
-    assert!(result.is_ok(), "discarded write must not error");
+    w.write_all(b"this must be kept\n")
+        .expect("a contended write still succeeds");
 
     handle.join().unwrap();
+
+    // And it actually reached the file, rather than being silently dropped.
+    let wrote_something = std::fs::read_dir(&dir)
+        .expect("read dir")
+        .filter_map(Result::ok)
+        .any(|e| e.metadata().map(|m| m.len() > 0).unwrap_or(false));
+    assert!(wrote_something, "the contended event must land on disk");
+
     let _ = std::fs::remove_dir_all(&dir);
 }
