@@ -4498,9 +4498,10 @@ cargo test
 
 ---
 
-## Star History Chart
+## Trending
 
-[![Star History Chart](https://star-history.dera.page/svg?repos=adolfousier/opencrabs&type=date&legend=top-left)](https://star-history.dera.page/#adolfousier/opencrabs&type=date)
+<a href="https://trendshift.io/repositories/22468?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-22468" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/22468/daily?language=Rust" alt="adolfousier/opencrabs — Trendshift #3 Repository Of The Day, Rust" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/22468?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-22468" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/22468/weekly?language=Rust" alt="adolfousier/opencrabs — Trendshift #20 Repository Of The Week, Rust" width="250" height="55"/></a>
 
 ## ✨ Stay Tuned
 
