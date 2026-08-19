@@ -1,14 +1,22 @@
 name: Pre-release Build
 
-# Build downloadable binaries on every push to main so contributors can
-# test unreleased code without waiting for a tagged release.
+# Build downloadable binaries on demand so contributors can test unreleased
+# code without waiting for a tagged release.
+#
+# Deliberately NOT on every push to main. Five targets per commit, on a repo
+# that lands many, spends build time continuously to produce artifacts nobody
+# asked for. This runs when there is something worth handing out.
+#
 # macOS targets use the self-hosted Mac Studio runner (fast, native).
 # Linux/Windows targets stay on GitHub-hosted runners.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      note:
+        description: "What is in this build (shown in the pre-release body)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -200,6 +208,10 @@ jobs:
     needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     steps:
+      # Needed before the notes step reads Cargo.toml for the version. Without
+      # it that grep runs in an empty workspace and fails the job.
+      - uses: actions/checkout@v5
+
       - name: Download all artifacts
         uses: actions/download-artifact@v7
         with:
@@ -209,7 +221,7 @@ jobs:
         run: |
           mkdir -p release-assets
           find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release-assets/ \;
-          cd release-assets && sha256sum * > SHA256SUMS
+          cd release-assets && sha256sum -- * > SHA256SUMS
           ls -la
 
       - name: Generate pre-release notes
@@ -221,9 +233,11 @@ jobs:
           cat > /tmp/prerelease_notes.md << EOF
           ## Pre-release build — v${VERSION}-pre-${SHORT_SHA}
 
-          **Automated build from main branch.** Not a tagged release — for testing only.
+          **On-demand build.** Not a tagged release — for testing only.
 
-          **Commit:** \`${SHORT_SHA}\` on [\`main\`](https://github.com/${{ github.repository }}/commit/${SHA})
+          **Commit:** \`${SHORT_SHA}\` on \`${{ github.ref_name }}\` ([view](https://github.com/${{ github.repository }}/commit/${SHA}))
+
+          ${{ inputs.note }}
 
           ### What's included
           - 5 platform binaries (linux-amd64, linux-arm64, macos-amd64, macos-arm64, windows-amd64)
