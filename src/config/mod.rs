@@ -4,6 +4,8 @@
 
 pub(crate) mod alias_merge;
 mod current;
+#[cfg(unix)]
+pub(crate) mod flock;
 pub mod guard;
 pub mod health;
 pub mod owner;

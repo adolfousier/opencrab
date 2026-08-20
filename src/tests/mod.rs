@@ -640,6 +640,8 @@ pub mod whatsapp_state_test;
 pub mod brain_tools_whatsapp_send_test;
 pub mod channel_commands_test;
 pub mod discord_handler_test;
+#[cfg(unix)]
+pub mod flock_retry_test;
 pub mod flow_progress_key_test;
 pub mod pdf_page_range_parser_test;
 pub mod pdf_smart_routing_test;
