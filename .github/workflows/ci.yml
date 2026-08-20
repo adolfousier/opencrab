@@ -139,10 +139,25 @@ jobs:
   # (rate_limiter pacing) rely on cargo test's threadpool semantics
   # and fail under nextest's process-per-test isolation. nextest
   # migration is a follow-up once those tests are made portable.
+  # Runs on BOTH platforms. The Mac runner is free and fast, but it cannot
+  # stand in for Linux: that is the platform most users deploy to, and the
+  # suite is full of cfg'd and filesystem-sensitive code. Testing only on the
+  # Mac would have traded Linux coverage for speed. Testing on both instead
+  # ADDED a platform, and the macOS entry immediately earned its place by
+  # catching a flock bug that had never run on macOS before.
   test:
-    name: Test (Linux)
+    name: Test (${{ matrix.label }})
     needs: [lint, audit]
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux
+            os: ubuntu-latest
+          - label: macOS
+            # Fork PRs never touch our hardware; they retest on Linux instead.
+            os: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -227,7 +242,9 @@ jobs:
     name: Code Coverage
     needs: [lint, audit]
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    # Stays on Linux: coverage is reported against the platform the project
+    # has always measured, and moving it would make the numbers incomparable.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
