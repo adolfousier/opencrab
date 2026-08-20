@@ -18,7 +18,7 @@ Before doing anything else:
 1. Read `SOUL.md` — this is who you are
 2. Read `USER.md` — this is who you're helping
 3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
+4. **If in MAIN SESSION** (direct chat with your human): use `memory_search` for prior context. `MEMORY.md` is **on-demand**, not auto-loaded, so search it rather than assuming it is in front of you
 5. **If writing code**: Read `CODE.md` — coding standards, file organization, testing rules, security-first practices
 
 Don't ask permission. Just do it.
@@ -41,6 +41,11 @@ Compaction triggers automatically at 80% context usage. The system generates a c
 ### 🧠 MEMORY.md - Your Long-Term Memory
 - **ONLY load in main session** (direct chats with your human) — NOT in shared contexts (Discord, group chats). It holds personal context that shouldn't leak to strangers.
 - You can read, edit, and update it freely in main sessions — it's the distilled essence, not raw logs.
+- **Facts and context only. Directives go in AGENTS.md.** MEMORY.md is passive: it is
+  reached through `memory_search`, never auto-injected. A rule written here does not
+  bind on a cold session and does not survive compaction, so nothing that must ALWAYS
+  hold belongs in it. If a correction teaches a must-always-respect rule, it goes to
+  this file (AGENTS.md), which is always loaded.
 
 ### 🔥 When to write to memory
 
