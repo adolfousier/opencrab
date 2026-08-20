@@ -36,6 +36,19 @@ pub struct LangConfig {
     /// fabrication in any other language through untouched.
     #[serde(default)]
     pub executed_framings: Vec<String>,
+    /// Generic first-person intent, e.g. `let me <verb>` / `I'll <verb>`,
+    /// with the verb captured in group 1 rather than enumerated. The phrase
+    /// list is an allowlist of specific verb pairings, so every verb nobody
+    /// thought to add slips through: `let me execute the full flow now` ended
+    /// a turn with no tool call because `let me execute` was not among the
+    /// 701 entries. Verbs that read as speech rather than action
+    /// (`let me know`) are filtered by `intent_verb_exclusions`.
+    #[serde(default)]
+    pub generic_intent_re: String,
+    /// Verbs that follow the construction above without promising work:
+    /// `let me know` addresses the user, `I'll be happy to` is not an action.
+    #[serde(default)]
+    pub intent_verb_exclusions: Vec<String>,
     #[serde(default)]
     pub gerund_re: String,
     #[serde(default)]

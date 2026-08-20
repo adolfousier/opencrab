@@ -367,3 +367,23 @@ file_context_words = [
     "png",
     "jpg",
 ]
+
+# Generic first-person intent: the verb is captured, not enumerated, so a
+# verb missing from intent_phrases (e.g. "let me execute") is still caught.
+generic_intent_re = "(?i)\\b(?:voy\\s+a|d[eé]jame|perm[ií]teme|vamos\\s+a)\\s+([a-záéíóúñ]{2,})"
+
+# Verbs that follow that construction without promising any work.
+intent_verb_exclusions = [
+    "saber",
+    "explicar",
+    "aclarar",
+    "resumir",
+    "decir",
+    "pensar",
+    "mostrar",
+    "enseñar",
+    "compartir",
+    "describir",
+    "mencionar",
+    "confirmar",
+]
