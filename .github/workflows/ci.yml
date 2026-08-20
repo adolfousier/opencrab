@@ -46,7 +46,7 @@ jobs:
   # cross-platform build/test matrix for a PR that won't lint anyway.
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -63,6 +63,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install ALSA dev (for local-stt feature)
+        # Linux-only: ALSA does not exist on macOS, where cpal uses CoreAudio.
+        # Left ungated, this ran `apt-get` on the self-hosted Mac and failed on
+        # sudo before any Rust work started.
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y libasound2-dev
 
       - name: Check formatting
@@ -102,7 +106,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: self-hosted
             target: aarch64-apple-darwin
             features: --all-features
     steps:
@@ -138,7 +142,7 @@ jobs:
   test:
     name: Test (Linux)
     needs: [lint, audit]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -154,6 +158,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install mold + ALSA dev (Linux)
+        # Linux-only toolchain extras; macOS uses the Xcode linker.
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y mold clang libasound2-dev
 
       - name: Run tests
@@ -171,7 +177,7 @@ jobs:
 
   audit:
     name: Cargo Audit
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -221,7 +227,7 @@ jobs:
     name: Code Coverage
     needs: [lint, audit]
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -237,6 +243,7 @@ jobs:
           toolchain: stable
 
       - name: Install ALSA dev
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y libasound2-dev
 
       - name: Install tarpaulin
@@ -263,7 +270,7 @@ jobs:
     name: CI Required Gate
     if: always()
     needs: [lint, build, test, audit]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
     steps:
       - name: Check results
         run: |
