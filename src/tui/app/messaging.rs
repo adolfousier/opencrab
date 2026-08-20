@@ -2386,11 +2386,7 @@ impl App {
             // Drain pending context hints (model changes, /cd, etc.) and prepend to message
             let mut transformed_content = content.clone();
             if !self.pending_context.is_empty() {
-                let context = self
-                    .pending_context
-                    .drain(..)
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let context = std::mem::take(&mut self.pending_context).join("\n");
                 transformed_content = format!("{}\n\n{}", context, transformed_content);
             }
 

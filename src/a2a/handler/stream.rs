@@ -14,6 +14,10 @@ pub type StreamTx = mpsc::Sender<StreamEvent>;
 
 /// Handle `message/stream` -- creates a task, spawns background processing,
 /// returns a receiver that yields SSE events.
+// The error variant is a full `JsonRpcResponse`, which is the protocol reply
+// this handler must produce on the failure path; boxing it would only move
+// the allocation without changing what is returned.
+#[allow(clippy::result_large_err)]
 pub async fn handle_stream_message(
     id: serde_json::Value,
     params: serde_json::Value,

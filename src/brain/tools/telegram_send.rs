@@ -215,6 +215,7 @@ pub(crate) async fn resolve_chat_target(
 /// empty `channel_messages` lookup, and because rich/cron messages arrive with
 /// no readable text in the reply, the agent can only honestly say it cannot see
 /// it. `sent` is `(message_id, content)` pairs (one per chunk for plain sends).
+#[allow(clippy::result_large_err)]
 async fn chat_or_err(
     input: &Value,
     state: &TelegramState,
