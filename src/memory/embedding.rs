@@ -155,6 +155,22 @@ pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
             continue;
         }
 
+        // Compute chunk hash for cache invalidation (#1107).
+        let chunk_hash = Store::hash_content(&chunk.text);
+
+        // Check if this chunk needs re-embedding (skip if unchanged).
+        let needs_embed = {
+            let store_lock = store
+                .lock()
+                .map_err(|e| format!("Store lock poisoned: {e}"))?;
+            store_lock.chunk_needs_embedding(&hash, seq, &chunk_hash)?
+        };
+
+        if !needs_embed {
+            tracing::debug!("Chunk {seq} unchanged (hash match), skipping embedding (#1107)");
+            continue;
+        }
+
         // catch_unwind guards against Rust-side panics from llama-cpp bindings.
         // A C-level abort() cannot be caught, which is why the size check above
         // stays even though chunking should make it unreachable.
@@ -174,7 +190,15 @@ pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
         store
             .lock()
             .map_err(|e| format!("Store lock poisoned: {e}"))?
-            .insert_embedding(&hash, seq, chunk.pos, &emb.embedding, &emb.model, &now)
+            .insert_embedding(
+                &hash,
+                seq,
+                chunk.pos,
+                &emb.embedding,
+                &emb.model,
+                &now,
+                Some(&chunk_hash),
+            )
             .map_err(|e| format!("Failed to store embedding: {e}"))?;
     }
 
@@ -240,12 +264,46 @@ pub(super) async fn run_api_backfill(store: &'static Mutex<Store>) -> (usize, us
         // wrote `skipped-too-large` placeholders past 32 KB, which is what made
         // those documents permanently unembeddable.
         for (seq, chunk) in chunks_for(body).into_iter().enumerate() {
+            // Compute chunk hash for cache invalidation (#1107).
+            let chunk_hash = Store::hash_content(&chunk.text);
+
+            // Check if this chunk needs re-embedding (skip if unchanged).
+            let needs_embed = match store.lock() {
+                Ok(s) => match s.chunk_needs_embedding(hash, seq, &chunk_hash) {
+                    Ok(needs) => needs,
+                    Err(e) => {
+                        tracing::warn!(
+                            "API backfill: chunk_needs_embedding failed for chunk {seq}: {e}"
+                        );
+                        true // Assume needs embedding on error
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("API backfill: store lock poisoned: {e}");
+                    true
+                }
+            };
+
+            if !needs_embed {
+                tracing::debug!("API backfill: chunk {seq} unchanged, skipping (#1107)");
+                chunks_stored += 1; // Count as "processed" for stats
+                continue;
+            }
+
             match embed_via_api(&chunk.text).await {
                 Ok(embedding) => {
                     let now = crate::utils::string::utc_timestamp();
                     if let Ok(s) = store.lock()
-                        && s.insert_embedding(hash, seq, chunk.pos, &embedding, &model_name, &now)
-                            .is_ok()
+                        && s.insert_embedding(
+                            hash,
+                            seq,
+                            chunk.pos,
+                            &embedding,
+                            &model_name,
+                            &now,
+                            Some(&chunk_hash),
+                        )
+                        .is_ok()
                     {
                         chunks_stored += 1;
                     }
@@ -347,6 +405,32 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
                 continue;
             }
 
+            // Compute chunk hash for cache invalidation (#1107).
+            let chunk_hash = Store::hash_content(&chunk.text);
+
+            // Check if this chunk needs re-embedding (skip if unchanged).
+            let needs_embed = match store.lock() {
+                Ok(s) => match s.chunk_needs_embedding(hash, seq, &chunk_hash) {
+                    Ok(needs) => needs,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Backfill: chunk_needs_embedding failed for chunk {seq}: {e}"
+                        );
+                        true // Assume needs embedding on error
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Backfill: store lock poisoned: {e}");
+                    true
+                }
+            };
+
+            if !needs_embed {
+                tracing::debug!("Backfill: chunk {seq} unchanged, skipping (#1107)");
+                chunks_stored += 1; // Count as "processed" for stats
+                continue;
+            }
+
             // Engine lock: embed one chunk → release
             // catch_unwind guards against panics from llama-cpp bindings.
             let emb = {
@@ -370,8 +454,16 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
             // Store lock: insert embedding → release
             if let Some(emb) = emb
                 && let Ok(s) = store.lock()
-                && s.insert_embedding(hash, seq, chunk.pos, &emb.embedding, &emb.model, &now)
-                    .is_ok()
+                && s.insert_embedding(
+                    hash,
+                    seq,
+                    chunk.pos,
+                    &emb.embedding,
+                    &emb.model,
+                    &now,
+                    Some(&chunk_hash),
+                )
+                .is_ok()
             {
                 chunks_stored += 1;
             }
@@ -492,11 +584,35 @@ pub async fn embed_content_api(store: &'static Mutex<Store>, body: &str) -> Resu
     // has no llama.cpp abort to guard against, and refusing large documents
     // outright was the reason the biggest ones had no vector at all.
     for (seq, chunk) in chunks_for(body).into_iter().enumerate() {
+        // Compute chunk hash for cache invalidation (#1107).
+        let chunk_hash = Store::hash_content(&chunk.text);
+
+        // Check if this chunk needs re-embedding (skip if unchanged).
+        let needs_embed = {
+            let store_lock = store
+                .lock()
+                .map_err(|e| format!("Store lock poisoned: {e}"))?;
+            store_lock.chunk_needs_embedding(&hash, seq, &chunk_hash)?
+        };
+
+        if !needs_embed {
+            tracing::debug!("Chunk {seq} unchanged (hash match), skipping API embedding (#1107)");
+            continue;
+        }
+
         let embedding = embed_via_api(&chunk.text).await?;
         store
             .lock()
             .map_err(|e| format!("Store lock poisoned: {e}"))?
-            .insert_embedding(&hash, seq, chunk.pos, &embedding, &model_name, &now)
+            .insert_embedding(
+                &hash,
+                seq,
+                chunk.pos,
+                &embedding,
+                &model_name,
+                &now,
+                Some(&chunk_hash),
+            )
             .map_err(|e| format!("Failed to store API embedding: {e}"))?;
     }
 

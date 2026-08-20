@@ -203,6 +203,13 @@ fn render_emits_only_populated_tiers() {
 /// The core regression: a tilde-collapsed working directory must be expanded
 /// before the filesystem scan. Under the old code `Path::new("~/proj").is_dir()`
 /// was always false and nothing was ever discovered.
+///
+/// WHY THIS TEST USES HOME_ENV_LOCK (process-global $HOME override):
+/// `expand_tilde("~/proj")` reads `$HOME` directly via `dirs::home_dir()`.
+/// The task-local override (`with_profile_home_async`) only changes what
+/// `opencrabs_home()` returns — it does NOT change `$HOME`. So tilde expansion
+/// testing requires mutating the process-global `$HOME` env var, serialized
+/// by HOME_ENV_LOCK to prevent races with other tests (#1096).
 #[test]
 fn tilde_path_is_expanded_before_scan() {
     let temp_home = tempfile::TempDir::new().unwrap();
@@ -212,6 +219,8 @@ fn tilde_path_is_expanded_before_scan() {
     let prev_home = std::env::var_os("HOME");
     let prev_userprofile = std::env::var_os("USERPROFILE");
     // SAFETY: HOME_ENV_LOCK serializes HOME mutation for the guard's lifetime.
+    // This test MUST use process-global $HOME because expand_tilde() reads
+    // $HOME directly — the task-local override does not affect it.
     unsafe {
         std::env::set_var("HOME", temp_home.path());
         std::env::set_var("USERPROFILE", temp_home.path());

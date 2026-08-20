@@ -4,7 +4,7 @@
 use crate::brain::agent::service::MessageEnqueueCallback;
 use crate::brain::agent::service::QueuedUserMessage;
 use crate::brain::agent::service::background_tasks::{
-    BackgroundTaskManager, CmdResult, completion_message, is_known_long, short_label, tail_lines,
+    BackgroundTaskManager, CmdResult, completion_message, short_label, tail_lines,
 };
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -48,18 +48,6 @@ fn completion_message_reflects_success_and_failure() {
     );
     assert!(fail.context_text.contains("exit 101 (failure)"));
     assert!(fail.display_text.contains("failed"));
-}
-
-#[test]
-fn known_long_matches_the_named_cases() {
-    assert!(is_known_long("cargo test --all-features"));
-    assert!(is_known_long("cd ~/proj && cargo build --release"));
-    assert!(is_known_long("npx remotion render Main out/x.mp4"));
-    assert!(is_known_long("gh run watch 12345"));
-    // Ordinary quick commands are not backgrounded.
-    assert!(!is_known_long("ls -la"));
-    assert!(!is_known_long("git status"));
-    assert!(!is_known_long("cat README.md"));
 }
 
 #[test]

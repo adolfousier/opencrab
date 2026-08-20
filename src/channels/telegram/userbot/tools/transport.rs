@@ -256,10 +256,7 @@ pub(crate) async fn send_phone(client: &Client, cmd: &SendToPhone) -> Result<Val
     let tl::enums::contacts::ImportedContacts::Contacts(result) = client
         .invoke(&import)
         .await
-        .map_err(|e| anyhow!("importContacts failed for {phone}: {e}"))?
-    else {
-        bail!("unexpected contacts.importContacts response for {phone}");
-    };
+        .map_err(|e| anyhow!("importContacts failed for {phone}: {e}"))?;
     let user = result
         .users
         .into_iter()

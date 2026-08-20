@@ -13,7 +13,9 @@ use teloxide::types::ThreadId;
 /// blocks, so `<details><summary>` becomes a native RichBlockDetails
 /// collapsible, which the markdown input mode cannot express.
 /// `reply_markup` is optional — pass `None` for no keyboard.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_html_id(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
@@ -22,7 +24,7 @@ pub(crate) async fn send_rich_html_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let mut body = build_body_html(chat_id, thread_id, html);
     if let Some(kb) = reply_markup {
         body["reply_markup"] = kb.clone();
@@ -37,7 +39,9 @@ pub(crate) async fn send_rich_html_id(
 
 /// Edit an existing rich message with HTML input (#420 path A).
 /// `reply_markup` is optional — pass `None` to leave the keyboard unchanged.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn edit_rich_html(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     message_id: i32,
@@ -46,7 +50,7 @@ pub(crate) async fn edit_rich_html(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<()> {
-    let url = format!("https://api.telegram.org/bot{token}/editMessageText");
+    let url = format!("{}/bot{token}/editMessageText", api_base(api_url));
     let mut body = serde_json::json!({
         "chat_id": chat_id,
         "message_id": message_id,
@@ -62,6 +66,7 @@ pub(crate) async fn edit_rich_html(
 /// Used for intermediate streamed segments, which must be tracked for later
 /// footer-append / dedup. Returns `Err` so the caller can fall back to HTML.
 pub(crate) async fn send_rich_markdown_id(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
@@ -69,7 +74,7 @@ pub(crate) async fn send_rich_markdown_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let result = post_rich(
         &url,
         &build_body(chat_id, thread_id, markdown),
@@ -281,7 +286,9 @@ pub(crate) fn build_body_html(
 /// `tg://photo?id=<id>`; the `media` array maps each id to a renderer URL
 /// Telegram fetches server-side. This is the mode that embeds images while
 /// keeping pipe tables native. Returns the new message id.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_markdown_media_id(
+    api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
@@ -290,7 +297,7 @@ pub(crate) async fn send_rich_markdown_media_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let result = post_rich(
         &url,
         &build_body_markdown_media(chat_id, thread_id, markdown, media),
@@ -332,4 +339,21 @@ pub(crate) fn build_body_markdown_media(
         body["message_thread_id"] = serde_json::json!(t.0.0);
     }
     body
+}
+
+/// The API base with any trailing separator removed.
+///
+/// `Bot::api_url()` returns a parsed `Url`, and the URL spec normalises an
+/// empty path to `/`, so `as_str()` yields `https://api.telegram.org/`.
+/// Concatenating that produced `https://api.telegram.org//bot<token>/method`,
+/// which Telegram rejects — every rich send failed and silently fell back to
+/// plain HTML, so tool blocks stopped rendering as rich and completions
+/// arrived as separate messages (#1117).
+///
+/// The tests that shipped with the parameterisation could not catch it:
+/// mockito's `server.url()` has no trailing slash, so they exercised a shape
+/// production never uses. teloxide builds these with `path_segments_mut()`
+/// for the same reason.
+fn api_base(api_url: &str) -> &str {
+    api_url.trim_end_matches('/')
 }

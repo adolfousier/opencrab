@@ -248,11 +248,7 @@ fn truncating_at_an_exact_boundary_is_stable() {
 fn strict_rejects_an_unverified_claim_against_criteria() {
     // The teeth: criteria declared, no commands ran for the type → refuse.
     assert_eq!(
-        criteria_verdict(
-            CriteriaPolicy::Strict,
-            true,
-            VerificationOutcome::NotConfigured
-        ),
+        criteria_verdict(CriteriaPolicy::Strict, VerificationOutcome::NotConfigured),
         CriteriaVerdict::Reject
     );
 }
@@ -263,7 +259,6 @@ fn downgrade_accepts_but_flags_an_unverified_claim() {
     assert_eq!(
         criteria_verdict(
             CriteriaPolicy::Downgrade,
-            true,
             VerificationOutcome::NotConfigured
         ),
         CriteriaVerdict::Downgrade
@@ -273,11 +268,7 @@ fn downgrade_accepts_but_flags_an_unverified_claim() {
 #[test]
 fn off_keeps_the_pre_870_behaviour() {
     assert_eq!(
-        criteria_verdict(
-            CriteriaPolicy::Off,
-            true,
-            VerificationOutcome::NotConfigured
-        ),
+        criteria_verdict(CriteriaPolicy::Off, VerificationOutcome::NotConfigured),
         CriteriaVerdict::Accept
     );
 }
@@ -291,7 +282,7 @@ fn a_proven_completion_accepts_under_every_policy() {
         CriteriaPolicy::Off,
     ] {
         assert_eq!(
-            criteria_verdict(policy, true, VerificationOutcome::Verified),
+            criteria_verdict(policy, VerificationOutcome::Verified),
             CriteriaVerdict::Accept,
             "policy {policy:?} must accept a proven completion"
         );
@@ -302,31 +293,39 @@ fn a_proven_completion_accepts_under_every_policy() {
 fn a_disabled_gate_accepts_even_under_strict() {
     // Global gate-off is an explicit user choice; strict must not override it.
     assert_eq!(
-        criteria_verdict(CriteriaPolicy::Strict, true, VerificationOutcome::Disabled),
+        criteria_verdict(CriteriaPolicy::Strict, VerificationOutcome::Disabled),
         CriteriaVerdict::Accept
     );
 }
 
 #[test]
-fn no_criteria_means_nothing_to_enforce() {
-    // A task without acceptance criteria has no claim to verify, under any
-    // policy or outcome.
-    for policy in [
-        CriteriaPolicy::Downgrade,
-        CriteriaPolicy::Strict,
-        CriteriaPolicy::Off,
-    ] {
-        for outcome in [
-            VerificationOutcome::Verified,
-            VerificationOutcome::NotConfigured,
-            VerificationOutcome::Disabled,
-        ] {
-            assert_eq!(
-                criteria_verdict(policy, false, outcome),
-                CriteriaVerdict::Accept,
-                "policy {policy:?} / outcome {outcome:?} must accept a criteria-less task"
-            );
-        }
+fn no_criteria_is_not_proof_either() {
+    // Silence is not proof (maintainer ruling, 2026-08-17): a criteria-less
+    // completion with nothing verified inherits the same verdict as a
+    // declared one. Declaring criteria buys nothing; omitting them dodges
+    // nothing.
+    assert_eq!(
+        criteria_verdict(
+            CriteriaPolicy::Downgrade,
+            VerificationOutcome::NotConfigured
+        ),
+        CriteriaVerdict::Downgrade
+    );
+    assert_eq!(
+        criteria_verdict(CriteriaPolicy::Strict, VerificationOutcome::NotConfigured),
+        CriteriaVerdict::Reject
+    );
+}
+
+#[test]
+fn a_criteria_less_completion_still_accepts_when_proven_or_disabled() {
+    // The escape hatches stay open: proof (commands ran and passed) or an
+    // explicit gate-off accepts regardless of criteria.
+    for outcome in [VerificationOutcome::Verified, VerificationOutcome::Disabled] {
+        assert_eq!(
+            criteria_verdict(CriteriaPolicy::Strict, outcome),
+            CriteriaVerdict::Accept
+        );
     }
 }
 

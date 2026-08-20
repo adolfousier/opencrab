@@ -20,7 +20,10 @@ use crate::config::types::TelegramUserbotConfig;
 /// A connected client for one tool invocation.
 pub(crate) struct ToolClient {
     pub client: Client,
-    pub session: Arc<FileSession>,
+    /// Held, not read: whether `Client` retains its own `Arc<FileSession>`
+    /// is unverified in grammers 0.10, and the session file must outlive any
+    /// state re-save. Costs nothing to hold for a one-shot process.
+    _session: Arc<FileSession>,
     /// Held, not read: dropping the update receiver while the pool runner is
     /// alive has unverified semantics in grammers 0.10, so it lives as long
     /// as this struct and the process owning it. The daemon's watch loop is
@@ -30,10 +33,10 @@ pub(crate) struct ToolClient {
 
 /// Connect on the configured session for a one-shot tool call.
 pub(crate) async fn connect(cfg: &TelegramUserbotConfig) -> Result<ToolClient> {
-    let (client, session, _updates) = login::connect(cfg).await?;
+    let (client, session, updates) = login::connect(cfg).await?;
     Ok(ToolClient {
         client,
-        session,
-        _updates,
+        _session: session,
+        _updates: updates,
     })
 }

@@ -6,12 +6,20 @@
       "title": "Research task",
       "description": "Investigate and understand the problem space",
       "task_type": "research",
+      "acceptance_criteria": [
+        "every cited path exists (spot-check with ls)",
+        "report separates verified from inferred"
+      ],
       "complexity": 2
     },
     {
       "title": "Implementation task",
       "description": "Build the actual solution",
       "task_type": "create",
+      "acceptance_criteria": [
+        "cargo clippy --locked --lib --tests --all-features -- -D warnings exits 0",
+        "cargo test --all-features --lib <module> reports 0 failed"
+      ],
       "complexity": 3
     },
     {
@@ -19,8 +27,8 @@
       "description": "Verify the solution works correctly",
       "task_type": "test",
       "acceptance_criteria": [
-        "Tests pass",
-        "Edge cases handled"
+        "cargo test --all-features --lib <filter> reports N passed, 0 failed",
+        "a red run names the exact failing assertion"
       ],
       "complexity": 2
     },
@@ -28,6 +36,9 @@
       "title": "Documentation task",
       "description": "Document the changes for future maintainers",
       "task_type": "documentation",
+      "acceptance_criteria": [
+        "every command the doc references is greppable in the doc (grep -c exits > 0)"
+      ],
       "complexity": 1
     }
   ]

@@ -323,7 +323,7 @@ pub async fn synthesize(text: &str, voice_config: &VoiceConfig) -> Result<Vec<u8
     // Clean markdown from text for ALL providers (not just Piper).
     // This prevents TTS engines from reading out loud code fences,
     // asterisks, headers, URLs, etc.
-    let cleaned = super::local_tts::clean_for_tts(text);
+    let cleaned = super::text_cleanup::clean_for_tts(text);
     if cleaned.is_empty() {
         anyhow::bail!("No speakable text after cleaning markdown");
     }

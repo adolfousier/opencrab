@@ -365,6 +365,7 @@ pub(crate) async fn refresh_plan_card(
                 return;
             }
             match super::rich::api::edit_rich_html(
+                bot.api_url().as_str(),
                 bot.token(),
                 chat.0,
                 mid.0,
@@ -401,6 +402,7 @@ pub(crate) async fn refresh_plan_card(
         }
         // No live card or edit failed: create fresh via rich API.
         match super::rich::api::send_rich_html_id(
+            bot.api_url().as_str(),
             bot.token(),
             chat.0,
             thread_id,

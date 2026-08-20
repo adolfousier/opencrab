@@ -85,13 +85,7 @@ async fn keep_typing_while_detached(
     background: Option<Arc<BackgroundTaskManager>>,
     session_id: Uuid,
 ) {
-    let Some(manager) = background else {
-        return;
-    };
-    while manager.running_for(session_id) > 0 {
-        // Sent BEFORE sleeping: the turn just ended and its last action is
-        // already expiring, so waiting a full tick first would leave a visible
-        // dead gap at the handover.
+    crate::channels::typing_tick::tick_while_detached(background, session_id, TICK, || {
         fire_chat_action(
             &bot,
             chat_id,
@@ -99,7 +93,6 @@ async fn keep_typing_while_detached(
             ChatAction::Typing,
             "handover typing",
         )
-        .await;
-        tokio::time::sleep(TICK).await;
-    }
+    })
+    .await;
 }

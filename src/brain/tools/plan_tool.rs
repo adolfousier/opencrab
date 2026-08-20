@@ -24,14 +24,6 @@ enum PlanOperation {
         /// Plan title (create mode). One of `title` / `file_path` is required.
         #[serde(default)]
         title: Option<String>,
-        #[serde(default)]
-        context: String,
-        #[serde(default)]
-        risks: Vec<String>,
-        #[serde(default)]
-        test_strategy: String,
-        #[serde(default)]
-        technical_stack: Vec<String>,
         /// Import mode: absolute path to a plan JSON file on disk. Takes
         /// precedence over `title` and `mode` when present.
         #[serde(default)]
@@ -318,7 +310,15 @@ async fn clear_task_goal(context: &ToolExecutionContext, session_id: uuid::Uuid)
 fn render_task_list(plan: &PlanDocument) -> String {
     plan.tasks
         .iter()
-        .map(|t| format!("  {}. {} [{}]", t.order, t.title, t.task_type))
+        .map(|t| {
+            format!(
+                "  {}. {} [{}]{}",
+                t.order,
+                t.title,
+                t.task_type,
+                crate::tui::plan::quality_glyph_suffix(t)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -416,7 +416,6 @@ pub(crate) const MAX_PLAN_FILE_SIZE: u64 = 10 * 1024 * 1024;
 /// Input validation limits
 pub(crate) const MAX_TITLE_LENGTH: usize = 200;
 pub(crate) const MAX_DESCRIPTION_LENGTH: usize = 5000;
-pub(crate) const MAX_CONTEXT_LENGTH: usize = 5000;
 
 // ── Ralph Loop: Mechanical verification gate ────────────────────────
 // Config resolved per-project (#947): a `ralph_loop.toml` at the
@@ -717,31 +716,36 @@ pub(crate) enum CriteriaVerdict {
     Accept,
     /// Accept, but nothing mechanically verified the claim — log as Uncertain.
     Downgrade,
-    /// Refuse the completion: criteria were declared but nothing verifies them.
+    /// Refuse the completion: nothing verifies the claim.
     Reject,
 }
 
 /// Decide how to treat a success claim given the criteria policy (#870).
 ///
 /// Pure so the whole policy matrix is unit-testable without a plan, a context,
-/// or a config file on disk. The policy only bites when a task DECLARES
-/// acceptance criteria yet its type ran NO verification commands
-/// (`NotConfigured`). A proven completion (`Verified`), a globally disabled
-/// gate (`Disabled` — an explicit user choice to turn the gate off), or a task
-/// with no criteria always accepts.
+/// or a config file on disk. The verdict judges proof, not paperwork: what
+/// matters is whether verification commands ran for the task's type
+/// (`Verified`), not whether criteria were declared. A claim nothing
+/// verified (`NotConfigured`) is downgraded to an Uncertain belief under the
+/// default policy and refused under `strict`, whether or not the task
+/// declared criteria: silence is not proof (maintainer ruling, 2026-08-17).
+/// A globally disabled gate (`Disabled`, an explicit user choice) always
+/// accepts.
 pub(crate) fn criteria_verdict(
     policy: CriteriaPolicy,
-    has_criteria: bool,
     outcome: VerificationOutcome,
 ) -> CriteriaVerdict {
-    let unverified = matches!(outcome, VerificationOutcome::NotConfigured);
-    if !(has_criteria && unverified) {
-        return CriteriaVerdict::Accept;
-    }
-    match policy {
-        CriteriaPolicy::Strict => CriteriaVerdict::Reject,
-        CriteriaPolicy::Downgrade => CriteriaVerdict::Downgrade,
-        CriteriaPolicy::Off => CriteriaVerdict::Accept,
+    match outcome {
+        // Proof, or an explicit gate-off, accepts under every policy.
+        VerificationOutcome::Verified | VerificationOutcome::Disabled => CriteriaVerdict::Accept,
+        // Nothing verified the claim: silence is not proof. Strict refuses,
+        // the default downgrades the belief to Uncertain, Off keeps the
+        // pre-#870 advisory behaviour (maintainer ruling, 2026-08-17).
+        VerificationOutcome::NotConfigured => match policy {
+            CriteriaPolicy::Strict => CriteriaVerdict::Reject,
+            CriteriaPolicy::Downgrade => CriteriaVerdict::Downgrade,
+            CriteriaPolicy::Off => CriteriaVerdict::Accept,
+        },
     }
 }
 
@@ -919,11 +923,20 @@ impl Tool for PlanTool {
          written, tests/clippy pass), immediately call `complete` for it before moving on. The TUI \
          progress widget counts only completed tasks, so a stale 0/N while work is done means a \
          `complete` was skipped, not that progress is tracked some other way. \
+         \n\nACCEPTANCE CRITERIA: criteria are the contract a completion is judged \
+         against. Each criterion must name a runnable command and the outcome it \
+         must produce, e.g. 'cargo test --all-features --lib backfill_sweep reports \
+         4 passed, 0 failed'. Prose outcomes ('works correctly', 'edge cases \
+         handled') cannot be re-checked by a third party. 1-3 checkable criteria \
+         per task. A task with no criteria can still complete, but the Ralph \
+         verification gate logs it as Uncertain: silence is not proof. \
          \n\nDETAILS: `start` is idempotent on an in-progress task and resets a failed task for \
          retry. `complete` takes action=\"success\" (default), \"fail\", or \"skip\". Ordering of \
          dependencies is by task order number (1-based). A started task's acceptance criteria \
          become the session goal until it completes. Completing the last task archives the plan. \
-         \n\nIMPORT: `init` with an absolute `file_path` (non-empty tasks required) goes Active. \
+         \n\nIMPORT: `init` with an absolute `file_path` (non-empty tasks required) goes to \
+         Editing for user review; under tool auto-approve it goes Active immediately \
+         (mirrors the create arm, #581). \
          BUNDLED REFERENCE PLANS: source at `src/docs/reference/plans/` (embedded), runtime at \
          `~/.opencrabs/profiles/<profile>/plans/`. See `coding-plans/rust-fast.json` etc. and \
          `plan-json-spec.md`. \
@@ -954,24 +967,6 @@ impl Tool for PlanTool {
                     "type": "string",
                     "description": "Task description (add_task)"
                 },
-                "context": {
-                    "type": "string",
-                    "description": "Context and assumptions (init create mode)"
-                },
-                "risks": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Identified risks and unknowns (init create mode)"
-                },
-                "test_strategy": {
-                    "type": "string",
-                    "description": "Testing strategy and approach (init create mode)"
-                },
-                "technical_stack": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Technologies, frameworks, and tools used (init create mode)"
-                },
                 "file_path": {
                     "type": "string",
                     "description": "Import mode: absolute path to a plan JSON file on disk (init). Takes precedence over title."
@@ -1001,7 +996,7 @@ impl Tool for PlanTool {
                 "acceptance_criteria": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Acceptance criteria for task completion (add_task)"
+                    "description": "Checkable acceptance criteria: each names a runnable command and its expected outcome, e.g. 'cargo test --lib <filter> reports 0 failed' (init tasks + add_tasks)"
                 },
                 "task_order": {
                     "type": "integer",
@@ -1087,10 +1082,6 @@ impl Tool for PlanTool {
         let result = match operation {
             PlanOperation::Init {
                 title,
-                context: ctx,
-                risks,
-                test_strategy,
-                technical_stack,
                 file_path,
                 mode,
                 tasks,
@@ -1203,10 +1194,11 @@ impl Tool for PlanTool {
 
                     imported.id = uuid::Uuid::new_v4();
                     imported.session_id = plan_sid;
-                    // Import is checklist-track: tasks are already structured,
-                    // but the plan still goes to Editing first so the user can
-                    // review before execution starts (start/complete are blocked
-                    // until approval).
+                    // Import is checklist-track: tasks are already structured.
+                    // Default is Editing first so the user can review before
+                    // execution starts (start/complete are blocked until
+                    // approval); under tool auto-approve the plan goes Active
+                    // immediately instead (mirrors the create arm, #581).
                     imported.status = PlanStatus::Editing;
                     imported.created_at = Utc::now();
                     imported.updated_at = Utc::now();
@@ -1246,7 +1238,6 @@ impl Tool for PlanTool {
                             task.complexity.clamp(1, 5)
                         };
                         task.status = TaskStatus::Pending;
-                        task.completed_at = None;
                         task.retry_count = 0;
                         task.notes = None;
                         task.dependencies = task
@@ -1275,15 +1266,32 @@ impl Tool for PlanTool {
                         ));
                     }
 
+                    // #581 parity with the create arm: under tool auto-approve
+                    // (yolo / cron / run / a2a) there is no user Approve step,
+                    // so the imported checklist goes live now instead of
+                    // stalling in Editing with nobody to approve it.
+                    let auto_active = context.auto_approve;
+                    if auto_active {
+                        imported.approve();
+                    }
+
                     let count = imported.tasks.len();
                     let plan_title = imported.title.clone();
                     let list = render_task_list(&imported);
                     plan = Some(imported);
 
-                    format!(
-                        "📋 Imported plan: {plan_title} ({count} tasks)\n\n{list}\n\n\
-                         Call 'start' to begin — it returns the first task's full details."
-                    )
+                    if auto_active {
+                        format!(
+                            "📋 Imported plan: {plan_title} ({count} tasks, Active — auto-approve). \
+                             No user Approve step in this mode; call 'start' to begin executing."
+                        )
+                    } else {
+                        format!(
+                            "📋 Imported plan: {plan_title} ({count} tasks, Editing).\n\n{list}\n\n\
+                             WAIT for the user to approve before calling 'start': checklist \
+                             operations stay blocked until the plan is Active."
+                        )
+                    }
                 } else {
                     // ===== create mode =====
                     let title = title.ok_or_else(|| {
@@ -1293,9 +1301,6 @@ impl Tool for PlanTool {
                         )
                     })?;
                     validate_string(&title, MAX_TITLE_LENGTH, "Plan title")?;
-                    if !ctx.is_empty() {
-                        validate_string(&ctx, MAX_CONTEXT_LENGTH, "Plan context")?;
-                    }
 
                     // Track disambiguation: explicit mode wins; otherwise
                     // tasks present imply checklist and no tasks imply design.
@@ -1362,10 +1367,6 @@ impl Tool for PlanTool {
                     }
 
                     let mut new_plan = PlanDocument::new(plan_sid, title.clone());
-                    new_plan.context = ctx;
-                    new_plan.risks = risks;
-                    new_plan.test_strategy = test_strategy;
-                    new_plan.technical_stack = technical_stack;
                     new_plan.status = PlanStatus::Editing;
 
                     for it in tasks {
@@ -1795,10 +1796,12 @@ impl Tool for PlanTool {
                 // The model cannot hallucinate "tests passed" when the
                 // shell says otherwise.
                 //
-                // Criteria-aware (#870): a success claimed against stated
-                // acceptance criteria that nothing mechanically verified is
-                // downgraded to an Uncertain belief (default) or rejected
-                // outright under `criteria_policy = "strict"`.
+                // Criteria-aware (#870): a success claim that nothing
+                // mechanically verified is downgraded to an Uncertain belief
+                // (default) or rejected outright under
+                // `criteria_policy = "strict"`, whether or not the task
+                // declared acceptance criteria: silence is not proof
+                // (maintainer ruling, 2026-08-17).
                 let mut criteria_downgraded = false;
                 if action.to_lowercase() == "success" {
                     let (task_type_str, has_criteria) = current_plan
@@ -1816,22 +1819,31 @@ impl Tool for PlanTool {
                             let policy = ralph_loop_config(&context.working_dir())
                                 .map(|c| c.verification.criteria_policy)
                                 .unwrap_or_default();
-                            match criteria_verdict(policy, has_criteria, outcome) {
+                            match criteria_verdict(policy, outcome) {
                                 CriteriaVerdict::Reject => {
+                                    let reason = if has_criteria {
+                                        "it declares acceptance criteria but no verification \
+                                         commands are configured for this task type"
+                                            .to_string()
+                                    } else {
+                                        "it declares no acceptance criteria and no verification \
+                                         commands are configured for this task type"
+                                            .to_string()
+                                    };
                                     return Ok(ToolResult::error(format!(
                                         "🔒 Ralph Loop REJECTED task #{task_order} (type={task_type_str}): \
-                                         it declares acceptance criteria but no verification commands are \
-                                         configured for this task type. Under `criteria_policy = \"strict\"` \
-                                         a success claim against unverified criteria is refused. Configure \
-                                         commands under [verification] in ralph_loop.toml (or remove the \
-                                         criteria), then complete again."
+                                         {reason}. Under `criteria_policy = \"strict\"` a success claim \
+                                         without proof is refused. Configure commands under [verification] \
+                                         in ralph_loop.toml for the task type (or set \
+                                         criteria_policy = \"downgrade\"), then complete again."
                                     )));
                                 }
                                 CriteriaVerdict::Downgrade => {
                                     criteria_downgraded = true;
                                     tracing::info!(
                                         "Ralph loop: task #{task_order} completion downgraded to Uncertain \
-                                         (criteria declared, type '{task_type_str}' has no verification commands)"
+                                         (type '{task_type_str}' ran no verification commands; criteria \
+                                         declared: {has_criteria})"
                                     );
                                 }
                                 CriteriaVerdict::Accept => {}

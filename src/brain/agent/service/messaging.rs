@@ -28,6 +28,7 @@ impl AgentService {
     /// only feeds the LLM context for this turn. Use for synthetic prompts
     /// (reaction guidance, queued mid-turn feedback) so scaffolding never
     /// shows in the TUI or re-enters future context.
+    #[tracing::instrument(skip_all, fields(session_id = %session_id, channel = "direct"))]
     pub async fn send_message_with_display(
         &self,
         session_id: Uuid,
@@ -123,6 +124,7 @@ impl AgentService {
     /// Send a message and get a streaming response
     ///
     /// Returns a stream of response chunks that can be consumed incrementally.
+    #[tracing::instrument(skip_all, fields(session_id = %session_id, channel = "streaming"))]
     pub async fn send_message_streaming(
         &self,
         session_id: Uuid,

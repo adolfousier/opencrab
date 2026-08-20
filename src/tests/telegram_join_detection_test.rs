@@ -5,7 +5,7 @@
 //! notice for both made them indistinguishable in the owner's DM and told the
 //! owner to allowlist OpenCrabs' own id.
 
-use crate::channels::telegram::handler::{BotJoin, format_bot_join_notification};
+use crate::channels::telegram::member_events::{BotJoin, format_bot_join_notification};
 
 const OTHER: BotJoin<'static> = BotJoin::Other {
     username: "atlas_bot",
@@ -154,7 +154,7 @@ fn large_ids_keep_their_precision() {
 
 // ── Owner-only add guard (#1042) ────────────────────────────────────
 
-use crate::channels::telegram::handler::format_unauthorized_add_notification;
+use crate::channels::telegram::member_events::format_unauthorized_add_notification;
 
 #[test]
 fn an_unauthorized_add_names_who_did_it_and_says_we_left() {

@@ -139,6 +139,7 @@ impl Store {
                 pos INTEGER NOT NULL DEFAULT 0,
                 model TEXT NOT NULL,
                 embedded_at TEXT NOT NULL,
+                chunk_hash TEXT,
                 PRIMARY KEY (hash, seq)
             );
             ",
@@ -454,6 +455,12 @@ impl Store {
     /// Insert (or replace) an embedding for one chunk of a content hash.
     /// `hash_seq` is `{hash}_{seq}` — the key format `vector_search.rs`
     /// reads, so it must not change.
+    /// Insert an embedding vector with per-chunk hash for caching (#1107).
+    ///
+    /// `hash` is the hash of the WHOLE document (foreign key to `content` table).
+    /// `seq` is the chunk sequence number within the document.
+    /// `chunk_hash` is the hash of THIS chunk's content (for cache invalidation).
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_embedding(
         &self,
         hash: &str,
@@ -462,14 +469,15 @@ impl Store {
         embedding: &[f32],
         model: &str,
         embedded_at: &str,
+        chunk_hash: Option<&str>,
     ) -> Result<(), String> {
         self.conn
             .execute(
                 r"
-            INSERT OR REPLACE INTO content_vectors (hash, seq, pos, model, embedded_at)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT OR REPLACE INTO content_vectors (hash, seq, pos, model, embedded_at, chunk_hash)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ",
-                params![hash, seq as i64, pos as i64, model, embedded_at],
+                params![hash, seq as i64, pos as i64, model, embedded_at, chunk_hash],
             )
             .map_err(|e| format!("insert_embedding metadata: {e}"))?;
 
@@ -484,6 +492,33 @@ impl Store {
             .map_err(|e| format!("insert_embedding blob: {e}"))?;
 
         Ok(())
+    }
+
+    /// Check if a chunk needs re-embedding based on its content hash (#1107).
+    ///
+    /// Returns `true` if no embedding exists for this (hash, seq) pair, or if
+    /// the stored chunk_hash differs from the new chunk_hash. Returns `false`
+    /// if the chunk is unchanged and can be skipped.
+    pub fn chunk_needs_embedding(
+        &self,
+        hash: &str,
+        seq: usize,
+        chunk_hash: &str,
+    ) -> Result<bool, String> {
+        let stored_hash: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT chunk_hash FROM content_vectors WHERE hash = ?1 AND seq = ?2",
+                params![hash, seq as i64],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("chunk_needs_embedding: {e}"))?;
+
+        match stored_hash {
+            None => Ok(true),                         // No embedding exists yet
+            Some(stored) => Ok(stored != chunk_hash), // Re-embed if hash changed
+        }
     }
 
     /// Counts describing how much of the store is actually vectorised (#1067).

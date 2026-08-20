@@ -237,15 +237,21 @@ impl ProfileRegistry {
         // Platform-specific exclusive lock
         #[cfg(unix)]
         {
+            use crate::config::flock::{FlockOutcome, exclusive};
             use std::os::unix::io::AsRawFd;
-            let fd = lock_file.as_raw_fd();
-            let ret = unsafe { libc::flock(fd, libc::LOCK_EX) };
-            if ret != 0 {
-                bail!(
-                    "failed to lock {}: {}",
-                    lock_path.display(),
-                    std::io::Error::last_os_error()
-                );
+            match exclusive(lock_file.as_raw_fd(), false) {
+                FlockOutcome::Acquired => {}
+                // A blocking request waits rather than reporting contention,
+                // so this arm only fires if that ever changes.
+                FlockOutcome::Held => {
+                    bail!(
+                        "failed to lock {}: held by another process",
+                        lock_path.display()
+                    )
+                }
+                FlockOutcome::Failed(e) => {
+                    bail!("failed to lock {}: {}", lock_path.display(), e)
+                }
             }
         }
         #[cfg(windows)]
@@ -836,14 +842,22 @@ pub(crate) fn acquire_scheduler_lock_in(lock_dir: &Path, profile: &str) -> Optio
 
     #[cfg(unix)]
     {
+        use crate::config::flock::{FlockOutcome, exclusive};
         use std::os::unix::io::AsRawFd;
-        // Non-blocking exclusive lock. EWOULDBLOCK means another live process
-        // already owns this profile's scheduler; any other error we also treat
-        // as "held" and skip, since spawning on an uncertain lock risks the
-        // double-fire this guard exists to prevent.
-        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if ret != 0 {
-            return None;
+        // Contention means another live process already owns this profile's
+        // scheduler. A genuine failure also declines, since spawning on an
+        // uncertain lock risks the double-fire this guard exists to prevent,
+        // but it says so rather than passing for an ordinary handover.
+        match exclusive(file.as_raw_fd(), true) {
+            FlockOutcome::Acquired => {}
+            FlockOutcome::Held => return None,
+            FlockOutcome::Failed(e) => {
+                tracing::warn!(
+                    "scheduler lock: cannot lock {}: {e} - not spawning scheduler",
+                    path.display()
+                );
+                return None;
+            }
         }
     }
 
@@ -939,18 +953,31 @@ pub(crate) fn acquire_instance_lock_in(lock_dir: &Path, profile: &str) -> Instan
 
     #[cfg(unix)]
     {
+        use crate::config::flock::{FlockOutcome, exclusive};
         use std::os::unix::io::AsRawFd;
-        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if ret != 0 {
-            let pid = fs::read_to_string(&path)
-                .ok()
-                .and_then(|s| s.trim().parse::<u32>().ok())
-                // A stamp naming a dead process means the file is stale while
-                // something else holds the flock, or the stamp was never
-                // written. Reporting it would send the user chasing a PID that
-                // does not exist.
-                .filter(|p| is_pid_alive(*p));
-            return InstanceGuard::Held { pid };
+        match exclusive(file.as_raw_fd(), true) {
+            FlockOutcome::Acquired => {}
+            FlockOutcome::Failed(e) => {
+                // We do not know whether anyone holds it, so do not claim an
+                // instance is running: report the same "no guard" state the
+                // open-failure path reports, with the reason.
+                tracing::warn!(
+                    "instance lock: cannot lock {}: {e} - starting without the guard",
+                    path.display()
+                );
+                return InstanceGuard::Unavailable;
+            }
+            FlockOutcome::Held => {
+                let pid = fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    // A stamp naming a dead process means the file is stale while
+                    // something else holds the flock, or the stamp was never
+                    // written. Reporting it would send the user chasing a PID that
+                    // does not exist.
+                    .filter(|p| is_pid_alive(*p));
+                return InstanceGuard::Held { pid };
+            }
         }
     }
 

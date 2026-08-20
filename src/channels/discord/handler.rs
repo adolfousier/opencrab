@@ -257,8 +257,11 @@ pub(crate) async fn handle_message(
     let mut content = msg.content.clone();
 
     // Show typing immediately when processing voice
-    if audio_attachment.is_some() && voice_config.stt_enabled {
-        let _ = msg.channel_id.broadcast_typing(&ctx.http).await;
+    if audio_attachment.is_some()
+        && voice_config.stt_enabled
+        && let Err(e) = msg.channel_id.broadcast_typing(&ctx.http).await
+    {
+        tracing::warn!(error = %e, "failed to broadcast Discord typing");
     }
 
     if let Some(audio) = audio_attachment
@@ -375,7 +378,7 @@ pub(crate) async fn handle_message(
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("Discord: failed to resolve session: {e:#} (#442)");
-                let _ = msg
+                if let Err(send_err) = msg
                     .channel_id
                     .say(
                         &ctx.http,
@@ -385,7 +388,10 @@ pub(crate) async fn handle_message(
                              /new if you deliberately want a fresh session."
                         ),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %send_err, "failed to send Discord session error message");
+                }
                 return;
             }
         }
@@ -406,7 +412,9 @@ pub(crate) async fn handle_message(
     // applies to the next run, it does not drop current work (#266).
     if crate::utils::stop_intent::is_stop_command_or_intent(&msg.content) {
         discord_state.cancel_session(session_id).await;
-        let _ = msg.channel_id.say(&ctx.http, "Operation cancelled.").await;
+        if let Err(e) = msg.channel_id.say(&ctx.http, "Operation cancelled.").await {
+            tracing::warn!(error = %e, "failed to send Discord message");
+        }
         return;
     }
 
@@ -431,7 +439,9 @@ pub(crate) async fn handle_message(
 
         // Handle simple text-response commands (Help, Usage, Evolve, Doctor, etc.)
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
-            let _ = msg.channel_id.say(&ctx.http, &reply).await;
+            if let Err(e) = msg.channel_id.say(&ctx.http, &reply).await {
+                tracing::warn!(error = %e, "failed to send Discord message");
+            }
             return;
         }
 
@@ -544,7 +554,9 @@ pub(crate) async fn handle_message(
                         let ctx_max = agent.context_limit_for_session(new_session.id);
                         let footer = crate::utils::format_ctx_footer(baseline, ctx_max, None);
                         let msg_text = format!("✅ New session started.\n\n{footer}");
-                        let _ = msg.channel_id.say(&ctx.http, &msg_text).await;
+                        if let Err(e) = msg.channel_id.say(&ctx.http, &msg_text).await {
+                            tracing::warn!(error = %e, "failed to send Discord message");
+                        }
                         tracing::info!(
                             "Discord /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
                             footer,
@@ -554,10 +566,13 @@ pub(crate) async fn handle_message(
                     }
                     Err(e) => {
                         tracing::error!("Discord: failed to create session: {}", e);
-                        let _ = msg
+                        if let Err(send_err) = msg
                             .channel_id
                             .say(&ctx.http, "Failed to create session.")
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(error = %send_err, "failed to send Discord session creation error");
+                        }
                     }
                 }
                 return;
@@ -611,14 +626,19 @@ pub(crate) async fn handle_message(
                 } else {
                     "No operation in progress."
                 };
-                let _ = msg.channel_id.say(&ctx.http, reply).await;
+                if let Err(e) = msg.channel_id.say(&ctx.http, reply).await {
+                    tracing::warn!(error = %e, "failed to send Discord message");
+                }
                 return;
             }
             ChannelCommand::Compact => {
-                let _ = msg
+                if let Err(e) = msg
                     .channel_id
                     .say(&ctx.http, "⏳ Compacting context...")
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, "failed to send Discord compact notification");
+                }
                 content =
                     "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                         .to_string();
@@ -630,7 +650,9 @@ pub(crate) async fn handle_message(
             ChannelCommand::NotACommand => {}
             // Help, Usage, Evolve, Doctor, UserSystem handled by try_execute_text_command above
             ChannelCommand::Profiles(resp) => {
-                let _ = msg.channel_id.say(&ctx.http, &resp.text).await;
+                if let Err(e) = msg.channel_id.say(&ctx.http, &resp.text).await {
+                    tracing::warn!(error = %e, "failed to send Discord message");
+                }
                 return;
             }
             _ => {}
@@ -728,12 +750,13 @@ pub(crate) async fn handle_message(
         .register_session_channel(session_id, msg.channel_id.get())
         .await;
 
-    // Claim this session's background-task completions for Discord (#940),
-    // so a completion is delivered by the surface that owns the session
-    // rather than by whichever service happened to run the command.
-    if let Some(enqueue) = agent.message_enqueue_callback() {
-        crate::brain::agent::service::background_tasks::register_session_route(session_id, enqueue);
-    }
+    // Claim this session's background-task completions for Discord: a completion
+    // must be delivered by the surface that OWNS the session, not by whichever
+    // service happened to run the command (#940).
+    crate::brain::agent::service::session_routes::claim_for_channel(
+        session_id,
+        agent.message_enqueue_callback(),
+    );
     let approval_cb = make_approval_callback(discord_state.clone());
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
@@ -797,7 +820,9 @@ pub(crate) async fn handle_message(
                     let http = http.clone();
                     tokio::spawn(async move {
                         for _ in 0..12 {
-                            let _ = channel.broadcast_typing(&http).await;
+                            if let Err(e) = channel.broadcast_typing(&http).await {
+                                tracing::warn!(error = %e, "failed to broadcast Discord typing");
+                            }
                             tokio::time::sleep(std::time::Duration::from_secs(8)).await;
                         }
                     });
@@ -921,7 +946,9 @@ pub(crate) async fn handle_message(
                 ProgressEvent::SelfHealingAlert { message } => {
                     tokio::spawn(async move {
                         let text = format!("🔧 {}", message);
-                        let _ = channel.say(&http, &text).await;
+                        if let Err(e) = channel.say(&http, &text).await {
+                            tracing::warn!(error = %e, "failed to send Discord message");
+                        }
                     });
                 }
                 ProgressEvent::IntermediateText { text, .. } => {
@@ -967,7 +994,9 @@ pub(crate) async fn handle_message(
                     let channel = channel;
                     tokio::spawn(async move {
                         let text = format!("⏳ Retry {}/{} — {}", attempt, max, reason);
-                        let _ = channel.say(&http, &text).await;
+                        if let Err(e) = channel.say(&http, &text).await {
+                            tracing::warn!(error = %e, "failed to send Discord message");
+                        }
                     });
                 }
                 ProgressEvent::ProviderSwitched {
@@ -977,7 +1006,9 @@ pub(crate) async fn handle_message(
                     let channel = channel;
                     tokio::spawn(async move {
                         let text = format!("🔄 Now using {}/{}", to_name, to_model);
-                        let _ = channel.say(&http, &text).await;
+                        if let Err(e) = channel.say(&http, &text).await {
+                            tracing::warn!(error = %e, "failed to send Discord message");
+                        }
                     });
                 }
                 // Optional follow-up suggestions (#598): post tap-to-send
@@ -1155,7 +1186,9 @@ pub(crate) async fn handle_message(
             // too large, stream broken, repetition loop). Same wording
             // as the TUI + Telegram + Slack + WhatsApp paths.
             let error_msg = format!("❌ Error\n\n{}", crate::brain::agent::format_user_error(&e));
-            let _ = msg.channel_id.say(&ctx.http, error_msg).await;
+            if let Err(e) = msg.channel_id.say(&ctx.http, error_msg).await {
+                tracing::warn!(error = %e, "failed to send Discord message");
+            }
         }
     }
 }
@@ -1274,9 +1307,12 @@ pub(crate) fn make_approval_callback(
                     } else {
                         "❌ Denied"
                     };
-                    let _ = sent_msg
+                    if let Err(e) = sent_msg
                         .edit(&http, EditMessage::new().content(label).components(vec![]))
-                        .await;
+                        .await
+                    {
+                        tracing::warn!(error = %e, "failed to edit Discord approval button");
+                    }
                     Ok((approved, always))
                 }
                 Ok(Err(_)) => {
@@ -1291,14 +1327,17 @@ pub(crate) fn make_approval_callback(
                         "Discord approval: 5-minute timeout — auto-denying (id={})",
                         approval_id
                     );
-                    let _ = sent_msg
+                    if let Err(e) = sent_msg
                         .edit(
                             &http,
                             EditMessage::new()
                                 .content("⏱️ Approval timed out — denied")
                                 .components(vec![]),
                         )
-                        .await;
+                        .await
+                    {
+                        tracing::warn!(error = %e, "failed to edit Discord timeout message");
+                    }
                     Ok((false, false))
                 }
             }

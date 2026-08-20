@@ -460,7 +460,9 @@ impl SlashCommandTool {
                         for project in &projects {
                             let slug = crate::services::file::slugify_project_name(&project.name);
                             if slug.eq_ignore_ascii_case(&dir_name) {
-                                let _ = project_svc.assign_session(sid, project.id).await;
+                                if let Err(e) = project_svc.assign_session(sid, project.id).await {
+                                tracing::warn!(error = %e, "failed to assign session to project");
+                            }
                                 tracing::info!(
                                     "Auto-assigned session {} to project '{}'",
                                     sid,

@@ -14,128 +14,6 @@ use uuid::Uuid;
 
 use super::types::{MessageEnqueueCallback, QueuedUserMessage};
 
-/// Where a session's background-task completion must be delivered, keyed by
-/// session rather than by whichever surface happened to run the command.
-///
-/// Every surface builds its own `BackgroundTaskManager` from its own enqueue
-/// callback, so the completion used to follow the *executing* service. A
-/// channel-bound session driven from the TUI therefore reported back to the
-/// TUI, and the channel that started the work never heard the answer (#940).
-/// A channel registers its session here when it binds one; the manager
-/// consults this first and only falls back to its own callback when nothing
-/// claims the session (a genuinely TUI-local or CLI-local session).
-static SESSION_ROUTES: Mutex<Option<HashMap<Uuid, MessageEnqueueCallback>>> = Mutex::new(None);
-
-/// Bind `session_id`'s background-task completions to `enqueue`.
-///
-/// Idempotent: re-binding the same session replaces the route, which is what
-/// a reconnect or a bot restart needs.
-pub fn register_session_route(session_id: Uuid, enqueue: MessageEnqueueCallback) {
-    match SESSION_ROUTES.lock() {
-        Ok(mut guard) => {
-            guard
-                .get_or_insert_with(HashMap::new)
-                .insert(session_id, enqueue.clone());
-            // Startup recovery runs before any channel connects, so this
-            // session may already have reports waiting for someone to claim
-            // it. Hand them over now that there is somewhere to send them
-            // (#1037). Done after the insert so the route is live first.
-            super::restart_recovery::claim_session(session_id, &enqueue);
-        }
-        Err(e) => {
-            // Worth saying out loud: without the route this session's next
-            // background completion silently goes to the wrong surface.
-            tracing::error!(
-                target: "background_task",
-                "Could not register resume route for session {session_id}: {e}"
-            );
-        }
-    }
-}
-
-/// Who should receive `session_id`'s completion: the surface that claimed the
-/// session, falling back to `executing` when nothing did.
-///
-/// The whole fix in one line — pick by session, never by who ran the command —
-/// so it is a pure function and directly testable.
-pub fn resolve_route(
-    session_id: Uuid,
-    executing: &MessageEnqueueCallback,
-) -> MessageEnqueueCallback {
-    session_route(session_id).unwrap_or_else(|| executing.clone())
-}
-
-/// The surface this process booted on, used when no channel claims a session.
-///
-/// `spawn_command` carries the executing service's callback on the manager, so
-/// it always has a fallback. A sub-agent has no such handle — it is reached
-/// from a tool with no service context — so the local surface is registered
-/// once at startup and resolved on demand instead (#1036).
-static LOCAL_ROUTE: Mutex<Option<MessageEnqueueCallback>> = Mutex::new(None);
-
-/// Record the booting surface as the fallback destination. Called once per
-/// process start; re-registering replaces it.
-pub fn register_local_route(enqueue: MessageEnqueueCallback) {
-    match LOCAL_ROUTE.lock() {
-        Ok(mut guard) => *guard = Some(enqueue),
-        Err(e) => {
-            // Without it, a sub-agent finishing on a session no channel owns
-            // has nowhere to report and its output is dropped.
-            tracing::error!(
-                target: "background_task",
-                "Could not register the local delivery route: {e}"
-            );
-        }
-    }
-}
-
-/// Deliver `msg` to whoever owns `session_id`, falling back to the booting
-/// surface. Returns whether it went anywhere at all.
-pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> bool {
-    if let Some(route) = session_route(session_id) {
-        route(session_id, msg);
-        return true;
-    }
-    let local = match LOCAL_ROUTE.lock() {
-        Ok(guard) => guard.clone(),
-        Err(e) => {
-            tracing::error!(
-                target: "background_task",
-                "Could not read the local delivery route for session {session_id}: {e}"
-            );
-            None
-        }
-    };
-    match local {
-        Some(route) => {
-            route(session_id, msg);
-            true
-        }
-        None => {
-            tracing::error!(
-                target: "background_task",
-                "Nothing can receive a message for session {session_id}; it is dropped: {}",
-                msg.display_text
-            );
-            false
-        }
-    }
-}
-
-/// The surface that owns `session_id`'s completions, if one claimed it.
-pub(crate) fn session_route(session_id: Uuid) -> Option<MessageEnqueueCallback> {
-    match SESSION_ROUTES.lock() {
-        Ok(guard) => guard.as_ref()?.get(&session_id).cloned(),
-        Err(e) => {
-            tracing::error!(
-                target: "background_task",
-                "Could not read resume route for session {session_id}: {e}"
-            );
-            None
-        }
-    }
-}
-
 /// Result of a finished background command.
 #[derive(Debug, Clone)]
 pub struct CmdResult {
@@ -229,6 +107,16 @@ impl BackgroundTaskManager {
         let this = std::sync::Arc::clone(&self);
         let task_id = Uuid::new_v4();
         tokio::spawn(async move {
+            // Log the START as well as the finish. Only completions were
+            // logged, so a task that never finished left no trace of having
+            // begun, and reconstructing which commands got detached meant
+            // inferring it from the completions that did arrive.
+            tracing::info!(
+                target: "background_task",
+                "Background task '{label}' started for session {session_id} \
+                 (id={task_id}, cwd={})",
+                cwd.display()
+            );
             // Persist BEFORE running: a restart mid-command must find a row to
             // report as interrupted, otherwise the session waits forever on a
             // resume that can no longer come (#763).
@@ -246,11 +134,18 @@ impl BackgroundTaskManager {
                     );
                 }
             }
+            let started = std::time::Instant::now();
             let result = run_detached(&command, &cwd).await;
+            // Exit code and elapsed time, not just a boolean: how long a task
+            // actually took is the only way to tell a correct detach from a
+            // wasteful one, and it was nowhere in the log.
             tracing::info!(
                 target: "background_task",
-                "Background task '{label}' for session {session_id} finished (success={})",
-                result.success
+                "Background task '{label}' for session {session_id} finished \
+                 (success={}, exit={}, elapsed={:.1}s)",
+                result.success,
+                result.code,
+                started.elapsed().as_secs_f32()
             );
             let msg = completion_message(&label, &command, &result);
             if let Some(repo) = task_repo()
@@ -279,7 +174,7 @@ impl BackgroundTaskManager {
             // runs on the TUI's service, so `this.enqueue` would answer into
             // the TUI and leave the channel that asked for the work waiting on
             // a reply that never comes (#940).
-            resolve_route(session_id, &this.enqueue)(session_id, msg);
+            super::session_routes::resolve_route(session_id, &this.enqueue)(session_id, msg);
         });
     }
 }
@@ -290,80 +185,8 @@ impl BackgroundTaskManager {
 /// manager, because `spawn_command` is reached from the bash tool which has no
 /// pool in its context. `None` before the DB is initialized (early startup,
 /// tests), which simply means restart accounting is skipped.
-fn task_repo() -> Option<crate::db::BackgroundTaskRepository> {
+pub(super) fn task_repo() -> Option<crate::db::BackgroundTaskRepository> {
     crate::db::global_pool().map(|p| crate::db::BackgroundTaskRepository::new(p.clone()))
-}
-
-/// Account for background tasks that were running when a previous process
-/// died, then clear them.
-///
-/// Every surviving row belonged to a process that no longer exists, so its
-/// child is gone too: there is nothing to reattach to and no result coming.
-/// Each one is reported into its session as an interruption so the agent can
-/// decide whether to re-run it, rather than waiting forever on a resume that
-/// can never arrive (#763). Returns how many were reported.
-pub async fn report_interrupted() -> usize {
-    let Some(repo) = task_repo() else {
-        return 0;
-    };
-    let rows = match repo.all().await {
-        Ok(rows) => rows,
-        Err(e) => {
-            tracing::error!(target: "background_task", "Failed to read background tasks: {e:#}");
-            return 0;
-        }
-    };
-    if rows.is_empty() {
-        return 0;
-    }
-    let mut count = 0usize;
-    for row in rows {
-        tracing::warn!(
-            target: "background_task",
-            "Background task '{}' for session {} was interrupted by a restart",
-            row.label,
-            row.session_id
-        );
-        // By session, never by whoever booted. This path used to take the
-        // caller's callback directly, so a channel session's interruption
-        // landed on the local surface — the shape #940 fixed for completions
-        // and left standing here. Startup runs before channels register, so
-        // an unclaimed session parks rather than mis-delivers (#1037).
-        super::restart_recovery::deliver_or_park(row.session_id, interrupted_message(&row));
-        count += 1;
-
-        // Clear per row, only after it is accounted for. clear_all() used to
-        // run regardless, so a row whose report never got produced was
-        // dropped from the table anyway and its session never heard anything.
-        if let Err(e) = repo.clear(row.id).await {
-            // A surviving row re-reports the same interruption next start,
-            // which is noisy but recoverable; the report itself already
-            // landed, so this is not fatal.
-            tracing::error!(
-                target: "background_task",
-                "Failed to clear background task '{}' after reporting it: {e:#}",
-                row.label
-            );
-        }
-    }
-    count
-}
-
-/// What the agent is told about a command a restart killed. Deliberately
-/// states that it did NOT finish and hands the decision back, rather than
-/// re-running something expensive on the agent's behalf.
-fn interrupted_message(row: &crate::db::BackgroundTaskRow) -> QueuedUserMessage {
-    let context_text = format!(
-        "[BACKGROUND TASK INTERRUPTED] `{}` was still running when OpenCrabs restarted, so it \
-         was killed and produced no result. The command was:\n\n```\n{}\n```\n\nIt did NOT \
-         complete. Decide whether to run it again based on what you were doing; do not assume \
-         it passed or failed.",
-        row.label, row.command
-    );
-    QueuedUserMessage {
-        context_text,
-        display_text: format!("⚠️ Background task interrupted by restart: {}", row.label),
-    }
 }
 
 /// Run `command` through `sh -c` in `cwd`, capturing merged stdout+stderr.
@@ -391,39 +214,21 @@ async fn run_detached(command: &str, cwd: &std::path::Path) -> CmdResult {
                 output: combined,
             }
         }
-        Err(e) => CmdResult {
-            success: false,
-            code: -1,
-            output: format!("failed to launch: {e}"),
-        },
+        Err(e) => {
+            // Distinct from a command that ran and failed: nothing executed at
+            // all, so the exit code below is not one the command produced.
+            tracing::error!(
+                target: "background_task",
+                "Background command could not be launched in {}: {e}",
+                cwd.display()
+            );
+            CmdResult {
+                success: false,
+                code: -1,
+                output: format!("failed to launch: {e}"),
+            }
+        }
     }
-}
-
-/// Command substrings that mark a genuinely long-running task (#722). When bash
-/// sees one AND a background manager is wired, it runs the command detached and
-/// resumes the session on completion instead of blocking toward the 600s cap.
-/// Matched as a substring so `cd x && cargo test` still counts.
-const KNOWN_LONG_MARKERS: &[&str] = &[
-    "cargo test",
-    "cargo build",
-    "cargo run",
-    "cargo clippy",
-    "npm test",
-    "npm run build",
-    "pnpm test",
-    "pnpm build",
-    "yarn test",
-    "yarn build",
-    "npx remotion render",
-    "remotion render",
-    "gh run watch",
-    "gh pr checks --watch",
-];
-
-/// Is `command` a known long-running task that should run in the background?
-pub(crate) fn is_known_long(command: &str) -> bool {
-    let lower = command.to_lowercase();
-    KNOWN_LONG_MARKERS.iter().any(|m| lower.contains(m))
 }
 
 /// A short human label for a command (first meaningful token sequence), for the

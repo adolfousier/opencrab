@@ -36,11 +36,32 @@ const fn default_version() -> u8 {
 }
 
 impl ToolInvocation {
+    /// Test-only constructor: production always arrives via `parse`/`load`.
+    #[cfg(test)]
     pub(crate) fn new(command: ToolCommand) -> Self {
         Self {
             version: CURRENT_VERSION,
             command,
         }
+    }
+
+    /// Serialize to pretty JSON (test-only: what would be written to disk).
+    #[cfg(test)]
+    pub(crate) fn to_json(&self) -> anyhow::Result<String> {
+        serde_json::to_string_pretty(self)
+            .map_err(|e| anyhow::anyhow!("serializing tool invocation: {e}"))
+    }
+
+    /// Save an invocation to a params file (test-only: creates parents).
+    #[cfg(test)]
+    pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("creating {}: {e}", parent.display()))?;
+        }
+        std::fs::write(path, self.to_json()?)
+            .map_err(|e| anyhow::anyhow!("writing params file {}: {e}", path.display()))?;
+        Ok(())
     }
 
     /// Parse an invocation from raw JSON (file contents).
@@ -57,27 +78,10 @@ impl ToolInvocation {
         Ok(inv)
     }
 
-    /// Serialize to pretty JSON (what gets written to disk).
-    pub(crate) fn to_json(&self) -> anyhow::Result<String> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| anyhow::anyhow!("serializing tool invocation: {e}"))
-    }
-
     /// Load an invocation from a params file.
     pub(crate) fn load(path: &Path) -> anyhow::Result<Self> {
         let json = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("reading params file {}: {e}", path.display()))?;
         Self::parse(&json)
-    }
-
-    /// Save an invocation to a params file (creates parents).
-    pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| anyhow::anyhow!("creating {}: {e}", parent.display()))?;
-        }
-        std::fs::write(path, self.to_json()?)
-            .map_err(|e| anyhow::anyhow!("writing params file {}: {e}", path.display()))?;
-        Ok(())
     }
 }

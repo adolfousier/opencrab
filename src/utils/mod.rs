@@ -2,12 +2,14 @@
 
 pub mod approval;
 pub mod command_label;
+pub(crate) mod config_reload_reason;
 pub mod config_watcher;
 pub mod fd_suppress;
 pub mod file_extract;
 pub mod git_branch;
 pub mod image;
 pub mod install;
+pub mod long_command;
 pub mod model_match;
 pub mod pdf_vision;
 pub mod plan_files;
@@ -17,6 +19,7 @@ pub mod provider_pair;
 pub mod providers;
 pub mod retry;
 pub mod sanitize;
+pub mod shell_scan;
 pub mod slack_fmt;
 pub mod stop_intent;
 pub mod string;

@@ -266,7 +266,7 @@ fn setup_store_with_embeddings(n: usize) -> (Store, TempDir) {
         emb[(i * 7) % 768] = 0.5;
         emb[(i * 13) % 768] = 0.3;
         store
-            .insert_embedding(&hash, 0, 0, &emb, "bench-model", now)
+            .insert_embedding(&hash, 0, 0, &emb, "bench-model", now, None)
             .unwrap();
     }
 
@@ -382,7 +382,7 @@ fn bench_insert_embedding(c: &mut Criterion) {
                 .unwrap();
             black_box(
                 store
-                    .insert_embedding(&hash, 0, 0, &emb, "bench-model", now)
+                    .insert_embedding(&hash, 0, 0, &emb, "bench-model", now, None)
                     .unwrap(),
             );
         });

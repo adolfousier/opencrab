@@ -12,8 +12,8 @@
 //! so this file can reach them from outside the module.
 
 use crate::brain::tools::plan_tool::{
-    MAX_CONTEXT_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_PLAN_FILE_SIZE, MAX_TITLE_LENGTH, PlanTool,
-    default_complexity, validate_plan_file_path, validate_string,
+    MAX_DESCRIPTION_LENGTH, MAX_PLAN_FILE_SIZE, MAX_TITLE_LENGTH, PlanTool, default_complexity,
+    validate_plan_file_path, validate_string,
 };
 use crate::brain::tools::{Tool, ToolExecutionContext};
 use crate::config::profile::{home_for_profile, with_profile_home_async};
@@ -178,7 +178,6 @@ fn input_validation_limits() {
     // Verify limits are reasonable
     assert_eq!(MAX_TITLE_LENGTH, 200);
     assert_eq!(MAX_DESCRIPTION_LENGTH, 5000);
-    assert_eq!(MAX_CONTEXT_LENGTH, 5000);
 }
 
 #[test]
@@ -204,13 +203,6 @@ fn validate_title_one_over_limit() {
 fn validate_description_at_limit() {
     let desc = "a".repeat(MAX_DESCRIPTION_LENGTH);
     let result = validate_string(&desc, MAX_DESCRIPTION_LENGTH, "Description");
-    assert!(result.is_ok());
-}
-
-#[test]
-fn validate_context_at_limit() {
-    let context = "a".repeat(MAX_CONTEXT_LENGTH);
-    let result = validate_string(&context, MAX_CONTEXT_LENGTH, "Context");
     assert!(result.is_ok());
 }
 
@@ -266,24 +258,101 @@ fn validate_plan_file_path_canonical() {
 
 #[tokio::test]
 async fn import_sample_plan_succeeds() {
-    let json = include_str!("../brain/tools/test_data/sample-coding-plan.json");
+    in_temp_home(async {
+        let json = include_str!("../brain/tools/test_data/sample-coding-plan.json");
 
-    let tmp_dir = TempDir::new().unwrap();
-    let plan_file = tmp_dir.path().join("sample-coding-plan.json");
-    std::fs::write(&plan_file, json).unwrap();
+        let tmp_dir = TempDir::new().unwrap();
+        let plan_file = tmp_dir.path().join("sample-coding-plan.json");
+        std::fs::write(&plan_file, json).unwrap();
 
-    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
-    let tool = PlanTool;
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let tool = PlanTool;
 
-    let input = serde_json::json!({
-        "operation": "init",
-        "file_path": plan_file.to_str().unwrap(),
-    });
+        let input = serde_json::json!({
+            "operation": "init",
+            "file_path": plan_file.to_str().unwrap(),
+        });
 
-    let result = tool.execute(input, &ctx).await.unwrap();
-    assert!(result.success, "import must succeed on the sample plan");
-    assert!(result.output.contains("Imported plan"));
-    assert!(result.output.contains("7 tasks"));
+        let result = tool.execute(input, &ctx).await.unwrap();
+        assert!(result.success, "import must succeed on the sample plan");
+        assert!(result.output.contains("Imported plan"));
+        assert!(result.output.contains("7 tasks"));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn import_under_auto_approve_goes_active() {
+    in_temp_home(async {
+        let json = include_str!("../brain/tools/test_data/sample-coding-plan.json");
+        let tmp_dir = TempDir::new().unwrap();
+        let plan_file = tmp_dir.path().join("sample-coding-plan.json");
+        std::fs::write(&plan_file, json).unwrap();
+
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
+        let tool = PlanTool;
+
+        let input = serde_json::json!({
+            "operation": "init",
+            "file_path": plan_file.to_str().unwrap(),
+        });
+
+        let result = tool.execute(input, &ctx).await.unwrap();
+        assert!(result.success);
+        // #581 parity with the create arm: under tool auto-approve there is no
+        // user Approve step, so the imported plan must go Active, not stall in
+        // Editing with a "call 'start'" message that the Editing gate refuses.
+        assert!(
+            result.output.contains("Active — auto-approve"),
+            "expected Active message, got: {}",
+            result.output
+        );
+        assert!(
+            !result.output.contains("Editing"),
+            "must not report Editing under auto-approve: {}",
+            result.output
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn import_without_auto_approve_waits_in_editing() {
+    in_temp_home(async {
+        let json = include_str!("../brain/tools/test_data/sample-coding-plan.json");
+        let tmp_dir = TempDir::new().unwrap();
+        let plan_file = tmp_dir.path().join("sample-coding-plan.json");
+        std::fs::write(&plan_file, json).unwrap();
+
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let tool = PlanTool;
+
+        let input = serde_json::json!({
+            "operation": "init",
+            "file_path": plan_file.to_str().unwrap(),
+        });
+
+        let result = tool.execute(input, &ctx).await.unwrap();
+        assert!(result.success);
+        assert!(
+            result.output.contains("Editing"),
+            "default import stays Editing: {}",
+            result.output
+        );
+        // The old message said "Call 'start' to begin" while start is refused in
+        // Editing — the message must direct the agent to WAIT for approval.
+        assert!(
+            result.output.contains("WAIT"),
+            "message must say WAIT: {}",
+            result.output
+        );
+        assert!(
+            !result.output.contains("Call 'start'"),
+            "lying start instruction must be gone: {}",
+            result.output
+        );
+    })
+    .await;
 }
 
 #[tokio::test]

@@ -7,7 +7,7 @@
 //! delivered into the TUI and the channel that asked for the work was left on
 //! the agent's last "waiting for the result" message with nothing following it.
 
-use crate::brain::agent::service::background_tasks::{register_session_route, resolve_route};
+use crate::brain::agent::service::session_routes::{register_session_route, resolve_route};
 use crate::brain::agent::service::{MessageEnqueueCallback, QueuedUserMessage};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;

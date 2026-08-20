@@ -95,7 +95,9 @@ pub(crate) fn make_question_callback(
                 std::mem::take(&mut *g)
             };
             for h in pending {
-                let _ = h.await;
+                if let Err(e) = h.await {
+                    tracing::warn!(error = %e, "Discord follow-up task panicked");
+                }
             }
 
             if let Err(e) = ChannelId::new(channel_id)

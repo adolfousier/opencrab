@@ -46,7 +46,7 @@ jobs:
   # cross-platform build/test matrix for a PR that won't lint anyway.
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -63,6 +63,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install ALSA dev (for local-stt feature)
+        # Linux-only: ALSA does not exist on macOS, where cpal uses CoreAudio.
+        # Left ungated, this ran `apt-get` on the self-hosted Mac and failed on
+        # sudo before any Rust work started.
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y libasound2-dev
 
       - name: Check formatting
@@ -102,7 +106,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: self-hosted
             target: aarch64-apple-darwin
             features: --all-features
     steps:
@@ -135,10 +139,25 @@ jobs:
   # (rate_limiter pacing) rely on cargo test's threadpool semantics
   # and fail under nextest's process-per-test isolation. nextest
   # migration is a follow-up once those tests are made portable.
+  # Runs on BOTH platforms. The Mac runner is free and fast, but it cannot
+  # stand in for Linux: that is the platform most users deploy to, and the
+  # suite is full of cfg'd and filesystem-sensitive code. Testing only on the
+  # Mac would have traded Linux coverage for speed. Testing on both instead
+  # ADDED a platform, and the macOS entry immediately earned its place by
+  # catching a flock bug that had never run on macOS before.
   test:
-    name: Test (Linux)
+    name: Test (${{ matrix.label }})
     needs: [lint, audit]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux
+            os: ubuntu-latest
+          - label: macOS
+            # Fork PRs never touch our hardware; they retest on Linux instead.
+            os: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -154,6 +173,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install mold + ALSA dev (Linux)
+        # Linux-only toolchain extras; macOS uses the Xcode linker.
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y mold clang libasound2-dev
 
       - name: Run tests
@@ -171,7 +192,7 @@ jobs:
 
   audit:
     name: Cargo Audit
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -201,6 +222,14 @@ jobs:
         #                      parse untrusted input through it); the parse path (pdf-extract)
         #                      is on lopdf 0.42, the patched version. Drop this ignore when
         #                      printpdf releases against lopdf >= 0.42.
+        # RUSTSEC-2026-0258 — h2 unbounded empty DATA frames. Our DIRECT
+        #                      dependency is patched (h2 0.4.17 >= 0.4.16). The
+        #                      remaining hit is h2 0.3.27, reached only through
+        #                      rwhisper -> kalosm-common -> reqwest 0.11 ->
+        #                      hyper 0.14 (the local-stt feature). The 0.3 line
+        #                      has no fixed release, so this cannot be resolved
+        #                      here. Drop this ignore when rwhisper moves to a
+        #                      reqwest built on hyper 1.x.
         run: cargo audit --ignore RUSTSEC-2024-0320 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0002 --ignore RUSTSEC-2026-0173 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0187 --ignore RUSTSEC-2026-0258
 
   # ── Stage 5: Coverage (on-demand only) ───────────────────────────────────
@@ -213,8 +242,13 @@ jobs:
     name: Code Coverage
     needs: [lint, audit]
     if: github.event_name == 'workflow_dispatch'
+    # Stays on Linux because that is the platform users deploy to, and code
+    # behind cfg(target_os = "linux") is invisible from macOS. The tradeoff is
+    # speed: tarpaulin instruments the whole suite in ~15 min on the Mac but
+    # needs well over 30 on a 2-core hosted runner, so the cap below is sized
+    # for the hosted runner rather than the fast one.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -229,6 +263,7 @@ jobs:
           toolchain: stable
 
       - name: Install ALSA dev
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y libasound2-dev
 
       - name: Install tarpaulin
@@ -255,7 +290,7 @@ jobs:
     name: CI Required Gate
     if: always()
     needs: [lint, build, test, audit]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
     steps:
       - name: Check results
         run: |

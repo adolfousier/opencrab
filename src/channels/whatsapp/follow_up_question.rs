@@ -70,7 +70,9 @@ pub(crate) fn make_question_callback(
                 std::mem::take(&mut *g)
             };
             for h in pending {
-                let _ = h.await;
+                if let Err(e) = h.await {
+                    tracing::warn!(error = %e, "WhatsApp follow-up task panicked");
+                }
             }
 
             if let Err(e) = client.send_message(chat_jid, text_msg).await {

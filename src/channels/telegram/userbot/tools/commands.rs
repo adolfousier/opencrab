@@ -42,7 +42,7 @@ pub(crate) enum ToolCommand {
 
 impl ToolCommand {
     /// Governance classification — see the module doc.
-    pub(crate) fn class(&self) -> ToolClass {
+    pub(crate) fn class(&self) -> ToolClass<'_> {
         match self {
             ToolCommand::ReadChat(_) | ToolCommand::SearchChat(_) => ToolClass::Read,
             ToolCommand::SearchGlobal(_) | ToolCommand::Discover(_) => ToolClass::Read,
@@ -54,7 +54,9 @@ impl ToolCommand {
         }
     }
 
-    /// Stable tool name (params-file `tool` tag).
+    /// Stable tool name (params-file `tool` tag). Test-only: the production
+    /// path reads the tag via serde, so this exists for assertions.
+    #[cfg(test)]
     pub(crate) fn name(&self) -> &'static str {
         match self {
             ToolCommand::ReadChat(_) => "read_chat",

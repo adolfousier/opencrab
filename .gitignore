@@ -88,3 +88,9 @@ cc-research.md
 
 # Local dev binary drops (scripts/build-dev-binaries.sh)
 dist/
+
+# Tauri/Cargo build output for the desktop GUI. Never committed: it is
+# ~24k files and ~940k lines of regenerable artifacts, and a stray
+# `git add -A` sweeps every one of them into whatever commit is open.
+desktop/src-tauri/target/
+desktop/dist/

@@ -5,6 +5,9 @@
 [![CI](https://github.com/adolfousier/opencrabs/actions/workflows/ci.yml/badge.svg)](https://github.com/adolfousier/opencrabs/actions/workflows/ci.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/adolfousier/opencrabs?style=social)](https://github.com/adolfousier/opencrabs)
 
+<a href="https://trendshift.io/repositories/22468?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-22468" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/22468/daily?language=Rust" alt="adolfousier/opencrabs — Trendshift #3 Repository Of The Day, Rust" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/22468?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-22468" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/22468/weekly?language=Rust" alt="adolfousier/opencrabs — Trendshift #20 Repository Of The Week, Rust" width="250" height="55"/></a>
+
 # 🦀 OpenCrabs
 
 **The autonomous, self-improving AI agent. Single Rust binary. Every channel.**
@@ -1241,6 +1244,8 @@ port = 18790          # Gateway port
 # api_key = "your-secret"  # Optional Bearer token auth for incoming requests
 # allowed_origins = ["http://localhost:3000"]  # CORS (empty = blocked)
 ```
+
+> **The section is `[a2a]`.** Older configs spell it `[gateway]` and still load — the two are the same setting, not two features. A file containing both is folded into one rather than rejected, but write `[a2a]` and keep a single section.
 
 ### Endpoints
 
@@ -4493,9 +4498,10 @@ cargo test
 
 ---
 
-## Star History Chart
+## Trending
 
-[![Star History Chart](https://api.star-history.com/svg?repos=adolfousier/opencrabs&type=date&legend=top-left)](https://www.star-history.com/#adolfousier/opencrabs)
+<a href="https://trendshift.io/repositories/22468?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-22468" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/22468/daily?language=Rust" alt="adolfousier/opencrabs — Trendshift #3 Repository Of The Day, Rust" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/22468?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-22468" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/22468/weekly?language=Rust" alt="adolfousier/opencrabs — Trendshift #20 Repository Of The Week, Rust" width="250" height="55"/></a>
 
 ## ✨ Stay Tuned
 

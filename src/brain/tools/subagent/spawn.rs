@@ -76,7 +76,7 @@ fn push_result(
     outcome: std::result::Result<&str, &str>,
 ) {
     let msg = completion_message(label, agent_id, outcome);
-    if crate::brain::agent::service::background_tasks::deliver_to_session(parent_session_id, msg) {
+    if crate::brain::agent::service::session_routes::deliver_to_session(parent_session_id, msg) {
         tracing::info!("Sub-agent {agent_id} reported its result to session {parent_session_id}");
     }
 }

@@ -14,6 +14,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 /// Base interval between RSI cycles (analyze + improve) — the first rung
 /// of the backoff ladder (#977).
@@ -1634,5 +1635,5 @@ pub fn spawn_rsi_engine(
             // Stamp last_cycle so restarts resume from here, not from scratch
             let _ = std::fs::write(&last_cycle_path, "");
         }
-    });
+    }.instrument(tracing::info_span!("rsi_engine")));
 }

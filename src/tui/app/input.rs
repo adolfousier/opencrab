@@ -1842,8 +1842,11 @@ impl App {
                 self.scroll_offset
             );
             // Load more history when paging up if hidden messages exist
-            if self.hidden_older_messages > 0 && self.display_token_count < 300_000 {
-                let _ = self.load_more_history().await;
+            if self.hidden_older_messages > 0
+                && self.display_token_count < 300_000
+                && let Err(e) = self.load_more_history().await
+            {
+                tracing::warn!(error = %e, "failed to load more history");
             }
         } else if keys::is_page_down(&event) {
             let before = self.scroll_offset;

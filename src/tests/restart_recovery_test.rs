@@ -12,10 +12,10 @@ use uuid::Uuid;
 
 use crate::brain::agent::QueuedUserMessage;
 use crate::brain::agent::service::MessageEnqueueCallback;
-use crate::brain::agent::service::background_tasks::register_session_route;
 use crate::brain::agent::service::restart_recovery::{
     clear_parked_for_test, deliver_or_park, flush_parked, parked_count,
 };
+use crate::brain::agent::service::session_routes::register_session_route;
 
 /// What a recording callback saw: (session, display text) per delivery.
 type Seen = Arc<Mutex<Vec<(Uuid, String)>>>;

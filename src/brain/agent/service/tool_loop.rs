@@ -69,6 +69,45 @@ fn emit_retry_notices(
     }
 }
 
+/// Re-read the two flags that decide **who executes tool calls** and **who
+/// owns the conversation history** for the entry that is active right now.
+///
+/// Both are cached once per turn because they cannot change for a plain
+/// provider. A `FallbackProvider` breaks that assumption: a sticky swap
+/// mid-turn can move the chain between an API provider (OpenCrabs executes
+/// the tools) and an agentic CLI (the subprocess already executed them).
+/// Acting on the pre-swap value ran every tool twice: two commits, two
+/// `gh issue create`s, one `sed -i` applied twice into code that no longer
+/// compiled (#1100).
+pub(crate) fn refresh_cli_flags(
+    provider: &std::sync::Arc<dyn crate::brain::provider::Provider>,
+    is_cli_provider: &mut bool,
+    cli_owns_context: &mut bool,
+) {
+    let now_cli = provider.cli_handles_tools();
+    let now_owns_context = provider.cli_manages_context();
+    if now_cli != *is_cli_provider || now_owns_context != *cli_owns_context {
+        tracing::info!(
+            "Provider swap changed tool ownership: cli_handles_tools {} -> {}, \
+             cli_manages_context {} -> {} (active '{}'). Tool calls will be {} this turn.",
+            *is_cli_provider,
+            now_cli,
+            *cli_owns_context,
+            now_owns_context,
+            provider
+                .active_subprovider_name()
+                .unwrap_or_else(|| provider.name().to_string()),
+            if now_cli {
+                "rendered only (the CLI ran them)"
+            } else {
+                "executed by OpenCrabs"
+            },
+        );
+    }
+    *is_cli_provider = now_cli;
+    *cli_owns_context = now_owns_context;
+}
+
 /// What to do with a provider-reported input-token count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenReport {
@@ -423,6 +462,7 @@ impl AgentService {
     /// still receives the full `user_message` (typically wrapped with
     /// channel/sender/reply metadata for context).
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, fields(session_id = %session_id, channel))]
     pub(super) async fn run_tool_loop(
         &self,
         session_id: Uuid,
@@ -476,8 +516,28 @@ impl AgentService {
         let approval_callback: Option<ApprovalCallback> =
             override_approval_callback.or_else(|| self.approval_callback.clone());
         let has_progress_override = override_progress_callback.is_some();
+        // A channel passes its own callback per message, and `or_else` picked
+        // exactly one — so a Telegram-driven turn never reached the
+        // service-level callback the TUI installs, and every counter the TUI
+        // derives from progress events sat frozen while the turn ran (#1092).
+        //
+        // Only non-textual telemetry is mirrored. Events carrying text
+        // (StreamingChunk, IntermediateText) also drive the TUI's own display
+        // through `cli/ui.rs`, so forwarding them would render the mirrored
+        // turn's content a second time. Counters are safe; content is not.
         let progress_callback: Option<ProgressCallback> =
-            override_progress_callback.or_else(|| self.progress_callback.clone());
+            match (override_progress_callback, self.progress_callback.clone()) {
+                (Some(channel_cb), Some(service_cb)) => {
+                    Some(Arc::new(move |sid: Uuid, event: ProgressEvent| {
+                        if matches!(event, ProgressEvent::TokenCount(_)) {
+                            service_cb(sid, event.clone());
+                        }
+                        channel_cb(sid, event);
+                    }) as ProgressCallback)
+                }
+                (Some(channel_cb), None) => Some(channel_cb),
+                (None, service_cb) => service_cb,
+            };
         // Effective question callback: per-call override wins over the
         // service-level fallback. Channels with native button surfaces
         // pass their own callback per message; everyone else passes
@@ -712,7 +772,9 @@ impl AgentService {
             // Mark auto_title_attempted BEFORE spawning to prevent race
             // conditions where the next message arrives before the
             // background task completes. The Err arm resets it.
-            let _ = session_svc.mark_auto_title_attempted(session_id).await;
+            if let Err(e) = session_svc.mark_auto_title_attempted(session_id).await {
+                tracing::warn!(error = %e, "failed to mark auto title attempted");
+            }
             // Capture the old title to preserve channel prefix
             let old_title = session.title.clone().unwrap_or_default();
             tokio::spawn(async move {
@@ -782,7 +844,10 @@ impl AgentService {
                         } else {
                             // Empty/unusable title — allow the next message
                             // to retry. Same recovery path as the Err arm.
-                            let _ = session_svc.reset_auto_title_attempted(session_id).await;
+                            if let Err(e) = session_svc.reset_auto_title_attempted(session_id).await
+                            {
+                                tracing::warn!(error = %e, "failed to reset auto title attempted");
+                            }
                         }
                     }
                     Err(e) => {
@@ -791,23 +856,31 @@ impl AgentService {
                             session_id,
                             e,
                         );
-                        let _ = session_svc.reset_auto_title_attempted(session_id).await;
+                        if let Err(e) = session_svc.reset_auto_title_attempted(session_id).await {
+                            tracing::warn!(error = %e, "failed to reset auto title attempted");
+                        }
                     }
                 }
             });
         }
 
-        // Detect CLI + local provider once (neither changes during the loop).
+        // Detect CLI + local provider up front.
         //
         // `is_cli_provider` controls TWO unrelated behaviors:
         //   1. Skip local tool execution (CLI runs tools internally)
         //   2. Skip OpenCrabs-side context compaction (CLI persists session)
         //
+        // Both are re-read whenever a sticky fallback swap fires mid-turn
+        // (see `refresh_cli_flags` at the swap site below): a chain that
+        // rotates between an API provider and an agentic CLI changes who
+        // executes the tools, and a stale `false` means both sides run them
+        // (#1100).
+        //
         // `is_local_provider` relaxes the phantom-tool-call detector so
         // local llama.cpp/MLX models that answer in prose when they should
         // have called a tool get re-prompted, matching what Unsloth Studio
         // does out of the box.
-        let (is_cli_provider, cli_owns_context, is_dialagram, is_local_provider) = {
+        let (mut is_cli_provider, mut cli_owns_context, is_dialagram, is_local_provider) = {
             let p = self.provider_for_session(session_id);
             let base = p.base_url();
             // Detect dialagram by base_url — users add it as a custom
@@ -3431,6 +3504,24 @@ impl AgentService {
             // Surface any sticky-fallback swap that the FallbackProvider
             // performed during this turn so the user sees which provider/model
             // is now active. Fires at most once per swap.
+            // Re-read who owns tool execution and context for THIS iteration,
+            // before the tool-execution decision below (#1100).
+            //
+            // Six sites can move this session onto a different provider
+            // mid-turn: the rate-limit walk, the stream-fallback walk, the
+            // 5xx walk, the empty-response rescue, a `FallbackProvider`
+            // sticky promotion, and `force_next_fallback`. Refreshing at each
+            // of them is how the bug happened. The rate-limit walk already
+            // refreshes `model_name` for exactly this reason and simply did
+            // not know there were two more bindings to carry. One refresh at
+            // the single point every path converges on cannot be forgotten by
+            // the seventh site.
+            refresh_cli_flags(
+                &self.provider_for_session(session_id),
+                &mut is_cli_provider,
+                &mut cli_owns_context,
+            );
+
             let rotated_this_iteration = self.provider_for_session(session_id).take_swap_event();
             if let Some(ref swap) = rotated_this_iteration {
                 let reason = if swap.reason.is_empty() {

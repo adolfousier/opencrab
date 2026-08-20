@@ -116,12 +116,19 @@ jobs:
             artifact_name: opencrabs.exe
             asset_suffix: windows-amd64
 
-          - os: macos-latest
+          # Both darwin targets build on our own Mac. GitHub bills macOS
+          # minutes at 10x, Linux at 1x and Windows at 2x, so these two jobs
+          # cost more than the other three combined; the Mac runs them for
+          # free and natively. Linux and Windows stay hosted, where they are
+          # cheap and native. This does mean a tag cannot finish its release
+          # while the Mac runner is offline: the darwin jobs queue until it
+          # comes back rather than failing over to a hosted runner.
+          - os: self-hosted
             target: x86_64-apple-darwin
             artifact_name: opencrabs
             asset_suffix: macos-amd64
 
-          - os: macos-latest
+          - os: self-hosted
             target: aarch64-apple-darwin
             artifact_name: opencrabs
             asset_suffix: macos-arm64

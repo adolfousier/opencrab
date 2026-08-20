@@ -321,7 +321,7 @@ fn test_generate_dedup_proposals_does_not_panic_on_multibyte_char_at_truncation_
     // made the slice panic. 79 ASCII bytes + '—' puts the dash at exactly
     // bytes 79..82, reproducing the original crash precisely.
     let dir = TempDir::new().unwrap();
-    let filler = "a".repeat(79);
+    let filler: String = "a".repeat(79);
     let shared_line = format!("{filler}— duplicated line with a multi-byte dash at the cut");
     write_brain_file(
         dir.path(),

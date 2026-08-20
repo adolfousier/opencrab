@@ -971,8 +971,17 @@ pub(crate) async fn refresh_flow_rich_details(
         freeze_flow_block_and_strip_kb(bot, chat, streaming, mid, "rich size limit reached").await;
         return;
     }
-    match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details, None, "turn", "-")
-        .await
+    match super::rich::api::edit_rich_html(
+        bot.api_url().as_str(),
+        bot.token(),
+        chat.0,
+        mid.0,
+        &details,
+        None,
+        "turn",
+        "-",
+    )
+    .await
     {
         // The plan Approve/Discard keyboard now rides the persistent plan card,
         // not the flow block (#580), so the flow block carries no reply_markup.
@@ -1208,6 +1217,7 @@ pub(crate) async fn open_flow(
         };
         if !details.is_empty() {
             match super::rich::api::send_rich_html_id(
+                bot.api_url().as_str(),
                 bot.token(),
                 chat.0,
                 thread_id,
@@ -1399,6 +1409,7 @@ pub(crate) async fn restick_flow_if_buried(
             return;
         }
         match super::rich::api::send_rich_html_id(
+            bot.api_url().as_str(),
             bot.token(),
             chat.0,
             thread_id,

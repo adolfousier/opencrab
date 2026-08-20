@@ -206,22 +206,6 @@ pub struct PlanDocument {
     /// List of tasks to complete
     pub tasks: Vec<PlanTask>,
 
-    /// Context and assumptions
-    #[serde(default)]
-    pub context: String,
-
-    /// Identified risks and unknowns
-    #[serde(default)]
-    pub risks: Vec<String>,
-
-    /// Testing strategy and approach
-    #[serde(default)]
-    pub test_strategy: String,
-
-    /// Technical stack (frameworks, libraries, tools)
-    #[serde(default)]
-    pub technical_stack: Vec<String>,
-
     /// Plan status
     #[serde(default)]
     pub status: PlanStatus,
@@ -257,10 +241,6 @@ impl PlanDocument {
             title,
             description: String::new(),
             tasks: Vec::new(),
-            context: String::new(),
-            risks: Vec::new(),
-            test_strategy: String::new(),
-            technical_stack: Vec::new(),
             status: PlanStatus::Editing,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -563,26 +543,6 @@ impl PlanDocument {
         })
     }
 
-    /// Get execution summary for all tasks
-    pub fn execution_summary(&self) -> ExecutionSummary {
-        let mut summary = ExecutionSummary::default();
-
-        for task in &self.tasks {
-            summary.total_tasks += 1;
-            match task.status {
-                TaskStatus::Completed => summary.completed += 1,
-                TaskStatus::Failed => summary.failed += 1,
-                TaskStatus::InProgress => summary.in_progress += 1,
-                TaskStatus::Pending => summary.pending += 1,
-                TaskStatus::Skipped => summary.skipped += 1,
-                TaskStatus::Blocked(_) => summary.blocked += 1,
-            }
-            summary.total_retries += task.retry_count as usize;
-        }
-
-        summary
-    }
-
     /// Get tasks that are ready to execute (dependencies satisfied, pending status)
     pub fn ready_tasks(&self) -> Vec<&PlanTask> {
         self.tasks
@@ -592,84 +552,6 @@ impl PlanDocument {
             })
             .collect()
     }
-
-    /// Get failed tasks that can be retried
-    pub fn retriable_tasks(&self) -> Vec<&PlanTask> {
-        self.tasks.iter().filter(|task| task.can_retry()).collect()
-    }
-
-    /// Get validation warnings for this plan
-    pub fn get_validation_warnings(&self) -> Vec<String> {
-        let mut warnings = Vec::new();
-
-        // Check for overly complex tasks
-        for task in &self.tasks {
-            if task.complexity >= 5 {
-                warnings.push(format!(
-                    "⚠️ Task '{}' has maximum complexity ({}★) - consider breaking it down",
-                    task.title, task.complexity
-                ));
-            }
-
-            // Check for vague task descriptions
-            if task.description.len() < 50 {
-                warnings.push(format!(
-                    "💡 Task '{}' has a brief description ({} chars) - add more detail",
-                    task.title,
-                    task.description.len()
-                ));
-            }
-
-            // Check for tasks with no acceptance criteria
-            if task.acceptance_criteria.is_empty() {
-                warnings.push(format!(
-                    "💡 Task '{}' has no acceptance criteria - define success criteria",
-                    task.title
-                ));
-            }
-        }
-
-        // Check for plans with too many tasks
-        if self.tasks.len() > 20 {
-            warnings.push(format!(
-                "⚠️ Plan has {} tasks (>20) - consider splitting into smaller plans",
-                self.tasks.len()
-            ));
-        }
-
-        // Check for missing context
-        if self.context.is_empty() {
-            warnings
-                .push("💡 Plan has no context - add environment info or constraints".to_string());
-        }
-
-        // Check for missing risks
-        if self.risks.is_empty() {
-            warnings
-                .push("💡 Plan has no identified risks - document potential issues".to_string());
-        }
-
-        // Check for missing test strategy
-        if self.test_strategy.is_empty() {
-            warnings
-                .push("💡 Plan has no test strategy - define how to verify success".to_string());
-        }
-
-        warnings
-    }
-}
-
-/// Summary of plan execution
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExecutionSummary {
-    pub total_tasks: usize,
-    pub completed: usize,
-    pub failed: usize,
-    pub in_progress: usize,
-    pub pending: usize,
-    pub skipped: usize,
-    pub blocked: usize,
-    pub total_retries: usize,
 }
 
 /// Status of a plan.
@@ -766,25 +648,10 @@ pub struct PlanTask {
     #[serde(default)]
     pub notes: Option<String>,
 
-    /// When task was completed
-    #[serde(default)]
-    pub completed_at: Option<DateTime<Utc>>,
-
-    /// Number of retry attempts
+    /// Times this task was restarted from Failed state; feeds the Ralph
+    /// loop iteration cap in the plan tool (mechanical, model cannot skip it).
     #[serde(default)]
     pub retry_count: u8,
-
-    /// Maximum retries allowed
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u8,
-
-    /// Output artifacts (file paths, generated code, etc.)
-    #[serde(default)]
-    pub artifacts: Vec<String>,
-}
-
-fn default_max_retries() -> u8 {
-    3
 }
 
 impl PlanTask {
@@ -801,17 +668,13 @@ impl PlanTask {
             acceptance_criteria: Vec::new(),
             status: TaskStatus::Pending,
             notes: None,
-            completed_at: None,
             retry_count: 0,
-            max_retries: 3,
-            artifacts: Vec::new(),
         }
     }
 
     /// Mark task as in progress. Idempotent and works from any prior state
     /// (Pending, InProgress, or Failed) so `start` can re-surface a task's
     /// details after a context compaction or to retry a failed task.
-    /// Increments retry_count when retrying from Failed state.
     pub fn start(&mut self) {
         if matches!(self.status, TaskStatus::Failed) {
             self.retry_count += 1;
@@ -819,22 +682,10 @@ impl PlanTask {
         self.status = TaskStatus::InProgress;
     }
 
-    /// Add an artifact (file path, generated code, etc.)
-    pub fn add_artifact(&mut self, artifact: String) {
-        self.artifacts.push(artifact);
-    }
-
-    /// Check if task can be retried
-    pub fn can_retry(&self) -> bool {
-        self.retry_count < self.max_retries
-            && matches!(self.status, TaskStatus::Pending | TaskStatus::Failed)
-    }
-
     /// Complete the task
     pub fn complete(&mut self, notes: Option<String>) {
         self.status = TaskStatus::Completed;
         self.notes = notes;
-        self.completed_at = Some(Utc::now());
     }
 
     /// Mark task as failed
@@ -949,4 +800,99 @@ impl TaskStatus {
             TaskStatus::Blocked(_) => "🚫",
         }
     }
+}
+
+// ── checklist quality glyphs ──────────────────────────────────────────
+//
+// A checklist row can look finished and mean nothing: a task with no
+// acceptance criteria, criteria nobody can actually run, or a Completed
+// box whose notes carry no receipt. These predicates mark that absence on
+// the row itself, where the reader already looks, rather than in a summary
+// line nobody reads.
+//
+// Absence-only, one glyph per task: the glyph reports what is MISSING, so
+// a well-formed task renders exactly as it did before.
+
+/// A criterion is mechanically verifiable when it names something runnable
+/// AND states what the run must produce. Either half alone is a wish.
+pub fn is_verifiable(criterion: &str) -> bool {
+    let lower = criterion.to_lowercase();
+
+    const RUNNABLE: &[&str] = &[
+        "cargo", "git ", "gh ", "npm ", "pnpm ", "make ", "curl ", "pytest", "python", "node ",
+        "grep", "rg ", "sed ", "awk ", "docker", "psql", "sqlite3", "stat ", "ls ", "wc ",
+    ];
+    let has_command = criterion.contains('`') || RUNNABLE.iter().any(|p| lower.contains(p));
+
+    // Stems, not full forms. Matching the literal "exit 0" misses "exits 0"
+    // and "report" misses "shows", so trim the plural / third-person ending
+    // before comparing and let one stem cover the whole family.
+    const EXPECT_STEM: &[&str] = &[
+        "exit",
+        "pass",
+        "fail",
+        "return",
+        "print",
+        "output",
+        "show",
+        "report",
+        "match",
+        "contain",
+        "clean",
+        "green",
+        "no warning",
+        "0 error",
+    ];
+    let stems: Vec<String> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .map(|w| w.trim_end_matches("es").trim_end_matches('s').to_string())
+        .collect();
+    let has_expectation = EXPECT_STEM
+        .iter()
+        .any(|p| stems.iter().any(|w| w == p) || lower.contains(p));
+
+    has_command && has_expectation
+}
+
+/// A receipt is something a third party can re-check: a sha, an exit code,
+/// a test count, or a path. "Done" is not a receipt.
+pub fn has_receipt(notes: &str) -> bool {
+    let lower = notes.to_lowercase();
+    let sha = notes
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|w| w.len() >= 7 && w.len() <= 40 && w.chars().all(|c| c.is_ascii_hexdigit()));
+    let counted = lower.contains("passed") || lower.contains("exit 0") || lower.contains("failed");
+    let path = notes.contains('/') && notes.contains('.');
+    sha || counted || path
+}
+
+/// The single glyph a task has earned, or `None` when nothing is missing.
+///
+/// Ordered by severity because only one renders: no criteria at all beats
+/// unrunnable criteria, which beats a completion with no receipt.
+///
+/// `Skipped`, `Failed` and `Blocked` never earn `❔`. Only `Completed`
+/// claims the work is done, so only `Completed` owes a receipt.
+pub fn quality_glyph(task: &PlanTask) -> Option<&'static str> {
+    if task.acceptance_criteria.is_empty() {
+        return Some("⚠️");
+    }
+    if !task.acceptance_criteria.iter().any(|c| is_verifiable(c)) {
+        return Some("🔓");
+    }
+    if task.status == TaskStatus::Completed
+        && !task.notes.as_deref().map(has_receipt).unwrap_or(false)
+    {
+        return Some("❔");
+    }
+    None
+}
+
+/// [`quality_glyph`] as a render-ready suffix: a leading space plus the
+/// glyph, or the empty string. Both surfaces append it verbatim, so the
+/// spacing can never drift between the tool output and the chat card.
+pub fn quality_glyph_suffix(task: &PlanTask) -> String {
+    quality_glyph(task)
+        .map(|g| format!(" {g}"))
+        .unwrap_or_default()
 }

@@ -1,0 +1,268 @@
+name: Pre-release Build
+
+# Build downloadable binaries on demand so contributors can test unreleased
+# code without waiting for a tagged release.
+#
+# Deliberately NOT on every push to main. Five targets per commit, on a repo
+# that lands many, spends build time continuously to produce artifacts nobody
+# asked for. This runs when there is something worth handing out.
+#
+# macOS targets use the self-hosted Mac Studio runner (fast, native).
+# Linux/Windows targets stay on GitHub-hosted runners.
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "What is in this build (shown in the pre-release body)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # macOS — self-hosted Mac Studio runner (native arm64, Rosetta for x86_64)
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: macOS (${{ matrix.asset_suffix }})
+    runs-on: [self-hosted, macOS]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            asset_suffix: macos-arm64
+          - target: x86_64-apple-darwin
+            asset_suffix: macos-amd64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        env:
+          CFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-march=armv8-a+crypto' || '' }}
+          CXXFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-march=armv8-a+crypto' || '' }}
+        run: cargo build --locked --release --target ${{ matrix.target }} --all-features
+
+      - name: Download RTK
+        shell: bash
+        run: |
+          RTK_VERSION="0.40.0"
+          case "${{ matrix.target }}" in
+            x86_64-apple-darwin) RTK_ASSET="rtk-x86_64-apple-darwin.tar.gz" ;;
+            aarch64-apple-darwin) RTK_ASSET="rtk-aarch64-apple-darwin.tar.gz" ;;
+          esac
+          curl -sL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/${RTK_ASSET}" -o "/tmp/${RTK_ASSET}"
+          mkdir -p /tmp/rtk-extract && tar xzf "/tmp/${RTK_ASSET}" -C /tmp/rtk-extract
+          RTK_BIN=$(find /tmp/rtk-extract -name "rtk" | head -1)
+          cp "$RTK_BIN" "target/${{ matrix.target }}/release/"
+          chmod +x "target/${{ matrix.target }}/release/rtk"
+
+      - name: Strip
+        run: strip target/${{ matrix.target }}/release/opencrabs
+
+      - name: Create archive
+        shell: bash
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          ARCHIVE="opencrabs-v${VERSION}-pre-${SHA}-${{ matrix.asset_suffix }}"
+          cd target/${{ matrix.target }}/release
+          tar czf "../../../../${ARCHIVE}.tar.gz" opencrabs rtk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: prerelease-${{ matrix.asset_suffix }}
+          path: opencrabs-v*-pre-*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Linux — GitHub-hosted runners (cross-compile from Mac is fragile for glibc)
+  # ---------------------------------------------------------------------------
+  build-linux:
+    name: Linux (${{ matrix.asset_suffix }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_suffix: linux-amd64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset_suffix: linux-arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }} --all-features
+
+      - name: Download RTK
+        shell: bash
+        run: |
+          RTK_VERSION="0.40.0"
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu) RTK_ASSET="rtk-x86_64-unknown-linux-musl.tar.gz" ;;
+            aarch64-unknown-linux-gnu) RTK_ASSET="rtk-aarch64-unknown-linux-gnu.tar.gz" ;;
+          esac
+          curl -sL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/${RTK_ASSET}" -o "/tmp/${RTK_ASSET}"
+          mkdir -p /tmp/rtk-extract && tar xzf "/tmp/${RTK_ASSET}" -C /tmp/rtk-extract
+          RTK_BIN=$(find /tmp/rtk-extract -name "rtk" | head -1)
+          cp "$RTK_BIN" "target/${{ matrix.target }}/release/"
+          chmod +x "target/${{ matrix.target }}/release/rtk"
+
+      - name: Strip
+        run: strip target/${{ matrix.target }}/release/opencrabs
+
+      - name: Create archive
+        shell: bash
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          ARCHIVE="opencrabs-v${VERSION}-pre-${SHA}-${{ matrix.asset_suffix }}"
+          cd target/${{ matrix.target }}/release
+          tar czf "../../../../${ARCHIVE}.tar.gz" opencrabs rtk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: prerelease-${{ matrix.asset_suffix }}
+          path: opencrabs-v*-pre-*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Windows — GitHub-hosted runner (needs NASM + CMake for aws-lc-rs)
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: Windows (windows-amd64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Build
+        shell: bash
+        env:
+          AWS_LC_SYS_CMAKE_BUILDER: 1
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc --all-features
+
+      - name: Download RTK
+        shell: bash
+        run: |
+          RTK_VERSION="0.40.0"
+          RTK_ASSET="rtk-x86_64-pc-windows-msvc.zip"
+          curl -sL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/${RTK_ASSET}" -o "/tmp/${RTK_ASSET}"
+          mkdir -p /tmp/rtk-extract
+          unzip -q "/tmp/${RTK_ASSET}" -d /tmp/rtk-extract
+          RTK_BIN=$(find /tmp/rtk-extract -name "rtk.exe" | head -1)
+          cp "$RTK_BIN" "target/x86_64-pc-windows-msvc/release/"
+
+      - name: Create archive
+        shell: bash
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          ARCHIVE="opencrabs-v${VERSION}-pre-${SHA}-windows-amd64"
+          cd target/x86_64-pc-windows-msvc/release
+          7z a "../../../../${ARCHIVE}.zip" opencrabs.exe rtk.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: prerelease-windows-amd64
+          path: opencrabs-v*-pre-*.zip
+
+  # ---------------------------------------------------------------------------
+  # Collect all pre-release artifacts into a single downloadable package
+  # ---------------------------------------------------------------------------
+  publish-prerelease:
+    name: Publish Pre-release
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      # Needed before the notes step reads Cargo.toml for the version. Without
+      # it that grep runs in an empty workspace and fails the job.
+      - uses: actions/checkout@v5
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Collect and checksum
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release-assets/ \;
+          cd release-assets && sha256sum -- * > SHA256SUMS
+          ls -la
+
+      - name: Generate pre-release notes
+        id: notes
+        run: |
+          SHA="${{ github.sha }}"
+          SHORT_SHA=$(echo "$SHA" | cut -c1-7)
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          cat > /tmp/prerelease_notes.md << EOF
+          ## Pre-release build — v${VERSION}-pre-${SHORT_SHA}
+
+          **On-demand build.** Not a tagged release — for testing only.
+
+          **Commit:** \`${SHORT_SHA}\` on \`${{ github.ref_name }}\` ([view](https://github.com/${{ github.repository }}/commit/${SHA}))
+
+          ${{ inputs.note }}
+
+          ### What's included
+          - 5 platform binaries (linux-amd64, linux-arm64, macos-amd64, macos-arm64, windows-amd64)
+          - SHA256 checksums
+          - RTK 0.40.0 bundled
+
+          ### Install
+          Download the archive for your platform, extract, and run \`./opencrabs\`.
+
+          ### Auto-update
+          These builds are not available via \`/evolve\` (that pulls tagged releases). To install a pre-release binary manually, download and replace your existing binary.
+          EOF
+
+      - name: Update pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Use a rolling 'nightly' tag — always points to the latest build
+          TAG="nightly"
+          # Delete old release if it exists (rolling pre-release)
+          if gh release view "$TAG" &>/dev/null; then
+            gh release delete "$TAG" --yes --cleanup-tag
+          fi
+          gh release create "$TAG" \
+            --title "Pre-release (nightly)" \
+            --notes-file /tmp/prerelease_notes.md \
+            --prerelease \
+            release-assets/*

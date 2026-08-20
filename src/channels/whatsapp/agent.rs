@@ -334,7 +334,9 @@ impl WhatsAppAgent {
             #[cfg(not(crates_publish))]
             bot.run().await;
             #[cfg(crates_publish)]
-            let _ = bot.run().await;
+            if let Err(e) = bot.run().await {
+                tracing::warn!(error = %e, "WhatsApp bot run failed");
+            }
             tracing::info!("WhatsApp: bot run loop exited");
         })
     }

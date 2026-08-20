@@ -5,7 +5,7 @@
 //! stand in the way:
 //!
 //! - Recovery runs during startup, before any channel has called
-//!   [`super::background_tasks::register_session_route`], so the route map is
+//!   [`super::session_routes::register_session_route`], so the route map is
 //!   empty at the moment the report is produced. Delivering immediately sends
 //!   a channel session's report to the local surface, which is the bug #940
 //!   fixed for the completion path and the restart path never got.
@@ -38,7 +38,7 @@ static PARKED: Mutex<Vec<(Uuid, QueuedUserMessage)>> = Mutex::new(Vec::new());
 /// leaves on the next [`claim_session`] for that session, or on
 /// [`flush_parked`] when the grace period ends.
 pub fn deliver_or_park(session_id: Uuid, msg: QueuedUserMessage) -> bool {
-    if let Some(route) = super::background_tasks::session_route(session_id) {
+    if let Some(route) = super::session_routes::session_route(session_id) {
         route(session_id, msg);
         return true;
     }
@@ -145,6 +145,78 @@ pub(crate) fn clear_parked_for_test() {
     }
 }
 
+/// Account for background tasks that were running when a previous process
+/// died, then clear them.
+///
+/// Every surviving row belonged to a process that no longer exists, so its
+/// child is gone too: there is nothing to reattach to and no result coming.
+/// Each one is reported into its session as an interruption so the agent can
+/// decide whether to re-run it, rather than waiting forever on a resume that
+/// can never arrive (#763). Returns how many were reported.
+pub async fn report_interrupted() -> usize {
+    let Some(repo) = super::background_tasks::task_repo() else {
+        return 0;
+    };
+    let rows = match repo.all().await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!(target: "background_task", "Failed to read background tasks: {e:#}");
+            return 0;
+        }
+    };
+    if rows.is_empty() {
+        return 0;
+    }
+    let mut count = 0usize;
+    for row in rows {
+        tracing::warn!(
+            target: "background_task",
+            "Background task '{}' for session {} was interrupted by a restart",
+            row.label,
+            row.session_id
+        );
+        // By session, never by whoever booted. This path used to take the
+        // caller's callback directly, so a channel session's interruption
+        // landed on the local surface — the shape #940 fixed for completions
+        // and left standing here. Startup runs before channels register, so
+        // an unclaimed session parks rather than mis-delivers (#1037).
+        deliver_or_park(row.session_id, interrupted_message(&row));
+        count += 1;
+
+        // Clear per row, only after it is accounted for. clear_all() used to
+        // run regardless, so a row whose report never got produced was
+        // dropped from the table anyway and its session never heard anything.
+        if let Err(e) = repo.clear(row.id).await {
+            // A surviving row re-reports the same interruption next start,
+            // which is noisy but recoverable; the report itself already
+            // landed, so this is not fatal.
+            tracing::error!(
+                target: "background_task",
+                "Failed to clear background task '{}' after reporting it: {e:#}",
+                row.label
+            );
+        }
+    }
+    count
+}
+
+/// What the agent is told about a command a restart killed. Deliberately
+/// states that it did NOT finish and hands the decision back, rather than
+/// re-running something expensive on the agent's behalf.
+fn interrupted_message(row: &crate::db::BackgroundTaskRow) -> QueuedUserMessage {
+    let context_text = format!(
+        "[BACKGROUND TASK INTERRUPTED] `{}` was still running when OpenCrabs restarted, so it \
+         was killed and produced no result. The command was:\n\n```\n{}\n```\n\nIt did NOT \
+         complete. Decide whether to run it again based on what you were doing; do not assume \
+         it passed or failed.",
+        row.label, row.command
+    );
+    QueuedUserMessage {
+        context_text,
+        display_text: format!("⚠️ Background task interrupted by restart: {}", row.label),
+    }
+}
+
 /// Account for everything a previous process was doing, and arrange for the
 /// reports to reach the right sessions.
 ///
@@ -182,7 +254,7 @@ pub async fn recover(local: MessageEnqueueCallback) -> usize {
     }
 
     // Then detached commands, which keep their own table.
-    reported += super::background_tasks::report_interrupted().await;
+    reported += report_interrupted().await;
 
     if reported > 0 {
         tracing::info!(

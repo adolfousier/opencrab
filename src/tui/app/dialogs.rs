@@ -236,8 +236,10 @@ impl App {
                     // First-time onboard — send hidden system prompt to the agent
                     // so it can check its environment and surprise the user.
                     // The `[SYSTEM:` prefix hides it from user display.
-                    if is_first_time {
-                        let _ = self.send_message(WELCOME_MESSAGE.to_string()).await;
+                    if is_first_time
+                        && let Err(e) = self.send_message(WELCOME_MESSAGE.to_string()).await
+                    {
+                        tracing::warn!(error = %e, "failed to send welcome message");
                     }
                 }
                 WizardAction::FetchModels => {
@@ -709,8 +711,10 @@ impl App {
 
                     // First-time onboard — send hidden system prompt to the agent
                     // so it can check its environment and surprise the user.
-                    if is_first_time {
-                        let _ = self.send_message(WELCOME_MESSAGE.to_string()).await;
+                    if is_first_time
+                        && let Err(e) = self.send_message(WELCOME_MESSAGE.to_string()).await
+                    {
+                        tracing::warn!(error = %e, "failed to send welcome message");
                     }
 
                     // Fire brain generation in the background

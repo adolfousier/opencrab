@@ -50,25 +50,29 @@ pub(crate) fn spawn_typing(
     tokio::spawn(async move {
         // Sent immediately: the point is that the user sees activity from the
         // first moment, not one tick later.
-        let _ = channel.broadcast_typing(&http).await;
+        broadcast(&http, channel, "turn start").await;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
-                _ = tokio::time::sleep(TICK) => {
-                    let _ = channel.broadcast_typing(&http).await;
-                }
+                _ = tokio::time::sleep(TICK) => broadcast(&http, channel, "turn tick").await,
             }
         }
 
         // The turn ended; keep going while detached work continues.
-        let Some(manager) = background else {
-            return;
-        };
-        while manager.running_for(session_id) > 0 {
-            // Before sleeping: the turn's last ping is already expiring, so a
-            // full tick of silence here would be visible at the handover.
-            let _ = channel.broadcast_typing(&http).await;
-            tokio::time::sleep(TICK).await;
-        }
+        crate::channels::typing_tick::tick_while_detached(background, session_id, TICK, || {
+            broadcast(&http, channel, "handover")
+        })
+        .await;
     });
+}
+
+/// Send one typing broadcast, saying so when it fails.
+///
+/// The three call sites above each dropped the Result. A channel that silently
+/// stops showing activity looks identical to an agent that has stopped working,
+/// and there was nothing in the log to tell the two apart.
+async fn broadcast(http: &Arc<Http>, channel: ChannelId, why: &str) {
+    if let Err(e) = channel.broadcast_typing(http).await {
+        tracing::warn!("Discord: typing broadcast failed ({why}): {e}");
+    }
 }

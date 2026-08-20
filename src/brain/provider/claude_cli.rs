@@ -783,8 +783,12 @@ impl Provider for ClaudeCliProvider {
             .ok_or_else(|| ProviderError::Internal("failed to capture stdin".to_string()))?;
         let prompt_bytes = prompt.into_bytes();
         tokio::spawn(async move {
-            let _ = stdin.write_all(&prompt_bytes).await;
-            let _ = stdin.shutdown().await;
+            if let Err(e) = stdin.write_all(&prompt_bytes).await {
+                tracing::warn!(error = %e, "failed to write prompt to Claude CLI stdin");
+            }
+            if let Err(e) = stdin.shutdown().await {
+                tracing::warn!(error = %e, "failed to shutdown Claude CLI stdin");
+            }
         });
 
         let stdout = child
@@ -843,7 +847,9 @@ impl Provider for ClaudeCliProvider {
                     biased;
                     _ = tx.closed() => {
                         tracing::info!("CLI stream cancelled — killing subprocess");
-                        let _ = child.kill().await;
+                        if let Err(e) = child.kill().await {
+                        tracing::warn!(error = %e, "failed to kill Claude CLI child process");
+                    }
                         break;
                     }
                     result = lines.next_line() => result,
@@ -1235,7 +1241,11 @@ impl Provider for ClaudeCliProvider {
                                 || error_lower.contains("too many tokens")
                                 || error_lower.contains("context length")
                             {
-                                let _ = tx.send(Err(ProviderError::ContextLengthExceeded(0))).await;
+                                if let Err(e) =
+                                    tx.send(Err(ProviderError::ContextLengthExceeded(0))).await
+                                {
+                                    tracing::warn!(error = %e, "failed to send context length error");
+                                }
                                 break;
                             }
 
@@ -1243,6 +1253,7 @@ impl Provider for ClaudeCliProvider {
                             // so the FallbackProvider can trigger the next provider in the chain.
                             if error_lower.contains("rate limit")
                                 || error_lower.contains("hit your limit")
+                                || error_lower.contains("session limit")
                                 || error_lower.contains("overloaded")
                                 || error_lower.contains("too many requests")
                                 || error_lower.contains("capacity")
@@ -1407,7 +1418,9 @@ impl Provider for ClaudeCliProvider {
                             }))
                             .await;
 
-                        let _ = tx.send(Ok(StreamEvent::MessageStop)).await;
+                        if let Err(e) = tx.send(Ok(StreamEvent::MessageStop)).await {
+                            tracing::warn!(error = %e, "failed to send MessageStop event");
+                        }
                         result_received = true;
                         break;
                     }
@@ -1455,7 +1468,9 @@ impl Provider for ClaudeCliProvider {
                         },
                     }))
                     .await;
-                let _ = tx.send(Ok(StreamEvent::MessageStop)).await;
+                if let Err(e) = tx.send(Ok(StreamEvent::MessageStop)).await {
+                    tracing::warn!(error = %e, "failed to send MessageStop event");
+                }
             }
 
             // Wait for process exit
@@ -1645,7 +1660,9 @@ async fn emit_full_block(
         CliContentBlock::Unknown => {}
     }
 
-    let _ = tx.send(Ok(StreamEvent::ContentBlockStop { index })).await;
+    if let Err(e) = tx.send(Ok(StreamEvent::ContentBlockStop { index })).await {
+        tracing::warn!(error = %e, "failed to send ContentBlockStop event");
+    }
 }
 
 /// Normalize Claude Code CLI tool names to OpenCrabs format.

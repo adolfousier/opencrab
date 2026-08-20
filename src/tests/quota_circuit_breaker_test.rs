@@ -19,6 +19,26 @@ use std::time::Duration;
 // ---------------------------------------------------------------------------
 
 #[test]
+fn detects_modelscope_this_months_quota_wording() {
+    // #1084: modelscope's monthly-dead wording was misclassified as transient.
+    // The exact error string from production:
+    let msg = "Rate limit exceeded: You have exceeded this month's quota for model \
+               Qwen-Ambassador/Qwen3.8-Max, please try again next month, \
+               or consider using other models";
+    assert!(
+        is_quota_exhausted_message(msg),
+        "modelscope's 'this month's quota' + 'try again next month' must be hard quota"
+    );
+
+    // Also verify with curly apostrophe (Unicode right single quotation mark).
+    let curly = msg.replace("month's", "month\u{2019}s");
+    assert!(
+        is_quota_exhausted_message(&curly),
+        "curly apostrophe variant must also be detected"
+    );
+}
+
+#[test]
 fn detects_common_quota_exhaustion_phrases() {
     // The phrases Alexey hit in production (ModelScope / Qwen / Xiaomi monthly
     // caps) plus the OpenAI-style billing messages.
@@ -192,6 +212,38 @@ fn breaker_ignores_empty_provider_name() {
     health::mark_exhausted("");
     assert!(!health::is_exhausted(""));
     assert!(health::exhausted_snapshot().is_empty());
+    health::clear_all();
+}
+
+// ---------------------------------------------------------------------------
+// 3a. Per-turn breaker skip (#1084)
+// ---------------------------------------------------------------------------
+
+/// Proves that a provider marked mid-turn is immediately invisible to
+/// the fallback walk — the breaker does NOT wait for startup or a new
+/// session.  When a modelscope quota error fires during a turn, the
+/// tool loop calls `mark_exhausted`; the very next `is_exhausted`
+/// check (same turn, same millisecond) must skip that provider.
+#[test]
+fn breaker_mark_skips_provider_per_turn() {
+    let _guard = breaker_isolation();
+    // Provider starts healthy — would participate in the fallback walk.
+    assert!(
+        !health::is_exhausted("ModelScope"),
+        "provider starts clean (not exhausted)"
+    );
+    // Simulate mid-turn: a modelscope quota error triggers the breaker.
+    health::mark_exhausted("ModelScope");
+    // The very next fallback-filter call (same turn) must skip it.
+    assert!(
+        health::is_exhausted("ModelScope"),
+        "provider marked mid-turn must be skipped immediately — no startup gate"
+    );
+    // Another provider is unaffected.
+    assert!(
+        !health::is_exhausted("OpenAI"),
+        "unrelated provider must not be skipped"
+    );
     health::clear_all();
 }
 

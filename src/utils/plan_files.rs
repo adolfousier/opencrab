@@ -24,6 +24,7 @@
 
 use crate::tui::plan::{PlanDocument, PlanStatus};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use uuid::Uuid;
 
 /// The session's data directory, resolved by what the session is bound to
@@ -217,6 +218,34 @@ impl PlanModeState {
     }
 }
 
+/// Threshold for treating a pre-init marker as stale (#1109).
+///
+/// When plan creation fails mid-flight (provider timeout, network error), the
+/// marker file is left behind with no cleanup path. Without staleness, the
+/// session is locked out of plan operations indefinitely (6.6 hours observed
+/// in Adi's audit). Five minutes is generous for a plan-init round-trip;
+/// anything older is a failed attempt, not an in-flight one.
+pub const PRE_INIT_STALE_THRESHOLD: Duration = Duration::from_secs(300);
+
+/// Whether the pre-init marker at `path` is older than [`PRE_INIT_STALE_THRESHOLD`].
+///
+/// Returns `true` when the marker should be treated as stale (session is not
+/// actually pre-init, the previous attempt failed). Returns `false` for a
+/// fresh marker or when the mtime cannot be read (conservative: treat as
+/// fresh rather than silently clearing an in-flight marker).
+fn is_marker_stale(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    let Ok(age) = modified.elapsed() else {
+        return false;
+    };
+    age > PRE_INIT_STALE_THRESHOLD
+}
+
 /// Derive the session's plan-mode state from disk.
 pub async fn plan_mode_state(session_id: Uuid) -> PlanModeState {
     let json = plan_json_read_path(session_id).await;
@@ -229,10 +258,22 @@ pub async fn plan_mode_state(session_id: Uuid) -> PlanModeState {
     let state = plan_mode_state_of(plan.as_ref(), md_exists);
     // Pre-init is a durable MARKER file, not a stored PlanDocument (#569). When
     // no real plan resolves, an existing marker means Plan-mode intent without
-    // an approvable document yet. (Legacy on-disk stub JSONs still resolve to
-    // PreInitEditing inside plan_mode_state_of, so both representations work.)
-    if state == PlanModeState::NoPlan && pre_init_marker_read_path(session_id).await.exists() {
-        return PlanModeState::PreInitEditing;
+    // an approvable document yet. Stale markers (>5 min old) are treated as
+    // failed attempts and map to NoPlan instead of locking the session (#1109).
+    if state == PlanModeState::NoPlan {
+        let marker_path = pre_init_marker_read_path(session_id).await;
+        if marker_path.exists() {
+            if is_marker_stale(&marker_path) {
+                tracing::warn!(
+                    "Plan: clearing stale pre-init marker at {} (>{:?} old, #1109)",
+                    marker_path.display(),
+                    PRE_INIT_STALE_THRESHOLD
+                );
+                let _ = std::fs::remove_file(&marker_path);
+                return PlanModeState::NoPlan;
+            }
+            return PlanModeState::PreInitEditing;
+        }
     }
     state
 }
@@ -575,10 +616,67 @@ pub async fn create_design_md(session_id: Uuid, title: &str) -> std::io::Result<
          - **Target state:** \n\
          - **Intent:** \n\n\
          ## Implementation steps\n\
-         1. \n"
+         1. \n   - Done when: \n"
     );
     std::fs::write(&path, scaffold)?;
+    clear_template_nudge(session_id);
     Ok(path)
+}
+
+/// Plans that already spent their single template-retry nudge (#1103).
+///
+/// Bounded to ONE per plan on purpose: a non-emptiness validator plus an
+/// unbounded retry teaches the model to write non-empty noise
+/// (`**Problem:** the code needs improvement`) that passes the check while
+/// being worth less than the empty label, because nothing blocks it
+/// afterwards. `create_design_md` clears the mark so the next plan gets its
+/// own single retry.
+static TEMPLATE_NUDGED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<Uuid>>> =
+    std::sync::OnceLock::new();
+
+fn template_nudged() -> &'static std::sync::Mutex<std::collections::HashSet<Uuid>> {
+    TEMPLATE_NUDGED.get_or_init(Default::default)
+}
+
+/// Clear the one-shot nudge mark so a freshly scaffolded plan gets its own
+/// single retry (#1103).
+pub fn clear_template_nudge(session_id: Uuid) {
+    template_nudged()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&session_id);
+}
+
+/// The one-shot retry nudge for a plan `.md` written with empty template
+/// labels (#1103), or `None` when nothing is missing or this plan already
+/// spent its single retry.
+///
+/// Carries the validator's own wording plus one instruction: the answers
+/// are already in the conversation. The three labels are a transcription of
+/// decisions the user already made, not new questions, which is what makes
+/// the retry mechanical. Deliberately no worked example (few-shot pressure
+/// toward the example's problem rather than the user's) and no question back
+/// to the user (who would be restating what they just discussed). When a
+/// field genuinely never came up, saying so plainly beats filler.
+pub fn template_nudge(session_id: Uuid, warnings: &[String]) -> Option<String> {
+    if warnings.is_empty() {
+        return None;
+    }
+    if !template_nudged()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(session_id)
+    {
+        return None;
+    }
+    Some(format!(
+        "PLAN TEMPLATE INCOMPLETE - rewrite the .md now, before asking for approval: {}. \
+         The answers are already in this conversation: those labels are a transcription \
+         of what was discussed, not new questions to research. If one genuinely never \
+         came up, write that plainly instead of filler - text that only passes the \
+         non-empty check is worse than an empty label, because nothing blocks it after.",
+        warnings.join("; ")
+    ))
 }
 
 /// Sync the session `.md` body into the plan JSON `description` (the
