@@ -242,10 +242,13 @@ jobs:
     name: Code Coverage
     needs: [lint, audit]
     if: github.event_name == 'workflow_dispatch'
-    # Stays on Linux: coverage is reported against the platform the project
-    # has always measured, and moving it would make the numbers incomparable.
+    # Stays on Linux because that is the platform users deploy to, and code
+    # behind cfg(target_os = "linux") is invisible from macOS. The tradeoff is
+    # speed: tarpaulin instruments the whole suite in ~15 min on the Mac but
+    # needs well over 30 on a 2-core hosted runner, so the cap below is sized
+    # for the hosted runner rather than the fast one.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
