@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `c43f4c6a` **session_id on every log line** (#1078): tracing spans at turn entry, cron jobs and the RSI engine make a single turn greppable out of a shared daily log
 - `c04fe914` **Legacy config section migrated on disk** (#1116): the old `[gateway]` spelling is rewritten to `[a2a]` so one name survives the round trip
 - `c8440fae` **Chunk-hash caching for memory** (#1107): unchanged chunks are skipped instead of re-embedded on every write
-- `09007693` **Pre-release binary builds** (#1111): every push to main produces installable binaries
+- `09007693` **Pre-release binary builds** (#1111): five platform targets plus SHA256SUMS, published as a rolling pre-release so contributors can test unreleased code without waiting for a tag. Runs **on demand** via workflow dispatch, not per push: `49c1463c` in this same release made it dispatch-only, since five targets on every commit spends build time continuously producing artifacts nobody asked for
 - `a2e55422` **Plan template warnings reach the agent** (#1103): surfaced as a one-shot retry nudge instead of being swallowed
 - `9c86b651` **Uncheckable checklist rows are marked**: a row whose acceptance criteria cannot be verified is flagged as such
 - `9b966d09` **Done-when convention made visible and derivable**
@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `d7e94166` **Phantom detector catches promised work whose verb was never enumerated**
 - `92adcde9` **Streaming placeholder-edit failures logged in the resume path** (#1085)
 - `79b93ee9` **Telemetry review fixes** (#1085): info-level, origin threading, full coverage
-- `49c1463c` **Pre-release builds on demand, publish job repaired** (#1111)
+- `49c1463c` **Pre-release builds on demand, publish job repaired** (#1111): dispatch-only instead of on every push to main, the publish job now checks out the repo it reads the version from, and the notes name the actual ref instead of asserting main
 - `085a500e` **Tests updated for chunk-hash caching and the rate-limit bail**
 - `531c0e42` **insert_embedding allows too_many_arguments**: 8 params required by chunk-hash caching
 
