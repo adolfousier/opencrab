@@ -1232,6 +1232,30 @@ pub(crate) async fn cmd_channel(
     }
 }
 
+/// Telegram userbot operations: login + one-shot tool invocations.
+pub(crate) async fn cmd_userbot(
+    config: &crate::config::Config,
+    operation: crate::cli::args::UserbotCommands,
+) -> Result<()> {
+    match operation {
+        #[cfg(feature = "telegram-userbot")]
+        crate::cli::args::UserbotCommands::Login { code } => {
+            crate::channels::telegram::userbot::login::cmd_userbot_login(config, code).await
+        }
+        #[cfg(feature = "telegram-userbot")]
+        crate::cli::args::UserbotCommands::Tool { params_file } => {
+            crate::channels::telegram::userbot::tools::cmd_userbot_tool(config, &params_file).await
+        }
+        #[cfg(not(feature = "telegram-userbot"))]
+        crate::cli::args::UserbotCommands::Login { .. }
+        | crate::cli::args::UserbotCommands::Tool { .. } => {
+            anyhow::bail!(
+                "this build lacks the telegram-userbot feature — rebuild with --features telegram-userbot"
+            );
+        }
+    }
+}
+
 /// Shared channel diagnostics
 fn cmd_doctor_channels(config: &crate::config::Config) {
     if config.channels.telegram.enabled {

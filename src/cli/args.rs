@@ -115,6 +115,12 @@ pub enum Commands {
         operation: ChannelCommands,
     },
 
+    /// Telegram userbot operations (MTProto user session)
+    Userbot {
+        #[command(subcommand)]
+        operation: UserbotCommands,
+    },
+
     /// Memory operations
     Memory {
         #[command(subcommand)]
@@ -298,6 +304,30 @@ pub enum ChannelCommands {
         /// Use the phone-code flow instead of QR
         #[arg(long)]
         code: bool,
+    },
+}
+
+/// Telegram userbot operations (MTProto user session).
+#[derive(Subcommand, Debug)]
+pub enum UserbotCommands {
+    /// Log the userbot in (QR by default, or phone+code with --code)
+    Login {
+        /// Use the phone-code flow instead of QR
+        #[arg(long)]
+        code: bool,
+    },
+    /// Run one tool invocation from a JSON params file (see
+    /// src/docs/reference/TELEGRAM_USERBOT_TOOLS.md). Reads need only an enabled
+    /// session; outbound targets must be in outbound_allowlist; raw
+    /// methods additionally need "confirm": true inside the params.
+    ///
+    /// Tools: tg_get_messages, tg_send_message, tg_send_document,
+    /// tg_edit_message, tg_find_chats, tg_get_chat_info,
+    /// tg_search_global, tg_send_to_phone, tg_mtproto
+    Tool {
+        /// Path to the JSON params file
+        #[arg(long = "params-file")]
+        params_file: String,
     },
 }
 
@@ -519,6 +549,7 @@ pub async fn run() -> Result<()> {
             }
         }
         Some(Commands::Channel { operation }) => commands::cmd_channel(&config, operation).await,
+        Some(Commands::Userbot { operation }) => commands::cmd_userbot(&config, operation).await,
         Some(Commands::Memory { operation }) => commands::cmd_memory(operation).await,
         Some(Commands::Session { operation }) => commands::cmd_session(&config, operation).await,
         Some(Commands::Service { operation }) => commands::cmd_service(operation).await,
