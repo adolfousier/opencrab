@@ -311,6 +311,8 @@ pub mod telegram_userbot_config_test;
 #[cfg(feature = "telegram-userbot")]
 pub mod telegram_userbot_login_flow_test;
 pub mod telegram_userbot_reconcile_test;
+#[cfg(feature = "telegram-userbot")]
+pub mod telegram_userbot_tools_test;
 pub mod tools_md_regression_test;
 pub mod write_opencrabs_file_inline_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows

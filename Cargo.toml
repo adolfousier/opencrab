@@ -99,14 +99,15 @@ zeroize = { version = "1.8", features = ["derive"] }
 # Telegram
 teloxide = { version = "0.17", features = ["macros"], optional = true }
 
-# Telegram userbot (MTProto user session) — grammers, by Telethon's author.
-# Same crate family the spike validated: QR login, 2FA SRP, DC migration,
-# persistent SQLite session (map: ~/.opencrabs/research/telegram-userbot-map.md).
 grammers-client = { version = "0.10", optional = true }
 grammers-session = { version = "0.10", default-features = false, features = ["serde"], optional = true }
 grammers-mtsender = { version = "0.10", optional = true }
 grammers-crypto = { version = "0.10", optional = true }
 
+# Raw TL construction for the userbot tool plane (contacts.importContacts,
+# and the raw passthrough). Same 0.10 family so cargo unifies the crate
+# instance with the client crate's private dep — one tl-types in the graph.
+grammers-tl-types = { version = "0.10", optional = true, features = ["impl-serde"] }
 # WhatsApp — pinned to upstream HEAD (past published 0.6.0) for the rewritten
 # LID/PN device registry: alias-aware LID<->PN resolution collapses a self-DM to
 # one device set, fixing the duplicate PN+LID device addressing that made the
@@ -218,8 +219,8 @@ rtk = []
 # under `cfg(test)` automatically; enable this feature for a standalone eval run.
 eval = []
 telegram = ["teloxide"]
-telegram-userbot = ["telegram", "dep:grammers-client", "dep:grammers-session", "dep:grammers-mtsender", "dep:grammers-crypto", "dep:qrcode"]
 trello = []
+telegram-userbot = ["telegram", "dep:grammers-client", "dep:grammers-session", "dep:grammers-mtsender", "dep:grammers-crypto", "dep:grammers-tl-types", "dep:qrcode"]
 whatsapp = ["whatsapp-rust", "whatsapp-rust-tokio-transport", "whatsapp-rust-ureq-http-client", "wacore", "wacore-binary", "waproto", "dep:qrcode", "dep:rmp-serde"]
 discord = ["serenity"]
 slack = ["slack-morphism", "tokio-tungstenite", "rustls"]

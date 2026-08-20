@@ -3196,6 +3196,9 @@ checksum = "67d450e2f2588af535fe85a17b9a6df8338794ee8ad6bcb1b97d61a14d472fc5"
 dependencies = [
  "grammers-tl-gen",
  "grammers-tl-parser",
+ "serde",
+ "serde_bytes",
+ "serde_derive",
 ]
 
 [[package]]
@@ -5386,6 +5389,7 @@ dependencies = [
  "grammers-crypto",
  "grammers-mtsender",
  "grammers-session",
+ "grammers-tl-types",
  "hound",
  "htmd",
  "ignore",
@@ -7443,6 +7447,16 @@ dependencies = [
  "serde",
  "serde_core",
  "typeid",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

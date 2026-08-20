@@ -12,6 +12,7 @@ pub(crate) mod convert;
 pub(crate) mod login;
 pub(crate) mod session;
 pub(crate) mod setup;
+pub(crate) mod tools;
 pub(crate) mod watch;
 
 use std::path::PathBuf;
