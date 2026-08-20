@@ -29,6 +29,24 @@ pub struct AgentContext {
 
     /// Maximum context tokens
     pub max_tokens: usize,
+
+    /// The provider's own count of the last request it received, when it
+    /// reported one.
+    ///
+    /// `token_count` is a tiktoken estimate of the system prompt plus the
+    /// messages. It leaves out the tool schemas the provider also receives,
+    /// and it disagrees with the provider's tokenizer on code and JSON: a
+    /// 2.4MB Claude CLI request we estimated at ~660k came back counted as
+    /// ~1.03M, over a 1M limit we believed we were at 66% of. Compaction
+    /// measured against the estimate fired eight times without ever getting
+    /// under the ceiling, because the ceiling was never where we thought.
+    ///
+    /// Once the provider tells us a real number we anchor on it and track our
+    /// own estimate's movement since, which keeps the budget honest between
+    /// calls without pretending we can tokenize the way they do. Stored as
+    /// (their count, our estimate at that moment) so the delta works in both
+    /// directions: trimming and compaction lower it, appending raises it.
+    pub provider_anchor: Option<(usize, usize)>,
 }
 
 /// A file tracked in the conversation
@@ -50,6 +68,7 @@ impl AgentContext {
             tracked_files: Vec::new(),
             token_count: 0,
             max_tokens,
+            provider_anchor: None,
         }
     }
 
@@ -199,9 +218,35 @@ impl AgentContext {
         tokens + 4
     }
 
+    /// The size of the next request, preferring the provider's count.
+    ///
+    /// Falls back to the local estimate until a provider has reported one, so
+    /// a first turn behaves exactly as before.
+    pub fn effective_token_count(&self) -> usize {
+        match self.provider_anchor {
+            // Their count, moved by however much our own estimate has shifted
+            // since we took it. Every path that trims or appends already
+            // maintains `token_count`, so none of them need to know about the
+            // anchor for the budget to follow along.
+            Some((reported, estimated_at_anchor)) => reported
+                .saturating_add(self.token_count)
+                .saturating_sub(estimated_at_anchor),
+            None => self.token_count,
+        }
+    }
+
+    /// Anchor the budget on a size the provider actually reported.
+    ///
+    /// Callers must reject implausible reports first: an endpoint that adds a
+    /// flat overhead to every call would otherwise drag the budget up and
+    /// compact a context that never needed it.
+    pub fn record_provider_reported_tokens(&mut self, reported: usize) {
+        self.provider_anchor = Some((reported, self.token_count));
+    }
+
     /// Get the current token usage percentage
     pub fn usage_percentage(&self) -> f64 {
-        (self.token_count as f64 / self.max_tokens as f64) * 100.0
+        (self.effective_token_count() as f64 / self.max_tokens as f64) * 100.0
     }
 
     /// Returns true if a message consists entirely of ToolResult blocks.
