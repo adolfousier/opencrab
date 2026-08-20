@@ -1,0 +1,134 @@
+# Telegram userbot tools — native OpenCrabs dynamic tools config.
+#
+# Drop-in replacement for the hosted MCP package (fast-mcp-telegram):
+# same 8 tool names, same $OPENCRABS_PARAMS file contract, but the
+# command is the local OpenCrabs binary riding the MTProto session
+# earned by `opencrabs userbot login`. No server, no bearer token,
+# session never leaves the machine.
+#
+# Governance is enforced inside the binary, before any network touch:
+#   - read tools run whenever the userbot is enabled
+#   - send/edit/phone require the target in
+#     channels.telegram.userbot.outbound_allowlist (empty = read-only)
+#   - the raw tool additionally requires "confirm": true in the params
+#
+# The params file is one JSON object: { "tool": "<tag>", ...fields }.
+# Tool tags: read_chat, search_chat, search_global, discover,
+# send_message, send_file, send_to_phone, edit_message, raw.
+
+[[tools]]
+name = "tg_get_messages"
+description = "Read or search messages in one chat: browse latest (dates), text search, or a thread by its root id. Success: messages, has_more."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 30
+params = [
+    { name = "tool", type = "string", description = "Must be 'read_chat' (browse/dates) or 'search_chat' (text query).", required = true },
+    { name = "chat", type = "string", description = "Target chat: numeric id (Bot API dialog form), '@username', or 'me' for Saved Messages.", required = true },
+    { name = "from", type = "string", description = "ISO 8601 lower date bound (read_chat only).", required = false, default = "" },
+    { name = "to", type = "string", description = "ISO 8601 upper date bound (read_chat only).", required = false, default = "" },
+    { name = "thread_id", type = "integer", description = "Thread/comment root message id — returns that thread (read_chat only).", required = false },
+    { name = "query", type = "string", description = "Text to search within the chat (search_chat only).", required = false, default = "" },
+    { name = "limit", type = "integer", description = "Max messages (default 20).", required = false, default = 20 }
+]
+
+[[tools]]
+name = "tg_send_message"
+description = "Send a text as the logged-in user. Outbound: target chat must be in outbound_allowlist. Irreversible."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 30
+params = [
+    { name = "tool", type = "string", description = "Must be 'send_message'.", required = true },
+    { name = "chat", type = "string", description = "Target chat: numeric id, '@username', or 'me'.", required = true },
+    { name = "text", type = "string", description = "Message text.", required = true },
+    { name = "reply_to", type = "integer", description = "Message id to reply to.", required = false }
+]
+
+[[tools]]
+name = "tg_send_document"
+description = "Upload a local file and send it as a document with optional caption, as the logged-in user. Outbound: allowlisted targets only. Irreversible."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 120
+params = [
+    { name = "tool", type = "string", description = "Must be 'send_file'.", required = true },
+    { name = "chat", type = "string", description = "Target chat.", required = true },
+    { name = "path", type = "string", description = "Local file path to upload.", required = true },
+    { name = "caption", type = "string", description = "Caption text.", required = false, default = "" }
+]
+
+[[tools]]
+name = "tg_edit_message"
+description = "Edit a message the user previously sent. Outbound: allowlisted targets only. Irreversible (edit trail)."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 30
+params = [
+    { name = "tool", type = "string", description = "Must be 'edit_message'.", required = true },
+    { name = "chat", type = "string", description = "Chat the message lives in.", required = true },
+    { name = "message_id", type = "integer", description = "Id of the message to edit.", required = true },
+    { name = "new_text", type = "string", description = "Replacement text.", required = true }
+]
+
+[[tools]]
+name = "tg_find_chats"
+description = "List dialogs (recent chats), or resolve a username or phone to its peer. Phone resolution is a read-only lookup (contacts.resolvePhone) — no contact import."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 30
+params = [
+    { name = "tool", type = "string", description = "Must be 'discover'.", required = true },
+    { name = "username", type = "string", description = "Username (with or without @) to resolve.", required = false, default = "" },
+    { name = "phone", type = "string", description = "E.164 phone to resolve (read-only lookup).", required = false, default = "" },
+    { name = "limit", type = "integer", description = "Max dialogs when no username/phone (default 20).", required = false, default = 20 }
+]
+
+[[tools]]
+name = "tg_get_chat_info"
+description = "Resolve a peer by username and return its profile info via users.getFullUser."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 30
+params = [
+    { name = "tool", type = "string", description = "Must be 'discover' with a username.", required = true },
+    { name = "username", type = "string", description = "Peer username to inspect.", required = false, default = "" },
+    { name = "limit", type = "integer", description = "Dialog cap when listing.", required = false, default = 20 }
+]
+
+[[tools]]
+name = "tg_search_global"
+description = "Search messages across all chats the account can see."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 60
+params = [
+    { name = "tool", type = "string", description = "Must be 'search_global'.", required = true },
+    { name = "query", type = "string", description = "Text to search for.", required = true },
+    { name = "limit", type = "integer", description = "Max results (default 20).", required = false, default = 20 }
+]
+
+[[tools]]
+name = "tg_send_to_phone"
+description = "Send a text to a phone number: imports a temporary contact (contacts.importContacts) then sends to it. Outbound: the E.164 phone literal must be in outbound_allowlist. Irreversible."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 30
+params = [
+    { name = "tool", type = "string", description = "Must be 'send_to_phone'.", required = true },
+    { name = "phone", type = "string", description = "E.164 phone, e.g. +2547...", required = true },
+    { name = "text", type = "string", description = "Message text.", required = true }
+]
+
+[[tools]]
+name = "tg_mtproto"
+description = "Raw MTProto invoke over a curated, schema-verified registry: messages.getHistory, messages.getReplies, messages.getForumTopics, contacts.resolveUsername, contacts.resolvePhone, account.getAuthorizations, users.getFullUser. Read-only constructors only; unknown methods are refused with the registry listing. Requires \"confirm\": true in the params."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 30
+params = [
+    { name = "tool", type = "string", description = "Must be 'raw'.", required = true },
+    { name = "method", type = "string", description = "Registry method name (dotted).", required = true },
+    { name = "params", type = "string", description = "JSON object of constructor params; peer-bearing methods take \"chat\" and resolve it locally.", required = false, default = "{}" },
+    { name = "confirm", type = "boolean", description = "Must be true for the call to run.", required = false, default = false }
+]
