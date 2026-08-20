@@ -16,6 +16,7 @@ pub(crate) mod feedback;
 mod gaslighting;
 pub(crate) mod helpers;
 mod messaging;
+mod model_refresh;
 pub(crate) mod nudge;
 pub(crate) mod parallel_tools;
 pub(crate) mod phantom;
@@ -32,6 +33,7 @@ mod types;
 pub use builder::{AgentService, BrainRebuild};
 pub use gaslighting::{is_gaslighting_preamble, strip_gaslighting_preamble};
 pub use helpers::{detect_text_repetition, provider_matches_session};
+pub use model_refresh::should_refresh_session_model;
 pub use phantom::{
     claims_unbacked_side_effects, count_intent_line_starts, count_unbacked_side_effect_claims,
     has_forward_intent_post_success, has_investigative_intent, has_phantom_tool_intent,
