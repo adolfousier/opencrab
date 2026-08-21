@@ -554,21 +554,60 @@ impl AgentService {
             ));
         }
 
-        // Run the actual loop
-        let result = self
-            .run_tool_loop_inner(
-                session_id,
-                user_message,
-                display_text_override,
-                model,
-                cancel_token,
-                has_override_approval,
-                approval_callback,
-                has_progress_override,
-                progress_callback,
-                question_callback,
-            )
-            .await;
+        // Run the actual loop, rotating the chain if the loop detector kills it.
+        //
+        // The abort inside the loop returns `AnnouncementLoop`, a
+        // provider-attributable error chosen so a loop-detector kill could
+        // reach the fallback walk (#1023). It never did: the walk lives in the
+        // arm that handles an error from the PROVIDER CALL, and this arrives by
+        // `return` from deep inside the loop, so it bypassed the arm entirely
+        // and the turn was dropped with ten providers untried. Retrying here
+        // puts it back on the chain, which is what #1023 said it should do.
+        //
+        // Bounded by the chain itself: `force_next_fallback` reports false when
+        // there is nowhere left to go, and the counter is only a backstop.
+        const MAX_CHAIN_ROTATIONS: u32 = 12;
+        let mut rotations: u32 = 0;
+        let result = loop {
+            let attempt = self
+                .run_tool_loop_inner(
+                    session_id,
+                    user_message.clone(),
+                    display_text_override.clone(),
+                    model.clone(),
+                    cancel_token.clone(),
+                    has_override_approval,
+                    approval_callback.clone(),
+                    has_progress_override,
+                    progress_callback.clone(),
+                    question_callback.clone(),
+                )
+                .await;
+
+            let killed_by_loop_detector = matches!(
+                &attempt,
+                Err(AgentError::Provider(
+                    crate::brain::provider::ProviderError::AnnouncementLoop(_)
+                ))
+            );
+            if !killed_by_loop_detector || rotations >= MAX_CHAIN_ROTATIONS {
+                break attempt;
+            }
+
+            let fb = self.provider_for_session(session_id);
+            if !fb.force_next_fallback(
+                "announcement_loop",
+                &self.provider_model_for_session(session_id),
+            ) {
+                // Chain exhausted: every provider was asked and none emitted
+                // the call. Now the error is the honest answer.
+                break attempt;
+            }
+            rotations += 1;
+            tracing::warn!(
+                "Loop-detector kill — handing the turn to the next provider                  (rotation {rotations}) instead of dropping it"
+            );
+        };
 
         if has_progress_override && let Some(ref tx) = self.session_updated_tx {
             let _ =
