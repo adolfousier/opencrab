@@ -2745,7 +2745,18 @@ impl OpenAIProvider {
                     })
                     .collect();
 
-                let content_val = make_content(&text_parts, &image_parts);
+                let mut content_val = make_content(&text_parts, &image_parts);
+                // A tool-call-only turn carries no text, and `make_content`
+                // returns None for that, which drops the field from the body
+                // entirely. DeepSeek's own harness replays an empty string
+                // rather than null on these turns, noting that some gateways
+                // reject null — and an absent field is a third state neither
+                // of them describes. Send what the vendor sends.
+                if content_val.is_none()
+                    && super::deepseek_reasoning::serves_deepseek(&self.base_url, &request.model)
+                {
+                    content_val = Some(serde_json::Value::String(String::new()));
+                }
                 // Real reasoning flows in via ContentBlock::Thinking blocks
                 // from tool_loop (live turns) and from_db_messages (resumed
                 // turns via the DB `thinking` column). `needs_reasoning_content`

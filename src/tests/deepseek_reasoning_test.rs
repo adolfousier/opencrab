@@ -102,3 +102,49 @@ fn the_published_window_is_used_only_for_deepseek_models() {
     );
     assert_eq!(default_context_window("qwen3.8-max"), None);
 }
+
+// ── the shapes DeepSeek expects on the wire ───────────────────────────
+
+use crate::brain::provider::custom_openai_compatible::OpenAIMessage;
+
+/// The body as it would be serialized, for one assistant message.
+fn serialize(msg: &OpenAIMessage) -> serde_json::Value {
+    serde_json::to_value(msg).expect("assistant message serializes")
+}
+
+#[test]
+fn a_tool_call_only_turn_carries_an_empty_content_string() {
+    // Not null and not absent. DeepSeek's own harness replays "" here and
+    // records that some gateways reject null; dropping the field is a third
+    // state neither of them describes.
+    let msg = OpenAIMessage {
+        role: "assistant".to_string(),
+        content: Some(serde_json::Value::String(String::new())),
+        tool_calls: None,
+        tool_call_id: None,
+        reasoning_content: None,
+    };
+    let body = serialize(&msg);
+    assert_eq!(
+        body.get("content"),
+        Some(&serde_json::Value::String(String::new())),
+        "the field must be present and empty"
+    );
+}
+
+#[test]
+fn an_absent_content_is_dropped_from_the_body_entirely() {
+    // Pins why the fix was needed: None does not serialize as null, it
+    // vanishes, so the model never sees the field at all.
+    let msg = OpenAIMessage {
+        role: "assistant".to_string(),
+        content: None,
+        tool_calls: None,
+        tool_call_id: None,
+        reasoning_content: None,
+    };
+    assert!(
+        serialize(&msg).get("content").is_none(),
+        "None omits the key rather than emitting null"
+    );
+}
