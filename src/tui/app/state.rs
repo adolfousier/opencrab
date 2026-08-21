@@ -1409,6 +1409,23 @@ impl App {
             ));
         }
 
+        // Config mistakes that change behaviour silently (#477). These were
+        // logged and nowhere else, so the surface that could act on them never
+        // saw them: a fallback entry naming a provider that does not exist
+        // reads as the next provider answering, with no way to tell a typo
+        // from a deliberate choice.
+        let config_warnings = crate::config::startup_checks::recorded_startup_warnings();
+        if !config_warnings.is_empty() {
+            self.push_system_message(format!(
+                "⚠️ Config warnings:\n{}",
+                config_warnings
+                    .iter()
+                    .map(|w| format!("• {w}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+
         // Notify user if DB integrity check failed
         if crate::db::db_integrity_failed() {
             self.push_system_message(

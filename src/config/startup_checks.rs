@@ -3,7 +3,77 @@
 //! function so the rules are unit tested; the caller logs each line once
 //! at startup (never on hot reload, which would spam).
 
+use std::sync::{LazyLock, Mutex};
+
 use crate::config::Config;
+
+/// Warnings from this process's startup, kept so surfaces that come up after
+/// the check can still show them.
+///
+/// Unlike `take_typo_warnings`, reading this does NOT drain: the TUI and the
+/// channels are both meant to see the same lines, and whichever initialised
+/// first would otherwise consume them for everyone else.
+static STARTUP_WARNINGS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Record this process's startup warnings for later display. Replaces any
+/// previous set, so a caller that runs the check twice does not double them.
+pub fn record_startup_warnings(warnings: &[String]) {
+    let mut slot = STARTUP_WARNINGS.lock().unwrap_or_else(|e| e.into_inner());
+    slot.clear();
+    slot.extend_from_slice(warnings);
+}
+
+/// This process's startup warnings, for a surface that wants to show them.
+pub fn recorded_startup_warnings() -> Vec<String> {
+    STARTUP_WARNINGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// Clear the recorded warnings. Tests only: the store is process-global, so a
+/// test that records must not leak into the next one.
+pub fn clear_startup_warnings_for_test() {
+    STARTUP_WARNINGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    NOTIFIED_SCOPES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+}
+
+/// Scopes already shown the warnings, so a chat is told once rather than on
+/// every message.
+static NOTIFIED_SCOPES: LazyLock<Mutex<std::collections::HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// The warning block to show in `scope`, or `None` if there is nothing to say
+/// or `scope` has already been told.
+///
+/// `scope` identifies one destination (a chat, a channel session). A channel
+/// has no startup of its own to hang this on, so it is delivered on first
+/// contact instead; repeating it every message would be worse than the silence
+/// it replaces.
+pub fn channel_notice_for(scope: &str) -> Option<String> {
+    let warnings = recorded_startup_warnings();
+    if warnings.is_empty() {
+        return None;
+    }
+    let mut seen = NOTIFIED_SCOPES.lock().unwrap_or_else(|e| e.into_inner());
+    if !seen.insert(scope.to_string()) {
+        return None;
+    }
+    Some(format!(
+        "⚠️ Config warnings:\n{}",
+        warnings
+            .iter()
+            .map(|w| format!("• {w}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ))
+}
 
 /// Collect startup warning lines for `config`. `raw_toml` is the config
 /// file's raw text when available, used to spot keys the schema silently
@@ -60,7 +130,57 @@ pub fn startup_warnings(config: &Config, raw_toml: Option<&str>) -> Vec<String> 
         }
     }
 
+    // 3. Fallback-chain entries naming a provider that does not exist. The
+    //    chain is resolved per attempt and an unresolvable name is skipped,
+    //    which is correct behaviour and stays that way — but the skip is
+    //    silent, so a typo reads as the next provider in the chain answering
+    //    instead. Observed live: `modelscope-qwen37max` for the configured
+    //    `modelscope-qwen37-max`, one missing hyphen, and the model the user
+    //    picked was quietly answered by the entry after it. `default_provider`
+    //    is already covered above; the chain was not.
+    if let Some(fb) = config.providers.fallback.as_ref() {
+        for (field, names) in [("providers", &fb.providers), ("vision", &fb.vision)] {
+            for name in names {
+                if crate::brain::provider::factory::provider_config_by_name(config, name).is_some()
+                {
+                    continue;
+                }
+                let hint = nearest_provider_name(config, name)
+                    .map(|near| format!(" — did you mean \"{near}\"?"))
+                    .unwrap_or_default();
+                warns.push(format!(
+                    "config: [providers.fallback] {field} lists \"{name}\", which matches no \
+                     configured provider — it will be skipped silently{hint}"
+                ));
+            }
+        }
+    }
+
     warns
+}
+
+/// The configured provider whose name differs from `name` only by separators.
+///
+/// Deliberately narrow. The typos this catches are punctuation slips in long
+/// namespaced ids (`modelscope-qwen37max` for `modelscope-qwen37-max`), where
+/// an exact match on the letters and digits is strong evidence and costs no
+/// judgement. A general edit distance would start guessing between providers
+/// that are genuinely different.
+fn nearest_provider_name<'a>(config: &'a Config, name: &str) -> Option<&'a str> {
+    let squash = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let target = squash(name);
+    config
+        .providers
+        .custom
+        .as_ref()?
+        .keys()
+        .find(|candidate| squash(candidate) == target)
+        .map(String::as_str)
 }
 
 fn expand_home(path: &str) -> String {
