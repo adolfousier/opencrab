@@ -1813,9 +1813,11 @@ fn spawn_settle_watcher(
 ///
 /// Callbacks from inline buttons (e.g. `/models` picker) fire in the chat
 /// where the button was pressed. We look up the session that's registered for
-/// that chat — this is the session the message handler resolved. Only falls
-/// back to the shared TUI session when no chat→session mapping exists (e.g.
-/// first-ever interaction before any message was processed).
+/// that chat — this is the session the message handler resolved. When no
+/// mapping exists yet (a first-ever interaction, before any message was
+/// processed) the shared session is used ONLY if it belongs to this same
+/// chat; otherwise the callback resolves to nothing rather than acting on a
+/// session that has no relationship to where the button was pressed.
 async fn resolve_callback_session(
     query: &CallbackQuery,
     state: &super::TelegramState,
@@ -1833,8 +1835,16 @@ async fn resolve_callback_session(
             return Some(session_id);
         }
     }
-    // Fallback: shared TUI session (owner DMs before any message handler ran)
-    *shared_session.lock().await
+    // The shared session is only usable when it genuinely belongs to THIS
+    // chat. It is a process-global handle, so taken unconditionally it lets a
+    // press in one chat act on whatever session happens to be current — the
+    // same reach that put a group's reaction into an unrelated session
+    // (#1131). The case the fallback exists for is an owner DM arriving before
+    // any message handler registered the chat, and that case still resolves:
+    // the shared session's own chat is this one.
+    let candidate = (*shared_session.lock().await)?;
+    let chat_id = query.message.as_ref().map(|m| m.chat().id.0)?;
+    (state.session_chat(candidate).await == Some(chat_id)).then_some(candidate)
 }
 
 /// Register bot commands with Telegram so they appear in the `/` menu.

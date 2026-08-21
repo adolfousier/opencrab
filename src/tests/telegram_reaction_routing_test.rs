@@ -74,3 +74,32 @@ async fn an_unmapped_chat_resolves_to_nothing() {
     let state = TelegramState::new();
     assert_eq!(state.chat_session(CHAT, Some(TOPIC)).await, None);
 }
+
+// ── the shared session may only answer for its own chat ───────────────
+
+#[tokio::test]
+async fn the_shared_session_is_usable_for_its_own_chat() {
+    // The case the fallback exists for: an owner DM arriving before any
+    // message handler registered the chat. The shared session's own chat is
+    // this one, so it still resolves.
+    let state = TelegramState::new();
+    let shared = Uuid::new_v4();
+    state.register_session_chat(shared, CHAT, None).await;
+
+    assert_eq!(state.session_chat(shared).await, Some(CHAT));
+}
+
+#[tokio::test]
+async fn the_shared_session_cannot_answer_for_another_chat() {
+    // The reach that put a group's reaction into an unrelated session: a
+    // process-global handle belonging to a different chat entirely.
+    let state = TelegramState::new();
+    let shared = Uuid::new_v4();
+    state.register_session_chat(shared, CHAT, None).await;
+
+    assert_ne!(
+        state.session_chat(shared).await,
+        Some(-100999999999),
+        "a session bound to one chat must not vouch for a press in another"
+    );
+}
