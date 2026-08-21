@@ -341,15 +341,9 @@ async fn cmd_chat_inner(
     // mistakes (ignored keys, defaults that only affect new sessions).
     {
         let raw = std::fs::read_to_string(crate::config::opencrabs_home().join("config.toml")).ok();
-        let warns = crate::config::startup_checks::startup_warnings(config, raw.as_deref());
-        for w in &warns {
+        for w in crate::config::startup_checks::startup_warnings(config, raw.as_deref()) {
             tracing::warn!("{w}");
         }
-        // The log is where these went to die: a config mistake that silently
-        // changes behaviour is exactly the thing the user needs told, not
-        // something to find later in a debug file. Record them so the TUI and
-        // the channels can surface them too.
-        crate::config::startup_checks::record_startup_warnings(&warns);
     }
     use crate::{
         brain::{

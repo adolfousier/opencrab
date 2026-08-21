@@ -1788,19 +1788,6 @@ pub(crate) async fn handle_message(
         }
     }
 
-    // Config mistakes that change behaviour silently (#477) are logged at
-    // startup, which a channel user never sees. A channel has no startup of
-    // its own, so the notice is delivered on first contact in this chat, once.
-    // A dangling fallback entry is exactly the case: the chain skips it and
-    // the next provider answers, and from here that is indistinguishable from
-    // the model the user picked.
-    if let Some(notice) =
-        crate::config::startup_checks::channel_notice_for(&format!("telegram:{}", msg.chat.id.0))
-        && let Err(e) = bot.send_message(msg.chat.id, notice).await
-    {
-        tracing::warn!("Telegram: could not deliver config warnings: {e}");
-    }
-
     tracing::info!(
         "Telegram: resolved session={} for {} in {} \"{}\" (chat_id={}, topic_id={:?})",
         session_id,

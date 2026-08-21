@@ -3,77 +3,7 @@
 //! function so the rules are unit tested; the caller logs each line once
 //! at startup (never on hot reload, which would spam).
 
-use std::sync::{LazyLock, Mutex};
-
 use crate::config::Config;
-
-/// Warnings from this process's startup, kept so surfaces that come up after
-/// the check can still show them.
-///
-/// Unlike `take_typo_warnings`, reading this does NOT drain: the TUI and the
-/// channels are both meant to see the same lines, and whichever initialised
-/// first would otherwise consume them for everyone else.
-static STARTUP_WARNINGS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-
-/// Record this process's startup warnings for later display. Replaces any
-/// previous set, so a caller that runs the check twice does not double them.
-pub fn record_startup_warnings(warnings: &[String]) {
-    let mut slot = STARTUP_WARNINGS.lock().unwrap_or_else(|e| e.into_inner());
-    slot.clear();
-    slot.extend_from_slice(warnings);
-}
-
-/// This process's startup warnings, for a surface that wants to show them.
-pub fn recorded_startup_warnings() -> Vec<String> {
-    STARTUP_WARNINGS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-}
-
-/// Clear the recorded warnings. Tests only: the store is process-global, so a
-/// test that records must not leak into the next one.
-pub fn clear_startup_warnings_for_test() {
-    STARTUP_WARNINGS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
-    NOTIFIED_SCOPES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
-}
-
-/// Scopes already shown the warnings, so a chat is told once rather than on
-/// every message.
-static NOTIFIED_SCOPES: LazyLock<Mutex<std::collections::HashSet<String>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
-
-/// The warning block to show in `scope`, or `None` if there is nothing to say
-/// or `scope` has already been told.
-///
-/// `scope` identifies one destination (a chat, a channel session). A channel
-/// has no startup of its own to hang this on, so it is delivered on first
-/// contact instead; repeating it every message would be worse than the silence
-/// it replaces.
-pub fn channel_notice_for(scope: &str) -> Option<String> {
-    let warnings = recorded_startup_warnings();
-    if warnings.is_empty() {
-        return None;
-    }
-    let mut seen = NOTIFIED_SCOPES.lock().unwrap_or_else(|e| e.into_inner());
-    if !seen.insert(scope.to_string()) {
-        return None;
-    }
-    Some(format!(
-        "⚠️ Config warnings:\n{}",
-        warnings
-            .iter()
-            .map(|w| format!("• {w}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    ))
-}
 
 /// Collect startup warning lines for `config`. `raw_toml` is the config
 /// file's raw text when available, used to spot keys the schema silently
