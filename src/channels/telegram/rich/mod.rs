@@ -131,10 +131,33 @@ pub(crate) fn markdown_to_html_p(text: &str) -> String {
 /// markdown+media send fails (e.g. a Bot API server < 10.2 without the
 /// `media` field); the primary path keeps tables native via the markdown
 /// dialect's `media` array (#1044).
+///
+/// Gated on [`mermaid::should_render_mermaid`]: when the feature is off or
+/// the text has no mermaid fence, no HTTP is made and the output equals
+/// [`markdown_to_html`]. Every chrome surface that can embed images renders
+/// prose through this pair (or the `_p` variant) so a mermaid fence in plan
+/// prose degrades exactly like one in a final reply (#1142).
 pub(crate) async fn markdown_to_html_mermaid(text: &str) -> String {
     let blocks = parse_markdown(text);
-    let resolved = mermaid::resolve_blocks(blocks).await;
+    let resolved = if mermaid::should_render_mermaid(text) {
+        mermaid::resolve_blocks(blocks).await
+    } else {
+        blocks
+    };
     render_html::render_html(&resolved)
+}
+
+/// Like [`markdown_to_html_mermaid`] but wraps paragraphs in `<p>` tags (and
+/// renders soft line breaks as `<br>`): the rich `sendRichMessage` HTML
+/// dialect used by the plan card's prose bodies (#1142).
+pub(crate) async fn markdown_to_html_mermaid_p(text: &str) -> String {
+    let blocks = parse_markdown(text);
+    let resolved = if mermaid::should_render_mermaid(text) {
+        mermaid::resolve_blocks(blocks).await
+    } else {
+        blocks
+    };
+    render_html::render_html_p(&resolved)
 }
 
 /// Send `markdown` as a native rich message, rendering any mermaid fences as

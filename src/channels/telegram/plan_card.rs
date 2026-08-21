@@ -111,7 +111,14 @@ fn serialize_card(style: CollapsibleStyle, blocks: &[CardBlock]) -> String {
 ///
 /// Returns `None` when the session has no plan content (no title and no
 /// checklist) — the caller removes the card in that case.
-fn render_plan_card(
+///
+/// Async because the rich arms render prose through the mermaid-aware
+/// converter (`markdown_to_html_mermaid_p`), so a mermaid fence in plan
+/// prose resolves to an embedded image exactly like one in a final reply
+/// (#1142). The classic arms stay on the sync converter: classic
+/// `sendMessage` HTML has no `<img>` tag, so a resolved image would get the
+/// whole card rejected — a fence there stays a readable source code block.
+async fn render_plan_card(
     style: CollapsibleStyle,
     title: Option<&str>,
     checklist: Option<&[String]>,
@@ -148,7 +155,9 @@ fn render_plan_card(
             };
             budget = budget.map(|b| b.saturating_sub(chars_used));
             // Every arm yields block-level markup: a collapsible element, or
-            // prose the renderer has already wrapped for its target.
+            // prose the renderer has already wrapped for its target. The rich
+            // arms go through the mermaid-aware converter (#1142); the classic
+            // arms stay sync (classic HTML cannot embed <img>).
             blocks.push(CardBlock::Block(match (&sec.heading, style) {
                 (Some(h), CollapsibleStyle::BlockquoteExpandable) => format!(
                     "<blockquote expandable><b>{}</b>\n{}</blockquote>",
@@ -158,9 +167,11 @@ fn render_plan_card(
                 (Some(h), CollapsibleStyle::DetailsSummary) => format!(
                     "<details><summary><b>{}</b></summary>{}</details>",
                     escape_html(h),
-                    super::rich::markdown_to_html_p(body),
+                    super::rich::markdown_to_html_mermaid_p(body).await,
                 ),
-                (None, CollapsibleStyle::DetailsSummary) => super::rich::markdown_to_html_p(body),
+                (None, CollapsibleStyle::DetailsSummary) => {
+                    super::rich::markdown_to_html_mermaid_p(body).await
+                }
                 (None, CollapsibleStyle::BlockquoteExpandable) => {
                     super::rich::markdown_to_html(body)
                 }
@@ -208,7 +219,7 @@ fn render_plan_card(
 
 /// Classic sendMessage card: `<blockquote expandable>` collapsibles, 4096-char
 /// budget with per-section prose truncation.
-pub(crate) fn render_plan_card_html(
+pub(crate) async fn render_plan_card_html(
     title: Option<&str>,
     checklist: Option<&[String]>,
     prose: Option<&[ProseSection]>,
@@ -221,11 +232,12 @@ pub(crate) fn render_plan_card_html(
         prose,
         goal,
     )
+    .await
 }
 
 /// Rich `sendRichMessage` card: `<details><summary>` collapsibles, 32K-char
 /// limit, no truncation — prose renders in full.
-pub(crate) fn render_plan_card_rich_html(
+pub(crate) async fn render_plan_card_rich_html(
     title: Option<&str>,
     checklist: Option<&[String]>,
     prose: Option<&[ProseSection]>,
@@ -238,6 +250,7 @@ pub(crate) fn render_plan_card_rich_html(
         prose,
         goal,
     )
+    .await
 }
 
 /// Result of a plan card edit attempt.
@@ -355,6 +368,7 @@ pub(crate) async fn refresh_plan_card(
             prose.as_deref(),
             goal.as_ref(),
         )
+        .await
     {
         let kb_val = plan_kb
             .keyboard()
@@ -431,7 +445,9 @@ pub(crate) async fn refresh_plan_card(
         checklist.as_deref(),
         prose.as_deref(),
         goal.as_ref(),
-    ) else {
+    )
+    .await
+    else {
         remove_plan_card_locked(bot, chat, state, session_id).await;
         return;
     };

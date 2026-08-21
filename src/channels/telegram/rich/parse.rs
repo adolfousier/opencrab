@@ -159,6 +159,12 @@ pub(super) fn parse_blocks(lines: &[String]) -> Vec<Block> {
         }
 
         // Paragraph: gather soft-wrapped lines until a blank or a new block.
+        // Lines are joined with `\n`, not the CommonMark space: chrome prose
+        // is single-newline-wrapped, and the renderer — not the parser —
+        // decides what a soft break means per dialect (literal `\n` in the
+        // classic HTML dialect, `<br>` in the rich one). Joining with a
+        // space here is what squashed multi-line prose into one visual line
+        // (#1142).
         let mut buf = Vec::new();
         while i < lines.len() {
             if lines[i].trim().is_empty() || starts_block(lines, i) {
@@ -167,7 +173,7 @@ pub(super) fn parse_blocks(lines: &[String]) -> Vec<Block> {
             buf.push(lines[i].trim().to_string());
             i += 1;
         }
-        blocks.push(Block::Paragraph(parse_inlines(&buf.join(" "))));
+        blocks.push(Block::Paragraph(parse_inlines(&buf.join("\n"))));
     }
 
     blocks
