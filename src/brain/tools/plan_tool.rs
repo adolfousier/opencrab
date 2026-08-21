@@ -734,18 +734,104 @@ pub(crate) fn truncate_output(output: &str, max_bytes: usize) -> String {
     format!("{}...[truncated]", &output[..end])
 }
 
+/// Parse the number of tests that actually ran, from any runner we recognise.
+///
+/// The guard this feeds catches two failure modes that both exit 0:
+/// 1. A filter typo that matches 0 tests, so nothing runs
+/// 2. A disabled suite that builds but skips everything
+///
+/// This used to read cargo's format alone, which made the guard silently
+/// inert everywhere else: a pytest, go, vitest or flutter run that matched
+/// nothing exited 0, parsed as `None`, and was stamped verified. In a
+/// repository that is not Rust, the protection simply did not exist.
+///
+/// `None` still means "no test summary recognised", which is not the same as
+/// zero and must never be treated as a failure: a lint, a build or a grep is a
+/// legitimate verification command with no test count to report.
+///
+/// Pure, so tests exercise it without invoking a real runner.
+pub(crate) fn parse_test_pass_count(output: &str) -> Option<usize> {
+    // Ordered by specificity: a runner that names its own total is preferred
+    // over a generic "N passed" that another tool might coincidentally print.
+    parse_cargo_test_pass_count(output)
+        .or_else(|| parse_jest_style_pass_count(output))
+        .or_else(|| parse_pytest_pass_count(output))
+        .or_else(|| parse_dart_pass_count(output))
+        .or_else(|| parse_go_pass_count(output))
+}
+
+/// jest / vitest: "Tests:       5 passed, 5 total" or "Tests  5 passed (5)".
+/// Also catches the zero case, which both print as "0 passed".
+fn parse_jest_style_pass_count(output: &str) -> Option<usize> {
+    let lower = output.to_lowercase();
+    let line = lower
+        .lines()
+        .find(|l| l.trim_start().starts_with("tests:") || l.trim_start().starts_with("tests "))?;
+    let idx = line.find("passed")?;
+    digits_before(&line[..idx])
+}
+
+/// pytest: "===== 5 passed, 2 warnings in 0.31s =====", and the zero case it
+/// spells differently: "no tests ran in 0.01s".
+fn parse_pytest_pass_count(output: &str) -> Option<usize> {
+    let lower = output.to_lowercase();
+    if lower.contains("no tests ran") {
+        return Some(0);
+    }
+    let line = lower
+        .lines()
+        .find(|l| l.contains(" passed") && (l.contains("=====") || l.contains(" in ")))?;
+    let idx = line.find(" passed")?;
+    digits_before(&line[..idx])
+}
+
+/// dart / flutter: "+5: All tests passed!", and "+0" when a filter matched
+/// nothing. The counter is the number that actually ran.
+fn parse_dart_pass_count(output: &str) -> Option<usize> {
+    let lower = output.to_lowercase();
+    if !lower.contains("all tests passed") {
+        return None;
+    }
+    let line = lower.lines().find(|l| l.contains("all tests passed"))?;
+    let plus = line.rfind('+')?;
+    let after: String = line[plus + 1..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    after.parse().ok()
+}
+
+/// go: "ok  example/pkg  0.02s" counts as a run; "no test files" is the
+/// zero case, which exits 0 and reports nothing else.
+fn parse_go_pass_count(output: &str) -> Option<usize> {
+    let lower = output.to_lowercase();
+    if lower.contains("[no test files]") || lower.contains("no test files") {
+        return Some(0);
+    }
+    // `go test` prints no count on success, so a passing run reports 1 to mean
+    // "something ran". The guard only distinguishes zero from non-zero.
+    lower.lines().any(|l| l.starts_with("ok  ")).then_some(1)
+}
+
+/// Read the trailing run of digits immediately before `haystack` ends,
+/// skipping whitespace. Shared by the runners whose count precedes a word.
+fn digits_before(haystack: &str) -> Option<usize> {
+    let num: String = haystack
+        .chars()
+        .rev()
+        .skip_while(|c| c.is_whitespace())
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    num.parse().ok()
+}
+
 /// Parse "N passed" from cargo test output.
 ///
 /// Cargo test emits "test result: ok. N passed; M failed; ..." on success.
-/// Returns `Some(N)` if found, `None` if the pattern doesn't match (not a
-/// cargo test run, or output format changed). Pure so tests don't need a
-/// real cargo invocation.
-///
-/// The guard catches two failure modes:
-/// 1. A filter typo that matches 0 tests (exits 0, runs nothing)
-/// 2. A disabled test suite that compiles but skips everything
-///
-/// Both exit 0, so without this parse the gate would accept them as verified.
+/// Returns `Some(N)` if found, `None` if the pattern doesn't match.
 pub(crate) fn parse_cargo_test_pass_count(output: &str) -> Option<usize> {
     // Cargo test output: "test result: ok. 42 passed; 0 failed; 3 ignored; ..."
     // The pattern is stable across cargo versions.
@@ -812,11 +898,12 @@ pub(crate) fn verify_with(
     for cmd in commands {
         let (exit_code, output) = run(cmd);
         if exit_code == 0 {
-            // Vacuous-pass guard: a cargo test that exits 0 but runs 0 tests
-            // is not a pass. A filter typo or disabled suite compiles clean
-            // and exits 0, so the gate would accept it as verified without
-            // this check. Parse "N passed" from the output; refuse if N == 0.
-            if let Some(passed) = parse_cargo_test_pass_count(&output)
+            // Vacuous-pass guard: a test run that exits 0 having run nothing
+            // is not a pass. A filter typo or disabled suite exits 0, so the
+            // gate would accept it as verified without this check. Every
+            // runner we recognise is consulted, not just cargo: the guard was
+            // inert in any repository that is not Rust.
+            if let Some(passed) = parse_test_pass_count(&output)
                 && passed == 0
             {
                 let truncated = truncate_output(&output, 500);
@@ -893,8 +980,26 @@ fn verify_task_completion(
     if !config.verification.enabled {
         return Ok(VerificationOutcome::Disabled);
     }
-    let Some(commands) = commands_for_type(&config.verification, task_type) else {
-        return Ok(VerificationOutcome::NotConfigured);
+    // A type the config never named used to verify nothing and the task was
+    // skipped. That is how a multi-language box lost the gate everywhere but
+    // Rust: the machine-wide file names cargo, so every other project either
+    // matched no entry at all or was handed a toolchain it does not have.
+    // Detect the project from its manifest and verify with the runner it
+    // actually uses. An explicit entry still wins, because a project that has
+    // said how it wants to be verified has said something no marker file can
+    // contradict.
+    let commands = match commands_for_type(&config.verification, task_type) {
+        Some(cmds) => cmds,
+        None => match super::project_runner::fallback_commands(working_dir, task_type) {
+            Some(cmds) => {
+                tracing::info!(
+                    "Ralph loop: no configured commands for type={task_type}; verifying with \
+                     the project's own runner instead of skipping: {cmds:?}"
+                );
+                cmds
+            }
+            None => return Ok(VerificationOutcome::NotConfigured),
+        },
     };
 
     tracing::info!(
