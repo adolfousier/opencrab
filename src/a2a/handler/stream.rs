@@ -13,6 +13,7 @@ use uuid::Uuid;
 pub type StreamTx = mpsc::Sender<StreamEvent>;
 
 /// Handle `message/stream` -- creates a task, spawns background processing,
+#[allow(clippy::result_large_err)] // pre-existing signature; clippy 1.98 tightened this lint after this code shipped
 /// returns a receiver that yields SSE events.
 pub async fn handle_stream_message(
     id: serde_json::Value,

@@ -48,10 +48,8 @@ const SKIPPED_MODEL: &str = "skipped-too-large";
 
 /// Decode a little-endian f32 blob, the encoding `db.rs` writes.
 fn decode_embedding(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
+    let (chunks, _) = bytes.as_chunks::<4>();
+    chunks.iter().map(|c| f32::from_le_bytes(*c)).collect()
 }
 
 /// Cosine similarity between two f32 vectors. 0.0 on length mismatch or

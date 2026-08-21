@@ -217,6 +217,8 @@ pub(crate) async fn resolve_chat_target(
 /// it. `sent` is `(message_id, content)` pairs (one per chunk for plain sends).
 async fn chat_or_err(
     input: &Value,
+    #[allow(clippy::result_large_err)]
+    // pre-existing signature; clippy 1.98 tightened this lint after this code shipped
     state: &TelegramState,
     session_id: Uuid,
 ) -> std::result::Result<i64, ToolResult> {

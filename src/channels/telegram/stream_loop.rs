@@ -81,7 +81,7 @@ pub(crate) fn spawn_edit_loop(
                             if !s.dirty && !s.recreate && !any_tools_dirty && !has_display && !has_active_tools && !processing { continue; }
 
                             // Drain the ordered display queue
-                            let display_items: Vec<DisplayItem> = s.display_queue.drain(..).collect();
+                            let display_items: Vec<DisplayItem> = std::mem::take(&mut s.display_queue);
 
                             // Collect dirty tools that already have messages (for editing)
                             let tool_edits: Vec<_> = s.tool_msgs.iter().enumerate()

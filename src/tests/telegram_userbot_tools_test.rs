@@ -393,7 +393,6 @@ fn sample_tools_toml_parses_and_covers_the_surface() {
 
 #[test]
 fn flood_wait_extraction_from_error_chain() {
-    use anyhow::Context as _;
     use grammers_client::InvocationError;
     use grammers_client::sender::RpcError;
 

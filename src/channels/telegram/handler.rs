@@ -2555,7 +2555,7 @@ pub(crate) async fn handle_message(
     // Grab streaming message id and drain queued display items
     let (streaming_msg_id, remaining_display) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
+        let display: Vec<DisplayItem> = std::mem::take(&mut s.display_queue);
         (s.msg_id, display)
     };
 

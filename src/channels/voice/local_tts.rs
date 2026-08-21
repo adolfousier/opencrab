@@ -406,10 +406,8 @@ impl PiperTts {
             anyhow::bail!("Piper output has odd byte count");
         }
 
-        let samples: Vec<i16> = raw
-            .chunks_exact(2)
-            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect();
+        let (pairs, _) = raw.as_chunks::<2>();
+        let samples: Vec<i16> = pairs.iter().map(|c| i16::from_le_bytes(*c)).collect();
 
         tracing::info!(
             "Piper TTS: {} samples ({:.1}s audio)",
