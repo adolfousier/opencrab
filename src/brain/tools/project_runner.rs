@@ -50,13 +50,36 @@ impl ProjectKind {
     }
 }
 
-/// Identify the project rooted at `working_dir` by its manifest.
+/// Identify the project the session is working in, from its manifest.
 ///
-/// Checked most specific first: a Flutter package also carries Dart files, and
-/// a Rust workspace inside a Node repository should still be Rust when that is
-/// where the work is happening. `None` means no manifest was recognised, and
-/// the caller must not guess a runner from nothing.
+/// `working_dir` is the session's own working directory, the same path the
+/// verification commands run in, so this asks about the folder the work is
+/// actually happening in rather than guessing at a project.
+///
+/// Walks up to find the nearest manifest, because a session is often parked in
+/// a subdirectory of the project it is working on. Without that, a session in
+/// `<repo>/src` recognised nothing and the task went back to being skipped,
+/// which is the behaviour this exists to remove. The NEAREST manifest wins, so
+/// a package inside a monorepo is verified as itself rather than as its parent.
+///
+/// Bounded by [`MAX_ANCESTORS`] so an unrecognised directory cannot walk to the
+/// filesystem root and adopt something unrelated on the way.
 pub(crate) fn detect(working_dir: &Path) -> Option<ProjectKind> {
+    working_dir
+        .ancestors()
+        .take(MAX_ANCESTORS)
+        .find_map(detect_exactly_in)
+}
+
+/// How far up to look for a manifest. Deep enough for the nested layouts that
+/// occur in practice, shallow enough that a stray directory does not inherit a
+/// project it has nothing to do with.
+const MAX_ANCESTORS: usize = 6;
+
+/// The manifest in exactly this directory, checked most specific first: a
+/// Flutter package carries a `package.json` too, and answering Node there
+/// would run the wrong runner in the repositories that matter most.
+fn detect_exactly_in(working_dir: &Path) -> Option<ProjectKind> {
     let has = |name: &str| working_dir.join(name).is_file();
     if has("pubspec.yaml") {
         return Some(ProjectKind::Flutter);

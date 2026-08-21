@@ -81,3 +81,32 @@ fn a_type_without_an_obvious_meaning_is_left_alone() {
     assert_eq!(fallback_commands(dir.path(), "refactor"), None);
     assert_eq!(fallback_commands(dir.path(), "documentation"), None);
 }
+
+#[test]
+fn a_session_parked_in_a_subdirectory_still_finds_its_project() {
+    // Sessions are often working inside a subdirectory of the repo. Looking
+    // only at that folder recognised nothing and the task went back to being
+    // skipped, which is what this whole fallback exists to prevent.
+    let dir = project_with("build.zig");
+    let nested = dir.path().join("src").join("core");
+    fs::create_dir_all(&nested).unwrap();
+
+    assert_eq!(detect(&nested), Some(ProjectKind::Zig));
+    assert_eq!(
+        fallback_commands(&nested, "test"),
+        Some(vec!["zig build test".to_string()])
+    );
+}
+
+#[test]
+fn the_nearest_manifest_wins_inside_a_monorepo() {
+    // A package inside a larger repository is verified as itself, not as its
+    // parent, or a Flutter app in a Rust monorepo would be tested with cargo.
+    let outer = project_with("Cargo.toml");
+    let inner = outer.path().join("apps").join("mobile");
+    fs::create_dir_all(&inner).unwrap();
+    fs::write(inner.join("pubspec.yaml"), "").unwrap();
+
+    assert_eq!(detect(&inner), Some(ProjectKind::Flutter));
+    assert_eq!(detect(outer.path()), Some(ProjectKind::Rust));
+}
