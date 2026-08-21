@@ -318,6 +318,7 @@ pub mod telegram_md_to_html_test;
 pub mod telegram_mentions_other_bot_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_menu_scope_test;
+pub mod telegram_reaction_routing_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_table_render_test;
 pub mod tools_md_regression_test;

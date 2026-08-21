@@ -237,6 +237,42 @@ impl ChannelMessageRepository {
             .context("Failed to look up channel message by platform id")
     }
 
+    /// The bot message's content AND the forum thread it was posted in.
+    ///
+    /// A reaction update carries no thread id, and sessions are keyed by
+    /// `(chat_id, topic_id)`, so a reaction in a forum topic could not be
+    /// matched to its session from the update alone. The row we already read
+    /// for the content knows the thread, which makes it recoverable rather
+    /// than guessed at.
+    pub async fn bot_message_with_thread(
+        &self,
+        channel: &str,
+        chat_id: &str,
+        platform_message_id: &str,
+    ) -> Result<Option<(String, Option<String>)>> {
+        let ch = channel.to_string();
+        let cid = chat_id.to_string();
+        let pmid = platform_message_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT content, thread_id FROM channel_messages \
+                     WHERE channel = ?1 AND channel_chat_id = ?2 \
+                     AND platform_message_id = ?3 AND sender_id = 'bot:opencrabs' \
+                     ORDER BY created_at DESC LIMIT 1",
+                    params![ch, cid, pmid],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                )
+                .optional()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to look up bot message by platform id")
+    }
+
     /// Like [`content_by_platform_message_id`] but only returns content when the
     /// message was sent by the bot (sender_id = 'bot:opencrabs'). Used by the
     /// inbound reaction handler to skip reactions on user-to-user messages.

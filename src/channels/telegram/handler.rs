@@ -2779,7 +2779,6 @@ pub(crate) async fn handle_reaction(
     bot: Bot,
     reaction: teloxide::types::MessageReactionUpdated,
     agent: Arc<AgentService>,
-    shared_session: Arc<Mutex<Option<Uuid>>>,
     telegram_state: Arc<TelegramState>,
     config_rx: tokio::sync::watch::Receiver<Config>,
     channel_msg_repo: ChannelMessageRepository,
@@ -2838,11 +2837,11 @@ pub(crate) async fn handle_reaction(
     // ── 5. Look up the reacted-to message in channel_messages ───────────
     // Only proceed if the message was sent by the bot.
     let msg_id = reaction.message_id;
-    let content = match channel_msg_repo
-        .bot_content_by_platform_message_id("telegram", &chat_id_str, &msg_id.0.to_string())
+    let (content, reacted_thread_id) = match channel_msg_repo
+        .bot_message_with_thread("telegram", &chat_id_str, &msg_id.0.to_string())
         .await
     {
-        Ok(Some(c)) => c,
+        Ok(Some(row)) => row,
         Ok(None) => {
             tracing::debug!(
                 "Telegram reaction: message {} not a stored bot message — skipping",
@@ -2861,15 +2860,25 @@ pub(crate) async fn handle_reaction(
     };
 
     // ── 6. Resolve session ──────────────────────────────────────────────
-    // Reactions carry no forum-thread info, so topic_id = None.
-    let session_id = if let Some(sid) = telegram_state.chat_session(chat_id.0, None).await {
-        sid
-    } else if let Some(sid) = *shared_session.lock().await {
-        sid
-    } else {
+    // The reaction update carries no thread id, but the message it landed on
+    // was stored with one, and sessions are keyed by (chat_id, topic_id). A
+    // forum topic's session is registered under Some(topic), so looking up
+    // None could never match it and every reaction in a topic fell through.
+    let topic_id = reacted_thread_id
+        .as_deref()
+        .and_then(|t| t.parse::<i32>().ok());
+    // Exactly the session this message belongs to, or none at all. There is no
+    // fallback on purpose: the old one reached for a process-global handle with
+    // no relationship to this chat, so a reaction in a group was injected into
+    // whatever session happened to be current and answered there, in front of
+    // people with no access to it. Widening the key instead would be the same
+    // mistake in miniature, landing a topic's reaction on the chat's other
+    // session. A reaction that cannot be placed is dropped: one lost ack.
+    let Some(session_id) = telegram_state.chat_session(chat_id.0, topic_id).await else {
         tracing::debug!(
-            "Telegram reaction: no session for chat {} — skipping",
-            chat_id.0
+            "Telegram reaction: no session for chat {} topic {:?} — skipping",
+            chat_id.0,
+            topic_id
         );
         return Ok(());
     };

@@ -1761,7 +1761,6 @@ fn spawn_handle_reaction(
                 bot,
                 reaction,
                 deps.agent,
-                deps.shared_session,
                 deps.telegram_state,
                 deps.config_rx,
                 deps.channel_msg_repo,
