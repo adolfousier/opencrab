@@ -12,7 +12,7 @@ use super::flow::{HeaderMarkup, StreamingState, humanize_duration, open_flow, re
 use super::handler::escape_html;
 use crate::brain::agent::AgentService;
 use crate::brain::goal::GoalManager;
-use crate::tui::plan::TaskStatus;
+
 use std::sync::Arc;
 use teloxide::prelude::*;
 use uuid::Uuid;
@@ -442,15 +442,16 @@ pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Opt
         plan.tasks
             .iter()
             .map(|t| {
-                let mark = if matches!(t.status, TaskStatus::Completed) {
-                    '☑'
-                } else {
-                    '☐'
-                };
+                let mark = crate::tui::plan::status_mark(&t.status);
                 let title = crate::utils::truncate_str(t.title.trim(), SECTION_TEXT_CAP);
+                let verification_badge = t
+                    .verification
+                    .map(|v| format!(" {}", v.badge()))
+                    .unwrap_or_default();
                 format!(
-                    "{mark} {title}{}",
-                    crate::tui::plan::quality_glyph_suffix(t)
+                    "{mark} {title}{}{}",
+                    crate::tui::plan::quality_glyph_suffix(t),
+                    verification_badge
                 )
             })
             .collect()

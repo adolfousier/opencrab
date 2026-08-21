@@ -111,13 +111,12 @@ pub(super) fn render_plan_checklist(f: &mut Frame, app: &App, area: Rect) {
     }
 
     for task in &visible {
-        let (icon, color) = match &task.status {
-            TaskStatus::Completed => ("✓", Color::Rgb(60, 165, 165)),
-            TaskStatus::Skipped => ("✓", Color::Rgb(60, 165, 165)),
-            TaskStatus::InProgress => ("▶", Color::Rgb(215, 100, 20)),
-            TaskStatus::Failed => ("✗", Color::Red),
-            TaskStatus::Blocked(_) => ("·", Color::DarkGray),
-            TaskStatus::Pending => ("·", Color::DarkGray),
+        let icon = crate::tui::plan::status_mark(&task.status).to_string();
+        let color = match &task.status {
+            TaskStatus::Completed | TaskStatus::Skipped => Color::Rgb(60, 165, 165),
+            TaskStatus::InProgress => Color::Rgb(215, 100, 20),
+            TaskStatus::Failed => Color::Red,
+            TaskStatus::Blocked(_) | TaskStatus::Pending => Color::DarkGray,
         };
 
         // Truncate task title to 60 chars
