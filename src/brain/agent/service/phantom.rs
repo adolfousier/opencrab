@@ -73,7 +73,7 @@ pub fn has_phantom_tool_intent_no_tools(text: &str) -> bool {
             continue;
         }
         let lower = window.to_lowercase();
-        if lang_intent_match_any(&lower) {
+        if has_intent_phrase(&lower) {
             return true;
         }
         // Past-tense completion claims stay gated to the detected language:
@@ -185,19 +185,31 @@ pub fn has_forward_intent_post_success(text: &str) -> bool {
     if trimmed.len() < 20 {
         return false;
     }
-    let lead = prose_lead_in(trimmed);
-    if lead.is_empty() {
-        return false;
+    // Both ends, for the same reason the zero-tool detector reads both: a
+    // promise made AFTER the tool results ("...no errors from our changes.
+    // Let me run tests and check the diff.") sits in the tail, and a
+    // lead-only window never saw it, so the turn closed on an undelivered
+    // promise and was logged as a pure completion acknowledgement.
+    for window in [prose_lead_in(trimmed), prose_tail(trimmed)] {
+        if window.is_empty() {
+            continue;
+        }
+        let lower = window.to_lowercase();
+        // A present-continuous work announcement ("Pushing the 3 commits
+        // now.") is inherently FORWARD-looking: it can never be a completion
+        // ack, no matter how many tools already ran this turn. The gate used
+        // to check intent phrases only, so announcements after a successful
+        // tool call closed turns as fake completions (#464).
+        // `matches_now_gerund` adds the leading-imminence form ("... Now
+        // downloading the fonts.") the trailing-marker regex misses.
+        if has_intent_phrase(&lower)
+            || matches_work_announcement(window)
+            || matches_now_gerund(window)
+        {
+            return true;
+        }
     }
-    let lower = lead.to_lowercase();
-    // A present-continuous work announcement ("Pushing the 3 commits
-    // now.") is inherently FORWARD-looking — it can never be a completion
-    // ack, no matter how many tools already ran this turn. The gate used
-    // to check intent phrases only, so announcements after a successful
-    // tool call closed turns as fake completions (#464). `matches_now_gerund`
-    // adds the leading-imminence form ("... Now downloading the fonts.") that
-    // the trailing-marker work-announcement regex misses.
-    lang_intent_match_any(&lower) || matches_work_announcement(lead) || matches_now_gerund(lead)
+    false
 }
 
 /// Remove inline channel directives (`<<react:🔥>>`, `<<IMG:path>>`, …)
@@ -529,6 +541,39 @@ fn lang_intent_match(lower: &str, phrases: &[String]) -> bool {
 /// carry language-distinctive tokens, so the cross-language union is
 /// collision-free — a Spanish phrase can't match English prose and vice
 /// versa. 2026-06-12.
+/// Does `lower` carry a first-person intent whose VERB was never enumerated?
+///
+/// [`lang_intent_match_any`] is an allowlist: it holds `let me run` and
+/// `let me check` but not `let me execute`, so a turn that ended on "Let me
+/// execute the full flow now" with no tool call was ruled a clean completion.
+/// Enumerating verbs cannot converge, so this matches the construction and
+/// reads the verb, rejecting only the ones that promise speech instead of
+/// work (`let me know`).
+fn matches_generic_intent(lower: &str) -> bool {
+    phantom_lang::all_langs().iter().any(|lang| {
+        if lang.generic_intent_re.is_empty() {
+            return false;
+        }
+        let Ok(re) = Regex::new(&lang.generic_intent_re) else {
+            return false;
+        };
+        re.captures_iter(lower).any(|caps| {
+            caps.get(1).is_some_and(|verb| {
+                let verb = verb.as_str();
+                !lang
+                    .intent_verb_exclusions
+                    .iter()
+                    .any(|excluded| excluded == verb)
+            })
+        })
+    })
+}
+
+/// Intent in any supported language, whether or not its verb was enumerated.
+fn has_intent_phrase(lower: &str) -> bool {
+    lang_intent_match_any(lower) || matches_generic_intent(lower)
+}
+
 fn lang_intent_match_any(lower: &str) -> bool {
     phantom_lang::all_langs()
         .iter()

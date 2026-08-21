@@ -373,3 +373,20 @@ file_context_words = [
     "png",
     "jpg",
 ]
+
+# Generic first-person intent: the verb is captured, not enumerated, so a
+# verb missing from intent_phrases (e.g. "let me execute") is still caught.
+generic_intent_re = "(?i)\\b(?:я\\s+(?:сейчас\\s+)?|давай(?:те)?\\s+)([а-яё]{3,})"
+
+# Verbs that follow that construction without promising any work.
+intent_verb_exclusions = [
+    "знаю",
+    "думаю",
+    "объясню",
+    "скажу",
+    "считаю",
+    "покажу",
+    "опишу",
+    "упомяну",
+    "подтвержу",
+]

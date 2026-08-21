@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.82] - 2026-08-20
+
+79 commits since v0.3.81. 162 files changed, +11,298 / -4,874 lines.
+
+### ✨ Features
+
+- `c43f4c6a` **session_id on every log line** (#1078): tracing spans at turn entry, cron jobs and the RSI engine make a single turn greppable out of a shared daily log
+- `c04fe914` **Legacy config section migrated on disk** (#1116): the old `[gateway]` spelling is rewritten to `[a2a]` so one name survives the round trip
+- `c8440fae` **Chunk-hash caching for memory** (#1107): unchanged chunks are skipped instead of re-embedded on every write
+- `09007693` **Pre-release binary builds** (#1111): five platform targets plus SHA256SUMS, published as a rolling pre-release so contributors can test unreleased code without waiting for a tag. Runs **on demand** via workflow dispatch, not per push: `49c1463c` in this same release made it dispatch-only, since five targets on every commit spends build time continuously producing artifacts nobody asked for
+- `a2e55422` **Plan template warnings reach the agent** (#1103): surfaced as a one-shot retry nudge instead of being swallowed
+- `9c86b651` **Uncheckable checklist rows are marked**: a row whose acceptance criteria cannot be verified is flagged as such
+- `9b966d09` **Done-when convention made visible and derivable**
+- `8844a5e5` **send_markdown_outbox** (#1085 P1b R2): one send ladder every proactive Telegram writer goes through
+- `86b29356` **Send-correlation telemetry** (#1085 P1a): at the three Telegram send chokepoints
+- `d50566c7` **Telemetry on every telegram_send arm** (#1085 P2)
+- `9a78f5de` **Final streaming edit logged** (#1085): the edit-in-place that closes a stream is now recorded
+
+### 🔧 Fixes
+
+- `00ca69f0` **Logger stops dropping events and writing to the TUI's terminal** (#1115)
+- `e21aebda` **Logger decoupled from the send path** (#1077): `try_lock` so one stalled write cannot silence every other thread
+- `c3694980` **An interrupted flock is no longer read as a held lock**: stale-lock false positive on startup
+- `e9bfcaff` **Both spellings of one config section fold together** (#1116): and a failed reload reports the real reason
+- `7ef35955` **Upstream templates stop syncing into user-owned brain files** (#1119): SOUL.md, USER.md and MEMORY.md are no longer merged into
+- `bc0f4dfb` **Directives route to AGENTS.md, MEMORY.md keeps facts** (#1121): an on-demand file no longer carries rules that must bind cold
+- `095fb32a` **Long rate-limit windows bail immediately** (#1110): instead of parking the send inline
+- `a7ebc98f` **Rich sends stop building a double-slash URL** (#1117)
+- `37b9e6da` **Rich API calls route through the Bot's api_url** (#1088): `set_api_url` now covers the rich path
+- `f0b926fb` **Stale plan pre-init markers auto-expire after 5 minutes** (#1109)
+- `08cbb351` **Task-outcome beliefs scoped to the plan id** (#1083): and the flag count is capped
+- `c0f95fc5` **Superseded beliefs archived under their own key namespace** (#1083)
+- `b12e19c6` **No-criteria completions inherit Uncertain** (#870): closing the asymmetry
+- `c113af1a` **Quota breaker recognises modelscope's monthly wording** (#1084)
+- `1ef6859e` **Tool ownership follows the active chain entry**, not the primary
+- `d9441a1a` **`session limit` counts as a claude-cli rate limit**
+- `6784993e` **112 discarded async Results now handled** (#1098): `let _ = ...await` no longer swallows failures silently
+- `ba40448f` **Cron awaits delivery handles before exec** (#1105): and persists the rebuild completion report
+- `b6b061b5` **Background detach only when the marker starts a command**: a command that merely mentions one no longer detaches
+- `3ae9175e` **A channel-driven turn updates the TUI's counters too** (#1092)
+- `e9df9713` **All six telegram arms route through thread resolution**
+- `08170ccd` **Char-boundary-safe truncation in the dedup scan rationale** (#1082)
+- `5caf1d98` **brain/browser added to the config typo whitelist** (#1090)
+- `b41835da` **HOME-mutating tests converted to a task-local override** (#1096): removing a suite-only flake
+- `8b8c3937` **h2 patched for RUSTSEC-2026-0258**, with the unreachable-to-fix hit ignored and documented
+- `28180bc5` **TTS text cleaning builds without the local-tts feature**
+- `d7e94166` **Phantom detector catches promised work whose verb was never enumerated**
+- `92adcde9` **Streaming placeholder-edit failures logged in the resume path** (#1085)
+- `79b93ee9` **Telemetry review fixes** (#1085): info-level, origin threading, full coverage
+- `49c1463c` **Pre-release builds on demand, publish job repaired** (#1111): dispatch-only instead of on every push to main, the publish job now checks out the repo it reads the version from, and the notes name the actual ref instead of asserting main
+- `085a500e` **Tests updated for chunk-hash caching and the rate-limit bail**
+- `531c0e42` **insert_embedding allows too_many_arguments**: 8 params required by chunk-hash caching
+
+### 📖 Documentation
+
+- `8a8e429d` document plan-scoped belief keys and the archive namespace (#1083)
+- `1837129d` state that `[gateway]` and `[a2a]` are one setting (#1116)
+- `c82e30a6` add the Trendshift daily and weekly badges
+- `2ce31159` replace the star history chart with Trendshift
+- `a17a2b04` point the star history chart at a working host
+- `564ad136` drop an issue reference that points at unrelated work
+
+### 🧹 Miscellaneous
+
+- `323fca1d` `f56586ea` `2a7c7853` `a8338391` `6b72e01b` `05955d99` telegram handler decomposition, seams 1 to 5 (#1086)
+- `ea3b2d98` resume-shape smoke of the shared streaming edit loop (#1086)
+- `5c0625db` typed targets and extracted action methods (#1080)
+- `55797670` one rate-limit wait helper, send_html_or_plain on the shared ladder (#1085 P1b R1)
+- `f07c1bea` best-effort helpers replace the discard culture (#1085 P3)
+- `3e6e250e` share the detached-work typing tail, log Discord pings
+- `6e2f3ff7` split delivery routing out of the task manager
+- `a07aede0` one shell scanner, one classifier, and a start log
+- `16dc55b5` remove dead plan schema fields and the unwired validation pass
+- `8e93c17e` enforce a checkable acceptance-criteria bar across prompt, schema hint and sample plan
+- `f2fb29ce` plan import mirrors #581 auto-approve, fixes the Editing/start contradiction
+- `763862b5` run the plan import tests under a temp profile home
+- `d9ab48d0` assert the corrected logger contention contract (#1115)
+- `c577413c` `4d3b713b` `ea5278ca` `f041f8d1` `266e86d5` CI runner migration to the self-hosted Mac
+- `4ac898a2` build both darwin targets on our own Mac
+- `5e993486` give coverage a cap a hosted runner can finish under
+- `f0847cc8` ignore the desktop build output
+- `89507574` remove the stray cerr file from the repo root
+- `85b1dfca` use str::repeat for the filler string
+- `96ac4276` `f720517a` formatting
+
+### 📊 Stats
+
+- 79 commits since v0.3.81
+- 162 files changed, +11,298 / -4,874 lines
+- 6,813 tests (6,781 passed, 0 failed, 32 ignored)
+
 ## [0.3.81] - 2026-08-17
 
 48 commits since v0.3.80. 157 files changed, +12,219 / -1,906 lines.
@@ -7730,3 +7821,4 @@ fixes.
 [0.3.79]: https://github.com/adolfousier/opencrabs/compare/v0.3.78...v0.3.79
 [0.3.80]: https://github.com/adolfousier/opencrabs/compare/v0.3.79...v0.3.80
 [0.3.81]: https://github.com/adolfousier/opencrabs/compare/v0.3.80...v0.3.81
+[0.3.82]: https://github.com/adolfousier/opencrabs/compare/v0.3.81...v0.3.82

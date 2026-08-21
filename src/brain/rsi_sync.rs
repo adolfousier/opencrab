@@ -88,13 +88,19 @@ pub struct TrackedTemplate {
 /// live `usage_pricing.toml`, and `/usage` reported $0.00 on real spend.
 const TRACKED: &[TrackedTemplate] = &[
     // Brain files — prose, merged by section, shipped under the templates dir.
-    md!("SOUL.md"),
-    md!("USER.md"),
+    //
+    // SOUL.md, USER.md and MEMORY.md are deliberately ABSENT (#1119). They are
+    // user-owned: personality/voice, this user's identity, and accumulated
+    // private memory. Upstream has no authority over any of them. Merging
+    // template sections in injected placeholder content into real user data,
+    // and pushed operational sections (Operating Rules, Hard Rules) into
+    // SOUL.md, a file whose own `**Owns:**` header declares it personality
+    // only. Seeding still creates all three on profile creation; they are
+    // simply never merged into afterwards.
     md!("AGENTS.md"),
     md!("TOOLS.md"),
     md!("CODE.md"),
     md!("SECURITY.md"),
-    md!("MEMORY.md"),
     md!("BOOT.md"),
     md!("HEARTBEAT.md"),
     // Config examples — merged by key, additively, shipped at the repo root

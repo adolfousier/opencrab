@@ -309,3 +309,19 @@ file_context_words = [
     "png",
     "jpg",
 ]
+
+# Generic first-person intent: the verb is captured, not enumerated, so a
+# verb missing from intent_phrases (e.g. "let me execute") is still caught.
+generic_intent_re = "(?i)\\b(?:saya\\s+akan|aku\\s+akan|mari\\s+kita|biar\\s+saya)\\s+([a-z]{2,})"
+
+# Verbs that follow that construction without promising any work.
+intent_verb_exclusions = [
+    "tahu",
+    "jelaskan",
+    "menjelaskan",
+    "katakan",
+    "pikir",
+    "tunjukkan",
+    "bagikan",
+    "sebutkan",
+]

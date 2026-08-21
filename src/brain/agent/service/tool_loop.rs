@@ -3649,6 +3649,22 @@ impl AgentService {
                 );
                 estimate
             };
+            // Anchor the context budget on what the provider counted, so
+            // compaction measures the request that will actually be sent
+            // rather than a local estimate that omits the tool schemas and
+            // disagrees with their tokenizer. Guarded by the same
+            // over-reporting check the ctx counter uses: an endpoint adding a
+            // flat overhead to every call must not drag the budget up and
+            // compact a context that was never close to full.
+            if response.usage.input_tokens > 0
+                && !is_implausible_token_report(
+                    context.token_count,
+                    self.base_context_tokens() as usize,
+                    call_input_tokens as usize,
+                )
+            {
+                context.record_provider_reported_tokens(call_input_tokens as usize);
+            }
             total_input_tokens += call_input_tokens;
             last_iter_input_tokens = call_input_tokens;
             total_output_tokens += response.usage.output_tokens;

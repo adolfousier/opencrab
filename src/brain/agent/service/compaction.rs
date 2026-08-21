@@ -70,8 +70,12 @@ impl AgentService {
         // truncate fallback in the error arm — those were the additions that
         // produced the cascade-and-loop behaviour.
         let effective_max = context.max_tokens;
+        // The provider's own count when we have one. Measuring against the
+        // local estimate is what let a request sail past a 1M limit while
+        // being reported as 66% full.
+        let effective_tokens = context.effective_token_count();
         let usage_pct = if effective_max > 0 {
-            (context.token_count as f64 / effective_max as f64) * 100.0
+            (effective_tokens as f64 / effective_max as f64) * 100.0
         } else {
             100.0
         };
@@ -103,11 +107,11 @@ impl AgentService {
                 "Hard truncation complete: {} messages, {} tokens ({:.0}%)",
                 context.messages.len(),
                 context.token_count,
-                context.token_count as f64 / effective_max as f64 * 100.0,
+                effective_tokens as f64 / effective_max as f64 * 100.0,
             );
 
             let usage_pct_now = if effective_max > 0 {
-                (context.token_count as f64 / effective_max as f64) * 100.0
+                (context.effective_token_count() as f64 / effective_max as f64) * 100.0
             } else {
                 100.0
             };
@@ -119,7 +123,7 @@ impl AgentService {
 
         // ── Tier 1: soft trigger at 65% - LLM compaction ──
         let usage_pct = if effective_max > 0 {
-            (context.token_count as f64 / effective_max as f64) * 100.0
+            (context.effective_token_count() as f64 / effective_max as f64) * 100.0
         } else {
             100.0
         };

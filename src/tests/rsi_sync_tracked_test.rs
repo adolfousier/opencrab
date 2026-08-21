@@ -41,12 +41,30 @@ fn keys_toml_is_never_tracked() {
 
 #[test]
 fn brain_files_resolve_under_the_templates_directory() {
-    let soul = TRACKED_FOR_TEST
+    // AGENTS.md rather than SOUL.md: SOUL.md is user-owned and no longer
+    // tracked (#1119), so the path shape is asserted on a system-owned file.
+    let agents = TRACKED_FOR_TEST
         .iter()
-        .find(|t| t.local == "SOUL.md")
-        .expect("SOUL.md must be tracked");
-    assert_eq!(soul.upstream, "src/docs/reference/templates/SOUL.md");
-    assert_eq!(soul.kind, TemplateKind::Markdown);
+        .find(|t| t.local == "AGENTS.md")
+        .expect("AGENTS.md must be tracked");
+    assert_eq!(agents.upstream, "src/docs/reference/templates/AGENTS.md");
+    assert_eq!(agents.kind, TemplateKind::Markdown);
+}
+
+#[test]
+fn user_owned_brain_files_are_never_tracked() {
+    // #1119: SOUL.md (personality), USER.md (identity) and MEMORY.md
+    // (accumulated private memory) belong to the user. Syncing upstream
+    // sections into them injected placeholder content into real user data and
+    // grew SOUL.md from ~1.9K to 4.7K with operational sections it does not
+    // own. Seeding still creates them; only the merge is forbidden. Asserted
+    // rather than left to a comment, since re-adding one would be silent.
+    for name in ["SOUL.md", "USER.md", "MEMORY.md"] {
+        assert!(
+            !TRACKED_FOR_TEST.iter().any(|t| t.local == name),
+            "{name} is user-owned and must never be merged from upstream"
+        );
+    }
 }
 
 #[test]
