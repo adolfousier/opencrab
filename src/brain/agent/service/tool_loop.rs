@@ -1365,7 +1365,12 @@ impl AgentService {
         // Set to true after we have forced a sticky fallback because
         // phantom retries exhausted. Guarantees we only swap once per
         // turn even if the fallback provider is also phantom-prone.
-        let mut phantom_sticky_swap_done: bool = false;
+        // How many times one turn may hand the work to the next provider when
+        // the current one will not call tools. The chain itself ends the
+        // rotation: `force_next_fallback` returns false once it is exhausted.
+        // This is only a backstop against a pathologically long chain.
+        const MAX_PHANTOM_SWAPS: u32 = 8;
+        let mut phantom_swaps_done: u32 = 0;
         // Bounded retry for the "reasoning-only, no answer" failure mode:
         // MLX Qwen models periodically emit finish_reason=stop after only
         // reasoning_content chunks — zero text, zero tool calls — so the
@@ -4720,7 +4725,7 @@ impl AgentService {
                 // tool-call channel for this prompt and another nudge
                 // won't help.
                 let should_force_fallback = phantom_eligible
-                    && !phantom_sticky_swap_done
+                    && phantom_swaps_done < MAX_PHANTOM_SWAPS
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                     && (phantom_retries_used >= MAX_PHANTOM_RETRIES
                         || (stuck_loop_now && phantom_retries_used >= MAX_PHANTOM_RETRIES / 2));
@@ -4730,8 +4735,14 @@ impl AgentService {
                         "phantom_intent_loop_or_exhausted",
                         &self.provider_model_for_session(session_id),
                     ) {
-                        phantom_sticky_swap_done = true;
+                        phantom_swaps_done += 1;
                         phantom_retries_used = 0;
+                        // The rolls are what stand between a stuck provider and
+                        // the give-up path. Handing the turn to a different
+                        // provider is a fresh attempt, not a continuation of the
+                        // old one's failure, so it gets the budget back rather
+                        // than inheriting a counter the previous provider spent.
+                        phantom_rolls = 0;
                         // A swap replays this turn against another provider,
                         // which re-emits the calls already counted. Without
                         // this the replayed copies stack onto the run and trip
@@ -4938,11 +4949,11 @@ impl AgentService {
                     if phantom_rolls < MAX_PHANTOM_ROLLS {
                         phantom_rolls += 1;
                         tracing::warn!(
-                            "Phantom retry cap rolling ({}/{} rolls, sticky_swapped={}) — \
+                            "Phantom retry cap rolling ({}/{} rolls, swaps_done={}) — \
                              resetting counter and re-nudging the active provider.",
                             phantom_rolls,
                             MAX_PHANTOM_ROLLS,
-                            phantom_sticky_swap_done
+                            phantom_swaps_done
                         );
                         self.record_provider_feedback(
                             session_id,
@@ -5003,30 +5014,34 @@ impl AgentService {
                             },
                         );
                     }
-                    // If the narration is an image-generation hallucination
-                    // ("here's your image" with no <<IMG:>> marker, no tool),
-                    // do NOT deliver the model's false claim — replace it with a
-                    // truthful message so the user is not told a fake image was
-                    // produced (#751). Otherwise deliver the narration as-is.
+                    // The narration describes work that was never done. Every
+                    // provider in the chain has now been asked and none called a
+                    // tool, so delivering it would hand over a description of
+                    // actions as though they had happened — the #751 image case
+                    // generalised: there the claim was an image, here it is
+                    // whatever was narrated. Say what is true instead, and wipe
+                    // the narration already streamed to the surface.
+                    if let Some(ref cb) = progress_callback {
+                        cb(
+                            session_id,
+                            ProgressEvent::StripStreamedContent {
+                                bytes: usize::MAX,
+                                reason: "unexecuted narration discarded".to_string(),
+                            },
+                        );
+                    }
                     let give_up_text =
                         if super::phantom::claims_unbacked_media_result(&iteration_text) {
-                            // Wipe the false narration already streamed to the surface.
-                            if let Some(ref cb) = progress_callback {
-                                cb(
-                                    session_id,
-                                    ProgressEvent::StripStreamedContent {
-                                        bytes: usize::MAX,
-                                        reason: "image-generation hallucination discarded"
-                                            .to_string(),
-                                    },
-                                );
-                            }
                             "I did not actually generate or edit an image — no image tool ran this \
                          turn, so there is nothing to show. If you want an image, ask me to \
                          generate one and I will call the image tool."
                                 .to_string()
                         } else {
-                            iteration_text.clone()
+                            "I could not complete this. I described the steps but never invoked a \
+                         tool, and retrying against every provider available did not change \
+                         that, so nothing was actually done. Nothing here was carried out — \
+                         please ask again, and narrow the request if it was a broad one."
+                                .to_string()
                         };
                     if !give_up_text.is_empty()
                         && !is_duplicate_iteration_text(&accumulated_text, &give_up_text)
