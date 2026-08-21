@@ -2198,18 +2198,31 @@ pub async fn switch_model(
 pub async fn run_evolve() -> String {
     use crate::brain::agent::ProgressEvent;
     use crate::brain::tools::{Tool, ToolExecutionContext, evolve::EvolveTool};
+    use std::path::PathBuf;
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     };
 
-    // Track whether we received a RestartReady signal
+    // Track whether we received a RestartReady signal, AND the binary it named.
+    //
+    // The path is not decoration (#1130). Evolve captures it BEFORE unlinking
+    // the old inode, and after the swap it is the only clean path left: Linux
+    // reports `/proc/self/exe` as `"<path> (deleted)"` and `current_exe()`
+    // hands that string back verbatim, so re-deriving it here execs a literal
+    // `"… (deleted)"` and ENOENTs. Matching with `{ .. }` threw it away and
+    // every channel-triggered evolve on Linux failed to restart.
     let restart_ready = Arc::new(AtomicBool::new(false));
+    let restart_binary: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
     let restart_flag = restart_ready.clone();
+    let restart_binary_sink = restart_binary.clone();
 
     // Create a progress callback that detects RestartReady
     let progress_callback: crate::brain::agent::ProgressCallback = Arc::new(move |_sid, event| {
-        if matches!(event, ProgressEvent::RestartReady { .. }) {
+        if let ProgressEvent::RestartReady { binary_path, .. } = event {
+            *restart_binary_sink
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = binary_path;
             restart_flag.store(true, Ordering::SeqCst);
         }
     });
@@ -2224,14 +2237,40 @@ pub async fn run_evolve() -> String {
         Err(e) => format!("Evolve failed: {}", e),
     };
 
-    // If we received a RestartReady signal, trigger the restart
-    if restart_ready.load(Ordering::SeqCst)
-        && let Err(e) = trigger_restart()
-    {
-        return format!("{result}\n\n⚠️ Update installed but restart failed: {e}");
+    // If we received a RestartReady signal, trigger the restart into the
+    // binary that signal named.
+    if restart_ready.load(Ordering::SeqCst) {
+        let preferred = restart_binary
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Err(e) = trigger_restart(preferred) {
+            return format!("{result}\n\n⚠️ Update installed but restart failed: {e}");
+        }
     }
 
     result
+}
+
+/// Pick the binary to exec on restart (#1130).
+///
+/// `preferred` is the path the `RestartReady` producer captured BEFORE any
+/// in-place swap. Evolve unlinks the old inode and renames the new binary over
+/// it, after which `/proc/self/exe` (and so `std::env::current_exe()`) reads
+/// back as `"<path> (deleted)"`. Rust returns that suffix verbatim, so execing
+/// it ENOENTs, and a retry writes the next download to a real file literally
+/// named `opencrabs (deleted)`.
+///
+/// Preferring the producer's path covers the binary-swap branch. Stripping the
+/// marker afterwards covers the cargo-install branch, which reports
+/// `binary_path: None` on purpose and would otherwise fall through to the same
+/// poisoned `current_exe()`. Stripping is idempotent, so a clean path, the
+/// only kind macOS ever produces, passes through untouched.
+pub(crate) fn restart_target(
+    preferred: Option<std::path::PathBuf>,
+    current: std::path::PathBuf,
+) -> std::path::PathBuf {
+    crate::brain::self_update::strip_deleted_marker(preferred.unwrap_or(current))
 }
 
 /// Relaunch the current binary with the arguments it was started with.
@@ -2242,12 +2281,18 @@ pub async fn run_evolve() -> String {
 /// image in place, keeping the pid, file descriptors, terminal and environment,
 /// so anything the alias exported survives.
 ///
+/// `preferred` short-circuits that resolution when a caller already knows the
+/// real path; see [`restart_target`]. The args stay `args().skip(1)` rather
+/// than `SelfUpdater::restart_into`, which hardcodes `chat --session <id>`: a
+/// daemon was never launched that way and must come back up as a daemon.
+///
 /// Only returns on failure.
 #[cfg(unix)]
-fn trigger_restart() -> Result<(), String> {
+fn trigger_restart(preferred: Option<std::path::PathBuf>) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
 
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate own binary: {e}"))?;
+    let current = std::env::current_exe().map_err(|e| format!("cannot locate own binary: {e}"))?;
+    let exe = restart_target(preferred, current);
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     tracing::info!("Restarting via exec(): {} {:?}", exe.display(), args);
@@ -2262,8 +2307,9 @@ fn trigger_restart() -> Result<(), String> {
 /// process exits. The pid changes and the child is briefly a grandchild of the
 /// old parent, which is why unix keeps the `exec()` path instead.
 #[cfg(not(unix))]
-fn trigger_restart() -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate own binary: {e}"))?;
+fn trigger_restart(preferred: Option<std::path::PathBuf>) -> Result<(), String> {
+    let current = std::env::current_exe().map_err(|e| format!("cannot locate own binary: {e}"))?;
+    let exe = restart_target(preferred, current);
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     tracing::info!("Restarting via spawn: {} {:?}", exe.display(), args);
@@ -2284,7 +2330,7 @@ const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_millis(150
 fn schedule_restart() -> String {
     tokio::spawn(async {
         tokio::time::sleep(SHUTDOWN_GRACE).await;
-        if let Err(e) = trigger_restart() {
+        if let Err(e) = trigger_restart(None) {
             // Reaching here means the process is still alive and the user was
             // already told it was going down, so the correction has to be loud.
             tracing::error!("Restart failed, still running: {e}");
