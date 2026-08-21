@@ -61,7 +61,10 @@ pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
 /// needs the number to read "Waiting for N background task(s)" — #1144).
 /// Both come from the single `running_tasks(session_id)` read so settle does
 /// not hit the manager twice.
-pub(crate) fn bg_indicator_for(agent: &AgentService, session_id: Uuid) -> (Option<String>, Option<usize>) {
+pub(crate) fn bg_indicator_for(
+    agent: &AgentService,
+    session_id: Uuid,
+) -> (Option<String>, Option<usize>) {
     let Some(bm) = agent.background_manager() else {
         return (None, None);
     };

@@ -4,9 +4,8 @@
 //! in one outer expandable; only the processing log collapses.
 
 use crate::channels::telegram::flow::{
-    FlowHeader, FlowLine, FlowOutcome, render_flow_details_chrome,
-    render_flow_details_chrome_pref, render_flow_html_chrome, render_flow_html_chrome_pref,
-    settled_icon_verb,
+    FlowHeader, FlowLine, FlowOutcome, render_flow_details_chrome, render_flow_details_chrome_pref,
+    render_flow_html_chrome, render_flow_html_chrome_pref, settled_icon_verb,
 };
 use crate::channels::telegram::flow_chrome::{
     FlowSections, GoalSection, ProseSection, clock_glyph, split_plan_prose,
@@ -716,10 +715,16 @@ fn settled_header_waits_when_bg_tasks_running() {
     // for N background task(s)" in the header, not "✅ Finished", so the header
     // and the "N tasks running" footer stop contradicting each other.
     let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::Finished);
-    assert_eq!((icon, verb.as_str()), ("⏳", "Waiting for 2 background tasks"));
+    assert_eq!(
+        (icon, verb.as_str()),
+        ("⏳", "Waiting for 2 background tasks")
+    );
 
     let (icon, verb) = settled_icon_verb(Some(1), FlowOutcome::Finished);
-    assert_eq!((icon, verb.as_str()), ("⏳", "Waiting for 1 background task"));
+    assert_eq!(
+        (icon, verb.as_str()),
+        ("⏳", "Waiting for 1 background task")
+    );
 
     // Nothing running (or no manager wired) → the plain finished header stands.
     let (icon, verb) = settled_icon_verb(Some(0), FlowOutcome::Finished);
