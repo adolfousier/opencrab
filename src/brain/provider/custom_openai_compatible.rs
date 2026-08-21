@@ -2887,7 +2887,7 @@ impl OpenAIProvider {
         // OTHER custom-provider model, pass the configured value straight through
         // as the request's `reasoning_effort` field — otherwise it was silently
         // dropped and e.g. modelstudio/DashScope qwen never got `xhigh` (#691).
-        let (mut reasoning_effort, thinking) = match self.reasoning_setting.as_deref() {
+        let (mut reasoning_effort, mut thinking) = match self.reasoning_setting.as_deref() {
             None => (None, None),
             Some(s) if super::kimi_reasoning::is_kimi_model(&request.model) => {
                 super::kimi_reasoning::resolve_fields(&request.model, s)
@@ -2916,6 +2916,28 @@ impl OpenAIProvider {
             );
             reasoning_effort = knobs.reasoning_effort;
             enable_thinking = knobs.enable_thinking;
+        }
+
+        // DeepSeek's knobs, which are not DashScope's. It reads a top-level
+        // `thinking: {"type": ...}` plus a `low | high | max` effort, and
+        // ignores `enable_thinking` entirely. Until now a DeepSeek target fell
+        // through to the pass-through arm above, so a configured `xhigh` (a
+        // qwen rung DeepSeek has no equivalent for) rode to the wire while the
+        // toggle it actually reads went unset.
+        //
+        // Gated on the model id OR the endpoint, because DeepSeek is not a
+        // built-in provider here: it is only ever reached through a custom
+        // OpenAI-compatible entry, and gateways re-serve these models under a
+        // namespaced id (#1040). A local runtime is excluded, matching qwen.
+        if super::deepseek_reasoning::serves_deepseek(&self.base_url, &request.model) {
+            let knobs = super::deepseek_reasoning::resolve(
+                reasoning_effort.as_deref(),
+                self.enable_thinking_setting,
+            );
+            thinking = Some(serde_json::json!({
+                "type": if knobs.enabled { "enabled" } else { "disabled" }
+            }));
+            reasoning_effort = knobs.effort.map(str::to_string);
         }
 
         // Carry reasoning across turns instead of re-deriving it each turn
@@ -4688,6 +4710,12 @@ impl Provider for OpenAIProvider {
     fn context_window(&self, model: &str) -> Option<u32> {
         // User-configured value takes priority over model-name heuristics
         if let Some(cw) = self.configured_context_window {
+            return Some(cw);
+        }
+        // DeepSeek publishes a 1M window; without this an entry added with no
+        // `context_window` fell through to the generic fallback and budgeted
+        // against a fraction of the real capacity.
+        if let Some(cw) = super::deepseek_reasoning::default_context_window(model) {
             return Some(cw);
         }
         let m = model.to_lowercase();

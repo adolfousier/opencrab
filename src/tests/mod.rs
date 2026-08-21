@@ -202,6 +202,7 @@ pub mod db_repository_message_test;
 pub mod db_repository_project_test;
 pub mod db_repository_session_test;
 pub mod db_retry_test;
+pub mod deepseek_reasoning_test;
 pub mod directive_discovery_test;
 pub mod discord_tool_group_test;
 pub mod doc_gen_docx_test;
