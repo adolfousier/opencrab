@@ -23,7 +23,8 @@ use crate::config::types::TelegramUserbotConfig;
 pub(crate) enum Denial {
     /// The userbot is disabled — no session exists to serve any tool.
     Disabled,
-    /// Outbound target not in `outbound_allowlist` (or list empty).
+    /// Outbound target's `chat_permissions` entry lacks `send` (or the
+    /// chat is absent from the map entirely).
     OutboundNotAllowed { target: String },
     /// Raw MTProto requires `confirm: true` on the invocation.
     RawUnconfirmed,
@@ -35,7 +36,7 @@ impl std::fmt::Display for Denial {
             Denial::Disabled => write!(f, "userbot disabled"),
             Denial::OutboundNotAllowed { target } => write!(
                 f,
-                "outbound target {target} not in channels.telegram.userbot.outbound_allowlist"
+                "outbound target {target} lacks `send` in channels.telegram.userbot.chat_permissions"
             ),
             Denial::RawUnconfirmed => {
                 write!(f, "raw MTProto requires confirm: true on the invocation")
@@ -47,8 +48,8 @@ impl std::fmt::Display for Denial {
 /// The governance gate: pure function of (command, config).
 ///
 /// - Read tools pass whenever the userbot is enabled.
-/// - Outbound tools additionally require the target chat to be listed in
-///   `outbound_allowlist` (empty list = strictly read-only, by design).
+/// - Outbound tools additionally require `send` for the target chat in
+///   `chat_permissions` (no `send` grants = strictly read-only, by design).
 /// - Raw requires its own `confirm` flag — no config default lets it
 ///   through silently.
 pub(crate) fn authorize(cmd: &ToolCommand, cfg: &TelegramUserbotConfig) -> Result<(), Denial> {
@@ -58,7 +59,7 @@ pub(crate) fn authorize(cmd: &ToolCommand, cfg: &TelegramUserbotConfig) -> Resul
     match cmd.class() {
         ToolClass::Read => Ok(()),
         ToolClass::Outbound(target) => {
-            if cfg.outbound_allowlist.iter().any(|c| c == target) {
+            if cfg.may_send(target) {
                 Ok(())
             } else {
                 Err(Denial::OutboundNotAllowed {
@@ -87,6 +88,8 @@ pub(crate) async fn run(cmd: &ToolCommand, client: &Client) -> Result<Value> {
         ToolCommand::SendFile(c) => transport::send_document(client, c).await,
         ToolCommand::SendToPhone(c) => transport::send_phone(client, c).await,
         ToolCommand::EditMessage(c) => transport::edit_text(client, c).await,
+        ToolCommand::React(c) => transport::react(client, c).await,
+        ToolCommand::Download(c) => transport::download(client, c).await,
         ToolCommand::Raw(c) => raw::run_raw(client, c).await,
     }
 }

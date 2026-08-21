@@ -145,3 +145,81 @@ mod tests {
         assert!(normalize_phone("").is_err());
     }
 }
+
+/// Resolve where a media download lands. Explicit paths must be
+/// absolute, inside `home`, and free of `..` components — traversal is
+/// refused at the boundary. The default is
+/// `<home>/.opencrabs/userbot_media/<sanitized chat>/msg-<id>.bin`
+/// (deterministic; the envelope returns the real path).
+pub(crate) fn resolve_download_path(
+    explicit: Option<&str>,
+    chat: &str,
+    message_id: i64,
+    home: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    use std::path::{Component, PathBuf};
+
+    let sanitize = |c: char| {
+        if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+            c
+        } else {
+            '_'
+        }
+    };
+    let path = match explicit {
+        Some(raw) => {
+            let raw = raw.trim();
+            let p = PathBuf::from(raw);
+            if !p.is_absolute() {
+                return Err(format!("download path must be absolute: {raw}"));
+            }
+            if p.components().any(|c| matches!(c, Component::ParentDir)) {
+                return Err(format!("download path must not contain '..': {raw}"));
+            }
+            p
+        }
+        None => home
+            .join(".opencrabs")
+            .join("userbot_media")
+            .join(chat.chars().map(sanitize).collect::<String>())
+            .join(format!("msg-{message_id}.bin")),
+    };
+    if !path.starts_with(home) {
+        return Err(format!(
+            "download path must stay under $HOME: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+#[cfg(test)]
+mod download_path_tests {
+    use super::*;
+
+    #[test]
+    fn default_path_is_deterministic_under_home() {
+        let home = std::path::Path::new("/home/tester");
+        let p = resolve_download_path(None, "-1001234567890", 42, home).unwrap();
+        assert_eq!(
+            p,
+            home.join(".opencrabs/userbot_media/-1001234567890/msg-42.bin")
+        );
+    }
+
+    #[test]
+    fn chat_component_is_sanitized() {
+        let home = std::path::Path::new("/h");
+        let p = resolve_download_path(None, "a/b c@x", 1, home).unwrap();
+        assert!(p.starts_with(home.join(".opencrabs/userbot_media/a_b_c_x")));
+    }
+
+    #[test]
+    fn explicit_paths_are_validated() {
+        let home = std::path::Path::new("/home/tester");
+        assert!(resolve_download_path(Some("/home/tester/x.mp4"), "c", 1, home).is_ok());
+        assert!(resolve_download_path(Some("rel/x.mp4"), "c", 1, home).is_err());
+        assert!(resolve_download_path(Some("/home/../etc/x"), "c", 1, home).is_err());
+        assert!(resolve_download_path(Some("/tmp/x.mp4"), "c", 1, home).is_err());
+    }
+}

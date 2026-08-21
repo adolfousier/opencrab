@@ -3,7 +3,7 @@
 //!
 //! Login is driven by `opencrabs channel userbot-login` (QR by default,
 //! `--code` for the phone-code path). The watch loop lives in
-//! [`watch`] and forwards `allowed_chats` messages through the same bot
+//! [`watch`] and forwards `read`-granted chat messages through the same bot
 //! handler; see the map at `~/.opencrabs/research/telegram-userbot-map.md`
 //! for the verified grammers 0.10 wiring notes.
 

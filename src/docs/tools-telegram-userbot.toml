@@ -9,7 +9,7 @@
 # Governance is enforced inside the binary, before any network touch:
 #   - read tools run whenever the userbot is enabled
 #   - send/edit/phone require the target in
-#     channels.telegram.userbot.outbound_allowlist (empty = read-only)
+#     channels.telegram.userbot.chat_permissions map (no send grants = read-only)
 #   - the raw tool additionally requires "confirm": true in the params
 #
 # The params file is one JSON object: { "tool": "<tag>", ...fields }.
@@ -18,7 +18,7 @@
 
 [[tools]]
 name = "tg_get_messages"
-description = "Read or search messages in one chat: browse latest (dates), text search, or a thread by its root id. Success: messages, has_more."
+description = "Read or search messages in one chat: browse latest (dates), text search, or a thread by its root id. Success: messages, has_more. [read-only]"
 executor = "shell"
 command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
 timeout_secs = 30
@@ -34,20 +34,22 @@ params = [
 
 [[tools]]
 name = "tg_send_message"
-description = "Send a text as the logged-in user. Outbound: target chat must be in outbound_allowlist. Irreversible."
+description = "Send a text as the logged-in user. [send permission required] Irreversible."
 executor = "shell"
 command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
-timeout_secs = 30
+timeout_secs = 150
 params = [
     { name = "tool", type = "string", description = "Must be 'send_message'.", required = true },
     { name = "chat", type = "string", description = "Target chat: numeric id, '@username', or 'me'.", required = true },
     { name = "text", type = "string", description = "Message text.", required = true },
-    { name = "reply_to", type = "integer", description = "Message id to reply to.", required = false }
+    { name = "reply_to", type = "integer", description = "Message id to reply to.", required = false },
+    { name = "schedule_unix", type = "integer", description = "Unix seconds to schedule the send. Must be future, within 366 days; omit to send now.", required = false },
+    { name = "wait_reply_secs", type = "integer", description = "After sending, poll up to N seconds (capped at 120) for the first incoming reply; result gains reply + waited_secs. Timeout returns reply: null, not an error. Mutually exclusive with schedule_unix.", required = false }
 ]
 
 [[tools]]
 name = "tg_send_document"
-description = "Upload a local file and send it as a document with optional caption, as the logged-in user. Outbound: allowlisted targets only. Irreversible."
+description = "Upload a local file and send it as a document with optional caption, as the logged-in user. [send permission required] Irreversible."
 executor = "shell"
 command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
 timeout_secs = 120
@@ -60,7 +62,7 @@ params = [
 
 [[tools]]
 name = "tg_edit_message"
-description = "Edit a message the user previously sent. Outbound: allowlisted targets only. Irreversible (edit trail)."
+description = "Edit a message the user previously sent. [send permission required] Irreversible (edit trail)."
 executor = "shell"
 command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
 timeout_secs = 30
@@ -72,8 +74,21 @@ params = [
 ]
 
 [[tools]]
+name = "tg_react"
+description = "React to a message as the logged-in user (emoticon literal, e.g. 👍; empty removes). [send permission required]."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 30
+params = [
+    { name = "tool", type = "string", description = "Must be 'react'.", required = true },
+    { name = "chat", type = "string", description = "Chat the message lives in: numeric id, '@username', or 'me'.", required = true },
+    { name = "message_id", type = "integer", description = "Id of the message to react to.", required = true },
+    { name = "emoji", type = "string", description = "Emoticon literal (e.g. 👍); empty string removes the reaction.", required = true }
+]
+
+[[tools]]
 name = "tg_find_chats"
-description = "List dialogs (recent chats), or resolve a username or phone to its peer. Phone resolution is a read-only lookup (contacts.resolvePhone) — no contact import."
+description = "List dialogs (recent chats), or resolve a username or phone to its peer. Phone resolution is a read-only lookup (contacts.resolvePhone) — no contact import. [read-only]"
 executor = "shell"
 command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
 timeout_secs = 30
@@ -86,7 +101,7 @@ params = [
 
 [[tools]]
 name = "tg_get_chat_info"
-description = "Resolve a peer by username and return its profile info via users.getFullUser."
+description = "Resolve a peer by username and return its profile info via users.getFullUser. [read-only]"
 executor = "shell"
 command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
 timeout_secs = 30
@@ -98,7 +113,7 @@ params = [
 
 [[tools]]
 name = "tg_search_global"
-description = "Search messages across all chats the account can see."
+description = "Search messages across all chats the account can see. [read-only]"
 executor = "shell"
 command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
 timeout_secs = 60
@@ -110,7 +125,7 @@ params = [
 
 [[tools]]
 name = "tg_send_to_phone"
-description = "Send a text to a phone number: imports a temporary contact (contacts.importContacts) then sends to it. Outbound: the E.164 phone literal must be in outbound_allowlist. Irreversible."
+description = "Send a text to a phone number: imports a temporary contact (contacts.importContacts) then sends to it. [send permission required; key is the phone literal] Irreversible."
 executor = "shell"
 command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
 timeout_secs = 30
@@ -131,4 +146,17 @@ params = [
     { name = "method", type = "string", description = "Registry method name (dotted).", required = true },
     { name = "params", type = "string", description = "JSON object of constructor params; peer-bearing methods take \"chat\" and resolve it locally.", required = false, default = "{}" },
     { name = "confirm", type = "boolean", description = "Must be true for the call to run.", required = false, default = false }
+]
+
+[[tools]]
+name = "tg_download"
+description = "Download media attached to a message to the local workspace. Read-class: no Telegram-side writes; the only write is the local file, which must land under $HOME. Returns {saved, path, bytes}."
+executor = "shell"
+command = "opencrabs userbot tool --params-file \"$OPENCRABS_PARAMS\" 2>&1"
+timeout_secs = 60
+params = [
+    { name = "tool", type = "string", description = "Must be 'download'.", required = true },
+    { name = "chat", type = "string", description = "Chat containing the message (id, @username, or 'me').", required = true },
+    { name = "message_id", type = "integer", description = "Message id carrying the media.", required = true },
+    { name = "path", type = "string", description = "Explicit save path: absolute, under $HOME, no '..'. Default: ~/.opencrabs/userbot_media/<chat>/msg-<id>.bin", required = false }
 ]

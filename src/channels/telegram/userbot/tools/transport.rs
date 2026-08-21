@@ -2,19 +2,20 @@
 //! JSON envelopes. Read tools are pure queries; outbound tools
 //! (send/edit/phone) mutate Telegram as the logged-in user and are
 //! irreversible-class — `dispatch::authorize` gates them behind
-//! `outbound_allowlist` before any code here runs.
+//! the `chat_permissions` `send` grant before any code here runs.
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, FixedOffset};
 use grammers_client::Client;
-use grammers_client::message::{InputMessage, Message};
+use grammers_client::message::{InputMessage, InputReactions, Message};
 use grammers_session::types::{PeerAuth, PeerId, PeerRef};
 use grammers_tl_types as tl;
 use serde_json::{Value, json};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::commands::{
-    Discover, EditMessage, Raw, ReadChat, SearchChat, SearchGlobal, SendFile, SendMessage,
-    SendToPhone,
+    Discover, Download, EditMessage, Raw, React, ReadChat, SearchChat, SearchGlobal, SendFile,
+    SendMessage, SendToPhone,
 };
 use super::mapping::{
     narrow_message_id, normalize_phone, parse_bot_api_chat_id, parse_date, truncate_with_more,
@@ -191,11 +192,59 @@ pub(crate) async fn send_text(client: &Client, cmd: &SendMessage) -> Result<Valu
         let id = narrow_message_id(reply_to)?;
         message = message.reply_to(Some(id));
     }
+    if let Some(unix) = cmd.schedule_unix {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before 1970")?
+            .as_secs() as i64;
+        if unix <= now {
+            bail!("schedule_unix {unix} must be in the future");
+        }
+        if unix > now + 366 * 24 * 3600 {
+            bail!("schedule_unix {unix} is beyond Telegram's 366-day window");
+        }
+        message = message.schedule_date(Some(UNIX_EPOCH + Duration::from_secs(unix as u64)));
+    }
+    if cmd.wait_reply_secs.is_some() && cmd.schedule_unix.is_some() {
+        bail!("wait_reply_secs cannot be combined with schedule_unix");
+    }
     let sent = client
         .send_message(peer, message)
         .await
         .map_err(|e| anyhow!("send to {} failed: {e}", cmd.chat))?;
-    Ok(render::message(&sent))
+    let mut envelope = render::message(&sent);
+    if let Some(secs) = cmd.wait_reply_secs {
+        let cap = secs.min(120);
+        let sent_id = sent.id();
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(cap);
+        // Poll newest-first for the first incoming message with a
+        // higher id: sender ≠ me (outgoing filtered), id > sent.
+        let reply = 'wait: loop {
+            let mut iter = client.iter_messages(peer);
+            for _ in 0..10 {
+                match iter.next().await? {
+                    Some(m) if m.id() > sent_id && !m.outgoing() => break 'wait Some(m),
+                    Some(_) => continue,
+                    None => break,
+                }
+            }
+            if Instant::now() + Duration::from_secs(1) > deadline {
+                break 'wait None;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        };
+        let waited = start.elapsed().as_secs();
+        let obj = envelope
+            .as_object_mut()
+            .context("message envelope is not an object")?;
+        obj.insert(
+            "reply".into(),
+            reply.as_ref().map(render::message).unwrap_or(Value::Null),
+        );
+        obj.insert("waited_secs".into(), json!(waited));
+    }
+    Ok(envelope)
 }
 
 /// Upload a local file and send it as a document (with optional
@@ -241,6 +290,28 @@ pub(crate) async fn edit_text(client: &Client, cmd: &EditMessage) -> Result<Valu
 /// the imported peer. Irreversible twice over — the contact import is
 /// visible in the account's contact list hygiene, and the message is
 /// delivered as the user.
+///
+/// React to a message as the user. Empty `emoji` removes the reaction.
+pub(crate) async fn react(client: &Client, cmd: &React) -> Result<Value> {
+    let peer = resolve_chat_ref(client, &cmd.chat).await?;
+    let id = narrow_message_id(cmd.message_id)
+        .with_context(|| format!("message id {} out of range", cmd.message_id))?;
+    let reactions = if cmd.emoji.is_empty() {
+        InputReactions::remove()
+    } else {
+        cmd.emoji.clone().into()
+    };
+    client
+        .send_reactions(peer, id, reactions)
+        .await
+        .map_err(|e| anyhow!("react in {} failed: {e}", cmd.chat))?;
+    Ok(json!({
+        "reacted": true,
+        "chat": cmd.chat,
+        "message_id": cmd.message_id,
+    }))
+}
+
 pub(crate) async fn send_phone(client: &Client, cmd: &SendToPhone) -> Result<Value> {
     let phone = normalize_phone(&cmd.phone)?;
     let contact = tl::types::InputPhoneContact {
@@ -278,4 +349,46 @@ pub(crate) async fn send_phone(client: &Client, cmd: &SendToPhone) -> Result<Val
         .await
         .map_err(|e| anyhow!("send to {phone} failed: {e}"))?;
     Ok(render::message(&sent))
+}
+
+/// Download media attached to one message. Read-class on the Telegram
+/// side (a fetch); the only write is the local file, path-validated by
+/// `mapping::resolve_download_path`.
+pub(crate) async fn download(client: &Client, cmd: &Download) -> Result<Value> {
+    let peer = resolve_chat_ref(client, &cmd.chat).await?;
+    let id = i32::try_from(cmd.message_id)
+        .map_err(|_| anyhow!("message_id {} out of range", cmd.message_id))?;
+    let msgs = client
+        .get_messages_by_id(peer, &[id])
+        .await
+        .map_err(|e| anyhow!("fetch message {id} from {}: {e}", cmd.chat))?;
+    let Some(msg) = msgs.into_iter().next().flatten() else {
+        bail!("message {id} not found in {}", cmd.chat);
+    };
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| anyhow!("HOME not set; pass an explicit download path"))?;
+    let path = super::mapping::resolve_download_path(
+        cmd.path.as_deref(),
+        &cmd.chat,
+        cmd.message_id,
+        &home,
+    )
+    .map_err(|e| anyhow!("{}", e))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let saved = msg
+        .download_media(&path)
+        .await
+        .map_err(|e| anyhow!("download msg {id} from {}: {e}", cmd.chat))?;
+    if !saved {
+        bail!("message {id} in {} carries no downloadable media", cmd.chat);
+    }
+    let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    Ok(json!({
+        "saved": true,
+        "path": path.display().to_string(),
+        "bytes": bytes,
+    }))
 }

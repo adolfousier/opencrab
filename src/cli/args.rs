@@ -318,12 +318,12 @@ pub enum UserbotCommands {
     },
     /// Run one tool invocation from a JSON params file (see
     /// src/docs/reference/TELEGRAM_USERBOT_TOOLS.md). Reads need only an enabled
-    /// session; outbound targets must be in outbound_allowlist; raw
+    /// session; outbound needs `send` in chat_permissions; raw
     /// methods additionally need "confirm": true inside the params.
     ///
     /// Tools: tg_get_messages, tg_send_message, tg_send_document,
-    /// tg_edit_message, tg_find_chats, tg_get_chat_info,
-    /// tg_search_global, tg_send_to_phone, tg_mtproto
+    /// tg_edit_message, tg_react, tg_download, tg_find_chats,
+    /// tg_get_chat_info, tg_search_global, tg_send_to_phone, tg_mtproto
     Tool {
         /// Path to the JSON params file
         #[arg(long = "params-file")]

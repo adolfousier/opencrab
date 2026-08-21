@@ -6,18 +6,18 @@
 //! 1. Params roundtrip: a tool invocation saved to a file and loaded
 //!    back is the same data — the file is the contract.
 //! 2. Governance: reads pass when enabled; outbound requires the target
-//!    in `outbound_allowlist` (empty = strictly read-only); raw MTProto
+//!    with `send` in `chat_permissions` (none = strictly read-only); raw MTProto
 //!    requires an explicit per-invocation `confirm`.
 
 use std::io::Write;
 
 use crate::channels::telegram::userbot::tools::commands::{
-    DEFAULT_LIMIT, Discover, EditMessage, Raw, ReadChat, SearchChat, SendFile, SendMessage,
-    SendToPhone, ToolCommand,
+    DEFAULT_LIMIT, Discover, Download, EditMessage, Raw, React, ReadChat, SearchChat, SendFile,
+    SendMessage, SendToPhone, ToolCommand,
 };
 use crate::channels::telegram::userbot::tools::dispatch::{Denial, authorize};
 use crate::channels::telegram::userbot::tools::params::ToolInvocation;
-use crate::config::types::TelegramUserbotConfig;
+use crate::config::types::{ChatPermission, TelegramUserbotConfig};
 
 fn read_chat(chat: &str) -> ToolCommand {
     ToolCommand::ReadChat(ReadChat {
@@ -60,6 +60,61 @@ fn parse_accepts_handwritten_params_json() {
 }
 
 #[test]
+fn parse_round_trips_schedule_unix() {
+    let json = r#"{
+        "tool": "send_message",
+        "chat": "@friend",
+        "text": "happy new year",
+        "schedule_unix": 1798761600
+    }"#;
+    let inv = ToolInvocation::parse(json).expect("scheduled send should parse");
+    match inv.command {
+        ToolCommand::SendMessage(SendMessage {
+            schedule_unix: Some(unix),
+            ..
+        }) => {
+            assert_eq!(unix, 1798761600);
+        }
+        other => panic!("expected scheduled SendMessage, got {other:?}"),
+    }
+    // Omitted field means send-now.
+    let now = ToolInvocation::parse(r#"{"tool":"send_message","chat":"@friend","text":"asap"}"#)
+        .expect("plain send should parse");
+    match now.command {
+        ToolCommand::SendMessage(SendMessage {
+            schedule_unix: None,
+            ..
+        }) => {}
+        other => panic!("expected plain SendMessage, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_wait_reply_secs() {
+    let inv = ToolInvocation::parse(
+        r#"{"tool":"send_message","chat":"@wallet","text":"balance","wait_reply_secs":45}"#,
+    )
+    .expect("wait-reply send should parse");
+    match inv.command {
+        ToolCommand::SendMessage(SendMessage {
+            wait_reply_secs: Some(secs),
+            ..
+        }) => assert_eq!(secs, 45),
+        other => panic!("expected wait-reply SendMessage, got {other:?}"),
+    }
+    // Omitted field means no wait.
+    let plain = ToolInvocation::parse(r#"{"tool":"send_message","chat":"@x","text":"y"}"#)
+        .expect("plain send should parse");
+    match plain.command {
+        ToolCommand::SendMessage(SendMessage {
+            wait_reply_secs: None,
+            ..
+        }) => {}
+        other => panic!("expected no-wait SendMessage, got {other:?}"),
+    }
+}
+
+#[test]
 fn parse_rejects_unknown_tool_and_future_version() {
     assert!(ToolInvocation::parse(r#"{"tool":"nope"}"#).is_err());
     assert!(ToolInvocation::parse(r#"{"version":99,"tool":"discover"}"#).is_err());
@@ -96,6 +151,23 @@ fn omitted_keys_take_typed_defaults() {
         raw.command,
         ToolCommand::Raw(Raw { confirm: false, .. })
     ));
+}
+
+#[test]
+fn download_parses_with_optional_path() {
+    let inv = ToolInvocation::parse(r#"{"tool":"download","chat":"me","message_id":42}"#)
+        .expect("download invocation should parse");
+    match inv.command {
+        ToolCommand::Download(Download {
+            chat,
+            message_id,
+            path,
+        }) => {
+            assert_eq!((chat.as_str(), message_id), ("me", 42));
+            assert_eq!(path, None);
+        }
+        other => panic!("expected Download, got {other:?}"),
+    }
 }
 
 #[test]
@@ -157,6 +229,8 @@ fn authorize_empty_allowlist_is_strictly_read_only() {
         chat: "@somebody".into(),
         text: "hi".into(),
         reply_to: None,
+        schedule_unix: None,
+        wait_reply_secs: None,
     });
     let edit = ToolCommand::EditMessage(EditMessage {
         chat: "@somebody".into(),
@@ -181,16 +255,21 @@ fn authorize_empty_allowlist_is_strictly_read_only() {
 #[test]
 fn authorize_outbound_passes_only_for_allowlisted_target() {
     let mut cfg = enabled_cfg();
-    cfg.outbound_allowlist = vec!["@friend".into()];
+    cfg.chat_permissions
+        .insert("@friend".into(), vec![ChatPermission::Send]);
     let ok = ToolCommand::SendMessage(SendMessage {
         chat: "@friend".into(),
         text: "hi".into(),
         reply_to: None,
+        schedule_unix: None,
+        wait_reply_secs: None,
     });
     let denied = ToolCommand::SendMessage(SendMessage {
         chat: "@stranger".into(),
         text: "hi".into(),
         reply_to: None,
+        schedule_unix: None,
+        wait_reply_secs: None,
     });
     assert_eq!(authorize(&ok, &cfg), Ok(()));
     assert_eq!(
@@ -209,7 +288,8 @@ fn authorize_outbound_passes_only_for_allowlisted_target() {
         phone: "+254700000000".into(),
         text: "hi".into(),
     });
-    cfg.outbound_allowlist.push("+254712345678".into());
+    cfg.chat_permissions
+        .insert("+254712345678".into(), vec![ChatPermission::Send]);
     assert_eq!(authorize(&phone_ok, &cfg), Ok(()));
     assert_eq!(
         authorize(&phone_denied, &cfg),
@@ -217,6 +297,30 @@ fn authorize_outbound_passes_only_for_allowlisted_target() {
             target: "+254700000000".into()
         })
     );
+}
+
+#[test]
+fn react_requires_send_permission_for_target_chat() {
+    let mut cfg = enabled_cfg();
+    cfg.chat_permissions
+        .insert("-1001234567890".into(), vec![ChatPermission::Read]);
+    let react = ToolCommand::React(React {
+        chat: "-1001234567890".into(),
+        message_id: 42,
+        emoji: "👍".into(),
+    });
+    // read-only grant must not allow a reaction
+    assert_eq!(
+        authorize(&react, &cfg),
+        Err(Denial::OutboundNotAllowed {
+            target: "-1001234567890".into()
+        })
+    );
+    cfg.chat_permissions
+        .get_mut("-1001234567890")
+        .unwrap()
+        .push(ChatPermission::Send);
+    assert_eq!(authorize(&react, &cfg), Ok(()));
 }
 
 #[test]
@@ -263,6 +367,8 @@ fn sample_tools_toml_parses_and_covers_the_surface() {
         "tg_send_message",
         "tg_send_document",
         "tg_edit_message",
+        "tg_react",
+        "tg_download",
         "tg_find_chats",
         "tg_get_chat_info",
         "tg_search_global",
@@ -283,4 +389,41 @@ fn sample_tools_toml_parses_and_covers_the_surface() {
             "no remote endpoints in the drop-in: {cmd}"
         );
     }
+}
+
+#[test]
+fn flood_wait_extraction_from_error_chain() {
+    use anyhow::Context as _;
+    use grammers_client::InvocationError;
+    use grammers_client::sender::RpcError;
+
+    let flood = anyhow::Error::new(InvocationError::Rpc(RpcError {
+        code: 420,
+        name: "FLOOD_WAIT".to_string(),
+        value: Some(31),
+        caused_by: None,
+    }));
+    assert_eq!(
+        crate::channels::telegram::userbot::tools::flood_wait_secs(&flood),
+        Some(31)
+    );
+
+    // Context-wrapped: the flood still surfaces through the chain.
+    let wrapped = flood.context("send failed");
+    assert_eq!(
+        crate::channels::telegram::userbot::tools::flood_wait_secs(&wrapped),
+        Some(31)
+    );
+
+    // Non-flood RPC errors are not waits.
+    let other = anyhow::Error::new(InvocationError::Rpc(RpcError {
+        code: 400,
+        name: "CHAT_ID_INVALID".to_string(),
+        value: None,
+        caused_by: None,
+    }));
+    assert_eq!(
+        crate::channels::telegram::userbot::tools::flood_wait_secs(&other),
+        None
+    );
 }

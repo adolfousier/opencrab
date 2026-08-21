@@ -370,10 +370,11 @@ where
 ///
 /// A read-plane companion to the bot: logs in as the user's own account
 /// (QR or code+2FA via `opencrabs userbot-login`), receives updates in
-/// chats the bot may not be a member of, and forwards `allowed_chats`
-/// through the SAME bot handler — replies still exit as the bot, so the
-/// user session never speaks on its own unless a chat is explicitly
-/// listed in `outbound_allowlist` (empty = read-only, by design).
+/// chats the bot may not be a member of, and forwards chats granted
+/// `read` through the SAME bot handler — replies still exit as the bot,
+/// so the user session never speaks on its own unless a chat is
+/// explicitly granted `send` in `chat_permissions` (empty = dry and
+/// read-only, by design).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TelegramUserbotConfig {
     #[serde(default)]
@@ -386,15 +387,43 @@ pub struct TelegramUserbotConfig {
     pub phone: Option<String>,
     /// grammers SQLite session path. Default: <opencrabs home>/telegram_userbot.session
     pub session_path: Option<String>,
-    /// Chat IDs whose inbound messages forward to the agent. Empty = dry
-    /// (session connects and receives, but nothing is forwarded).
+    /// Per-chat permissions — one map, one source of truth. Keys are chat
+    /// refs exactly as they appear in tool calls (numeric id strings like
+    /// "-1001234567890", or "@username"). `read` gates ingestion by the
+    /// watch loop (empty map = dry: connect and receive, forward nothing);
+    /// `send` is the irreversible-action gate for acting as the user.
     #[serde(default)]
-    pub allowed_chats: Vec<String>,
-    /// Chat IDs the user session may send to AS THE USER. Empty = strictly
-    /// read-only. This is the irreversible-action gate: sending as the user
-    /// is visible to others and scored by Telegram's spam heuristics.
-    #[serde(default)]
-    pub outbound_allowlist: Vec<String>,
+    pub chat_permissions: BTreeMap<String, Vec<ChatPermission>>,
+}
+
+/// What the userbot may do in a chat. A chat absent from
+/// `chat_permissions` is invisible; present without `send` it is
+/// ingest-only. There is deliberately no `draft` tier — compose-but-not-
+/// send was ruled a non-goal by the owner (2026-08-21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatPermission {
+    /// Ingest inbound messages from this chat into the agent.
+    Read,
+    /// Act as the user in this chat (send/edit/react — visible to others,
+    /// scored by Telegram's spam heuristics).
+    Send,
+}
+
+impl TelegramUserbotConfig {
+    /// May the watch loop ingest messages from this chat id?
+    pub fn may_read(&self, chat_id: i64) -> bool {
+        self.chat_permissions
+            .get(&chat_id.to_string())
+            .is_some_and(|perms| perms.contains(&ChatPermission::Read))
+    }
+
+    /// May the session act as the user toward this chat ref?
+    pub fn may_send(&self, target: &str) -> bool {
+        self.chat_permissions
+            .get(target.trim())
+            .is_some_and(|perms| perms.contains(&ChatPermission::Send))
+    }
 }
 
 /// Telegram channel configuration

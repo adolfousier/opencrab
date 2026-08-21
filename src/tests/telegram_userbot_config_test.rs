@@ -1,8 +1,8 @@
 //! Telegram userbot config tests ([channels.telegram.userbot]).
 //!
 //! The userbot is a read-plane companion to the bot: grammers MTProto user
-//! session, secrets in keys.toml, dry by default (empty `allowed_chats`),
-//! strictly read-only by default (empty `outbound_allowlist`). These tests
+//! session, secrets in keys.toml, dry by default (empty `chat_permissions`),
+//! strictly read-only by default (no `send` grants in `chat_permissions`). These tests
 //! pin the two invariants a mis-parse would silently break:
 //!
 //! 1. A config WITHOUT the table parses to the safe default (disabled, dry,
@@ -29,9 +29,11 @@ fn absent_userbot_table_is_disabled_dry_and_read_only() {
     let cfg = channels_from_toml("[telegram]\nenabled = true\ntoken = \"x\"\n");
     let ub = &cfg.telegram.userbot;
     assert!(!ub.enabled, "userbot must default to disabled");
-    assert!(ub.allowed_chats.is_empty(), "no forwarding by default");
+    assert!(ub.chat_permissions.is_empty(), "no forwarding by default");
     assert!(
-        ub.outbound_allowlist.is_empty(),
+        ub.chat_permissions
+            .values()
+            .all(|p| !p.contains(&crate::config::types::ChatPermission::Send)),
         "sending as the user must never be enabled by default"
     );
     assert!(ub.api_hash.is_none() && ub.api_id.is_none() && ub.phone.is_none());
@@ -48,16 +50,20 @@ enabled = true
 enabled = true
 api_id = 25625345
 phone = "+254700000000"
-allowed_chats = ["-1001234567890", "777"]
-outbound_allowlist = []
+
+[telegram.userbot.chat_permissions]
+"-1001234567890" = ["read"]
+"777" = ["read", "send"]
 "#,
     );
     let ub = &cfg.telegram.userbot;
     assert!(ub.enabled);
     assert_eq!(ub.api_id, Some(25625345));
     assert_eq!(ub.phone.as_deref(), Some("+254700000000"));
-    assert_eq!(ub.allowed_chats, vec!["-1001234567890", "777"]);
-    assert!(ub.outbound_allowlist.is_empty());
+    assert!(ub.may_read(-1001234567890));
+    assert!(ub.may_read(777));
+    assert!(ub.may_send("777"));
+    assert!(!ub.may_send("-1001234567890"));
 }
 
 #[test]

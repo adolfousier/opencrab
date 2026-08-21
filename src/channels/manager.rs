@@ -262,7 +262,7 @@ impl ChannelManager {
                     Ok(handle) => {
                         tracing::info!(
                             "ChannelManager: spawning Telegram userbot (read plane, \
-                             forwards allowed_chats as inbound)"
+                             forwards `read`-granted chats as inbound)"
                         );
                         handles.insert("telegram-userbot".to_string(), handle);
                     }

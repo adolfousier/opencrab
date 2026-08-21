@@ -1,22 +1,23 @@
-//! The 8 tool commands — plain serde data, no behavior.
+//! The tool commands — plain serde data, no behavior.
 //!
 //! Mirrors the MCP package's tool surface (moneyacademyke parity target)
 //! grounded against vendored grammers 0.10 signatures
 //! (`~/.opencrabs/research/gramers-0.10-signatures.txt`):
 //!
 //! | Tool | gramers surface |
-//! |---|---|
+//! |---|---|---|
 //! | `read_chat` | dialogs iter + messages by filter |
 //! | `search_chat` | messages iter + text filter |
 //! | `search_global` | `resolve_username` + chat search |
 //! | `send_message` | `send_message` (peer ref) |
 //! | `send_file` | media upload path |
 //! | `edit_message` | `edit_message` |
+//! | `react` | `send_reactions` (emoticon string) |
 //! | `discover` | `iter_dialogs`, folders, contacts |
 //! | `raw` | typed TL invoke |
 //!
 //! `class` is the governance data: reads are always allowed (the session
-//! exists to read), outbound requires the target in `outbound_allowlist`,
+//! exists to read), outbound requires `send` for the target in `chat_permissions`,
 //! raw needs an explicit confirm on the invocation itself.
 //!
 //! Autonomy classes: read = reversible, outbound = irreversible
@@ -36,6 +37,8 @@ pub(crate) enum ToolCommand {
     SendFile(SendFile),
     SendToPhone(SendToPhone),
     EditMessage(EditMessage),
+    React(React),
+    Download(Download),
     Discover(Discover),
     Raw(Raw),
 }
@@ -46,10 +49,12 @@ impl ToolCommand {
         match self {
             ToolCommand::ReadChat(_) | ToolCommand::SearchChat(_) => ToolClass::Read,
             ToolCommand::SearchGlobal(_) | ToolCommand::Discover(_) => ToolClass::Read,
+            ToolCommand::Download(_) => ToolClass::Read,
             ToolCommand::SendMessage(s) => ToolClass::Outbound(&s.chat),
             ToolCommand::SendFile(s) => ToolClass::Outbound(&s.chat),
             ToolCommand::SendToPhone(s) => ToolClass::Outbound(&s.phone),
             ToolCommand::EditMessage(e) => ToolClass::Outbound(&e.chat),
+            ToolCommand::React(r) => ToolClass::Outbound(&r.chat),
             ToolCommand::Raw(_) => ToolClass::Dangerous,
         }
     }
@@ -66,6 +71,8 @@ impl ToolCommand {
             ToolCommand::SendFile(_) => "send_file",
             ToolCommand::SendToPhone(_) => "send_to_phone",
             ToolCommand::EditMessage(_) => "edit_message",
+            ToolCommand::React(_) => "react",
+            ToolCommand::Download(_) => "download",
             ToolCommand::Discover(_) => "discover",
             ToolCommand::Raw(_) => "raw",
         }
@@ -76,7 +83,7 @@ impl ToolCommand {
 pub(crate) enum ToolClass<'a> {
     /// Always allowed while a session exists.
     Read,
-    /// Allowed only when `target` is in `outbound_allowlist`.
+    /// Allowed only when the target carries `send` in `chat_permissions`.
     Outbound(&'a str),
     /// Allowed only with explicit per-invocation confirmation.
     Dangerous,
@@ -120,6 +127,16 @@ pub(crate) struct SendMessage {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<i64>,
+    /// Unix seconds when Telegram should send this message. Must be
+    /// in the future and within Telegram's ~366-day scheduling window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_unix: Option<i64>,
+    /// After sending, poll up to this many seconds (capped at 120)
+    /// for the first incoming reply — sender ≠ me, id > sent id.
+    /// Timeout is not an error: the envelope reports `reply: null`
+    /// plus `waited_secs`. Process-local polling; no daemon state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_reply_secs: Option<u64>,
 }
 
 /// Send a file as the user. Outbound: visible, spam-scored.
@@ -147,6 +164,31 @@ pub(crate) struct EditMessage {
     pub chat: String,
     pub message_id: i64,
     pub new_text: String,
+}
+
+/// React to a message as the user (emoticon string, e.g. "👍").
+/// Outbound: a reaction is a public write, same class as a send.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct React {
+    pub chat: String,
+    pub message_id: i64,
+    /// Emoticon literal; empty string removes the reaction
+    /// (`InputReactions::remove()` semantics via empty payload).
+    pub emoji: String,
+}
+
+/// Download media attached to one message. Read-class on the Telegram
+/// side: a fetch — the only write is the local file, and explicit paths
+/// are validated (absolute, under $HOME, no `..`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Download {
+    /// Chat containing the message (id, @username, or "me").
+    pub chat: String,
+    pub message_id: i64,
+    /// Explicit save path — must be absolute, under $HOME, without `..`
+    /// components. Default: ~/.opencrabs/userbot_media/<chat>/msg-<id>.bin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// Discover chats/users: dialogs, folders, contacts by phone.
