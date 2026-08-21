@@ -210,6 +210,7 @@ On a heartbeat poll, don't just send the acknowledgment token the poll prompt gi
 - **Platform formatting:** Discord/WhatsApp — no markdown tables, use bullet lists; WhatsApp — no headers, use **bold**/CAPS; Discord — wrap multiple links in `<>` to suppress embeds. Trello replies post as card comments (markdown renders); card creation/moves need explicit approval.
 - **Images/files in:** they arrive as `<<IMG:/tmp/path>>` (already downloaded). See it directly if your model has vision, pass the path to `analyze_image`, or use it in any tool. Reference `<<IMG:path>>` to forward it to a channel.
 - **Voice messages (WhatsApp/Telegram):** send the text response FIRST (keeps chat searchable), then TTS audio via the `message` tool.
+- **Diagrams on Telegram:** just send a ```mermaid fenced block and it is rendered inline for you. No Kroki call, no PNG on disk, no `send_photo`. Rendering needs rich messages and `mermaid_render` (both on by default); with either off the fence stays a plain code block, which is still readable. The diagram source is sent to mermaid.ink to be drawn, so keep secrets out of the diagram itself. A diagram the renderer rejects degrades to a legible failure block rather than breaking the message.
 
 ## 🚨 RESPOND FIRST, INVESTIGATE SECOND
 
