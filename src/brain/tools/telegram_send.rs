@@ -215,6 +215,27 @@ pub(crate) async fn resolve_chat_target(
 /// empty `channel_messages` lookup, and because rich/cron messages arrive with
 /// no readable text in the reply, the agent can only honestly say it cannot see
 /// it. `sent` is `(message_id, content)` pairs (one per chunk for plain sends).
+/// Refuse a destination a scheduled job was never given.
+///
+/// A cron turn has no channel origin, so the proactive send path takes its
+/// destination from the tool input — and a job's turn can pick that input up
+/// from anywhere it reads, including a recalled memory. On 2026-08-21 a memory
+/// note from two weeks earlier carried a chat id and thread id under the
+/// heading "CONTINUE THIS TASK", and a job posted its report into that group:
+/// one it was never configured for, whose members had asked for nothing.
+///
+/// A chat id found in memory or in earlier context is not permission to post
+/// there. Outside a cron turn this is transparent.
+#[allow(clippy::result_large_err)]
+fn guard_cron_target(chat_id: i64) -> std::result::Result<i64, ToolResult> {
+    if crate::cron::send_scope::may_send_to(chat_id) {
+        return Ok(chat_id);
+    }
+    let reason = crate::cron::send_scope::refusal(chat_id);
+    tracing::warn!("telegram_send: {reason}");
+    Err(ToolResult::error(reason))
+}
+
 #[allow(clippy::result_large_err)]
 async fn chat_or_err(
     input: &Value,
@@ -222,16 +243,19 @@ async fn chat_or_err(
     session_id: Uuid,
 ) -> std::result::Result<i64, ToolResult> {
     if let Some(id) = input.get("chat_id").and_then(|v| v.as_i64()) {
-        return Ok(id);
+        return guard_cron_target(id);
     }
     // Session origin chat — where this interaction started, same map
-    // follow_up_question uses (#450). Falls through to owner_chat_id for
-    // cold/cron sessions that never bound a chat.
+    // follow_up_question uses (#450).
     if let Some(id) = state.session_chat(session_id).await {
-        return Ok(id);
+        return guard_cron_target(id);
     }
+    // The owner's chat, for a session that never bound one. A cron job is
+    // exactly such a session, so this used to hand every targetless job a
+    // destination it was never given — the owner's DM. Guarded like the rest:
+    // with no deliver_to the job sends nowhere and reports in its own session.
     match state.owner_chat_id().await {
-        Some(id) => Ok(id),
+        Some(id) => guard_cron_target(id),
         None => Err(ToolResult::error(
             "No owner chat ID known yet and no 'chat_id' parameter provided. \
              The owner needs to send at least one message to the bot first, \

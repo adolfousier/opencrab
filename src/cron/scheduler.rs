@@ -764,9 +764,26 @@ async fn execute_job(
         }
     }
 
+    // The only chat this turn may send to, taken from the job's own
+    // configuration. A job with no `deliver_to` may send to none: its output
+    // lives in its session and the scheduler is the only thing that speaks.
+    // Scoped across the whole turn so it holds inside every tool call, and
+    // task-local so it never reaches a sibling job on the scheduler.
+    let permitted_chat = job
+        .deliver_to
+        .as_deref()
+        .and_then(|targets| {
+            targets
+                .split(',')
+                .map(str::trim)
+                .find_map(|t| t.strip_prefix("telegram:"))
+        })
+        .and_then(|id| id.trim().parse::<i64>().ok());
+
     // Execute with auto-approved tools (no interactive user)
-    let result = agent
-        .send_message_with_tools_and_callback(
+    let result = crate::cron::send_scope::with_send_target(
+        permitted_chat,
+        agent.send_message_with_tools_and_callback(
             session_id,
             job.prompt.clone(),
             effective_model,
@@ -779,8 +796,9 @@ async fn execute_job(
             None, // no follow_up_question surface for cron
             "cron",
             None,
-        )
-        .await;
+        ),
+    )
+    .await;
 
     match result {
         Ok(response) => {
