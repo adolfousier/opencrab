@@ -373,6 +373,7 @@ fn test_task_complexity_stars() {
         status: TaskStatus::Pending,
         notes: None,
         retry_count: 0,
+        verification: None,
     };
     assert_eq!(task1.complexity_stars(), "★☆☆☆☆");
 
@@ -578,17 +579,6 @@ fn verifiable_accepts_a_backticked_command() {
 }
 
 #[test]
-fn receipt_accepts_recheckable_evidence_only() {
-    assert!(has_receipt("committed as fbd93fd5"));
-    assert!(has_receipt("75 passed, 0 failed"));
-    assert!(has_receipt("clippy exit 0"));
-    assert!(has_receipt("wrote src/tui/plan.rs"));
-    // A claim is not a receipt.
-    assert!(!has_receipt("Done"));
-    assert!(!has_receipt("finished the task as requested"));
-}
-
-#[test]
 fn glyph_flags_a_task_with_no_criteria() {
     let task = create_test_task(1, "no criteria");
     assert_eq!(quality_glyph(&task), Some("⚠️"));
@@ -599,15 +589,6 @@ fn glyph_flags_criteria_nobody_can_run() {
     let mut task = create_test_task(1, "soft criteria");
     task.acceptance_criteria = vec!["the code is clean and well factored".to_string()];
     assert_eq!(quality_glyph(&task), Some("🔓"));
-}
-
-#[test]
-fn glyph_flags_a_completion_with_no_receipt() {
-    let mut task = create_test_task(1, "claimed done");
-    task.acceptance_criteria = vec!["`cargo test` passes".to_string()];
-    task.status = TaskStatus::Completed;
-    task.notes = Some("all good".to_string());
-    assert_eq!(quality_glyph(&task), Some("❔"));
 }
 
 #[test]
@@ -653,4 +634,40 @@ fn glyph_suffix_is_a_space_plus_glyph_or_nothing() {
     let mut good = create_test_task(2, "good");
     good.acceptance_criteria = vec!["`cargo test` passes".to_string()];
     assert_eq!(quality_glyph_suffix(&good), "");
+}
+
+#[test]
+fn exempt_type_suppresses_criteria_warning() {
+    // Documentation tasks have no criteria warning (#1133)
+    let doc_task = PlanTask::new(
+        1,
+        "write docs".to_string(),
+        "Write API docs".to_string(),
+        TaskType::Documentation,
+    );
+    assert_eq!(quality_glyph(&doc_task), None);
+
+    // Research tasks have no criteria warning
+    let research_task = PlanTask::new(
+        2,
+        "investigate".to_string(),
+        "Research options".to_string(),
+        TaskType::Research,
+    );
+    assert_eq!(quality_glyph(&research_task), None);
+
+    // Other tasks have no criteria warning
+    let other_task = PlanTask::new(
+        3,
+        "misc".to_string(),
+        "Miscellaneous".to_string(),
+        TaskType::Other("other".to_string()),
+    );
+    assert_eq!(quality_glyph(&other_task), None);
+}
+
+#[test]
+fn verification_verdict_badge_rendering() {
+    assert_eq!(VerificationVerdict::Verified.badge(), "🛡");
+    assert_eq!(VerificationVerdict::Uncertain.badge(), "🟡");
 }
