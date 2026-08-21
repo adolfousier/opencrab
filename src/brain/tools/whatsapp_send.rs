@@ -144,9 +144,9 @@ async fn persist_outgoing(jid: &Jid, content: &str) {
 }
 
 /// Read a local file, expanding tilde. Returns (bytes, detected mime, filename).
+#[allow(clippy::result_large_err)]
+// pre-existing signature; clippy 1.98 tightened this lint after this code shipped
 async fn read_local_media(
-    #[allow(clippy::result_large_err)]
-    // pre-existing signature; clippy 1.98 tightened this lint after this code shipped
     path: &str,
     default_mime: &str,
 ) -> std::result::Result<(Vec<u8>, String, String), ToolResult> {
