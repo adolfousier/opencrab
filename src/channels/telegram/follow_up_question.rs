@@ -66,6 +66,15 @@ pub(crate) fn make_question_callback(
 
             let question_id = uuid::Uuid::new_v4().to_string();
 
+            // #1143: if any option label is over-long for one-per-row
+            // inline buttons, fold the full texts into the question body
+            // as a numbered list and render compact numeric buttons.
+            // The ORIGINAL strings are what gets registered below, so a
+            // tap still resolves to the real option text — the model
+            // never sees a bare number.
+            let full_options = info.options.clone();
+            let info = info.compact_options(40);
+
             // Single-column layout. Each option gets its own row so
             // labels stay readable on narrow screens. The absolute
             // option index is encoded in the callback data so the
@@ -88,12 +97,7 @@ pub(crate) fn make_question_callback(
 
             let (tx, rx) = oneshot::channel::<String>();
             state
-                .register_pending_question(
-                    question_id.clone(),
-                    info.session_id,
-                    tx,
-                    info.options.clone(),
-                )
+                .register_pending_question(question_id.clone(), info.session_id, tx, full_options)
                 .await;
             tracing::info!(
                 "Telegram follow_up_question: registered id={} options={}",

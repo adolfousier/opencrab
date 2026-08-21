@@ -150,6 +150,34 @@ impl Tool for FollowUpQuestionTool {
     }
 }
 
+impl FollowUpQuestionInfo {
+    /// Compact over-long option labels for channels with cramped button
+    /// rendering (#1143).
+    ///
+    /// If ANY option exceeds `threshold` chars, the full option texts are
+    /// folded into the question body as a numbered list and the option
+    /// labels are replaced with `"1"`..`"N"`. Short label sets pass through
+    /// unchanged (identity).
+    ///
+    /// Answer resolution is index-based (`q:{id}:{idx}` callback data →
+    /// `options[idx]` in the channel's pending-question map), so a caller
+    /// that clones the ORIGINAL options before calling this and registers
+    /// the clone still delivers the real text to the model on tap — never
+    /// a bare number. Channel renderers do exactly that.
+    pub fn compact_options(mut self, threshold: usize) -> Self {
+        if self.options.iter().any(|o| o.chars().count() > threshold) {
+            let mut question = self.question;
+            question.push_str("\n\n");
+            for (i, opt) in self.options.iter().enumerate() {
+                question.push_str(&format!("\n{}. {}", i + 1, opt));
+            }
+            self.question = question;
+            self.options = (1..=self.options.len()).map(|i| i.to_string()).collect();
+        }
+        self
+    }
+}
+
 /// Render a question + numbered options as plain text for surfaces with no
 /// interactive callback (cron, webhook, A2A). The agent relays this in its reply
 /// instead of the tool hard-erroring (#716). Extracted for direct testing.

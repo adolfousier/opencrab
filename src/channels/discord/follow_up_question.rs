@@ -50,6 +50,14 @@ pub(crate) fn make_question_callback(
 
             let question_id = uuid::Uuid::new_v4().to_string();
 
+            // #1143: fold over-long labels into the question body as a
+            // numbered list and render compact numeric buttons (aligned
+            // with the existing 80-char truncation point). The ORIGINAL
+            // strings are what gets registered below, so a click still
+            // resolves to the real option text.
+            let full_options = info.options.clone();
+            let info = info.compact_options(80);
+
             // Discord ActionRows allow up to 5 buttons. follow_up_
             // question caps at 8 options so we split into at most 2
             // rows. The absolute option index is encoded in the
@@ -79,7 +87,7 @@ pub(crate) fn make_question_callback(
 
             let (tx, rx) = oneshot::channel::<String>();
             state
-                .register_pending_question(question_id.clone(), tx, info.options.clone())
+                .register_pending_question(question_id.clone(), tx, full_options)
                 .await;
             tracing::info!(
                 "Discord follow_up_question: registered id={} options={}",
