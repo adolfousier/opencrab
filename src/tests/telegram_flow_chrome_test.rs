@@ -326,6 +326,104 @@ async fn plan_state_editing_copy_locked_to_decision_7() {
     let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
 }
 
+// ── plan prose: scaffold filtering (#580, #1145) ──
+
+#[test]
+fn empty_scaffold_lines_are_recognized() {
+    use crate::channels::telegram::flow_chrome::is_empty_scaffold_line;
+    // Filled content stays.
+    assert!(!is_empty_scaffold_line("- **Problem:** fix the flake"));
+    assert!(!is_empty_scaffold_line("1. Wire the handler"));
+    assert!(
+        !is_empty_scaffold_line("   - Done when: cargo test passes"),
+        "a filled Done when criterion is real content"
+    );
+    // Unfilled scaffold placeholders hide.
+    assert!(is_empty_scaffold_line("- **Problem:** "));
+    assert!(is_empty_scaffold_line("- **Target state:**"));
+    assert!(is_empty_scaffold_line("1. "));
+    assert!(
+        is_empty_scaffold_line("   - Done when: "),
+        "the empty Done when bullet is scaffold (#1145)"
+    );
+}
+
+#[tokio::test]
+async fn unfilled_design_scaffold_renders_no_prose() {
+    // #1145 regression: the pristine scaffold must not leak a hollow
+    // "Implementation steps" section onto the plan card.
+    use crate::channels::telegram::flow_chrome::load_plan_prose;
+    use crate::config::profile::{home_for_profile, with_profile_home_async};
+    use crate::utils::plan_files::{create_design_md, save_plan};
+    use uuid::Uuid;
+
+    let profile = format!("flow-chrome-test-{}", Uuid::new_v4());
+    with_profile_home_async(Some(&profile), async {
+        let sid = Uuid::new_v4();
+        let plan = crate::tui::plan::PlanDocument::new(sid, "T".to_string());
+        save_plan(&plan).await.unwrap();
+        create_design_md(sid, "T").await.unwrap();
+        assert_eq!(
+            load_plan_prose(sid).await,
+            None,
+            "pristine scaffold must render as no prose sections"
+        );
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
+}
+
+#[tokio::test]
+async fn partially_filled_design_scaffold_keeps_only_real_content() {
+    // Design track between init and approve: the model works through the
+    // template, so only filled lines may reach the card (#580, #1145).
+    use crate::channels::telegram::flow_chrome::load_plan_prose;
+    use crate::config::profile::{home_for_profile, with_profile_home_async};
+    use crate::utils::plan_files::{create_design_md, plan_md_path, save_plan};
+    use uuid::Uuid;
+
+    let profile = format!("flow-chrome-test-{}", Uuid::new_v4());
+    with_profile_home_async(Some(&profile), async {
+        let sid = Uuid::new_v4();
+        let plan = crate::tui::plan::PlanDocument::new(sid, "T".to_string());
+        save_plan(&plan).await.unwrap();
+        create_design_md(sid, "T").await.unwrap();
+        std::fs::write(
+            plan_md_path(sid).await,
+            "# T\n\n\
+             ## Context\n\
+             - **Problem:** the card lies.\n\
+             - **Target state:** \n\
+             - **Intent:** honest cards.\n\n\
+             ## Implementation steps\n\
+             1. Patch the filter\n\
+             2. \n   - Done when: cargo test passes\n",
+        )
+        .unwrap();
+        let secs = load_plan_prose(sid).await.expect("filled sections survive");
+        let ctx = secs
+            .iter()
+            .find(|s| s.heading.as_deref() == Some("Context"))
+            .unwrap();
+        assert!(
+            !ctx.body.contains("Target state"),
+            "empty label hides: {ctx:?}"
+        );
+        assert!(ctx.body.contains("the card lies"));
+        let steps = secs
+            .iter()
+            .find(|s| s.heading.as_deref() == Some("Implementation steps"))
+            .unwrap();
+        assert!(steps.body.contains("Patch the filter"));
+        assert!(
+            steps.body.contains("Done when: cargo test passes"),
+            "filled criterion stays: {steps:?}"
+        );
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
+}
+
 // ── header-only renders (empty flow_entries): plain merged footer ──
 
 #[test]

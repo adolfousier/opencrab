@@ -230,6 +230,18 @@ pub struct PlanDocument {
     /// turn) so it survives restart.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pre_init_editing: bool,
+
+    /// Durable "waiting on user Approve" flag: set on `plan init` when the
+    /// plan is created in Editing (both tracks), cleared by
+    /// [`PlanDocument::approve`]. This is the approval-queue marker the
+    /// design `.md`'s existence was silently doubling as (#1145):
+    /// `plan_mode_state_of` derives `PostInitEditing` from this flag, and
+    /// the legacy-draft normalization must not Active-ify a plan that is
+    /// genuinely waiting on approval. Neither may key on the `.md` —
+    /// checklist plans do not have one. Survives restart like
+    /// [`PlanDocument::pre_init_editing`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending_approval: bool,
 }
 
 impl PlanDocument {
@@ -246,6 +258,7 @@ impl PlanDocument {
             updated_at: Utc::now(),
             approved_at: None,
             pre_init_editing: false,
+            pending_approval: false,
         }
     }
 
@@ -437,6 +450,7 @@ impl PlanDocument {
     /// user Approve's job on the design track).
     pub fn start_execution(&mut self) {
         self.status = PlanStatus::Active;
+        self.pending_approval = false;
         self.updated_at = Utc::now();
     }
 

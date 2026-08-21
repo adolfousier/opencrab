@@ -501,9 +501,11 @@ pub(crate) async fn load_plan_prose(session_id: Uuid) -> Option<Vec<ProseSection
 }
 
 /// True for an unfilled session-plan scaffold line: a bold `**Label:**` field
-/// with nothing after it, or a bare numbered step `N.` with no text. These are
-/// the `create_design_md` template placeholders; hiding them keeps a
-/// checklist plan's empty `.md` from rendering as hollow sections (#580).
+/// with nothing after it, a bare numbered step `N.` with no text, or an empty
+/// `- Done when:` criteria bullet. These are the `create_design_md` template
+/// placeholders; hiding them keeps a **partially-filled design template**
+/// from rendering as hollow sections while the model works through it (#580,
+/// #1145). A filled `Done when: <criterion>` line is real content and stays.
 pub(crate) fn is_empty_scaffold_line(line: &str) -> bool {
     let t = line.trim();
     if t.is_empty() {
@@ -518,6 +520,10 @@ pub(crate) fn is_empty_scaffold_line(line: &str) -> bool {
         && let Some(idx) = body.find(":**")
         && body[idx + 3..].trim().is_empty()
     {
+        return true;
+    }
+    // Empty `Done when:` criteria bullet (the scaffold's per-step placeholder).
+    if body == "Done when:" {
         return true;
     }
     // Empty `N.` numbered step.

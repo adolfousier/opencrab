@@ -146,6 +146,78 @@ async fn conflicting_mode_and_tasks_are_refused() {
 }
 
 #[tokio::test]
+async fn checklist_init_creates_no_design_md() {
+    // #1145: checklist plans carry no design document — the scaffold `.md`
+    // existed only to hold the plan in Editing for approval (#573), and the
+    // card rendered its hollow `## Implementation steps` section as a phantom
+    // prose block. No file, no "Plan document" line in the message.
+    in_temp_home(async {
+        let tool = PlanTool;
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
+        let (ok, out) = run(
+            &tool,
+            &ctx,
+            json!({
+                "operation": "init",
+                "title": "Ship fix",
+                "tasks": [{ "title": "t1", "description": "d1" }]
+            }),
+        )
+        .await;
+        assert!(ok, "checklist init must succeed, got: {out}");
+        assert!(
+            !plan_md_path(ctx.session_id).await.exists(),
+            "checklist init must not create a design .md"
+        );
+        assert!(
+            !out.contains("Plan document"),
+            "checklist init must not point at a plan document, got: {out}"
+        );
+        let plan = load_plan(ctx.session_id).await.unwrap();
+        assert_eq!(plan.status, PlanStatus::Active);
+        assert_eq!(plan.tasks.len(), 1);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn checklist_init_editing_creates_no_design_md() {
+    // #1145, user-review flavor (no auto-approve): still no `.md`, and the
+    // message keeps its card-dedup guidance without a document path.
+    in_temp_home(async {
+        let tool = PlanTool;
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let (ok, out) = run(
+            &tool,
+            &ctx,
+            json!({
+                "operation": "init",
+                "title": "Ship fix",
+                "tasks": [{ "title": "t1", "description": "d1" }]
+            }),
+        )
+        .await;
+        assert!(ok, "checklist init must succeed, got: {out}");
+        assert!(
+            !plan_md_path(ctx.session_id).await.exists(),
+            "checklist init must not create a design .md"
+        );
+        assert!(
+            !out.contains("Plan document"),
+            "checklist init must not point at a plan document, got: {out}"
+        );
+        assert_eq!(
+            plan_mode_state(ctx.session_id).await,
+            PlanModeState::PostInitEditing
+        );
+        let plan = load_plan(ctx.session_id).await.unwrap();
+        assert_eq!(plan.status, PlanStatus::Editing);
+        assert_eq!(plan.tasks.len(), 1);
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn design_init_refused_under_auto_approve() {
     in_temp_home(async {
         let tool = PlanTool;

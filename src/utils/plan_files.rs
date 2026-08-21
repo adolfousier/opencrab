@@ -289,6 +289,11 @@ pub fn plan_mode_state_of(plan: Option<&PlanDocument>, md_exists: bool) -> PlanM
     match plan.status {
         PlanStatus::Active => PlanModeState::Active,
         PlanStatus::Editing if plan.pre_init_editing && !md_exists => PlanModeState::PreInitEditing,
+        // Explicit approval-queue marker (#1145): derived from the flag, not
+        // the design `.md` existing — checklist plans have no `.md`.
+        PlanStatus::Editing if plan.pending_approval => PlanModeState::PostInitEditing,
+        // Legacy Editing + `.md` (design track, or plans predating #1145):
+        // the `.md`'s existence was the implicit marker.
         PlanStatus::Editing if md_exists => PlanModeState::PostInitEditing,
         // Editing without an .md or a pre-init flag is a legacy draft (the
         // old seven-status world had no design track). load_plan normalizes
@@ -362,6 +367,7 @@ pub fn load_plan_from_path(path: &Path) -> Option<PlanDocument> {
     // trapped in Editing (there is no .md to approve).
     if plan.status == PlanStatus::Editing
         && !plan.pre_init_editing
+        && !plan.pending_approval
         && !plan.tasks.is_empty()
         && !md_path_for(path).exists()
     {

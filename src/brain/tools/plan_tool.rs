@@ -1714,16 +1714,32 @@ impl Tool for PlanTool {
                     let auto_active = !design && context.auto_approve;
                     if auto_active {
                         new_plan.approve();
+                    } else {
+                        // Durable approval-queue marker (#1145): state
+                        // derivation keys on this flag, not on the design
+                        // `.md` existing — checklist plans have no `.md`.
+                        new_plan.pending_approval = true;
                     }
 
                     let count = new_plan.tasks.len();
                     plan = Some(new_plan);
 
-                    let md_path = crate::utils::plan_files::create_design_md(plan_sid, &title)
-                        .await
-                        .map_err(ToolError::Io)?;
+                    // The design `.md` is a design-track artifact (#1145): the
+                    // checklist's deliverable is the checklist itself, and the
+                    // placeholder scaffold (#573) used to be written for
+                    // checklist plans too — the card then rendered its hollow
+                    // `## Implementation steps` section as a phantom prose block.
+                    let md_path = if design {
+                        Some(
+                            crate::utils::plan_files::create_design_md(plan_sid, &title)
+                                .await
+                                .map_err(ToolError::Io)?,
+                        )
+                    } else {
+                        None
+                    };
 
-                    if design {
+                    if let Some(md_path) = &md_path {
                         format!(
                             "📋 Created design plan: {title} (Editing)\n\n\
                              Plan document: {}\n\n\
@@ -1746,10 +1762,8 @@ impl Tool for PlanTool {
                              repeat the tasks in your reply — that duplicates the card. \
                              Confirm the plan is ready in one short line and ask the user \
                              to approve.\n\n\
-                             Plan document: {}\n\n\
                              WAIT for the user to approve the plan before calling 'start'. \
-                             Checklist operations are blocked until approval.",
-                            md_path.display()
+                             Checklist operations are blocked until approval."
                         )
                     }
                 }
