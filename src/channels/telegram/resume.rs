@@ -140,6 +140,7 @@ pub(crate) async fn resume_session(
         turn_started_at: std::time::Instant::now(),
         flow_outcome: None,
         bg_indicator: None,
+        bg_count: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -432,7 +433,9 @@ pub(crate) async fn resume_session(
     {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.flow_outcome = Some(flow_outcome);
-        s.bg_indicator = super::handler::bg_indicator_for(&agent, session_id);
+        let (bg_indicator, bg_count) = super::handler::bg_indicator_for(&agent, session_id);
+        s.bg_indicator = bg_indicator;
+        s.bg_count = bg_count;
     }
     // Recompute sections at settle so the plan Approve/Discard keyboard, which
     // attaches only at turn end (#571), materializes on the final render — the

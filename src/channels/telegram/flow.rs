@@ -133,6 +133,12 @@ pub(crate) struct StreamingState {
     /// for several, `None` when nothing is detached. Rendered as the final
     /// footer segment after the clock.
     pub(crate) bg_indicator: Option<String>,
+    /// Background-task count at settle time (#1144): `None` when no manager is
+    /// wired, `Some(n)` otherwise. Drives the settled-header override so a turn
+    /// that ends with detached work reads "Waiting for N background task(s)"
+    /// instead of "✅ Finished". Parallel to [`Self::bg_indicator`] (the footer
+    /// label) but carries the numeric count the header needs.
+    pub(crate) bg_count: Option<usize>,
     /// Intermediate texts already sent — used to dedup final response
     pub(crate) sent_intermediates: Vec<String>,
     /// Message IDs of every intermediate chunk delivered to Telegram, so a
@@ -678,7 +684,7 @@ pub(crate) fn humanize_duration(secs: u64) -> String {
 }
 
 /// Terminal state of a turn, shown in the settled flow-block header (#480).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum FlowOutcome {
     Finished,
     Failed,
@@ -694,6 +700,31 @@ impl FlowOutcome {
             FlowOutcome::TimedOut => ("⏱", "Timed out"),
         }
     }
+}
+
+/// Settled header icon+verb, overridden to a waiting state when the turn
+/// finished with background tasks still running (#1144). A settled card that
+/// ends with detached work otherwise reads "✅ Finished" up top and "N tasks
+/// running" in the footer — the exact split this fixes. The icon is a static
+/// ref; the verb is an owned [`String`] because it carries the task count, so
+/// callers pass `verb.as_str()` into [`FlowHeader::Settled`].
+pub(crate) fn settled_icon_verb(
+    bg_count: Option<usize>,
+    outcome: FlowOutcome,
+) -> (&'static str, String) {
+    if outcome == FlowOutcome::Finished
+        && let Some(n) = bg_count
+        && n > 0
+    {
+        let verb = if n == 1 {
+            "Waiting for 1 background task".to_string()
+        } else {
+            format!("Waiting for {n} background tasks")
+        };
+        return ("⏳", verb);
+    }
+    let (icon, verb) = outcome.icon_verb();
+    (icon, verb.to_string())
 }
 
 /// How the block header renders: live during a turn, or settled to a terminal
@@ -838,13 +869,13 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
     let elapsed = s.turn_started_at.elapsed().as_secs();
     match s.flow_outcome {
         Some(outcome) => {
-            let (icon, verb) = outcome.icon_verb();
+            let (icon, verb) = settled_icon_verb(s.bg_count, outcome);
             let duration = humanize_duration(elapsed);
             render_flow_html_chrome_pref(
                 &flow_lines(s),
                 &FlowHeader::Settled {
                     icon,
-                    verb,
+                    verb: verb.as_str(),
                     duration: &duration,
                 },
                 None,
@@ -873,13 +904,13 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
     let elapsed = s.turn_started_at.elapsed().as_secs();
     match s.flow_outcome {
         Some(outcome) => {
-            let (icon, verb) = outcome.icon_verb();
+            let (icon, verb) = settled_icon_verb(s.bg_count, outcome);
             let duration = humanize_duration(elapsed);
             render_flow_details_chrome_pref(
                 &flow_lines(s),
                 &FlowHeader::Settled {
                     icon,
-                    verb,
+                    verb: verb.as_str(),
                     duration: &duration,
                 },
                 None,

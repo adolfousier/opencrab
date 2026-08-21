@@ -4,8 +4,9 @@
 //! in one outer expandable; only the processing log collapses.
 
 use crate::channels::telegram::flow::{
-    FlowHeader, FlowLine, render_flow_details_chrome, render_flow_details_chrome_pref,
-    render_flow_html_chrome, render_flow_html_chrome_pref,
+    FlowHeader, FlowLine, FlowOutcome, render_flow_details_chrome,
+    render_flow_details_chrome_pref, render_flow_html_chrome, render_flow_html_chrome_pref,
+    settled_icon_verb,
 };
 use crate::channels::telegram::flow_chrome::{
     FlowSections, GoalSection, ProseSection, clock_glyph, split_plan_prose,
@@ -609,6 +610,30 @@ fn settled_footer_shows_bg_indicator_when_task_running() {
         many.contains("🔧 3 tasks running"),
         "multiple tasks show the count, rich path included: {many:?}"
     );
+}
+
+#[test]
+fn settled_header_waits_when_bg_tasks_running() {
+    // #1144: a settled turn that ends with detached work must read "Waiting
+    // for N background task(s)" in the header, not "✅ Finished", so the header
+    // and the "N tasks running" footer stop contradicting each other.
+    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::Finished);
+    assert_eq!((icon, verb.as_str()), ("⏳", "Waiting for 2 background tasks"));
+
+    let (icon, verb) = settled_icon_verb(Some(1), FlowOutcome::Finished);
+    assert_eq!((icon, verb.as_str()), ("⏳", "Waiting for 1 background task"));
+
+    // Nothing running (or no manager wired) → the plain finished header stands.
+    let (icon, verb) = settled_icon_verb(Some(0), FlowOutcome::Finished);
+    assert_eq!((icon, verb.as_str()), ("✅", "Finished"));
+    let (icon, verb) = settled_icon_verb(None, FlowOutcome::Finished);
+    assert_eq!((icon, verb.as_str()), ("✅", "Finished"));
+
+    // Non-finished outcomes are never overridden, even with work pending.
+    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::Failed);
+    assert_eq!((icon, verb.as_str()), ("❌", "Failed"));
+    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::TimedOut);
+    assert_eq!((icon, verb.as_str()), ("⏱", "Timed out"));
 }
 
 #[test]

@@ -56,13 +56,20 @@ pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
 /// when nothing is detached or no manager is wired (#722). A settled turn
 /// that ends with detached work looks identical to a complete one without
 /// this, and the typing indicator staying alive is too easy to miss.
-pub(crate) fn bg_indicator_for(agent: &AgentService, session_id: Uuid) -> Option<String> {
-    let bm = agent.background_manager()?;
+///
+/// Returns the footer label **and** the numeric count (the settled header
+/// needs the number to read "Waiting for N background task(s)" — #1144).
+/// Both come from the single `running_tasks(session_id)` read so settle does
+/// not hit the manager twice.
+pub(crate) fn bg_indicator_for(agent: &AgentService, session_id: Uuid) -> (Option<String>, Option<usize>) {
+    let Some(bm) = agent.background_manager() else {
+        return (None, None);
+    };
     let tasks = bm.running_tasks(session_id);
     match tasks.len() {
-        0 => None,
-        1 => Some(format!("{} running", tasks[0].label)),
-        n => Some(format!("{n} tasks running")),
+        0 => (None, Some(0)),
+        1 => (Some(format!("{} running", tasks[0].label)), Some(1)),
+        n => (Some(format!("{n} tasks running")), Some(n)),
     }
 }
 

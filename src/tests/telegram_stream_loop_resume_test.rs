@@ -186,6 +186,7 @@ async fn resume_shape_loop_edits_tools_in_place_and_never_reacts() {
         turn_started_at: std::time::Instant::now(),
         flow_outcome: None,
         bg_indicator: None,
+        bg_count: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
