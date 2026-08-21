@@ -456,6 +456,49 @@ impl TelegramAgent {
                             }
 
                             // Provider picker callback → show models for that provider
+                            // Page navigation on the model picker. Without this the
+                            // arrows drew but did nothing, which is the same dead-end the
+                            // picker itself was in before it paged at all.
+                            if data == "noop" {
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "page indicator").await;
+                                return ResponseResult::Ok(());
+                            }
+                            if let Some((page_num, provider_name, filter)) =
+                                crate::channels::telegram::picker_limits::parse_nav_callback(data)
+                            {
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "model page").await;
+                                let resp = crate::channels::commands::models_for_provider(&provider_name).await;
+                                if let Some(msg) = &query.message {
+                                    use teloxide::payloads::EditMessageTextSetters;
+                                    use teloxide::prelude::Requester;
+                                    use teloxide::types::InlineKeyboardMarkup;
+                                    use crate::channels::telegram::picker_limits as picker;
+                                    let page = picker::page_of(&resp.models, page_num, filter.as_deref());
+                                    let keyboard = InlineKeyboardMarkup::new(picker::page_keyboard(
+                                        &resp.provider_name,
+                                        &resp.current_model,
+                                        &page,
+                                    ));
+                                    let text = crate::channels::telegram::handler::md_to_html(
+                                        &picker::page_text(
+                                            &resp.provider_name,
+                                            &resp.current_model,
+                                            resp.models.len(),
+                                            &page,
+                                        ),
+                                    );
+                                    if let Err(e) = bot
+                                        .edit_message_text(msg.chat().id, msg.id(), &text)
+                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                        .reply_markup(keyboard)
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: model page update failed: {e}");
+                                    }
+                                }
+                                return ResponseResult::Ok(());
+                            }
+
                             if let Some(provider_name) = data.strip_prefix("provider:") {
                                 let resp = crate::channels::commands::models_for_provider(provider_name).await;
 
@@ -560,41 +603,30 @@ impl TelegramAgent {
                                     use teloxide::payloads::EditMessageTextSetters;
                                     use teloxide::prelude::Requester;
                                     use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
-                                    let rows: Vec<Vec<InlineKeyboardButton>> = resp
-                                        .models
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, m)| {
-                                            let display = if *m == resp.current_model {
-                                                format!("✓ {}", m)
-                                            } else {
-                                                m.clone()
-                                            };
-                                            // Pipe separator because BOTH provider_name and
-                                            // model can contain `:` — custom providers
-                                            // are `custom:<name>` (e.g. `custom:dialagram`)
-                                            // and OpenRouter models carry `:free`/`:thinking`
-                                            // suffixes. Splitting on `:` here put the
-                                            // provider's tail into the model name and the
-                                            // session got persisted with broken metadata
-                                            // (`provider=custom`, `model=dialagram:qwen-3.7-…`
-                                            // — seen 2026-05-18T23:39 sync_provider trace).
-                                            // Generator + parser MUST stay in lock-step.
-                                            // Telegram caps callback_data at 64 BYTES. Long model
-                                            // names (e.g. modelscope's
-                                            // "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" → 65 B)
-                                            // overflow, and Telegram then rejects the ENTIRE
-                                            // keyboard (BUTTON_DATA_INVALID) — the picker showed
-                                            // nothing and spun on "loading" forever. This helper
-                                            // falls back to an index form the parser resolves.
-                                            let data = crate::channels::commands::model_button_callback_data(
-                                                &resp.provider_name, m, i,
-                                            );
-                                            vec![InlineKeyboardButton::callback(display, data)]
-                                        })
-                                        .collect();
+                                    // OpenRouter carries several hundred models. Rendering
+                                    // one button each, with the same list enumerated in the
+                                    // text above it, pushed the message past Telegram's 4096
+                                    // characters: editMessageText answered MESSAGE_TOO_LONG,
+                                    // the failure was a log line, and the picker did nothing
+                                    // at all from the user's side. Page it instead of capping,
+                                    // so the rest of the catalogue stays reachable.
+                                    use crate::channels::telegram::picker_limits as picker;
+                                    let page = picker::page_of(&resp.models, 0, None);
+                                    let rows: Vec<Vec<InlineKeyboardButton>> =
+                                        picker::page_keyboard(
+                                            &resp.provider_name,
+                                            &resp.current_model,
+                                            &page,
+                                        );
                                     let keyboard = InlineKeyboardMarkup::new(rows);
-                                    let text = crate::channels::telegram::handler::md_to_html(&resp.text);
+                                    let text = crate::channels::telegram::handler::md_to_html(
+                                        &picker::page_text(
+                                            &resp.provider_name,
+                                            &resp.current_model,
+                                            resp.models.len(),
+                                            &page,
+                                        ),
+                                    );
                                     if let Err(e) = bot
                                         .edit_message_text(msg.chat().id, msg.id(), &text)
                                         .parse_mode(teloxide::types::ParseMode::Html)
@@ -602,6 +634,20 @@ impl TelegramAgent {
                                         .await
                                     {
                                         tracing::warn!("Telegram: callback UI update failed: {e}");
+                                        // Say something. This failing to a log line is why the
+                                        // picker looked like it was still loading forever.
+                                        let fallback = format!(
+                                            "Could not show the model list for {}: {e}\n\nSet one                                              directly with /models <name>.",
+                                            resp.provider_name
+                                        );
+                                        if let Err(e2) = bot
+                                            .edit_message_text(msg.chat().id, msg.id(), fallback)
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                "Telegram: could not report the picker failure either: {e2}"
+                                            );
+                                        }
                                     }
                                 }
                                 return ResponseResult::Ok(());
