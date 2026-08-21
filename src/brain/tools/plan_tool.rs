@@ -159,6 +159,86 @@ fn parse_task_type(s: &str) -> TaskType {
     }
 }
 
+/// Whether a task type requires checkable (runnable) acceptance criteria (#1133).
+/// Returns `true` for types that can name a runnable command (test, build,
+/// refactor, edit, delete, create, configuration); `false` for exempt types
+/// (documentation, research, other) that cannot reasonably name `cargo test`.
+fn requires_checkable_criteria(task_type: &TaskType) -> bool {
+    matches!(
+        task_type,
+        TaskType::Test
+            | TaskType::Build
+            | TaskType::Refactor
+            | TaskType::Edit
+            | TaskType::Delete
+            | TaskType::Create
+            | TaskType::Configuration
+    )
+}
+
+/// Validate a task's acceptance criteria at creation time (#1133).
+/// Returns `Ok(())` if the task may proceed, or an error message if refused.
+/// Under `downgrade` policy, logs a belief and returns Ok. Under `off`, does nothing.
+fn validate_task_criteria_at_creation(
+    task_order: usize,
+    task_title: &str,
+    task_type: &TaskType,
+    acceptance_criteria: &[String],
+    policy: CriteriaPolicy,
+) -> Result<()> {
+    if policy == CriteriaPolicy::Off || !requires_checkable_criteria(task_type) {
+        return Ok(());
+    }
+
+    // Check if criteria are empty
+    if acceptance_criteria.is_empty() {
+        if policy == CriteriaPolicy::Strict {
+            return Err(ToolError::InvalidInput(format!(
+                "Task #{task_order} '{task_title}' (type={task_type}) has no acceptance criteria. \
+                 Under `criteria_policy = \"strict\"`, required task types must have checkable \
+                 criteria naming a runnable command and expected outcome. \
+                 Rewrite the criteria or change task_type to an exempt type (documentation, research, other)."
+            )));
+        }
+        // downgrade: log and proceed
+        tracing::info!(
+            "Task #{task_order} '{task_title}' (type={task_type}) has no acceptance criteria — \
+             logged as belief under downgrade policy"
+        );
+        return Ok(());
+    }
+
+    // Check if any criterion is verifiable (runnable)
+    let has_verifiable = acceptance_criteria
+        .iter()
+        .any(|c| crate::tui::plan::is_verifiable(c));
+
+    if !has_verifiable {
+        if policy == CriteriaPolicy::Strict {
+            let prose_examples: Vec<&str> = acceptance_criteria
+                .iter()
+                .take(2)
+                .map(|s| s.as_str())
+                .collect();
+            return Err(ToolError::InvalidInput(format!(
+                "Task #{task_order} '{task_title}' (type={task_type}) has prose-only criteria: \
+                 {:?}. Under `criteria_policy = \"strict\"`, required task types must have at \
+                 least one checkable criterion naming a runnable command (e.g., 'cargo test --lib \
+                 <filter> reports 0 failed'). Rewrite the criteria or change task_type to an \
+                 exempt type (documentation, research, other).",
+                prose_examples
+            )));
+        }
+        // downgrade: log and proceed
+        tracing::info!(
+            "Task #{task_order} '{task_title}' (type={task_type}) has prose-only criteria — \
+             logged as belief under downgrade policy"
+        );
+    }
+
+    Ok(())
+}
+
 /// Append a task to `plan`, resolving 1-based dependency order numbers to the
 /// referenced tasks' UUIDs. Returns the new task's order. Shared by `add_task`
 /// and `init`'s inline tasks.
@@ -311,12 +391,17 @@ fn render_task_list(plan: &PlanDocument) -> String {
     plan.tasks
         .iter()
         .map(|t| {
+            let verification_badge = t
+                .verification
+                .map(|v| format!(" {}", v.badge()))
+                .unwrap_or_default();
             format!(
-                "  {}. {} [{}]{}",
+                "  {}. {} [{}]{}{}",
                 t.order,
                 t.title,
                 t.task_type,
-                crate::tui::plan::quality_glyph_suffix(t)
+                crate::tui::plan::quality_glyph_suffix(t),
+                verification_badge
             )
         })
         .collect::<Vec<_>>()
@@ -484,7 +569,7 @@ pub(crate) struct RalphVerification {
 }
 
 /// Policy for completion claims made against unverified acceptance criteria (#870).
-#[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum CriteriaPolicy {
     /// Accept the completion but log the belief as Uncertain, not Verified.
@@ -494,6 +579,65 @@ pub(crate) enum CriteriaPolicy {
     Strict,
     /// Pre-#870 behaviour: criteria stay advisory, no enforcement.
     Off,
+}
+
+impl std::fmt::Display for CriteriaPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CriteriaPolicy::Downgrade => write!(f, "downgrade"),
+            CriteriaPolicy::Strict => write!(f, "strict"),
+            CriteriaPolicy::Off => write!(f, "off"),
+        }
+    }
+}
+
+/// Track the last observed criteria_policy per working directory for audit trail (#1135).
+///
+/// Static storage so policy flips are detected across multiple `complete` calls
+/// in the same session. Keyed by working directory path since different projects
+/// can have different policies.
+static LAST_OBSERVED_POLICY: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, CriteriaPolicy>>,
+> = std::sync::OnceLock::new();
+
+/// Log a criteria_policy flip as a belief (#1135).
+///
+/// Compares the current policy to the last observed value for this working
+/// directory. If different, logs a belief recording the transition (old → new)
+/// with timestamp. Updates the last observed value regardless.
+///
+/// Returns the current policy for convenience.
+pub(crate) fn audit_criteria_policy_flip(
+    working_dir: &std::path::Path,
+    current: CriteriaPolicy,
+) -> CriteriaPolicy {
+    let lock = LAST_OBSERVED_POLICY
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let Ok(mut map) = lock.lock() else {
+        tracing::warn!("Failed to acquire criteriaPolicy audit lock");
+        return current;
+    };
+
+    let last = map.get(working_dir).copied();
+    map.insert(working_dir.to_path_buf(), current);
+
+    if let Some(prev) = last
+        && prev != current
+    {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        super::epistemic::add_belief(
+            &format!("ralph_loop:criteria_policy:{}", working_dir.display()),
+            &format!("{prev} → {current} (flipped at {timestamp})"),
+            super::epistemic::Confidence::Verified,
+            "plan_tool:criteria_policy_audit",
+        );
+        tracing::info!(
+            "criteria_policy flipped: {prev} → {current} at {timestamp} (working_dir: {})",
+            working_dir.display()
+        );
+    }
+
+    current
 }
 
 #[derive(Debug, Deserialize)]
@@ -590,6 +734,42 @@ pub(crate) fn truncate_output(output: &str, max_bytes: usize) -> String {
     format!("{}...[truncated]", &output[..end])
 }
 
+/// Parse "N passed" from cargo test output.
+///
+/// Cargo test emits "test result: ok. N passed; M failed; ..." on success.
+/// Returns `Some(N)` if found, `None` if the pattern doesn't match (not a
+/// cargo test run, or output format changed). Pure so tests don't need a
+/// real cargo invocation.
+///
+/// The guard catches two failure modes:
+/// 1. A filter typo that matches 0 tests (exits 0, runs nothing)
+/// 2. A disabled test suite that compiles but skips everything
+///
+/// Both exit 0, so without this parse the gate would accept them as verified.
+pub(crate) fn parse_cargo_test_pass_count(output: &str) -> Option<usize> {
+    // Cargo test output: "test result: ok. 42 passed; 0 failed; 3 ignored; ..."
+    // The pattern is stable across cargo versions.
+    let lower = output.to_lowercase();
+    let marker = "test result:";
+    let pos = lower.find(marker)?;
+    let after = &lower[pos + marker.len()..];
+    // Find "N passed" after "test result:"
+    let passed_pos = after.find("passed")?;
+    let before_passed = &after[..passed_pos];
+    // Extract the number: scan backwards from "passed" for digits only
+    let num_str: String = before_passed
+        .chars()
+        .rev()
+        .skip_while(|c| c.is_whitespace())
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    // Handle "42 passed" or "1,234 passed" (though cargo doesn't use commas)
+    num_str.parse::<usize>().ok()
+}
+
 /// Which commands verify a task of this type, if verification is on.
 ///
 /// Pure over the config section so the mapping can be tested without a file on
@@ -632,6 +812,30 @@ pub(crate) fn verify_with(
     for cmd in commands {
         let (exit_code, output) = run(cmd);
         if exit_code == 0 {
+            // Vacuous-pass guard: a cargo test that exits 0 but runs 0 tests
+            // is not a pass. A filter typo or disabled suite compiles clean
+            // and exits 0, so the gate would accept it as verified without
+            // this check. Parse "N passed" from the output; refuse if N == 0.
+            if let Some(passed) = parse_cargo_test_pass_count(&output)
+                && passed == 0
+            {
+                let truncated = truncate_output(&output, 500);
+                failures.push(format!(
+                    "`{cmd}` exited 0 but ran 0 tests (vacuous pass)\n{truncated}"
+                ));
+                tracing::warn!(
+                    "Verification vacuous for task #{task_order}: {cmd} exited 0 with 0 tests passed"
+                );
+                if !require_all {
+                    return Err(format!(
+                        "Verification gate REJECTED for task #{task_order} (type={task_type}):\n\
+                         The command `{cmd}` exited with code 0 but ran 0 tests. A filter \
+                         that matches nothing, or a disabled test suite, is not a verified \
+                         completion. Fix the filter or re-enable the tests and try again.\n\n\
+                         {truncated}"
+                    ));
+                }
+            }
             continue;
         }
         let truncated = truncate_output(&output, 500);
@@ -1369,6 +1573,23 @@ impl Tool for PlanTool {
                     let mut new_plan = PlanDocument::new(plan_sid, title.clone());
                     new_plan.status = PlanStatus::Editing;
 
+                    // Get criteria_policy for validation (#1133)
+                    let policy = ralph_loop_config(&context.working_dir())
+                        .map(|c| c.verification.criteria_policy)
+                        .unwrap_or_default();
+
+                    for it in &tasks {
+                        let parsed_type = parse_task_type(&it.task_type);
+                        let order = new_plan.tasks.len() + 1;
+                        validate_task_criteria_at_creation(
+                            order,
+                            &it.title,
+                            &parsed_type,
+                            &it.acceptance_criteria,
+                            policy,
+                        )?;
+                    }
+
                     for it in tasks {
                         add_task_to_plan(
                             &mut new_plan,
@@ -1443,9 +1664,27 @@ impl Tool for PlanTool {
                         "add_tasks needs at least one task in `tasks`.".to_string(),
                     ));
                 }
+
+                // Get criteria_policy for validation (#1133)
+                let policy = ralph_loop_config(&context.working_dir())
+                    .map(|c| c.verification.criteria_policy)
+                    .unwrap_or_default();
+
                 let mut added: Vec<String> = Vec::new();
                 for it in tasks {
                     let task_title = it.title.clone();
+                    let parsed_type = parse_task_type(&it.task_type);
+                    let order = current_plan.tasks.len() + 1;
+
+                    // Validate criteria at creation (#1133)
+                    validate_task_criteria_at_creation(
+                        order,
+                        &task_title,
+                        &parsed_type,
+                        &it.acceptance_criteria,
+                        policy,
+                    )?;
+
                     let order = add_task_to_plan(
                         current_plan,
                         it.title,
@@ -1481,6 +1720,23 @@ impl Tool for PlanTool {
                         "No active plan. Create one with 'init' first.".to_string(),
                     )
                 })?;
+
+                // Get criteria_policy for validation (#1133)
+                let policy = ralph_loop_config(&context.working_dir())
+                    .map(|c| c.verification.criteria_policy)
+                    .unwrap_or_default();
+                let parsed_type = parse_task_type(&task_type);
+                let order = current_plan.tasks.len() + 1;
+
+                // Validate criteria at creation (#1133)
+                validate_task_criteria_at_creation(
+                    order,
+                    &title,
+                    &parsed_type,
+                    &acceptance_criteria,
+                    policy,
+                )?;
+
                 let order = add_task_to_plan(
                     current_plan,
                     title.clone(),
@@ -1819,6 +2075,7 @@ impl Tool for PlanTool {
                             let policy = ralph_loop_config(&context.working_dir())
                                 .map(|c| c.verification.criteria_policy)
                                 .unwrap_or_default();
+                            let policy = audit_criteria_policy_flip(&context.working_dir(), policy);
                             match criteria_verdict(policy, outcome) {
                                 CriteriaVerdict::Reject => {
                                     let reason = if has_criteria {
