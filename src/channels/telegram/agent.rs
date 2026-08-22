@@ -1709,11 +1709,33 @@ impl TelegramAgent {
                 }
             });
 
+            // #1155 lifecycle coverage: the bot's OWN membership status changed
+            // (kicked, left, promoted, restricted). Nothing to serve here — the
+            // value is (a) visibility in logs and (b) cache hygiene: a kicked
+            // bot forgets the solo-owner evaluation so a re-add re-evaluates
+            // fresh instead of trusting a stale decision.
+            let my_chat_member_handler = Update::filter_my_chat_member().endpoint({
+                let deps = deps.clone();
+                move |update: teloxide::types::ChatMemberUpdated| {
+                    let deps = deps.clone();
+                    async move {
+                        let chat_id = update.chat.id.0;
+                        let new_status = update.new_chat_member.status();
+                        tracing::info!(
+                            "Telegram: my membership in chat {chat_id} changed to {new_status:?}"
+                        );
+                        deps.telegram_state.clear_solo_evaluated(chat_id).await;
+                        ResponseResult::Ok(())
+                    }
+                }
+            });
+
             let tree = dptree::entry()
                 .branch(msg_handler)
                 .branch(edited_handler)
                 .branch(cb_handler)
-                .branch(reaction_handler);
+                .branch(reaction_handler)
+                .branch(my_chat_member_handler);
 
             // Retry loop: if the dispatcher exits (network hiccup, Telegram conflict
             // from another process using the same token, etc.), wait and reconnect.
@@ -1917,7 +1939,12 @@ async fn resolve_callback_session(
 ///
 /// Telegram constraints: max 100 commands, names must be lowercase with
 /// underscores only (no hyphens), descriptions max 256 chars.
-pub(crate) async fn register_bot_commands(bot: &Bot) {
+/// Build the full owner command catalog (#1155): built-ins, `commands.toml`
+/// entries and skills, names sanitized to Telegram's rules, deduped, capped
+/// at 100. Extracted from `register_bot_commands` so the solo-owner
+/// auto-registration path (`menu_auto`) publishes the exact same menu
+/// without config entries.
+pub(crate) fn collect_command_catalog() -> Vec<teloxide::types::BotCommand> {
     use teloxide::types::BotCommand;
 
     let mut commands: Vec<BotCommand> = vec![
@@ -2005,6 +2032,13 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
     // Telegram limit: max 100 commands
     commands.truncate(100);
 
+    commands
+}
+
+/// Register the command menus for every configured audience (startup +
+/// ConfigWatcher refresh).
+pub(crate) async fn register_bot_commands(bot: &Bot) {
+    let commands = collect_command_catalog();
     register_scoped_menus(bot, commands).await;
 }
 

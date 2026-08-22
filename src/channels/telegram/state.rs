@@ -78,6 +78,12 @@ pub struct TelegramState {
     /// tap handler resolves `idx -> suggestion string`; cleared on tap or when
     /// the user sends anything.
     pending_followups: Mutex<HashMap<Uuid, Vec<String>>>,
+    /// Solo-owner auto-registration cache (#1155): chat_id → decision already
+    /// reached. `true` = eligible solo group, full owner catalog registered;
+    /// `false` = evaluated and ineligible. Cleared on membership events so the
+    /// next message re-evaluates instead of trusting a stale snapshot — the
+    /// exact staleness class Gap 2 of #1155 describes.
+    solo_evaluated: Mutex<HashMap<i64, bool>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Persistent plan-card message per session (#580): the single Telegram
@@ -234,6 +240,7 @@ impl TelegramState {
             pending_questions: Mutex::new(HashMap::new()),
             session_pending_question: Mutex::new(HashMap::new()),
             pending_followups: Mutex::new(HashMap::new()),
+            solo_evaluated: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
             plan_card_store: Mutex::new(None),
@@ -415,6 +422,22 @@ impl TelegramState {
     /// Get the bot's numeric user ID for reply-to-bot detection.
     pub async fn bot_user_id(&self) -> Option<i64> {
         *self.bot_user_id.lock().await
+    }
+
+    /// Cached solo-owner evaluation for a chat, if one was reached (#1155).
+    pub async fn solo_evaluated(&self, chat_id: i64) -> Option<bool> {
+        self.solo_evaluated.lock().await.get(&chat_id).copied()
+    }
+
+    /// Record a solo-owner evaluation outcome (#1155).
+    pub async fn set_solo_evaluated(&self, chat_id: i64, eligible: bool) {
+        self.solo_evaluated.lock().await.insert(chat_id, eligible);
+    }
+
+    /// Forget a chat's solo-owner evaluation — membership changed, next
+    /// message re-evaluates (#1155).
+    pub async fn clear_solo_evaluated(&self, chat_id: i64) {
+        self.solo_evaluated.lock().await.remove(&chat_id);
     }
 
     /// Check if Telegram is currently connected.

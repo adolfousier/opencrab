@@ -123,7 +123,13 @@ async fn poll_once(st: &mut RawPollState) {
     let body = serde_json::json!({
         "timeout": 30,
         "offset": st.offset,
-        "allowed_updates": ["message", "edited_message", "callback_query", "message_reaction"],
+        "allowed_updates": [
+            "message",
+            "edited_message",
+            "callback_query",
+            "message_reaction",
+            "my_chat_member",
+        ],
     });
     let resp = st
         .http
