@@ -43,6 +43,80 @@ fn custom_provider_default_model() {
     assert_eq!(provider.default_model(), "llama3");
 }
 
+// ── #1147: supported_models must include the configured default ──
+
+#[test]
+fn supported_models_includes_configured_default_missing_from_catalog() {
+    // OpenRouter hides stealth/* models from the public /models catalog:
+    // the fetched list never contains the model the user configured as
+    // default, so every remap gate treated the pair as foreign and
+    // "remapped" it to itself (WARN per turn) — or skipped a valid cron job.
+    let provider = OpenAIProvider::with_base_url(
+        "sk-test".to_string(),
+        "https://openrouter.ai/api/v1/chat/completions".to_string(),
+    )
+    .with_name("openrouter")
+    .with_default_model("stealth/ox-alpha".to_string())
+    .with_models(vec![
+        "anthropic/claude-sonnet-4.5".to_string(),
+        "openai/gpt-5.2".to_string(),
+        "z-ai/glm-5".to_string(),
+    ]);
+    let supported = provider.supported_models();
+    assert!(
+        supported.iter().any(|m| m == "stealth/ox-alpha"),
+        "configured default must be in supported_models even when the live catalog omits it, got: {:?}",
+        supported
+    );
+    // Catalog entries survive untouched.
+    assert!(supported.iter().any(|m| m == "anthropic/claude-sonnet-4.5"));
+    assert_eq!(supported.len(), 4);
+}
+
+#[test]
+fn supported_models_does_not_duplicate_existing_default() {
+    let provider = OpenAIProvider::with_base_url(
+        String::new(),
+        "http://localhost:1234/v1/chat/completions".to_string(),
+    )
+    .with_name("lmstudio")
+    .with_default_model("qwen3-27b".to_string())
+    .with_models(vec!["qwen3-27b".to_string(), "llama3".to_string()]);
+    let supported = provider.supported_models();
+    assert_eq!(supported.iter().filter(|m| *m == "qwen3-27b").count(), 1);
+    assert_eq!(supported.len(), 2);
+}
+
+#[test]
+fn supported_models_without_default_has_no_missing_sentinel() {
+    // No default configured: the MISSING_MODEL error sentinel must never
+    // leak into the advertised catalog.
+    let provider = OpenAIProvider::with_base_url(
+        String::new(),
+        "http://localhost:1234/v1/chat/completions".to_string(),
+    )
+    .with_name("bare");
+    let supported = provider.supported_models();
+    assert!(!supported.iter().any(|m| m == "MISSING_MODEL"));
+}
+
+#[test]
+fn context_window_budget_uses_configured_window() {
+    // #1147 finding 2: the request-time token budget must consult the
+    // configured context_window (1M for the stealth setup), not a hardcoded
+    // 200k that misreported a 71,840-token request as 36% instead of ~7%.
+    let provider = OpenAIProvider::with_base_url(
+        "sk-test".to_string(),
+        "https://openrouter.ai/api/v1/chat/completions".to_string(),
+    )
+    .with_name("openrouter")
+    .with_default_model("stealth/ox-alpha".to_string())
+    .with_context_window(1_000_000);
+    assert_eq!(provider.context_window("stealth/ox-alpha"), Some(1_000_000));
+    let pct = (71_840_f32 / 1_000_000_f32 * 100.0).round() as u32;
+    assert_eq!(pct, 7);
+}
+
 // ── Factory: custom providers from config ───────────────────────
 
 fn config_with_custom(name: &str, api_key: Option<String>, base_url: Option<String>) -> Config {

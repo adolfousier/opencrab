@@ -3549,11 +3549,17 @@ impl Provider for OpenAIProvider {
             .map(|tools| count_tokens(&serde_json::to_string(tools).unwrap_or_default()))
             .unwrap_or(0);
         let total_input_tokens = message_tokens + tool_schema_tokens;
-        let context_pct = (total_input_tokens as f32 / 200_000.0 * 100.0).round() as u32;
+        // #1147: budget against the provider's actual window (configured
+        // context_window, then model heuristics) instead of a hardcoded 200k,
+        // which misreported a configured-1M provider as "36% of 200k".
+        let context_window = self.context_window(&model).unwrap_or(200_000);
+        let context_pct =
+            (total_input_tokens as f32 / context_window as f32 * 100.0).round() as u32;
         tracing::debug!(
-            "OpenAI stream request: ~{} input tokens ({}% of 200k window) — {} messages, {} tool schemas",
+            "OpenAI stream request: ~{} input tokens ({}% of {}-token window) — {} messages, {} tool schemas",
             total_input_tokens,
             context_pct,
+            context_window,
             openai_request.messages.len(),
             tools_count
         );
@@ -4669,16 +4675,31 @@ impl Provider for OpenAIProvider {
         // own catalog). Without this override, every custom OpenAI-compatible
         // provider would advertise the OpenAI GPT list, causing helpers.rs:95
         // to either run a noisy no-op remap or mis-route to default_model.
-        if !self.configured_models.is_empty() {
-            return self.configured_models.clone();
+        let mut models = if !self.configured_models.is_empty() {
+            self.configured_models.clone()
+        } else {
+            vec![
+                "gpt-4-turbo-preview".to_string(),
+                "gpt-4".to_string(),
+                "gpt-4-32k".to_string(),
+                "gpt-3.5-turbo".to_string(),
+                "gpt-3.5-turbo-16k".to_string(),
+            ]
+        };
+        // The configured default is servable by construction even when the
+        // catalog omits it — OpenRouter hides stealth/* models from the public
+        // /models list (#1147). Without the union, every remap gate that
+        // consults supported_models() (helpers.rs stream_complete,
+        // fallback.rs, context.rs compaction, tool_loop.rs stale-pin guard
+        // and feedback attribution, cron/scheduler.rs job validation) treats
+        // the provider's own default as foreign and either "remaps" it to
+        // itself with a WARN per turn or skips a validly configured cron job.
+        let default = self.default_model();
+        if default != "MISSING_MODEL" && !models.iter().any(|m| m == default) {
+            models.push(default.to_string());
+            models.sort();
         }
-        vec![
-            "gpt-4-turbo-preview".to_string(),
-            "gpt-4".to_string(),
-            "gpt-4-32k".to_string(),
-            "gpt-3.5-turbo".to_string(),
-            "gpt-3.5-turbo-16k".to_string(),
-        ]
+        models
     }
 
     async fn fetch_models(&self) -> Vec<String> {
