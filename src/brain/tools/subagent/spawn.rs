@@ -215,6 +215,9 @@ impl Tool for SpawnAgentTool {
 
         let child_session_id = child_session.id;
         let agent_id = SubAgentManager::generate_id();
+        // Cut before the child is built so its working directory can point at
+        // the new tree from the first turn.
+        let worktree = super::worktree::create(&context.working_dir(), &agent_id);
 
         // Create cancel token and input channel for the child
         let cancel_token = CancellationToken::new();
@@ -317,12 +320,22 @@ impl Tool for SpawnAgentTool {
                 );
             }
 
+            // A private checkout for this child (#1151). A fan-out spawns
+            // several at once against one tree, so they collide by
+            // construction rather than by coincidence. `None` is a normal
+            // outcome — outside a repository, or if git refuses — and means
+            // the child works where it always did.
+            let child_dir = worktree
+                .as_ref()
+                .map(|w| w.path.clone())
+                .unwrap_or_else(|| context.working_dir());
+
             let agent =
                 crate::brain::agent::AgentService::new(provider, service_context.clone(), &config)
                     .await
                     .with_tool_registry(Arc::new(child_registry))
                     .with_auto_approve_tools(true) // children auto-approve (parent already approved spawn)
-                    .with_working_directory(context.working_dir())
+                    .with_working_directory(child_dir)
                     .with_plan_session_override(plan_session_override);
 
             Arc::new(agent)
@@ -346,6 +359,7 @@ impl Tool for SpawnAgentTool {
         let cancel_clone = cancel_token.clone();
         let manager = self.manager.clone();
         let agent_id_clone = agent_id.clone();
+        let worktree_for_cleanup = worktree.clone();
         let prompt_clone = full_prompt;
         let label_clone = label.clone();
         let mut input_rx = input_rx;
@@ -475,6 +489,22 @@ impl Tool for SpawnAgentTool {
                     agent_id_clone
                 );
             }
+            // Return the tree, unless the child left work in it. A tree with
+            // a commit or an uncommitted edit survives: discarding a child's
+            // work silently would be worse than the collisions the isolation
+            // exists to prevent. Settle this BEFORE reporting, so a kept tree
+            // is named in the result the parent reads rather than only in the
+            // log, where nobody would find it.
+            let final_output = match &worktree_for_cleanup {
+                Some(wt) => {
+                    let removed = wt.cleanup();
+                    match wt.parent_notice(removed) {
+                        Some(note) => format!("{final_output}{note}"),
+                        None => final_output,
+                    }
+                }
+                None => final_output,
+            };
             if manager.mark_completed(&agent_id_clone, final_output.clone()) {
                 push_result(
                     parent_session_id,
