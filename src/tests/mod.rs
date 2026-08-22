@@ -16,6 +16,7 @@ pub static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub static MODEL_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub mod a2a_agent_card_test;
+pub mod a2a_context_continuity_test;
 pub mod a2a_debate_test;
 pub mod a2a_handler_tasks_test;
 pub mod a2a_handler_test;

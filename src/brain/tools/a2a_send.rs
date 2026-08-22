@@ -28,7 +28,7 @@ impl Tool for A2aSendTool {
         "Communicate with remote A2A (Agent-to-Agent) agents. \
          Actions: 'discover' to fetch an agent's capabilities, \
          'send' to send a task message, 'get' to check task status, \
-         'cancel' to cancel a running task, 'stream' to send and stream response. \
+         'cancel' to cancel a running task. \
          Requires the remote agent's base URL (e.g. http://192.168.1.10:18790)."
     }
 
