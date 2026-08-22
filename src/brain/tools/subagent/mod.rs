@@ -17,6 +17,7 @@ pub mod spawn;
 pub mod status;
 pub mod team;
 mod wait;
+pub(crate) mod worktree;
 
 pub use agent_type::AgentType;
 pub use close::CloseAgentTool;
