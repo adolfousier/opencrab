@@ -74,9 +74,10 @@ pub(crate) fn page_of(models: &[String], page: usize, filter: Option<&str>) -> M
     }
 }
 
-/// The picker's message text: a header and the page's models, never the whole
-/// catalogue. The buttons carry the models, so repeating all of them in text
-/// is what overflowed the limit in the first place.
+/// The picker's message text: a header, the filter/page status and a hint —
+/// never an enumeration of the page's models. The buttons carry the models,
+/// so repeating them in text is what overflowed the limit in the first place;
+/// listing just the current page was still pure duplication (#1149).
 pub(crate) fn page_text(
     display_name: &str,
     current_model: &str,
@@ -98,19 +99,16 @@ pub(crate) fn page_text(
     }
 
     if page.total_pages > 1 {
-        lines.push(format!("Page {}/{}", page.page + 1, page.total_pages));
+        lines.push(format!(
+            "Page {}/{} — use ◀ ▶ to page",
+            page.page + 1,
+            page.total_pages
+        ));
     }
     lines.push(String::new());
-
-    let offset = page.page * MODEL_PAGE_SIZE;
-    for (i, m) in page.models.iter().enumerate() {
-        let marker = if m == current_model { " ✓" } else { "" };
-        lines.push(format!("{}. `{}`{}", offset + i + 1, m, marker));
-    }
-
+    lines.push("Tap a model below (✓ = current).".into());
     if page.total_pages > 1 {
-        lines.push(String::new());
-        lines.push("Use ◀ ▶ to page, or /models <text> to filter by name.".into());
+        lines.push("/models <text> filters by name.".into());
     }
     lines.join("\n")
 }

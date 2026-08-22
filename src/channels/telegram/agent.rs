@@ -746,15 +746,30 @@ impl TelegramAgent {
                                     }
                                 };
                                 crate::channels::telegram::keyboards::ack_callback(&bot, &query, "approval").await;
+                                // #1149: offer Apply-to-all-sessions right where the user
+                                // just switched via buttons — the textual /models <p m>
+                                // path already does this (#468). Same central 64-byte guard;
+                                // a picker tap can never come from an `all`-scoped command,
+                                // so no extra scoping check applies here.
+                                let mut switch_markup = teloxide::types::InlineKeyboardMarkup::default();
+                                if switch_ok
+                                    && let Some(pname) = provider_name
+                                    && let Some(data) = crate::channels::commands::apply_all_callback_data(pname, model_name)
+                                {
+                                    switch_markup = teloxide::types::InlineKeyboardMarkup::new(vec![vec![
+                                        teloxide::types::InlineKeyboardButton::callback(
+                                            "Apply to all sessions",
+                                            data,
+                                        ),
+                                    ]]);
+                                }
                                 if let Some(msg) = &query.message {
                                     use teloxide::payloads::EditMessageTextSetters;
                                     use teloxide::prelude::Requester;
                                     if let Err(e) = bot
                                         .edit_message_text(msg.chat().id, msg.id(), &display_text)
                                         .parse_mode(teloxide::types::ParseMode::Html)
-                                        .reply_markup(
-                                            teloxide::types::InlineKeyboardMarkup::default(),
-                                        )
+                                        .reply_markup(switch_markup)
                                         .await
                                     {
                                         tracing::warn!("Telegram: callback UI update failed: {e}");

@@ -1652,29 +1652,22 @@ fn format_providers(agent: &AgentService, session_id: Uuid) -> ProvidersResponse
 
     let providers = all_known_providers_with_status_loaded();
 
-    let mut text_lines = vec![
-        "🤖 *Switch Provider*".to_string(),
-        format!("Current: `{}` / `{}`", current_provider, current_model),
-        String::new(),
-    ];
-    for (name, label, configured) in &providers {
-        let prefix = if !configured {
-            "🔒 "
-        } else if *name == current_provider {
-            "✓ "
-        } else {
-            "• "
-        };
-        text_lines.push(format!("{}`{}`", prefix, label));
-    }
-    text_lines.push(String::new());
-    text_lines.push("🔒 = needs API key (tap for setup steps)".to_string());
+    // Body carries heading + status + hint only (#1149): every channel renders
+    // one button per provider right below, using the same ✓/•/🔒 semantics via
+    // `provider_marker`, so enumerating the list in text too was pure
+    // duplication — identical to the cleanup #129 gave /sessions.
+    let text = format!(
+        "🤖 *Switch Provider*\n\n\
+         Current: `{}` / `{}`\n\n\
+         Tap a provider below. 🔒 = needs API key.",
+        current_provider, current_model
+    );
 
     ProvidersResponse {
         current_provider: current_provider.clone(),
         current_model: current_model.clone(),
         providers,
-        text: text_lines.join("\n"),
+        text,
     }
 }
 
@@ -1701,6 +1694,16 @@ pub fn unconfigured_provider_help(provider_name: &str) -> String {
          ```toml\n[providers.{section}]\napi_key = \"YOUR-{display}-KEY\"\n```\n\n\
          Then restart OpenCrabs. Do NOT paste your API key here — \
          Telegram keeps message history that bots cannot delete in DMs."
+    )
+}
+
+/// Model-picker message body (#1149): heading + current + hint, no model
+/// enumeration — every channel draws one button per model immediately below,
+/// so a numbered text copy was the same duplication #129 removed from
+/// /sessions (and the reason OpenRouter's catalogue overflowed Telegram).
+fn models_text(display_name: &str, current_model: &str) -> String {
+    format!(
+        "🤖 *{display_name} Models*\n\nCurrent: `{current_model}`\n\nTap a model below (✓ = current)."
     )
 }
 
@@ -1756,23 +1759,15 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
             canonical_models
         };
 
-        let mut text_lines = vec![
-            format!("🤖 *{} Models*", display_name),
-            format!("Current: `{}`", current_model),
-            String::new(),
-        ];
-        for (i, m) in models.iter().enumerate() {
-            let marker = if *m == current_model { " ✓" } else { "" };
-            text_lines.push(format!("{}. `{}`{}", i + 1, m, marker));
-        }
         // Positions are what long-name buttons encode, so record them.
         crate::channels::model_menu::remember(provider_name, &models);
 
+        let text = models_text(display_name, &current_model);
         return ModelsResponse {
             provider_name: provider_name.to_string(),
             current_model,
             models,
-            text: text_lines.join("\n"),
+            text,
             agent_handled: false,
         };
     }
@@ -1833,23 +1828,15 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
         models.retain(|m| m != &current_model);
         models.insert(0, current_model.clone());
 
-        let mut text_lines = vec![
-            format!("🤖 *{} Models*", display_name),
-            format!("Current: `{}`", current_model),
-            String::new(),
-        ];
-        for (i, m) in models.iter().enumerate() {
-            let marker = if *m == current_model { " ✓" } else { "" };
-            text_lines.push(format!("{}. `{}`{}", i + 1, m, marker));
-        }
         // Positions are what long-name buttons encode, so record them.
         crate::channels::model_menu::remember(provider_name, &models);
 
+        let text = models_text(display_name, &current_model);
         return ModelsResponse {
             provider_name: provider_name.to_string(),
             current_model,
             models,
-            text: text_lines.join("\n"),
+            text,
             agent_handled: false,
         };
     }
@@ -1920,23 +1907,15 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
         models.insert(0, current_model.clone());
     }
 
-    let mut text_lines = vec![
-        format!("🤖 *{} Models*", display_name),
-        format!("Current: `{}`", current_model),
-        String::new(),
-    ];
-    for (i, m) in models.iter().enumerate() {
-        let marker = if *m == current_model { " ✓" } else { "" };
-        text_lines.push(format!("{}. `{}`{}", i + 1, m, marker));
-    }
     // Positions are what long-name buttons encode, so record them.
     crate::channels::model_menu::remember(provider_name, &models);
 
+    let text = models_text(display_name, &current_model);
     ModelsResponse {
         provider_name: provider_name.to_string(),
         current_model,
         models,
-        text: text_lines.join("\n"),
+        text,
         agent_handled: false,
     }
 }
@@ -1946,6 +1925,32 @@ fn provider_config_models(config: &crate::config::Config, name: &str) -> Vec<Str
     crate::utils::providers::config_for(&config.providers, name)
         .map(|c| c.models.clone())
         .unwrap_or_default()
+}
+
+/// Single source for the provider-picker ✓/•/🔒 semantics (#1149). Used by
+/// the per-channel button labels (telegram/discord/slack) so the three
+/// renderers can't drift apart again; the text body no longer enumerates
+/// providers at all.
+pub fn provider_marker(name: &str, current_provider: &str, configured: bool) -> &'static str {
+    if !configured {
+        "🔒"
+    } else if name == current_provider {
+        "✓"
+    } else {
+        "•"
+    }
+}
+
+/// Build the `allm:<provider>|<model>` callback payload behind the
+/// "Apply to all sessions" button (#468), enforcing Telegram's 64-byte
+/// callback_data cap centrally (#1149). `None` = payload too long; callers
+/// omit the button rather than truncating — an omitted button beats a broken
+/// one, and no index-fallback form exists for `allm:`. The generator (this +
+/// the telegram/agent.rs picker-success path + the commands_tg textual-switch
+/// path) and the `allm:` parser MUST agree on this pipe format.
+pub fn apply_all_callback_data(provider_name: &str, model: &str) -> Option<String> {
+    let data = format!("allm:{provider_name}|{model}");
+    (data.len() <= 64).then_some(data)
 }
 
 /// Build the Telegram `callback_data` for a model button, guaranteed to fit

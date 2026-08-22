@@ -559,6 +559,8 @@ pub mod mission_control_schedule_service_test;
 pub mod mission_control_skill_inbox_test;
 pub mod model_fetch_test;
 #[cfg(feature = "telegram")]
+pub mod models_picker_dedup_test;
+#[cfg(feature = "telegram")]
 pub mod parallel_tools_test;
 pub mod profile_test;
 pub mod retry_notice_drain_test;
@@ -601,7 +603,6 @@ pub mod subagent_session_ttl_test;
 pub mod subagent_test;
 pub mod subagent_tool_description_test;
 pub mod suggest_followups_test;
-#[cfg(feature = "telegram")]
 pub mod telegram_ephemeral_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_newest_msg_id_test;

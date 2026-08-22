@@ -459,12 +459,15 @@ pub(crate) async fn handle_message(
                             chunk
                                 .iter()
                                 .map(|(name, label, configured)| {
-                                    let display = if !*configured {
-                                        format!("🔒 {} (setup)", label)
-                                    } else if *name == resp.current_provider {
-                                        format!("✓ {}", label)
-                                    } else {
-                                        label.clone()
+                                    let marker = crate::channels::commands::provider_marker(
+                                        name,
+                                        &resp.current_provider,
+                                        *configured,
+                                    );
+                                    let display = match marker {
+                                        "🔒" => format!("🔒 {} (setup)", label),
+                                        "✓" => format!("✓ {}", label),
+                                        _ => label.clone(),
                                     };
                                     let display = if display.len() > 80 {
                                         format!("{}…", display.chars().take(79).collect::<String>())

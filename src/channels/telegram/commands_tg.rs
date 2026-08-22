@@ -95,22 +95,21 @@ pub(crate) async fn handle_channel_command(
         // the >4096-char mission-control report silently failed to send at all.)
         // Direct model switch (#467): on success, Telegram offers an inline
         // "Apply to all sessions" button (#468) unless the user already
-        // scoped with the textual `all`. Pipe separator in the callback
-        // (like model:) so custom: prefixes and :free suffixes survive;
-        // skipped when the payload would exceed Telegram's 64-byte limit.
+        // scoped with the textual `all`. Payload built (and 64-byte-capped)
+        // centrally by `apply_all_callback_data` (#1149); skipped entirely
+        // when it would not fit.
         if let commands::ChannelCommand::ModelSwitched(reply) = &cmd {
             let mut keyboard: Option<InlineKeyboardMarkup> = None;
             if !reply.starts_with('⚠')
                 && !text.trim().ends_with(" all")
                 && let Some(arg) = text.trim().split_once(' ').map(|x| x.1.trim())
                 && let Ok((prov, model)) = crate::utils::provider_pair::parse_pair(arg)
+                && let Some(data) =
+                    crate::channels::commands::apply_all_callback_data(&prov, &model)
             {
-                let data = format!("allm:{prov}|{model}");
-                if data.len() <= 64 {
-                    keyboard = Some(InlineKeyboardMarkup::new(vec![vec![
-                        InlineKeyboardButton::callback("Apply to all sessions", data),
-                    ]]));
-                }
+                keyboard = Some(InlineKeyboardMarkup::new(vec![vec![
+                    InlineKeyboardButton::callback("Apply to all sessions", data),
+                ]]));
             }
             let mut req = bot.send_message(msg.chat.id, reply.clone());
             if let Some(kb) = keyboard {
@@ -208,12 +207,15 @@ pub(crate) async fn handle_channel_command(
                     .providers
                     .iter()
                     .map(|(name, label, configured)| {
-                        let display = if !*configured {
-                            format!("🔒 {} (setup)", label)
-                        } else if *name == resp.current_provider {
-                            format!("✓ {}", label)
-                        } else {
-                            label.clone()
+                        let marker = crate::channels::commands::provider_marker(
+                            name,
+                            &resp.current_provider,
+                            *configured,
+                        );
+                        let display = match marker {
+                            "🔒" => format!("🔒 {} (setup)", label),
+                            "✓" => format!("✓ {}", label),
+                            _ => label.clone(),
                         };
                         // Unconfigured providers route through `setup:<name>`
                         // so the callback handler can show setup instructions
