@@ -470,13 +470,29 @@ fn test_task_status_display() {
 }
 
 #[test]
-fn test_task_status_icons() {
-    assert_eq!(TaskStatus::Pending.icon(), "⏸️");
-    assert_eq!(TaskStatus::InProgress.icon(), "▶️");
-    assert_eq!(TaskStatus::Completed.icon(), "✅");
-    assert_eq!(TaskStatus::Skipped.icon(), "⏭️");
-    assert_eq!(TaskStatus::Failed.icon(), "❌");
-    assert_eq!(TaskStatus::Blocked("".to_string()).icon(), "🚫");
+fn test_active_checklist_uses_shared_status_marks() {
+    // #1157: /show-plan and the TUI overlay render the same marks as the
+    // widget and Telegram card — the shared status_mark() set, not emojis.
+    let mut plan = create_test_plan(Uuid::new_v4());
+    let mut done = create_test_task(1, "Done thing");
+    done.status = TaskStatus::Completed;
+    let mut stuck = create_test_task(2, "Stuck thing");
+    stuck.status = TaskStatus::Blocked("waiting".to_string());
+    plan.add_task(done);
+    plan.add_task(stuck);
+    let out = crate::utils::plan_mode::format_active_checklist(&plan);
+    assert!(
+        out.contains('☑'),
+        "completed row should use shared mark: {out}"
+    );
+    assert!(
+        out.contains('⏸'),
+        "blocked row should use shared mark: {out}"
+    );
+    assert!(
+        !out.contains("✅") && !out.contains("⏸️") && !out.contains('🚫'),
+        "emoji set must be gone: {out}"
+    );
 }
 
 #[test]

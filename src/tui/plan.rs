@@ -810,20 +810,6 @@ impl std::fmt::Display for TaskStatus {
     }
 }
 
-impl TaskStatus {
-    /// Get status icon for UI display
-    pub fn icon(&self) -> &str {
-        match self {
-            TaskStatus::Pending => "⏸️",
-            TaskStatus::InProgress => "▶️",
-            TaskStatus::Completed => "✅",
-            TaskStatus::Skipped => "⏭️",
-            TaskStatus::Failed => "❌",
-            TaskStatus::Blocked(_) => "🚫",
-        }
-    }
-}
-
 /// Machine-written verification verdict (#1133). The agent never types this —
 /// the Ralph gate writes it at `complete(action=success)`. Rendered as a badge
 /// on completed rows: 🛡 Verified, 🟡 Uncertain, *(nothing)* NotRun.
@@ -854,7 +840,7 @@ impl VerificationVerdict {
 /// - Skipped: ⏭ (skip forward)
 /// - InProgress: ▶ (play)
 /// - Pending: ☐ (empty checkbox — not started)
-/// - Failed: ❌ (cross, parity with the emoji `icon()` set)
+/// - Failed: ❌ (cross mark)
 /// - Blocked: ⏸ (pause — deliberately stopped, reason attached)
 pub fn status_mark(status: &TaskStatus) -> char {
     match status {
