@@ -1759,6 +1759,17 @@ impl AgentService {
                     self.reset_primary_failure_streak(session_id);
                     resp
                 }
+                // /stop beats every recovery path (#1148): if the token fired
+                // while the call was in flight (handshake race, provider-
+                // internal rate-limit backoff, fallback walk), classify as
+                // Cancelled BEFORE any recovery machinery runs. Without this,
+                // a cancel landing in the pre-first-token window surfaces as
+                // a noisy Provider(Internal) after the chain was walked for
+                // nothing.
+                Err(_) if cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) => {
+                    tracing::info!("🛑 Stream aborted by cancellation (token fired during call)");
+                    return Err(AgentError::Cancelled);
+                }
                 // Budget-gated on purpose (#1021): once the nudges are spent
                 // this arm stops matching, so the error falls through to the
                 // fallback walk below instead of dead-ending here.
@@ -2581,6 +2592,14 @@ impl AgentService {
                     let mut succeeded = None;
 
                     for attempt in 1..=MAX_STREAM_RETRIES {
+                        // /stop beats the retry budget (#1148): bail out
+                        // before spending another attempt.
+                        if cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
+                            tracing::info!(
+                                "🛑 Stream retry loop aborted — cancelled before attempt {attempt}"
+                            );
+                            return Err(AgentError::Cancelled);
+                        }
                         tracing::info!(
                             "Stream retry attempt {}/{} after: {}",
                             attempt,
@@ -2588,9 +2607,19 @@ impl AgentService {
                             last_err
                         );
 
-                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s
+                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s — raced against /stop
                         let backoff_ms = 500u64 * (1u64 << (attempt - 1));
-                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        if !crate::brain::agent::service::helpers::cancellable_backoff(
+                            cancel_token.as_ref(),
+                            tokio::time::Duration::from_millis(backoff_ms),
+                        )
+                        .await
+                        {
+                            tracing::info!(
+                                "🛑 Stream retry loop aborted — cancelled during backoff"
+                            );
+                            return Err(AgentError::Cancelled);
+                        }
 
                         // Rebuild request
                         let mut retry_req =
@@ -3002,6 +3031,14 @@ impl AgentService {
                     let mut succeeded = None;
 
                     for attempt in 1..=MAX_STREAM_RETRIES {
+                        // /stop beats the retry budget (#1148): bail out
+                        // before spending another attempt.
+                        if cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
+                            tracing::info!(
+                                "🛑 5xx retry loop aborted — cancelled before attempt {attempt}"
+                            );
+                            return Err(AgentError::Cancelled);
+                        }
                         tracing::info!(
                             "5xx retry attempt {}/{} after: {}",
                             attempt,
@@ -3009,9 +3046,17 @@ impl AgentService {
                             last_err
                         );
 
-                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s
+                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s — raced against /stop
                         let backoff_ms = 500u64 * (1u64 << (attempt - 1));
-                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        if !crate::brain::agent::service::helpers::cancellable_backoff(
+                            cancel_token.as_ref(),
+                            tokio::time::Duration::from_millis(backoff_ms),
+                        )
+                        .await
+                        {
+                            tracing::info!("🛑 5xx retry loop aborted — cancelled during backoff");
+                            return Err(AgentError::Cancelled);
+                        }
 
                         let mut retry_req =
                             LLMRequest::new(model_name.clone(), context.messages.clone())

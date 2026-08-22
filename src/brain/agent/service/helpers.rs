@@ -197,6 +197,23 @@ pub(crate) fn handshake_timeout_for(cli_handles_tools: bool, base_url: Option<&s
     }
 }
 
+/// Sleep for `dur`, aborting early when the cancel token fires (#1148).
+///
+/// Returns `false` only when cancellation won — the caller should stop
+/// whatever retry/backoff sequence it is inside of. With no token this is a
+/// plain sleep and always returns `true`. Shared by every stream-retry
+/// backoff site so `/stop` never rides out an exponential backoff chain.
+pub(crate) async fn cancellable_backoff(token: Option<&CancellationToken>, dur: Duration) -> bool {
+    let Some(token) = token else {
+        tokio::time::sleep(dur).await;
+        return true;
+    };
+    tokio::select! {
+        _ = tokio::time::sleep(dur) => true,
+        _ = token.cancelled() => false,
+    }
+}
+
 impl AgentService {
     /// Token count for the serialized schemas of ALL registered tools — the
     /// upper-bound tool overhead. Used as the cl100k baseline and as the
@@ -293,41 +310,59 @@ impl AgentService {
         // the full 300s reqwest timeout before the retry chain fires.
         let handshake_timeout =
             handshake_timeout_for(provider.cli_handles_tools(), provider.base_url());
-        let mut stream =
-            match tokio::time::timeout(handshake_timeout, provider.stream(request)).await {
-                Ok(Ok(s)) => {
-                    // Per-call provenance (#969): which chain entry actually
-                    // served this call, with the session id so an incident
-                    // can tell "fallback advanced" apart from "different
-                    // session". Read AFTER the await: a sticky promote
-                    // happens inside provider.stream(), so the label must
-                    // reflect the entry that won the handshake.
-                    tracing::info!(
-                        "Streaming call served: session={} {} model='{}'",
-                        session_id,
-                        provider.provenance_label(),
-                        request_model,
-                    );
-                    s
+        // /stop must win over the pre-first-token window too (#1148): the
+        // call below contains the provider-internal rate-limit retries and
+        // the fallback chain walk, none of which observe the token. Racing
+        // the whole subtree drops all of it instantly on cancel instead of
+        // riding out minutes of backoff.
+        let handshake = tokio::time::timeout(handshake_timeout, provider.stream(request));
+        let handshake_result = if let Some(token) = cancel_token {
+            tokio::select! {
+                res = handshake => res,
+                _ = token.cancelled() => {
+                    tracing::info!("🛑 stream handshake aborted — cancelled while connecting");
+                    return Err(crate::brain::provider::ProviderError::Internal(
+                        "cancelled by user".to_string(),
+                    ));
                 }
-                Ok(Err(e)) => {
-                    crate::config::health::record_failure(provider.name(), &e.to_string());
-                    return Err(e);
-                }
-                Err(_elapsed) => {
-                    let secs = handshake_timeout.as_secs();
-                    tracing::warn!(
-                        "⏱️ stream handshake timeout after {}s ({}); retry chain will fire",
-                        secs,
-                        provider.base_url().unwrap_or("<no-base-url>"),
-                    );
-                    crate::config::health::record_failure(
-                        provider.name(),
-                        &format!("handshake timeout after {}s", secs),
-                    );
-                    return Err(crate::brain::provider::ProviderError::Timeout(secs));
-                }
-            };
+            }
+        } else {
+            handshake.await
+        };
+        let mut stream = match handshake_result {
+            Ok(Ok(s)) => {
+                // Per-call provenance (#969): which chain entry actually
+                // served this call, with the session id so an incident
+                // can tell "fallback advanced" apart from "different
+                // session". Read AFTER the await: a sticky promote
+                // happens inside provider.stream(), so the label must
+                // reflect the entry that won the handshake.
+                tracing::info!(
+                    "Streaming call served: session={} {} model='{}'",
+                    session_id,
+                    provider.provenance_label(),
+                    request_model,
+                );
+                s
+            }
+            Ok(Err(e)) => {
+                crate::config::health::record_failure(provider.name(), &e.to_string());
+                return Err(e);
+            }
+            Err(_elapsed) => {
+                let secs = handshake_timeout.as_secs();
+                tracing::warn!(
+                    "⏱️ stream handshake timeout after {}s ({}); retry chain will fire",
+                    secs,
+                    provider.base_url().unwrap_or("<no-base-url>"),
+                );
+                crate::config::health::record_failure(
+                    provider.name(),
+                    &format!("handshake timeout after {}s", secs),
+                );
+                return Err(crate::brain::provider::ProviderError::Timeout(secs));
+            }
+        };
 
         // Accumulate state from stream events
         let mut id = String::new();
