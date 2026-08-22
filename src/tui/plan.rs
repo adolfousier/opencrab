@@ -849,21 +849,21 @@ impl VerificationVerdict {
 /// Render-ready status mark for a task (#1136). Single shared helper so
 /// Telegram card and TUI widget produce identical marks for the same status.
 ///
-/// Distinct marks per status:
+/// Distinct marks per status (#1154):
 /// - Completed: ☑ (checkmark)
 /// - Skipped: ⏭ (skip forward)
 /// - InProgress: ▶ (play)
-/// - Failed: ✗ (cross)
-/// - Blocked: · (dot)
-/// - Pending: · (dot)
+/// - Pending: ☐ (empty checkbox — not started)
+/// - Failed: ❌ (cross, parity with the emoji `icon()` set)
+/// - Blocked: ⏸ (pause — deliberately stopped, reason attached)
 pub fn status_mark(status: &TaskStatus) -> char {
     match status {
         TaskStatus::Completed => '☑',
         TaskStatus::Skipped => '⏭',
         TaskStatus::InProgress => '▶',
-        TaskStatus::Failed => '✗',
-        TaskStatus::Blocked(_) => '·',
-        TaskStatus::Pending => '·',
+        TaskStatus::Pending => '☐',
+        TaskStatus::Failed => '❌',
+        TaskStatus::Blocked(_) => '⏸',
     }
 }
 

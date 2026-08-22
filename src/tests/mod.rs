@@ -274,6 +274,7 @@ pub mod phantom_uncalled_command_test;
 pub mod phantom_unsent_file_test;
 pub mod phantom_work_announcement_test;
 pub mod picker_limits_test;
+pub mod plan_status_glyph_test;
 pub mod plan_tool_inline_test;
 pub mod plan_vacuous_pass_test;
 pub mod pressure_warning_test;
