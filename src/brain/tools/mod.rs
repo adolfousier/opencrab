@@ -42,6 +42,7 @@ pub mod a2a_send;
 pub mod analyze_image;
 pub mod analyze_video;
 pub mod mission_control_report;
+pub mod profile_list;
 
 // Tool implementations - Recursive Self-Improvement
 pub mod channel_search;

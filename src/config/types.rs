@@ -251,6 +251,13 @@ pub struct A2aConfig {
     #[serde(default)]
     pub allowed_origins: Vec<String>,
 
+    /// Optional externally-reachable URL for this profile's gateway (public
+    /// IP, tailscale hostname, relay). The target declares how it is reachable
+    /// once; every caller inherits it via `profile_list` / the agent card.
+    /// Absent → callers fall back to `http://{bind}:{port}` (same-box use).
+    #[serde(default)]
+    pub advertise_url: Option<String>,
+
     /// Optional API key for authenticating incoming A2A requests (Bearer token).
     /// If set, all JSON-RPC requests must include `Authorization: Bearer <key>`.
     /// If unset, no authentication is required (suitable for loopback-only use).
@@ -273,6 +280,7 @@ impl Default for A2aConfig {
             bind: default_a2a_bind(),
             port: default_a2a_port(),
             allowed_origins: vec![],
+            advertise_url: None,
             api_key: None,
         }
     }

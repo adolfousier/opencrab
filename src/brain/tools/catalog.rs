@@ -167,6 +167,7 @@ pub const EXTENDED_TOOL_INVENTORY: &[(&str, &[&str])] = &[
             "brave_search",
             "mission_control_report",
             "a2a_send",
+            "profile_list",
             "execute_code",
             "notebook_edit",
             "web_scrape",
@@ -235,6 +236,7 @@ pub fn is_protected_builtin(name: &str) -> bool {
                 | "channel_search"
                 | "mission_control_report"
                 | "a2a_send"
+                | "profile_list"
                 | "tool_manage"
                 | "execute_code"
                 | "notebook_edit"
@@ -300,7 +302,8 @@ pub fn tool_category(name: &str) -> &'static str {
             || n == "goal_manage"
             || n == "session_search"
             || n == "channel_search"
-            || n == "a2a_send" =>
+            || n == "a2a_send"
+            || n == "profile_list" =>
         {
             "utility"
         }

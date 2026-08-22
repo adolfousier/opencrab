@@ -94,6 +94,9 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(crate::brain::tools::goal_manage::GoalManageTool));
     // A2A send — agent can communicate with remote A2A agents
     tool_registry.register(Arc::new(crate::brain::tools::a2a_send::A2aSendTool::new()));
+    tool_registry.register(Arc::new(
+        crate::brain::tools::profile_list::ProfileListTool::new(),
+    ));
     // Config management (read/write config.toml, commands.toml)
     tool_registry.register(Arc::new(ConfigTool));
     // Slash command invocation (agent can call any slash command)

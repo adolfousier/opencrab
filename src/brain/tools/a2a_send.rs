@@ -29,7 +29,9 @@ impl Tool for A2aSendTool {
          Actions: 'discover' to fetch an agent's capabilities, \
          'send' to send a task message, 'get' to check task status, \
          'cancel' to cancel a running task. \
-         Requires the remote agent's base URL (e.g. http://192.168.1.10:18790)."
+         Target the remote agent with EITHER its base URL or the 'profile' \
+         parameter naming a local profile (see profile_list); exactly one is \
+         required."
     }
 
     fn input_schema(&self) -> Value {
@@ -43,7 +45,11 @@ impl Tool for A2aSendTool {
                 },
                 "url": {
                     "type": "string",
-                    "description": "Base URL of the remote A2A agent (e.g. http://127.0.0.1:18790)"
+                    "description": "Base URL of the remote A2A agent (e.g. http://127.0.0.1:18790). Mutually exclusive with 'profile'"
+                },
+                "profile": {
+                    "type": "string",
+                    "description": "Name of a local profile to target (see profile_list). Resolves via that profile's advertise_url, else http://bind:port. Mutually exclusive with 'url'"
                 },
                 "message": {
                     "type": "string",
@@ -62,7 +68,7 @@ impl Tool for A2aSendTool {
                     "description": "Optional Bearer token for authenticated A2A endpoints"
                 }
             },
-            "required": ["action", "url"]
+            "required": ["action"]
         })
     }
 
@@ -91,14 +97,34 @@ impl Tool for A2aSendTool {
 
     async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
         let action = input.get("action").and_then(|v| v.as_str()).unwrap_or("");
-        let base_url = match input.get("url").and_then(|v| v.as_str()) {
-            Some(u) if !u.is_empty() => u.trim_end_matches('/'),
-            _ => {
+        let base_url: String = match (
+            input
+                .get("url")
+                .and_then(|v| v.as_str())
+                .filter(|u| !u.is_empty()),
+            input
+                .get("profile")
+                .and_then(|v| v.as_str())
+                .filter(|p| !p.is_empty()),
+        ) {
+            (Some(_), Some(_)) => {
                 return Ok(ToolResult::error(
-                    "Missing required parameter 'url'.".to_string(),
+                    "Parameters 'url' and 'profile' are mutually exclusive - provide only one."
+                        .to_string(),
+                ));
+            }
+            (Some(u), None) => u.trim_end_matches('/').to_string(),
+            (None, Some(p)) => match resolve_profile_target(p) {
+                Ok(url) => url,
+                Err(msg) => return Ok(ToolResult::error(msg)),
+            },
+            (None, None) => {
+                return Ok(ToolResult::error(
+                    "Missing target - provide either 'url' or 'profile'.".to_string(),
                 ));
             }
         };
+        let base_url: &str = &base_url;
         let api_key = input.get("api_key").and_then(|v| v.as_str());
 
         match action {
@@ -401,4 +427,30 @@ pub(crate) fn extract_response_text(task: &Value) -> String {
     }
 
     texts.join("\n")
+}
+
+/// Error text for targeting an a2a-disabled profile (#1161 wording).
+pub(crate) fn profile_disabled_error(name: &str) -> String {
+    format!("profile '{name}' has a2a disabled - set [a2a] enabled=true in its config")
+}
+
+/// Resolve a local profile name to its reachable A2A URL (#1161):
+/// `advertise_url` when set, else `http://{bind}:{port}`. Unknown names get
+/// the valid roster listed so the model can self-correct.
+fn resolve_profile_target(name: &str) -> std::result::Result<String, String> {
+    let profiles = crate::config::profile::list_profiles()
+        .map_err(|e| format!("failed to list profiles: {e}"))?;
+    if !profiles.iter().any(|p| p.name == name) {
+        let valid: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+        return Err(format!(
+            "Unknown profile '{}'. Valid profiles: {}",
+            name,
+            valid.join(", ")
+        ));
+    }
+    let (cfg, _found) = super::profile_list::load_profile_a2a(name).map_err(|e| e.to_string())?;
+    if !cfg.enabled {
+        return Err(profile_disabled_error(name));
+    }
+    Ok(super::profile_list::effective_a2a_url(&cfg))
 }

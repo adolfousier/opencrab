@@ -154,3 +154,31 @@ fn test_default_impl() {
     let tool = A2aSendTool;
     assert_eq!(tool.name(), "a2a_send");
 }
+
+#[tokio::test]
+async fn test_url_and_profile_mutually_exclusive() {
+    let tool = A2aSendTool::new();
+    let input = serde_json::json!({
+        "action": "discover",
+        "url": "http://localhost:18790",
+        "profile": "default"
+    });
+    let result = tool.execute(input, &ctx()).await.unwrap();
+    assert!(!result.success);
+    let err = result.error.as_deref().unwrap_or("");
+    assert!(err.contains("mutually exclusive"), "got: {err}");
+}
+
+#[tokio::test]
+async fn test_missing_target_names_both_options() {
+    let tool = A2aSendTool::new();
+    // No url, no profile -> error must teach the model both ways to target.
+    let input = serde_json::json!({"action": "discover"});
+    let result = tool.execute(input, &ctx()).await.unwrap();
+    assert!(!result.success);
+    let err = result.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("'url'") && err.contains("'profile'"),
+        "got: {err}"
+    );
+}
