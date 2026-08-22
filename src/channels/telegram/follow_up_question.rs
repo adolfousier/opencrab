@@ -120,13 +120,22 @@ pub(crate) fn make_question_callback(
             // after the buttons, confusing the user (issue #142).
             flush_intermediates(&bot, ChatId(chat_id), thread_id, &streaming).await;
 
-            if let Err(e) = super::send::message_in_thread(&bot, ChatId(chat_id), thread_id, &text)
+            match super::send::message_in_thread(&bot, ChatId(chat_id), thread_id, &text)
                 .parse_mode(ParseMode::Html)
                 .reply_markup(keyboard)
                 .await
             {
-                tracing::error!("Telegram follow_up_question: send failed: {}", e);
-                return Err(AgentError::Internal(format!("send failed: {}", e)));
+                Ok(sent) => {
+                    // The question bubble is non-sticky burial evidence (#1150):
+                    // when the turn resumes and appends more rounds, the flow
+                    // block must restick BELOW this Q/A pair instead of staying
+                    // pinned above it.
+                    state.note_bot_bubble(chat_id, sent.id.0);
+                }
+                Err(e) => {
+                    tracing::error!("Telegram follow_up_question: send failed: {}", e);
+                    return Err(AgentError::Internal(format!("send failed: {}", e)));
+                }
             }
 
             match tokio::time::timeout(std::time::Duration::from_secs(600), rx).await {

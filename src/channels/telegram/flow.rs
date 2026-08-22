@@ -14,6 +14,7 @@ use teloxide::prelude::*;
 use teloxide::types::{MessageId, ParseMode};
 
 use super::handler::{escape_html, format_inline, send_html_or_plain};
+use super::state::TelegramState;
 
 /// Individual tool call — each gets its own Telegram message.
 pub(crate) struct ToolMsg {
@@ -1409,25 +1410,36 @@ pub(crate) async fn append_intermediate_to_flow(
 /// surface (rich details or classic HTML), retag its tool entries to the new
 /// message, then delete the old copy. On any re-send failure the old block is
 /// kept untouched: relocation must never lose the block. `newest_incoming` is
-/// the highest incoming message id the handler has recorded for this chat.
+/// the highest NON-STICKY message id recorded for this chat (#1150) — sticky
+/// reposts never feed it, so one restick can't manufacture evidence against
+/// the plan card. Draws the shared sticky-action budget before any API call
+/// (#1150); returns whether the block actually relocated, so the caller can
+/// coordinate the plan-card order under the same budget draw.
 pub(crate) async fn restick_flow_if_buried(
     bot: &Bot,
     chat: ChatId,
     thread_id: Option<teloxide::types::ThreadId>,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    tg: &TelegramState,
     newest_incoming: Option<i32>,
-) {
+) -> bool {
     let (old_mid, rich) = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         match s.open_group_msg_id {
             Some(mid) => (mid, s.flow_rich),
-            None => return,
+            None => return false,
         }
     };
     // Buried only if a chat message with a higher id than the block landed.
     match newest_incoming {
         Some(newest) if newest > old_mid.0 => {}
-        _ => return,
+        _ => return false,
+    }
+    // Flood-control budget (#1150): a restick is a create+delete pair, and the
+    // plan-card move that follows is another — one shared gate bounds the
+    // burst instead of two independent timers (#814).
+    if !tg.claim_sticky_action(chat.0, TelegramState::STICKY_STACK_MIN_INTERVAL) {
+        return false;
     }
 
     // Re-post the current full flow at the bottom on the same surface.
@@ -1437,7 +1449,7 @@ pub(crate) async fn restick_flow_if_buried(
             render_flow_details_state(&s)
         };
         if details.is_empty() {
-            return;
+            return false;
         }
         match super::rich::api::send_rich_html_id(
             bot.api_url().as_str(),
@@ -1465,7 +1477,7 @@ pub(crate) async fn restick_flow_if_buried(
             render_flow(&s)
         };
         if html.is_empty() {
-            return;
+            return false;
         }
         match send_html_or_plain(bot, chat, thread_id, &html, "turn").await {
             Ok(mid) => Some(mid),
@@ -1478,7 +1490,7 @@ pub(crate) async fn restick_flow_if_buried(
         }
     };
     let Some(new_mid) = new_mid else {
-        return;
+        return false;
     };
 
     // Swap the block id to the relocated message BEFORE deleting the old copy,
@@ -1510,6 +1522,7 @@ pub(crate) async fn restick_flow_if_buried(
     // The plan Approve/Discard keyboard rides the persistent plan card, not the
     // flow block (#580), so a relocated block re-posts bare — nothing to
     // re-attach here.
+    relocated
 }
 
 /// Pull the trailing folded intermediate out of the collapsed processing-log

@@ -167,13 +167,21 @@ pub struct TelegramState {
     /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
     /// session looking permanently busy.
     active_turns: std::sync::Mutex<std::collections::HashSet<Uuid>>,
-    /// Highest incoming Telegram message id seen per chat (#451). Recorded for
-    /// EVERY message reaching the handler, mention or not, so the streaming
-    /// edit loop can tell when its open flow block has been buried by newer
-    /// chatter (block message id < newest incoming id) and re-stick the block
-    /// to the bottom. Telegram message ids are per-chat monotonic, so a plain
-    /// max is a valid "is the block buried" test.
+    /// Newest NON-STICKY message id seen per chat (#451, semantics sharpened
+    /// by #1150). This is burial EVIDENCE for the flow block: user messages
+    /// (recorded in the handler) plus non-sticky bot bubbles — intermediate
+    /// reports (#582), follow-up questions. Sticky elements deliberately do
+    /// NOT feed it: flow-block reposts and plan-card reposts never call these
+    /// recorders, so one restick can never manufacture evidence that buries
+    /// the other sticky element (the ping-pong #1150 closes). Telegram message
+    /// ids are per-chat monotonic, so a plain max is a valid "is the block
+    /// buried" test.
     chat_newest_msg_id: std::sync::Mutex<HashMap<i64, i32>>,
+    /// Per-chat instant of the last sticky-stack action (#1150): a flow-block
+    /// restick or a plan-card move, each of which is a delete+create pair.
+    /// One shared flood-control budget instead of two independent gates —
+    /// uncoordinated bursts of both were exactly the #814 regression shape.
+    last_sticky_action: std::sync::Mutex<HashMap<i64, std::time::Instant>>,
     /// Dedup of outbound media uploaded via `telegram_send` so an identical
     /// file+caption isn't delivered twice back-to-back (#721).
     media_dedup: super::outbound_dedup::MediaSendDedup,
@@ -245,6 +253,7 @@ impl TelegramState {
             pending_reactions: std::sync::Mutex::new(HashMap::new()),
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
             chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
+            last_sticky_action: std::sync::Mutex::new(HashMap::new()),
             media_dedup: super::outbound_dedup::MediaSendDedup::default(),
             callback_origins: std::sync::Mutex::new(HashMap::new()),
         }
@@ -278,6 +287,50 @@ impl TelegramState {
             *entry = msg_id;
         }
     }
+
+    /// Record a NON-STICKY bot-sent bubble as burial evidence (#1150):
+    /// intermediate rich reports (#582) and follow-up question bubbles land
+    /// below the flow block exactly like user chatter, but before this
+    /// recorder nothing tracked them, so the block stayed buried under its own
+    /// output for the rest of the turn. Sticky sends (flow-block reposts,
+    /// plan-card reposts) must NEVER call this — their ids are positions, not
+    /// evidence, and counting them is the restick ping-pong #1150 closes.
+    pub(crate) fn note_bot_bubble(&self, chat_id: i64, msg_id: i32) {
+        self.note_incoming_msg(chat_id, msg_id);
+    }
+
+    /// Claim permission for one sticky-stack action (flow-block restick or
+    /// plan-card move) in `chat_id` (#1150). Returns false when another such
+    /// action fired less than `min_interval` ago; the caller then skips its
+    /// delete+create pair instead of bursting toward Telegram's flood control
+    /// (#814). Both sticky mechanisms draw from this one budget so they can't
+    /// combine into the storm two independent gates allowed.
+    pub(crate) fn claim_sticky_action(
+        &self,
+        chat_id: i64,
+        min_interval: std::time::Duration,
+    ) -> bool {
+        let mut map = self
+            .last_sticky_action
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        if let Some(last) = map.get(&chat_id)
+            && now.duration_since(*last) < min_interval
+        {
+            return false;
+        }
+        map.insert(chat_id, now);
+        true
+    }
+
+    /// Minimum spacing between ANY sticky-stack actions in one chat (#1150):
+    /// a flow-block restick and its coordinated plan-card move count as ONE
+    /// action; the next restick (either mechanism) waits this long. Bounds
+    /// delete+create churn well under Telegram's group flood limits while
+    /// keeping #451 burial recovery responsive.
+    pub(crate) const STICKY_STACK_MIN_INTERVAL: std::time::Duration =
+        std::time::Duration::from_secs(15);
 
     /// Newest incoming message id seen in a chat, if any (#451). The streaming
     /// edit loop compares this against its open flow block's message id to

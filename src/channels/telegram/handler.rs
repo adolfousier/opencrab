@@ -2677,6 +2677,14 @@ pub(crate) async fn handle_message(
         if telegram_state
             .should_restick_plan_card(session_id, RESTICK_COOLDOWN)
             .await
+            // Shared sticky-stack budget (#1150): a flow restick moments ago
+            // already spent this chat's delete+create allowance; skipping here
+            // is safe — the refresh below still edits in place, and the next
+            // settle or flow restick reorders.
+            && telegram_state.claim_sticky_action(
+                msg.chat.id.0,
+                super::state::TelegramState::STICKY_STACK_MIN_INTERVAL,
+            )
         {
             super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
                 .await;

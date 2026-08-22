@@ -199,6 +199,7 @@ pub(crate) async fn deliver_intermediate_message(
     chat: ChatId,
     thread_id: Option<teloxide::types::ThreadId>,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    tg: &super::state::TelegramState,
     text: &str,
 ) -> bool {
     // #690 follow-up (#980): re-expand a collapsed table once, up front, so the
@@ -213,6 +214,9 @@ pub(crate) async fn deliver_intermediate_message(
         }
     }
     if let Some(id) = try_send_intermediate_rich(bot, chat, thread_id, text).await {
+        // The bubble is non-sticky burial evidence (#1150): the flow block must
+        // restick below its own output on the next append.
+        tg.note_bot_bubble(chat.0, id.0);
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.sent_intermediates.push(text.to_string());
         s.intermediate_msg_ids.push(id);
@@ -225,7 +229,10 @@ pub(crate) async fn deliver_intermediate_message(
     let mut sent_ids: Vec<MessageId> = Vec::new();
     for chunk in split_message(&html, 4096) {
         match send_html_or_plain(bot, chat, thread_id, chunk, "turn").await {
-            Ok(id) => sent_ids.push(id),
+            Ok(id) => {
+                tg.note_bot_bubble(chat.0, id.0);
+                sent_ids.push(id);
+            }
             Err(e) => {
                 tracing::warn!("Telegram: rich-intermediate send failed ({e})");
                 return false;
