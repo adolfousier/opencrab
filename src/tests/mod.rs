@@ -606,6 +606,8 @@ pub mod subagent_worktree_test;
 pub mod suggest_followups_test;
 pub mod telegram_ephemeral_test;
 #[cfg(feature = "telegram")]
+pub mod telegram_folded_reclaim_suppression_test;
+#[cfg(feature = "telegram")]
 pub mod telegram_newest_msg_id_test;
 pub mod telegram_outbound_dedup_test;
 pub mod telegram_raw_update_parse_test;

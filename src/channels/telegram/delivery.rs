@@ -147,6 +147,7 @@ pub(crate) async fn deliver_final_response(
             // minor formatting differences between the streamed
             // intermediate and the final response don't bypass dedup.
             let norm = |s: &str| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
+            let mut suppressed_final = false;
             let text_only = if !sent.is_empty() {
                 let norm_final = norm(&text_only);
                 if sent.iter().any(|i| norm(i) == norm_final) {
@@ -154,6 +155,7 @@ pub(crate) async fn deliver_final_response(
                         "Telegram dedup: match found among {} intermediates (normalized) — suppressing final response",
                         sent.len()
                     );
+                    suppressed_final = true;
                     String::new()
                 } else {
                     text_only
@@ -169,17 +171,38 @@ pub(crate) async fn deliver_final_response(
             // a closing react directive becomes a reaction ON TOP of the
             // delivered completion, instead of the reaction-only skip
             // imprisoning the answer inside the Processing log block.
+            //
+            // UNLESS the final was just suppressed by dedup (#1152): the
+            // trailing folded run then belongs to the SAME answer, which
+            // already went out as intermediate bubbles. Reclaiming it here
+            // re-ships an orphan duplicate fragment (62-char tail under the
+            // full answer). `folded_duplicates_final` cannot arbitrate this:
+            // streaming may leave a SUFFIX chunk folded in the block, and
+            // that predicate deliberately only matches prefix overlap. So
+            // when suppression happened, strip the folded copy from the
+            // block silently — it is already delivered.
             let text_only = if text_only.trim().is_empty() {
-                match take_folded_final(bot, chat_id, streaming).await {
-                    Some(reclaimed) => {
+                if suppressed_final {
+                    if let Some(discarded) = take_folded_final(bot, chat_id, streaming).await {
                         tracing::info!(
-                            "Telegram: reclaimed folded final ({} chars) before react \
-                             decision (#478)",
-                            reclaimed.len()
+                            "Telegram: final suppressed by dedup — dropping {} folded \
+                             chars already delivered as intermediates (#1152)",
+                            discarded.len()
                         );
-                        reclaimed
                     }
-                    None => text_only,
+                    text_only
+                } else {
+                    match take_folded_final(bot, chat_id, streaming).await {
+                        Some(reclaimed) => {
+                            tracing::info!(
+                                "Telegram: reclaimed folded final ({} chars) before react \
+                                 decision (#478)",
+                                reclaimed.len()
+                            );
+                            reclaimed
+                        }
+                        None => text_only,
+                    }
                 }
             } else {
                 text_only
@@ -216,7 +239,11 @@ pub(crate) async fn deliver_final_response(
                 if let Err(ref e) = react_result {
                     tracing::warn!("Telegram: failed to set reaction ({mapped}): {}", e);
                 }
-                if text_only.trim().is_empty() && turn_ran_tools {
+                // `!suppressed_final` (#1152): a final suppressed by dedup was
+                // not dropped — it shipped early as intermediate bubbles. That
+                // is delivery, not the failure mode #439 guards against, so no
+                // synthetic "Done — X/Y tool calls" summary on top of it.
+                if text_only.trim().is_empty() && turn_ran_tools && !suppressed_final {
                     // Work turn with no completion text (#439): the model
                     // replaced its summary with a reaction. Deliver a
                     // fallback completion so the work is reported — the
