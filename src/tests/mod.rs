@@ -560,8 +560,9 @@ pub mod mission_control_skill_inbox_test;
 pub mod model_fetch_test;
 #[cfg(feature = "telegram")]
 pub mod models_picker_dedup_test;
-#[cfg(feature = "telegram")]
 pub mod parallel_tools_test;
+#[cfg(feature = "telegram")]
+pub mod path_lock_test;
 pub mod profile_test;
 pub mod retry_notice_drain_test;
 pub mod rsi_brain_dedup_test;
