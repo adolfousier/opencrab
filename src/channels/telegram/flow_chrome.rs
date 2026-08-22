@@ -430,14 +430,21 @@ pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Opt
     let Some(plan) = crate::utils::plan_files::load_plan(session_id).await else {
         return (None, None);
     };
+    plan_document_sections(&plan)
+}
+
+/// Title + checklist rows for a plan card, from any document — live or
+/// archived (#1158). Same row shape either way: full ballot checklist
+/// (ADR 0005 Decision 3, one `status_mark()` row per task), quality glyphs,
+/// verification badges, section text cap. Empty `tasks` (Editing before the
+/// seed) yield no checklist.
+pub(crate) fn plan_document_sections(
+    plan: &crate::tui::plan::PlanDocument,
+) -> (Option<String>, Option<Vec<String>>) {
     let title = {
         let t = plan.title.trim();
         (!t.is_empty()).then(|| crate::utils::truncate_str(t, SECTION_TEXT_CAP).to_string())
     };
-    // Full ballot checklist (ADR 0005 Decision 3): one row per task, `☑` for a
-    // completed task and `☐` otherwise, kept complete even when every task is
-    // done until the completing turn settles (Decision 9). Empty `tasks`
-    // (Editing before the seed) yield no checklist.
     let checklist = (!plan.tasks.is_empty()).then(|| {
         plan.tasks
             .iter()
@@ -482,7 +489,15 @@ pub(crate) async fn load_plan_prose(session_id: Uuid) -> Option<Vec<ProseSection
     // hollow "Context / Problem: / Target state: / …" sections (#580). A filled
     // design plan keeps every non-empty line. Sections that become empty after
     // filtering are dropped entirely.
-    let sections: Vec<ProseSection> = split_plan_prose(&body)
+    prose_sections_from_md_body(&body)
+}
+
+/// Prose sections from session-plan markdown text: strips unfilled scaffold
+/// lines (empty `**Label:**` fields, bare `N.` steps) and sections that end
+/// up empty, so a blank template never renders as hollow headings (#580).
+/// Shared by the live-prose loader and the archived-card finalizer (#1158).
+pub(crate) fn prose_sections_from_md_body(body: &str) -> Option<Vec<ProseSection>> {
+    let sections: Vec<ProseSection> = split_plan_prose(body)
         .into_iter()
         .filter_map(|mut sec| {
             let kept: Vec<&str> = sec

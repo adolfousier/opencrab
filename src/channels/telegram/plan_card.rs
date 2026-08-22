@@ -511,6 +511,85 @@ pub(crate) async fn refresh_plan_card(
 /// removal (discard / plan gone) and — followed by a later [`refresh_plan_card`]
 /// — as a re-stick so the next card posts fresh at the bottom of the
 /// conversation, keeping exactly one card visible as it follows the turns down.
+/// Completed-plan finalization (#1158): when a turn settles right after the
+/// session's plan was archived, edit the tracked card IN PLACE into its
+/// completed form instead of deleting+reposting or leaving it live: ✅ header,
+/// final checklist, keyboard stripped (explicit EMPTY `inline_keyboard`;
+/// omitting `reply_markup` leaves stale buttons attached per Bot API
+/// semantics), footer noting the archive.
+///
+/// One-shot by construction (#809 lesson): success UNTRACKS the card, so no
+/// later refresh or restart ever re-renders an archived plan as live. The
+/// "archived moments ago" gate (`recent_archived_plan`) lives in the caller:
+/// tool_loop archives at EVERY settling plan-turn, so mere archive existence
+/// would wrongly finalize unrelated later settles forever.
+pub(crate) async fn finalize_plan_card(
+    bot: &Bot,
+    chat: ChatId,
+    state: &Arc<TelegramState>,
+    session_id: Uuid,
+) {
+    // Same lock discipline as refresh/remove (#822): held across API calls.
+    let card_lock = state.plan_card_lock(session_id).await;
+    let _guard = card_lock.lock().await;
+    let Some((mid, _sig)) = state.plan_card(session_id).await else {
+        // Nothing tracked: finalized once already, or never posted. Either
+        // way deliberately NOT reposting is what kills resurrection.
+        return;
+    };
+    let Some(doc) = crate::utils::plan_files::latest_archived_plan(session_id).await else {
+        return;
+    };
+    let (title, checklist) = super::flow_chrome::plan_document_sections(&doc);
+    let empty_kb = serde_json::json!({ "inline_keyboard": [] });
+
+    // Rich path first, mirroring refresh_plan_card's dual rendering.
+    let mut edited = false;
+    if Config::current().channels.telegram.rich_messages
+        && let Some(mut rich) =
+            render_plan_card_rich_html(title.as_deref(), checklist.as_deref(), None, None).await
+    {
+        rich = rich.replacen("📋", "✅", 1);
+        rich.push_str("\n<i>Plan completed and archived.</i>");
+        match super::rich::api::edit_rich_html(
+            bot.api_url().as_str(),
+            bot.token(),
+            chat.0,
+            mid.0,
+            &rich,
+            Some(&empty_kb),
+            "turn",
+            "-",
+        )
+        .await
+        {
+            Ok(()) => edited = true,
+            Err(e) => tracing::debug!("Telegram plan card rich finalize failed ({mid:?}): {e}"),
+        }
+    }
+    if !edited {
+        let mut html = render_plan_card_html(title.as_deref(), checklist.as_deref(), None, None)
+            .await
+            .unwrap_or_else(|| "<b>Plan</b>".to_string());
+        html = html.replacen("📋", "✅", 1);
+        html.push_str("\n<i>Plan completed and archived.</i>");
+        if let Err(e) = bot
+            .edit_message_text(chat, mid, html)
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .reply_markup(teloxide::types::InlineKeyboardMarkup::new(Vec::<
+                Vec<teloxide::types::InlineKeyboardButton>,
+            >::new(
+            )))
+            .await
+        {
+            tracing::debug!("Telegram plan card finalize edit failed ({mid:?}): {e}");
+        }
+    }
+    // One-shot regardless of edit outcome: a card deleted by the user must
+    // not come back as a live card rendered from the archive either.
+    state.take_plan_card(session_id).await;
+}
+
 pub(crate) async fn remove_plan_card(
     bot: &Bot,
     chat: ChatId,

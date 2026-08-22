@@ -477,6 +477,33 @@ pub async fn archive_plan(session_id: Uuid) -> std::io::Result<()> {
     archive_plan_files(&plan_json_read_path(session_id).await)
 }
 
+/// True when the newest file under this session's `archive/` was written
+/// within `max_age` (#1158). tool_loop archives a plan at EVERY settling
+/// plan-turn, so "an archive exists" cannot distinguish completion-now from
+/// completion-hours-ago; callers needing "the settle that just happened
+/// archived it" must gate on this recency window instead.
+/// Dir-level core of [`recent_archived_plan`], split out so tests can point
+/// it at a temp dir instead of the session's real archive location (#1158).
+pub(crate) fn recent_archive_in_dir(dir: &std::path::Path, max_age: std::time::Duration) -> bool {
+    std::fs::read_dir(dir)
+        .ok()
+        .and_then(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| e.metadata().ok())
+                .filter_map(|m| m.modified().ok())
+                .filter_map(|t| t.elapsed().ok())
+                .min()
+                .map(|age| age <= max_age)
+        })
+        .unwrap_or(false)
+}
+
+pub async fn recent_archived_plan(session_id: Uuid, max_age: std::time::Duration) -> bool {
+    let dir = archive_dir(session_id).await;
+    recent_archive_in_dir(&dir, max_age)
+}
+
 fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
     // Archive next to wherever the plan actually lives (resolved or legacy
     // dir), so this stays sync and path-based for the loader's terminal-status

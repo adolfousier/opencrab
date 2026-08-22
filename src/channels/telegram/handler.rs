@@ -2673,32 +2673,44 @@ pub(crate) async fn handle_message(
         // flood control and produced duplicate cards. Skipping the re-stick
         // still refreshes in place below, so the card stays correct; it just
         // stays where it is until the next re-stick is due.
-        const RESTICK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(90);
-        if telegram_state
-            .should_restick_plan_card(session_id, RESTICK_COOLDOWN)
-            .await
-            // Shared sticky-stack budget (#1150): a flow restick moments ago
-            // already spent this chat's delete+create allowance; skipping here
-            // is safe — the refresh below still edits in place, and the next
-            // settle or flow restick reorders.
+        if crate::utils::plan_files::recent_archived_plan(
+            session_id,
+            std::time::Duration::from_secs(120),
+        )
+        .await
+        {
+            // Plan completed THIS settle (#1158): finalize the tracked card
+            // in place (✅ header, keyboard stripped, one-shot untrack)
+            // instead of re-sticking or refreshing a now-archived plan.
+            super::plan_card::finalize_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
+                .await;
+        } else {
+            const RESTICK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(90);
+            if telegram_state
+                .should_restick_plan_card(session_id, RESTICK_COOLDOWN)
+                .await
+                // Shared sticky-stack budget (#1150): a flow restick moments ago
+                // already spent this chat's delete+create allowance; skipping here
+                // is safe — the refresh below still edits in place, and the next
+                // settle or flow restick reorders.
             && telegram_state.claim_sticky_action(
                 msg.chat.id.0,
                 super::state::TelegramState::STICKY_STACK_MIN_INTERVAL,
+            ) {
+                super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
+                    .await;
+            }
+            super::plan_card::refresh_plan_card(
+                &bot,
+                msg.chat.id,
+                thread_id,
+                &telegram_state,
+                &agent,
+                session_id,
+                plan_kb,
             )
-        {
-            super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
-                .await;
+            .await;
         }
-        super::plan_card::refresh_plan_card(
-            &bot,
-            msg.chat.id,
-            thread_id,
-            &telegram_state,
-            &agent,
-            session_id,
-            plan_kb,
-        )
-        .await;
     }
 
     // Drop the active-turn guard before flushing so any reaction arriving during

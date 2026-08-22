@@ -688,6 +688,7 @@ pub mod telegram_model_callback_data_test;
 pub mod telegram_outbox_record_test;
 pub mod telegram_pending_question_steer_test;
 pub mod telegram_photo_batching_test;
+pub mod telegram_plan_finalize_test;
 pub mod telegram_plan_render_test;
 pub mod telegram_pre_tool_rolling_test;
 pub mod telegram_quote_reply_test;
