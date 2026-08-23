@@ -1065,6 +1065,12 @@ async fn cmd_chat_inner(
     // Now that the registry is Arc'd, give it to the channel factory
     channel_factory.set_tool_registry(shared_tool_registry.clone());
 
+    // Sub-agent manager for every channel agent (#1170): the factory is the
+    // ONLY sub-agent wiring chat channels get. Without this, tasks_list reads
+    // an empty registry in Telegram/WhatsApp/Discord/Slack sessions while the
+    // TUI (wired at service build) and the cron daemon work fine.
+    channel_factory.set_subagent_manager(subagent_manager.clone());
+
     // Share session_updated_tx with the factory so channel agents (WhatsApp, Telegram, etc.)
     // trigger real-time TUI refresh when they complete a response.
     channel_factory.set_session_updated_tx(session_updated_tx.clone());

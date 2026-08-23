@@ -133,6 +133,7 @@ pub mod candle_whisper_test;
 pub mod channel_action_test;
 pub mod channel_command_media_marker_test;
 pub mod channel_command_owner_gate_test;
+pub mod channel_factory_subagent_test;
 pub mod channel_restart_target_test;
 pub mod channel_search_test;
 pub mod channel_session_resolve_test;
