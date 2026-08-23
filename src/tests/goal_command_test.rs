@@ -118,3 +118,30 @@ fn usage_warning_shows_correct_shape() {
     assert!(w.contains("/goal status"), "{w}");
     assert!(w.contains("/goal clear"), "{w}");
 }
+
+// ── #1167: autocorrect missing leading `/` ───────────────────────────
+
+#[test]
+fn missing_slash_is_prepended() {
+    let (cmd, args) = normalize_command("status", "");
+    assert_eq!(cmd, "/status");
+    assert_eq!(args, "");
+
+    let (cmd, args) = normalize_command("models list", "");
+    assert_eq!(cmd, "/models");
+    assert_eq!(args, "list");
+}
+
+#[test]
+fn present_slash_is_untouched() {
+    let (cmd, _) = normalize_command("/status", "");
+    assert_eq!(cmd, "/status");
+}
+
+#[test]
+fn empty_command_stays_empty_for_the_rejection_path() {
+    // The execute() path still rejects empty commands; normalize must not
+    // invent a bare "/" out of nothing.
+    let (cmd, _) = normalize_command("", "");
+    assert_eq!(cmd, "");
+}
