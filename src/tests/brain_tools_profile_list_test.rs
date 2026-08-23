@@ -19,9 +19,11 @@ fn test_api_key_never_surfaced_in_roster() {
     // Even if a caller smuggles a configured api_key into the row, the
     // rendered roster must not contain it - the negative test pinning the
     // #1161 hard rule.
-    let mut cfg = A2aConfig::default();
-    cfg.enabled = true;
-    cfg.api_key = Some("super-secret-key-do-not-leak".to_string());
+    let cfg = A2aConfig {
+        enabled: true,
+        api_key: Some("super-secret-key-do-not-leak".to_string()),
+        ..Default::default()
+    };
     let out = render_roster(&[row("worker", cfg)]);
     assert!(
         !out.contains("super-secret-key-do-not-leak"),
@@ -33,11 +35,13 @@ fn test_api_key_never_surfaced_in_roster() {
 
 #[test]
 fn test_advertise_url_wins_over_bind_port() {
-    let mut cfg = A2aConfig::default();
-    cfg.enabled = true;
-    cfg.bind = "0.0.0.0".into();
-    cfg.port = 18790;
-    cfg.advertise_url = Some("http://crab.example.com:9999".into());
+    let cfg = A2aConfig {
+        enabled: true,
+        bind: "0.0.0.0".into(),
+        port: 18790,
+        advertise_url: Some("http://crab.example.com:9999".into()),
+        ..Default::default()
+    };
     assert_eq!(
         effective_a2a_url(&cfg),
         "http://crab.example.com:9999",
@@ -47,16 +51,20 @@ fn test_advertise_url_wins_over_bind_port() {
 
 #[test]
 fn test_advertise_url_trimmed_of_slash_and_whitespace() {
-    let mut cfg = A2aConfig::default();
-    cfg.advertise_url = Some("  http://relay.example.com/  ".into());
+    let cfg = A2aConfig {
+        advertise_url: Some("  http://relay.example.com/  ".into()),
+        ..Default::default()
+    };
     assert_eq!(effective_a2a_url(&cfg), "http://relay.example.com");
 }
 
 #[test]
 fn test_bind_port_fallback_when_no_advertise_url() {
-    let mut cfg = A2aConfig::default();
-    cfg.bind = "127.0.0.1".into();
-    cfg.port = 18790;
+    let mut cfg = A2aConfig {
+        bind: "127.0.0.1".into(),
+        port: 18790,
+        ..Default::default()
+    };
     // None and blank-but-set must both fall back.
     assert_eq!(effective_a2a_url(&cfg), "http://127.0.0.1:18790");
     cfg.advertise_url = Some("   ".into());
@@ -86,9 +94,11 @@ fn test_disabled_profile_rendering_notes_config_presence() {
 
 #[test]
 fn test_enabled_roster_shows_advertise_url_and_collision_warning() {
-    let mut a = A2aConfig::default();
-    a.enabled = true;
-    a.advertise_url = Some("http://a.example.com".into());
+    let a = A2aConfig {
+        enabled: true,
+        advertise_url: Some("http://a.example.com".into()),
+        ..Default::default()
+    };
     let mut b = a.clone();
     b.advertise_url = None;
     let out = render_roster(&[row("alpha", a), row("beta", b)]);
