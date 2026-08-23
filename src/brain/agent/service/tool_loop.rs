@@ -965,6 +965,13 @@ impl AgentService {
                     &model_name,
                 );
             for msg in db_messages.iter_mut() {
+                // #1172: phantom-blocked sections must never re-enter LLM
+                // context (#86) — strip them before the generic artifact
+                // sweep, which would only remove their markers and leave the
+                // narration standing.
+                if msg.content.contains("<!-- phantom_blocked=1 -->") {
+                    msg.content = crate::utils::sanitize::strip_phantom_blocked(&msg.content);
+                }
                 if preserve_thinking && msg.role == "assistant" {
                     let (cleaned, reasoning) =
                         crate::utils::sanitize::hoist_reasoning_blocks(&msg.content);
@@ -1359,7 +1366,6 @@ impl AgentService {
         // Iteration content withheld from the DB by the phantom persist-skip.
         // Flushed at turn close if that very iteration ends the turn (#458):
         // the reloadable history must always contain what the user saw.
-        let mut pending_phantom_content: Option<String> = None;
         let mut recent_tool_calls: Vec<String> = Vec::new(); // Track tool calls to detect loops
         // Normalized call signatures (#957, generalized #961): the
         // exact-match hard-break only fires on identical args, so loops
@@ -1410,6 +1416,14 @@ impl AgentService {
         // This is only a backstop against a pathologically long chain.
         const MAX_PHANTOM_SWAPS: u32 = 8;
         let mut phantom_swaps_done: u32 = 0;
+        // Global detection ceiling (#1172): provider swaps reset the
+        // per-provider retry budget BY DESIGN (a fresh provider gets a fresh
+        // chance), but rotation then multiplies total detections — production
+        // saw 25 detections / 123 requests across 8 swaps in one stuck turn
+        // ($0 metered). This counter NEVER resets; crossing it forces the
+        // give-up path no matter how fresh the active provider's budget is.
+        let mut phantom_detections_total: u32 = 0;
+        const MAX_PHANTOM_DETECTIONS_TOTAL: u32 = MAX_PHANTOM_RETRIES * (MAX_PHANTOM_ROLLS + 1);
         // Bounded retry for the "reasoning-only, no answer" failure mode:
         // MLX Qwen models periodically emit finish_reason=stop after only
         // reasoning_content chunks — zero text, zero tool calls — so the
@@ -1777,7 +1791,8 @@ impl AgentService {
                     if matches!(
                         e,
                         crate::brain::provider::ProviderError::ThinkingLoopTimeout(_)
-                    ) && phantom_retries_used < MAX_PHANTOM_RETRIES =>
+                    ) && phantom_retries_used < MAX_PHANTOM_RETRIES
+                        && phantom_detections_total < MAX_PHANTOM_DETECTIONS_TOTAL =>
                 {
                     let secs =
                         if let crate::brain::provider::ProviderError::ThinkingLoopTimeout(s) = e {
@@ -1825,6 +1840,7 @@ impl AgentService {
                     // pathological model can't loop forever: once the cap is
                     // hit the normal phantom give-up path takes over.
                     phantom_retries_used += 1;
+                    phantom_detections_total += 1;
                     context.add_message(Message::user(super::nudge::no_tool_calls_nudge(
                         is_local_provider,
                     )));
@@ -4528,7 +4544,7 @@ impl AgentService {
                 }
                 if iteration_is_phantom {
                     tracing::debug!(
-                        "[phantom] Skipping DB persist for phantom iteration \
+                        "[phantom] Persisting phantom-blocked iteration with flag \
                          (text_len={}, has_reasoning={})",
                         iteration_text.len(),
                         reasoning_text
@@ -4536,19 +4552,29 @@ impl AgentService {
                             .map(|r| !r.trim().is_empty())
                             .unwrap_or(false),
                     );
-                    // Stash instead of drop: if the turn CLOSES on this
-                    // iteration, the text is the visible completion and the
-                    // turn-close flush persists it (#458).
                     if !iteration_text.is_empty() {
                         iter_content.push_str(&format!("{}\n\n", iteration_text));
                     }
-                    pending_phantom_content = if iter_content.is_empty() {
-                        None
-                    } else {
-                        Some(iter_content)
-                    };
+                    // #1172: a "phantom" iteration can BE the deliverable — a
+                    // verbose model narrating its (real, completed) work before
+                    // EndTurn. Persist every blocked iteration under an
+                    // explicit HTML-comment flag so it stays recoverable from
+                    // the DB while rendering invisibly in markdown. This
+                    // supersedes the #458 turn-close flush: nothing is withheld
+                    // any more, so there is nothing left to flush at close.
+                    // Never touches accumulated_text — the user surface still
+                    // sees none of it.
+                    if !iter_content.is_empty() {
+                        iter_content.insert_str(0, "<!-- phantom_blocked=1 -->\n");
+                        iter_content.push_str("\n<!-- /phantom_blocked=1 -->\n");
+                        if let Err(e) = message_service
+                            .append_content(assistant_db_msg.id, &iter_content)
+                            .await
+                        {
+                            tracing::warn!("failed to persist phantom-blocked iteration: {e}");
+                        }
+                    }
                 } else {
-                    pending_phantom_content = None;
                     // Skip a verbatim restatement of what the turn already
                     // carries (#1070). The DB append is skipped with it, so a
                     // resumed session doesn't surface the duplicate either.
@@ -4877,6 +4903,7 @@ impl AgentService {
                     }
                 }
                 if phantom_retries_used < MAX_PHANTOM_RETRIES
+                    && phantom_detections_total < MAX_PHANTOM_DETECTIONS_TOTAL
                     && phantom_eligible
                     && (super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                         // Strict full-text detector (#589): the lead-in-only
@@ -4949,6 +4976,7 @@ impl AgentService {
                             &turn_tool_output,
                         ))
                 {
+                    phantom_detections_total += 1;
                     phantom_retries_used += 1;
                     tracing::warn!(
                         "Phantom tool call detected (local={}) — model described \
@@ -5027,10 +5055,17 @@ impl AgentService {
                 // narrating instead of calling tools must not loop forever
                 // (#746).
                 if phantom_eligible
-                    && phantom_retries_used >= MAX_PHANTOM_RETRIES
+                    && (phantom_retries_used >= MAX_PHANTOM_RETRIES
+                        || phantom_detections_total >= MAX_PHANTOM_DETECTIONS_TOTAL)
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
-                    if phantom_rolls < MAX_PHANTOM_ROLLS {
+                    // #1172: the global ceiling may trip this gate while rolls
+                    // remain. A roll resets the retry counter and re-nudges,
+                    // which would defeat the ceiling entirely — so no roll
+                    // once total detections are spent.
+                    if phantom_rolls < MAX_PHANTOM_ROLLS
+                        && phantom_detections_total < MAX_PHANTOM_DETECTIONS_TOTAL
+                    {
                         phantom_rolls += 1;
                         tracing::warn!(
                             "Phantom retry cap rolling ({}/{} rolls, swaps_done={}) — \
@@ -5710,23 +5745,11 @@ impl AgentService {
                 } else {
                     tracing::info!("Agent responded with text only (no tool calls)");
                 }
-                // Turn-close flush (#458): the closing iteration's persist
-                // was withheld by the phantom skip, but the turn ended on it
-                // — that text IS the completion the user saw. Write it so a
-                // session reload shows the same history as the live view.
-                if let Some(content) = pending_phantom_content.take() {
-                    tracing::info!(
-                        "[phantom] persisting withheld closing-iteration content ({} chars) \
-                         at turn close (#458)",
-                        content.len()
-                    );
-                    if let Err(e) = message_service
-                        .append_content(assistant_db_msg.id, &content)
-                        .await
-                    {
-                        tracing::warn!("failed to persist withheld completion: {e}");
-                    }
-                }
+                // #458's turn-close flush was removed by #1172: blocked phantom
+                // iterations now persist immediately under a phantom_blocked=1
+                // flag at detection time, so there is nothing left to withhold
+                // and nothing to flush here.
+
                 final_response = Some(response);
 
                 // --- GOAL POST-TURN HOOK ---

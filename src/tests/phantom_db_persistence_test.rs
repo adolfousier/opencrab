@@ -1,5 +1,5 @@
-//! Regression: phantom self-heal scaffolding must NOT land in the DB
-//! `messages.content` column.
+//! Regression: phantom self-heal scaffolding must never reach the user or
+//! future LLM context.
 //!
 //! Background: discussion #86 / gist 85cfdc26 showed a Telegram session
 //! with 34 phantom entries piled into the agent's history. Each new turn
@@ -7,13 +7,13 @@
 //! assistant history, and the model hallucinated more phantoms from its
 //! own corrections.
 //!
-//! Commit `c7814618` ("stop injecting phantom text into context") fixed
-//! the in-memory `ConversationContext` for the live turn but left the
-//! per-iteration `append_content` call in `tool_loop.rs:2589-2600`
-//! unconditional, so phantom text still hit the DB. This file pins the
-//! follow-up fix: phantom iterations skip the persist; the eventual
-//! successful iteration (or `[self-heal] Aborted —…` notice) gets
-//! persisted normally.
+//! Contract history: `c7814618` stopped injecting phantom text into live
+//! context; a follow-up made iterations skip the persist entirely. #1172
+//! replaced that with flag-and-persist — blocked iterations land in the DB
+//! wrapped in paired `<!-- phantom_blocked=1 -->` sections, so a
+//! misclassified deliverable stays recoverable, while context rebuilds call
+//! `strip_phantom_blocked` so #86's guarantee (discarded narrations never
+//! re-enter LLM history) still holds. This file pins that contract.
 
 use crate::brain::agent::service::AgentService;
 use crate::brain::provider::{
@@ -172,10 +172,21 @@ async fn phantom_iteration_not_persisted_to_assistant_db_row() {
         .find(|m| m.role == "assistant")
         .expect("at least one assistant message");
 
+    // #1172: the blocked iteration IS persisted now — but wrapped in paired
+    // phantom_blocked markers, so (a) a misclassified deliverable stays
+    // recoverable from the DB, and (b) context rebuilds strip the whole
+    // section (strip_phantom_blocked), preserving #86's guarantee that
+    // discarded narrations never re-enter LLM history.
     assert!(
-        !assistant.content.contains("Let me check the git status"),
-        "phantom narration leaked into DB → next-turn LLM context would see it.\n\
+        assistant.content.contains("<!-- phantom_blocked=1 -->")
+            && assistant.content.contains("Let me check the git status"),
+        "phantom-blocked iteration must be recoverable under its flag.\n\
          Full content:\n{}",
+        assistant.content
+    );
+    assert!(
+        assistant.content.contains("<!-- /phantom_blocked=1 -->"),
+        "the flag must be paired so context rebuilds can strip the section:\n{}",
         assistant.content
     );
     assert!(
