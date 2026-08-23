@@ -198,9 +198,20 @@ impl Tool for ResumeAgentTool {
                     })?
             };
 
-            // Resumed agents get General type (full parent tools minus recursive/dangerous)
-            let child_registry =
-                super::agent_type::AgentType::General.build_registry(&self.parent_registry);
+            // Rebuild the child's registry from its FROZEN grant (#1173,
+            // fixes F2): resume used to hand back a full General registry
+            // regardless of how the child was originally spawned, silently
+            // widening an explore-style child into full write access. The
+            // stored read_only flag is the single source of truth for the
+            // agent's whole life.
+            let child_registry = super::build_child_registry(&self.parent_registry);
+            if self.manager.get_read_only(agent_id).unwrap_or(false) {
+                crate::brain::tools::plan_gate::restrict_registry_to_read_only(&child_registry);
+                tracing::info!(
+                    "Resumed sub-agent {agent_id} holds a read-only grant: \
+                     registry rebuilt restricted (#1173)"
+                );
+            }
 
             Arc::new(
                 crate::brain::agent::AgentService::new(provider, service_context, &config)

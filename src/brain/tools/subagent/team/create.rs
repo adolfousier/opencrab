@@ -2,8 +2,8 @@
 
 use super::manager::TeamManager;
 use crate::brain::tools::error::{Result, ToolError};
-use crate::brain::tools::subagent::AgentType;
 use crate::brain::tools::subagent::manager::{SubAgent, SubAgentManager, SubAgentState};
+use crate::brain::tools::subagent::map_deprecated_agent_type;
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -71,9 +71,9 @@ impl Tool for TeamCreateTool {
                                 "type": "string",
                                 "description": "Short label for this agent"
                             },
-                            "agent_type": {
-                                "type": "string",
-                                "enum": ["general", "explore", "architect", "plan", "code", "research"]
+                            "read_only": {
+                                "type": "boolean",
+                                "description": "Spawn this member with a read-restricted tool registry (#1173): reads/search/research only. Omit or false for full capability."
                             },
                             "provider": {
                                 "type": "string",
@@ -150,12 +150,37 @@ impl Tool for TeamCreateTool {
                 .unwrap_or("team-member")
                 .to_string();
 
-            let agent_type = AgentType::parse(
-                agent_def
-                    .get("agent_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("general"),
-            );
+            // Per-member capability grant (#1173): explicit read_only wins;
+            // a deprecated typed agent_type maps to its historical grant,
+            // loudly; unknown types fail closed for THIS member only.
+            let member_read_only = match agent_def.get("read_only") {
+                Some(v) => Some(v.as_bool().ok_or_else(|| {
+                    ToolError::InvalidInput(format!(
+                        "Team member '{label}': 'read_only' must be a boolean"
+                    ))
+                })?),
+                None => None,
+            };
+            let deprecated_raw = agent_def
+                .get("agent_type")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let (read_only, member_grant_note) = match (member_read_only, deprecated_raw) {
+                (Some(ro), _) => (ro, None),
+                (None, Some(raw)) => {
+                    let grant = map_deprecated_agent_type(&raw)
+                        .map_err(|e| ToolError::InvalidInput(format!("{label}: {e}")))?;
+                    tracing::warn!(
+                        "team_create member '{label}' uses deprecated agent_type='{raw}'; \
+                         mapped to read_only={grant} (#1173)"
+                    );
+                    (
+                        grant,
+                        Some(format!("deprecated agent_type '{raw}' → read_only={grant}")),
+                    )
+                }
+                (None, None) => (false, None),
+            };
 
             // Per-member provider / model overrides (issue #152). Same
             // precedence as spawn_agent: per-member > config > parent.
@@ -224,7 +249,13 @@ impl Tool for TeamCreateTool {
                     .map_err(|e| ToolError::Execution(format!("Provider creation failed: {}", e)))?
             };
 
-            let child_registry = agent_type.build_registry(&self.parent_registry);
+            let child_registry = super::super::build_child_registry(&self.parent_registry);
+            if read_only {
+                crate::brain::tools::plan_gate::restrict_registry_to_read_only(&child_registry);
+                tracing::info!(
+                    "Team member '{label}' spawned read-only: registry restricted (#1173)"
+                );
+            }
 
             let child_service = Arc::new(
                 crate::brain::agent::AgentService::new(provider, service_context.clone(), &config)
@@ -234,7 +265,18 @@ impl Tool for TeamCreateTool {
                     .with_working_directory(context.working_dir()),
             );
 
-            let full_prompt = format!("{}\n\n{}", agent_type.system_prompt(), prompt);
+            // Typed preambles are gone (#1173, Proposal B): restricted
+            // members get one factual capability line, full members just the
+            // task.
+            let full_prompt = if read_only {
+                format!(
+                    "[Capability note: you are a READ-ONLY team member. Your tool \
+                     set contains file reading/search and web research only — no \
+                     writes, no bash, no spawning.]\n\n{prompt}"
+                )
+            } else {
+                prompt
+            };
 
             let cancel_clone = cancel_token.clone();
             let manager = self.subagent_manager.clone();
@@ -296,6 +338,7 @@ impl Tool for TeamCreateTool {
                 id: agent_id.clone(),
                 label: label.clone(),
                 session_id: child_session_id,
+                read_only,
                 state: SubAgentState::Running,
                 cancel_token,
                 join_handle: Some(handle),
@@ -307,10 +350,14 @@ impl Tool for TeamCreateTool {
 
             spawned_ids.push(agent_id.clone());
             spawn_results.push(format!(
-                "  {} ({}) → {}",
+                "  {} ({}) → {}{}",
                 label,
-                agent_type.label(),
-                agent_id
+                if read_only { "read-only" } else { "full" },
+                agent_id,
+                member_grant_note
+                    .as_deref()
+                    .map(|n| format!(" [{n}]"))
+                    .unwrap_or_default()
             ));
         }
 

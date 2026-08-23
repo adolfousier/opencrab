@@ -131,10 +131,9 @@ impl Tool for SpawnAgentTool {
                     "type": "string",
                     "description": "Short human-readable label for this sub-agent (e.g., 'refactor-auth', 'test-runner')"
                 },
-                "agent_type": {
-                    "type": "string",
-                    "description": "Agent specialization: 'general' (full tools), 'explore' (read-only), 'plan' (read+bash), 'code' (full write), 'research' (web+read). Default: general",
-                    "enum": ["general", "explore", "architect", "plan", "code", "research"]
+                "read_only": {
+                    "type": "boolean",
+                    "description": "Spawn this child with a read-restricted tool registry (#1173): file reads, glob/grep/ls and web research only — no writes, no bash, no spawning. Use for exploration, code review, and research children. Omit or false for a full-capability worker (still minus recursive/dangerous tools)."
                 },
                 "provider": {
                     "type": "string",
@@ -174,12 +173,43 @@ impl Tool for SpawnAgentTool {
             .unwrap_or("sub-agent")
             .to_string();
 
-        let agent_type = super::AgentType::parse(
-            input
-                .get("agent_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("general"),
-        );
+        // Resolve the child's capability grant (#1173). Explicit `read_only`
+        // wins; a deprecated typed `agent_type` maps to its historical
+        // effective grant (loudly); anything else defaults to full access.
+        // A non-boolean `read_only` is a hard error, not a silent default —
+        // the caller asked for a specific capability and must not get a
+        // different one because of a type mistake.
+        let explicit_read_only = match input.get("read_only") {
+            Some(v) => Some(v.as_bool().ok_or_else(|| {
+                ToolError::InvalidInput(
+                    "'read_only' must be a boolean (true = restricted registry, false = full)"
+                        .into(),
+                )
+            })?),
+            None => None,
+        };
+        let deprecated_raw = input
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let (read_only, deprecation_note) = match (explicit_read_only, deprecated_raw) {
+            (Some(ro), _) => (ro, None),
+            (None, Some(raw)) => {
+                let grant =
+                    super::map_deprecated_agent_type(&raw).map_err(ToolError::InvalidInput)?;
+                tracing::warn!(
+                    "spawn_agent called with deprecated agent_type='{raw}'; \
+                     mapped to read_only={grant}. Pass read_only explicitly (#1173)."
+                );
+                (
+                    grant,
+                    Some(format!(
+                        "Deprecated agent_type '{raw}' resolved to read_only={grant}; pass read_only explicitly."
+                    )),
+                )
+            }
+            (None, None) => (false, None),
+        };
 
         // Optional plan-state override (#908 option A): plan-driven
         // execution hands the child the PARENT's session id so the worker's
@@ -297,8 +327,21 @@ impl Tool for SpawnAgentTool {
                     })?
             };
 
-            // Build filtered tool registry based on agent type
-            let child_registry = agent_type.build_registry(&self.parent_registry);
+            // Build the child's tool registry (#1173): parent's tools minus
+            // recursive/dangerous ones, then restricted to read-only when the
+            // parent granted only read access. The #649 Editing-parent
+            // restriction below applies on top of either grant.
+            let child_registry = super::build_child_registry(&self.parent_registry);
+            // Explicit read_only grant from the spawn call (#1173): strip
+            // mutating tools before any other consideration.
+            if read_only {
+                crate::brain::tools::plan_gate::restrict_registry_to_read_only(&child_registry);
+                tracing::info!(
+                    "Sub-agent spawned with read_only=true: \
+                     child registry restricted to read-only (#1173)"
+                );
+            }
+
             // #649: a child spawned while the PARENT session is in Plan-mode
             // Editing must be read-only. The child runs under a fresh session
             // that resolves to NoPlan, so the per-call plan gate never fires
@@ -341,8 +384,19 @@ impl Tool for SpawnAgentTool {
             Arc::new(agent)
         };
 
-        // Prepend agent type system prompt to the user's task
-        let full_prompt = format!("{}\n\n{}", agent_type.system_prompt(), prompt);
+        // Typed preambles are gone (#1173, Proposal B): a restricted child
+        // gets one factual capability line derived from its actual grant —
+        // no role-play text that could drift from what the registry truly
+        // allows. Full-access children receive just the task.
+        let full_prompt = if read_only {
+            format!(
+                "[Capability note: you are a READ-ONLY sub-agent. Your tool set \
+                 contains file reading/search and web research only — no writes, \
+                 no bash, no spawning. Report findings; do not attempt changes.]\n\n{prompt}"
+            )
+        } else {
+            prompt.clone()
+        };
 
         // Create the status file in Pending state before spawning. new()
         // writes the file; we don't need the returned handle, but we do
@@ -520,6 +574,7 @@ impl Tool for SpawnAgentTool {
             id: agent_id.clone(),
             label: label.clone(),
             session_id: child_session_id,
+            read_only,
             state: SubAgentState::Running,
             cancel_token,
             join_handle: Some(handle),
@@ -530,8 +585,20 @@ impl Tool for SpawnAgentTool {
         });
 
         Ok(ToolResult::success(format!(
-            "Spawned sub-agent '{}' with id: {}\nSession: {}\nPrompt: {}",
-            label, agent_id, child_session_id, prompt
+            "Spawned sub-agent '{}' with id: {}\nSession: {}\nAccess: {}\nPrompt: {}{}",
+            label,
+            agent_id,
+            child_session_id,
+            if read_only {
+                "read-only (#1173): reads/search/research only"
+            } else {
+                "full (minus recursive/dangerous tools)"
+            },
+            prompt,
+            deprecation_note
+                .as_deref()
+                .map(|n| format!("\nNote: {n}"))
+                .unwrap_or_default()
         )))
     }
 }
