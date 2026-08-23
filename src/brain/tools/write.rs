@@ -178,10 +178,17 @@ impl Tool for WriteTool {
             )));
         }
 
+        // One writer at a time on this path (#1153). Advisory, held only
+        // across the write; a contended write proceeds and says so rather
+        // than refusing, since a blocked save is worse than an interleave.
+        let write_lock = super::path_lock::acquire(&path);
+        let contended = write_lock.as_ref().is_some_and(|l| !l.is_held());
+
         // Write the file
         fs::write(&path, &input.content)
             .await
             .map_err(ToolError::Io)?;
+        drop(write_lock);
 
         // The session now knows the file as what it just wrote, so its next
         // write is not mistaken for a stale one.
@@ -195,11 +202,15 @@ impl Tool for WriteTool {
                 .await;
         }
 
-        let message = format!(
+        let mut message = format!(
             "Successfully wrote {} bytes to {}",
             input.content.len(),
             path.display()
         );
+        // An overlapping write is reported rather than swallowed.
+        if contended {
+            message.push_str(&super::path_lock::contention_notice(&path));
+        }
 
         Ok(ToolResult::success(message)
             .with_metadata("path".to_string(), path.display().to_string())
