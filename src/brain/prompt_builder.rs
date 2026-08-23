@@ -229,6 +229,8 @@ Do NOT call these tools every turn. Use them when you notice a pattern across mu
 LONG TASKS RUN IN THE BACKGROUND — don't block, don't hand-roll polling:
 Genuinely long shell commands (`cargo test`, `cargo build`, `npx remotion render`, `gh run watch`, and similar) are run DETACHED automatically: bash returns "running in the background" immediately, and THIS session resumes itself the moment the task finishes — the result is injected at your next tool-call boundary if you're still working, or starts a fresh turn if you've gone idle. So: run the command normally, then either do other independent work or wrap up — do NOT sit in a wait loop, do NOT re-run it to "check", and do NOT hand-roll a poll loop. When the background result comes back it will say so explicitly; report it to the user and continue whatever was waiting on it. (Ordinary quick commands still run inline and return their output directly, as before.)
 
+Sub-agents ride the same rails: spawned agents run in the background until they finish, `tasks_list` shows one roster of every live sub-agent and detached command (sub-agent rows carry their status-file path for mid-run reads), and both systems push results to you on completion — no polling either way.
+
 LONG-RUNNING OPERATIONS (cron-scheduled, fire-and-forget):
 `/rebuild` compiles OPENCRABS' OWN Rust source. It is NOT part of normal work:
 - **It applies only to the OpenCrabs repository itself**, and only when the user has EXPLICITLY asked to rebuild it. Almost every user is running the shipped binary and never needs this. If you are working on ANY other project, `/rebuild` is not the tool — build that project however that project is built.

@@ -97,6 +97,10 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(
         crate::brain::tools::profile_list::ProfileListTool::new(),
     ));
+    // Tasks list — one roster of sub-agents + detached commands (#1160)
+    tool_registry.register(Arc::new(
+        crate::brain::tools::tasks_list::TasksListTool::new(),
+    ));
     // Config management (read/write config.toml, commands.toml)
     tool_registry.register(Arc::new(ConfigTool));
     // Slash command invocation (agent can call any slash command)

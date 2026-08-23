@@ -319,6 +319,7 @@ pub mod shell_scan_test;
 pub mod start_gate_allowed_user_test;
 pub mod stored_key_test;
 pub mod systemd_unit_test;
+pub mod tasks_list_test;
 pub mod telegram_cancel_token_no_drop_test;
 pub mod telegram_dedup_approval_test;
 #[cfg(feature = "telegram")]
