@@ -888,6 +888,7 @@ impl Config {
             a2a: overlay.a2a,
             image: overlay.image,
             cron: overlay.cron,
+            doctor: overlay.doctor,
             memory: overlay.memory,
             brain: overlay.brain,
             browser: overlay.browser,

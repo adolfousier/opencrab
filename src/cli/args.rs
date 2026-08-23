@@ -62,7 +62,12 @@ pub enum Commands {
     Status,
 
     /// Run diagnostics: check config, provider connectivity, channel health, tools, brain
-    Doctor,
+    Doctor {
+        /// Repair detected issues: stuck cron rows, stale plan markers,
+        /// loose brain/log file permissions (#1114)
+        #[arg(long)]
+        fix: bool,
+    },
 
     /// Initialize configuration
     Init {
@@ -485,7 +490,7 @@ pub async fn run() -> Result<()> {
             ui::cmd_chat(&config, None, true).await
         }
         Some(Commands::Status) => commands::cmd_status(&config).await,
-        Some(Commands::Doctor) => commands::cmd_doctor(&config).await,
+        Some(Commands::Doctor { fix }) => commands::cmd_doctor(&config, fix).await,
         Some(Commands::Init { force }) => commands::cmd_init(&config, force).await,
         Some(Commands::Config { show_secrets }) => {
             commands::cmd_config(&config, show_secrets).await

@@ -368,6 +368,23 @@ async fn cmd_chat_inner(
         .await
         .context("Failed to run database migrations")?;
 
+    // #1114: optional startup self-repair (kill-switch: [doctor] auto_fix).
+    // Repairs stuck cron rows, stale pre-init plan markers, loose brain/log
+    // permissions; every action lands in the log as the audit trail.
+    if config.doctor.auto_fix {
+        let roots = crate::cli::commands::marker_roots(db.pool()).await;
+        match crate::cli::doctor_fix::run_all(db.pool(), &roots, &crate::config::opencrabs_home())
+            .await
+        {
+            Ok(reports) => {
+                for r in &reports {
+                    tracing::info!(action = r.action, detail = %r.detail, "startup auto-fix");
+                }
+            }
+            Err(e) => tracing::warn!("startup auto-fix failed: {e:#}"),
+        }
+    }
+
     // Auto-categorize uncategorized sessions using keyword heuristics
     if let Err(e) = crate::usage::categorizer::categorize_with_heuristic(db.pool()).await {
         tracing::warn!("Session auto-categorization failed: {}", e);

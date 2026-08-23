@@ -90,6 +90,10 @@ pub struct Config {
     /// across multiple profiles to save memory.
     #[serde(default)]
     pub browser: BrowserConfig,
+
+    /// Self-repair configuration for `/doctor --fix` and the startup sweep
+    #[serde(default)]
+    pub doctor: DoctorConfig,
 }
 
 /// Custom deserializer for `[brain.caps]` that accepts both:
@@ -156,6 +160,23 @@ pub struct BrainConfig {
     /// `caps`. Default 500 lines per the issue's recommended budget.
     #[serde(default = "default_brain_file_cap")]
     pub default_cap: usize,
+}
+
+/// `[doctor]` — self-repair switches for `/doctor --fix` and the startup
+/// sweep (#1114).
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct DoctorConfig {
+    /// Run the repair sweep automatically at startup (stuck cron rows,
+    /// stale pre-init plan markers, loose brain/log permissions). Set false
+    /// to restrict repairs to explicit `/doctor --fix` invocations.
+    #[serde(default = "default_true")]
+    pub auto_fix: bool,
+}
+
+impl Default for DoctorConfig {
+    fn default() -> Self {
+        Self { auto_fix: true }
+    }
 }
 
 fn default_true() -> bool {
@@ -2407,6 +2428,7 @@ impl Default for Config {
             memory: MemoryConfig::default(),
             brain: BrainConfig::default(),
             browser: BrowserConfig::default(),
+            doctor: DoctorConfig::default(),
         }
     }
 }
