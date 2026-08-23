@@ -57,6 +57,39 @@ impl MessageRepository {
             .context("Failed to find messages by session")
     }
 
+    /// Find the most recent `limit` messages for a session, oldest-first.
+    ///
+    /// Unlike [`find_by_session`], this pushes the LIMIT into SQL so reading
+    /// the tail of a huge session costs `limit` rows instead of the whole
+    /// history. The DESC scan is reversed in Rust to restore chronological
+    /// order.
+    pub async fn find_recent_by_session(
+        &self,
+        session_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        let sid = session_id.to_string();
+        let limit = limit as i64;
+        let mut messages = self
+            .pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT * FROM messages WHERE session_id = ?1 \
+                     ORDER BY sequence DESC LIMIT ?2",
+                )?;
+                let rows = stmt.query_map(params![sid, limit], Message::from_row)?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to find recent messages by session")?;
+        messages.reverse();
+        Ok(messages)
+    }
+
     /// Create a new message
     pub async fn create(&self, message: &Message) -> Result<()> {
         let m = message.clone();
