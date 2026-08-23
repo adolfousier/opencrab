@@ -160,6 +160,33 @@ pub fn validate_path_safety(
     Ok(path)
 }
 
+/// Best-effort human name for a non-regular file type. Errors name the
+/// kind so a model that probed a device file gets "character device" back
+/// and does not retry the same class with a different path (#1164).
+fn describe_file_type(md: &std::fs::Metadata) -> &'static str {
+    let ft = md.file_type();
+    if ft.is_dir() {
+        return "directory";
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if ft.is_char_device() {
+            return "character device";
+        }
+        if ft.is_block_device() {
+            return "block device";
+        }
+        if ft.is_fifo() {
+            return "FIFO (named pipe)";
+        }
+        if ft.is_socket() {
+            return "socket";
+        }
+    }
+    "special file"
+}
+
 /// Resolve a path, check it exists, and confirm it's a file.
 ///
 /// Returns a user-friendly error message suitable for ToolResult::error()
@@ -182,7 +209,15 @@ pub fn validate_file_path(
     }
 
     if !path.is_file() {
-        return Err(format!("Path is not a file: {}", path.display()));
+        let kind = std::fs::metadata(&path)
+            .map(|md| describe_file_type(&md))
+            .unwrap_or("special file");
+        return Err(format!(
+            "Path is not a regular file: {} ({}) — file tools read regular \
+             files only; devices, pipes and directories are not readable",
+            path.display(),
+            kind
+        ));
     }
 
     Ok(path)
