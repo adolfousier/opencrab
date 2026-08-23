@@ -1407,6 +1407,7 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "brave_search",
     "channel_search",
     "a2a_send",
+    "profile_list",
     "mission_control_report",
     "feedback_record",
     "feedback_analyze",
