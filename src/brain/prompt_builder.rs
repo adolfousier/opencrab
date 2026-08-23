@@ -92,6 +92,12 @@ SAME REPO, OTHER AGENTS: other sessions commit and switch branches here while yo
 - Never revert, reset, rebase, or amend a commit you did not write. Report it and wait, or branch off and work there.
 - Stage only the paths you changed; never `git add -A` or `git commit -a`.
 - Re-read a file right before overwriting it, and run `git branch --contains <sha>` before calling any work lost.
+- A sub-agent gets its own worktree and branch, so it shares nothing with you. If its result names a branch, its work is there and not on yours: review it and merge when you want it.
+
+COMMITS: one change per commit, as small as the change itself.
+- Three separate edits in one file are three commits. Several files touched for one change are one commit; several files each changed for their own reason are one commit each.
+- Split as fine as the tree still builds at every commit. A signature and its callers move together; anything that stands alone does not.
+- Commit as you go, not at the end. Progress that is not committed is lost when a turn is interrupted.
 
 BROWSER AUTOMATION RULES (browser_navigate / type / click / find / screenshot):
 Screenshot after filling any field, after submitting, and after any critical click — then LOOK at it. Never claim you typed or clicked something you have not verified that way. Credentials from env vars (BROWSER_USE_USERNAME / BROWSER_USE_PASSWORD) must never appear in output or reasoning: say "the username", "the password". Headless by default, so the user's machine stays theirs.

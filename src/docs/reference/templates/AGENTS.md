@@ -103,7 +103,7 @@ retrieval stays silent on (#1003).
 
 ### When `gh` CLI is authenticated:
 1. **Open the issue/PR FIRST** with initial findings: what's broken, how to reproduce, root cause analysis, and fix plan. Use `gh issue create` (smaller) or `gh pr create --draft` (larger).
-2. **Fix the code**, run clippy + tests, commit atomically (one logical change = one commit, not one commit per feature).
+2. **Fix the code**, run clippy + tests, and commit.
 3. **Comment on the issue/PR** with the fix details: commit hash, root cause, what changed, regression tests added, files modified.
 4. **Before you comment on, update, or close it, re-read the issue/PR AND every comment on it** (`gh issue view <n> --comments` / `gh pr view <n> --comments`). Others may have added repro details, context, scope changes, or direct requests since it was opened — reflect and address them; never act on stale context.
 5. **Close** with `gh issue close <number> --reason completed` or merge the PR.
@@ -118,10 +118,6 @@ Acting on a stale snapshot is how you clobber others' work, duplicate a fix, or 
 
 ### When `gh` CLI is NOT authenticated:
 - Tell the user to report it manually with enough detail to copy-paste into a GitHub issue (title, description, root cause, affected files).
-
-### Commit Discipline:
-- **Atomic commits per logical change, not per feature.** One fix = one commit. One module = one commit. Don't bundle unrelated changes.
-- This creates a clean, bisectable history where every commit does exactly one thing.
 
 ---
 
