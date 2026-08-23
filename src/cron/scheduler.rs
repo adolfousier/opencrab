@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::db::CronJobRepository;
 use crate::db::CronJobRunRepository;
 use crate::db::models::{CronJob, CronJobRun};
+use crate::db::repository::CronJobPatch;
 use crate::services::{ServiceContext, SessionService};
 use chrono::Utc;
 use std::sync::Arc;
@@ -56,6 +57,19 @@ pub const DEDUP_SCAN_JOB_NAME: &str = "__opencrabs_dedup_scan__";
 /// numbering, so the job would run on the wrong day, silently — worse than not
 /// running. Rejecting 0 is deliberate (`cron_schedule_util_test::dow_zero_is_rejected`).
 pub(crate) const DEDUP_SCAN_CRON: &str = "0 4 * * 1";
+
+/// The pre-#1024 artifact this job originally shipped as: Unix-style dow 0,
+/// which the `cron` crate rejects outright (see [`DEDUP_SCAN_CRON`] docs).
+/// Rows still holding EXACTLY this value are repaired at startup (#1163).
+/// Any other expression — including other invalid ones — is treated as
+/// deliberate and never touched.
+pub(crate) const LEGACY_DEDUP_SCAN_CRON: &str = "0 4 * * 0";
+
+/// Warn-once guard for unparseable cron expressions (#1163): without it an
+/// invalid row warns on every ~60s tick — 1,440 warns/day for a job that
+/// never runs. One warning per process is enough to diagnose.
+static INVALID_EXPR_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Schedule a one-shot background rebuild for `session_id`. Returns once the
 /// job is queued — the build runs out-of-band on the scheduler's next tick
@@ -108,10 +122,34 @@ pub async fn schedule_background_rebuild(
 /// if a job named [`DEDUP_SCAN_JOB_NAME`] already exists, so repeated scheduler
 /// starts never stack duplicate jobs. The job runs the scanner directly (see
 /// [`run_dedup_scan_job`]) every Sunday at 04:00 UTC.
-async fn ensure_weekly_dedup_scan_job(repo: &CronJobRepository) -> anyhow::Result<()> {
+pub(crate) async fn ensure_weekly_dedup_scan_job(repo: &CronJobRepository) -> anyhow::Result<()> {
     if let Ok(existing) = repo.list_all().await
-        && existing.iter().any(|j| j.name == DEDUP_SCAN_JOB_NAME)
+        && let Some(job) = existing.iter().find(|j| j.name == DEDUP_SCAN_JOB_NAME)
     {
+        // Repair-in-place (#1163): installs that seeded before #1024 hold
+        // LEGACY_DEDUP_SCAN_CRON, which this parser rejects outright. The
+        // name-idempotent early-return used to make that row immortal:
+        // dead job plus one warn per minute for life. Rewrite ONLY rows
+        // holding that exact legacy artifact; every other expression
+        // (including user-customized schedules) is deliberate and stays.
+        if job.cron_expr == LEGACY_DEDUP_SCAN_CRON {
+            let patch = CronJobPatch {
+                cron_expr: Some(DEDUP_SCAN_CRON.to_string()),
+                reset_next_run: true,
+                ..Default::default()
+            };
+            match repo.update_fields(&job.id.to_string(), patch).await {
+                Ok(true) => tracing::info!(
+                    "Repaired legacy dedup-scan schedule '{}' -> '{}' (#1163)",
+                    LEGACY_DEDUP_SCAN_CRON,
+                    DEDUP_SCAN_CRON
+                ),
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to repair legacy dedup-scan schedule")
+                }
+            }
+        }
         return Ok(());
     }
     let job = CronJob::new(
@@ -515,11 +553,16 @@ impl CronScheduler {
                 match super::next_run_utc(&job.cron_expr, job_tz(job), now) {
                     Some(next) => (next - now).num_seconds() <= 60,
                     None => {
-                        tracing::warn!(
-                            "Invalid cron expression for job '{}': {}",
-                            job.name,
-                            job.cron_expr
-                        );
+                        // Warn once per process (#1163): this arm fires on
+                        // every ~60s tick otherwise, so one bad row produced
+                        // 1,440 identical warns/day.
+                        if !INVALID_EXPR_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                            tracing::warn!(
+                                "Invalid cron expression for job '{}': {} (suppressing further warnings until restart)",
+                                job.name,
+                                job.cron_expr
+                            );
+                        }
                         false
                     }
                 }
