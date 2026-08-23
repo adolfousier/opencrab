@@ -91,6 +91,7 @@ pub mod brain_tools_config_tool_test;
 pub mod brain_tools_doc_parser_test;
 pub mod brain_tools_dynamic_loader_test;
 pub mod brain_tools_dynamic_tool_test;
+pub mod brain_tools_edit_notfound_test;
 pub mod brain_tools_error_test;
 pub mod brain_tools_exa_search_test;
 pub mod brain_tools_fuzzy_test;
