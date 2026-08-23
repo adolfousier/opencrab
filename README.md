@@ -3932,6 +3932,52 @@ flowchart TD
     AGG --> DELETE[Delete team]
 ```
 
+### Working-tree isolation
+
+Children used to inherit the parent's directory, so a fan-out collided by
+construction: several agents spawned at once wrote the same bytes with no
+arbitration. Each child now gets its own `git worktree` on a
+`subagent/<id>` branch and works there.
+
+The cost is the source, not the build. `.git` is shared between worktrees,
+so a checkout is a few tens of MB rather than a copy of the repository, and
+the build cache is cloned copy-on-write where the filesystem supports it
+(APFS `cp -c`), which takes no measurable time or disk. Elsewhere the child
+simply builds cold.
+
+Nothing about it is load-bearing. Outside a git repository, or if git
+refuses, the child works in the parent's directory exactly as before. A tree
+left behind by a crashed run is cleared and re-cut rather than being allowed
+to refuse isolation to every later child.
+
+**What happens to the work.** On completion a tree holding nothing is
+removed and never mentioned — the common case, since most children change
+nothing. A tree holding a commit or an uncommitted edit is kept, and the
+result the parent reads names the branch, the path, and the `git merge` that
+lands it. Work is judged by HEAD having moved off the commit the tree was
+cut from, so nothing is discarded silently.
+
+There is no worktree-specific merge to learn: it is one repository with two
+checkouts, and `subagent/<id>` is an ordinary branch.
+
+### One writer at a time
+
+Isolation degrades to the parent's directory outside a repository, and a
+fan-out is back to sharing one tree when it does. So `edit_file` and
+`write_file` take an advisory lock on the path they are writing, held across
+the write and released on drop — including on a panic, so a writer that dies
+mid-write costs a pause rather than a wedged file.
+
+Deliberately weak, because a lock that can block a save is worse than the
+collision it prevents. A contended write waits briefly and then proceeds
+anyway, reporting the overlap so the file's contents are known to be suspect
+rather than silently wrong. Every failure to lock degrades to writing.
+
+The guarantee is in the write path rather than in an instruction, so it does
+not depend on an agent remembering to check. It does not cover writes made
+through `bash` (a heredoc, `sed -i`, a build script), which is what the
+worktree covers.
+
 ## 8. Data Layer
 
 ```mermaid
