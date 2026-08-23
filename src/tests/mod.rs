@@ -741,3 +741,4 @@ pub mod whatsapp_photo_batching_test;
 pub mod whatsapp_qr_replay_test;
 pub mod whatsapp_store_test;
 pub mod word_delete_keybinding_test;
+pub mod write_partial_view_guard_test;

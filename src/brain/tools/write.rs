@@ -23,6 +23,10 @@ struct WriteInput {
     /// Whether to create parent directories if they don't exist
     #[serde(default)]
     create_dirs: bool,
+
+    /// Confirm overwriting a file this session has not fully read (#1168)
+    #[serde(default)]
+    overwrite_read_confirm: bool,
 }
 
 #[async_trait]
@@ -50,6 +54,11 @@ impl Tool for WriteTool {
                 "create_dirs": {
                     "type": "boolean",
                     "description": "Whether to create parent directories if they don't exist (default: false)",
+                    "default": false
+                },
+                "overwrite_read_confirm": {
+                    "type": "boolean",
+                    "description": "Required to overwrite an existing file that this session has not fully read (a windowed start_line/line_count read does not count). Confirms you intend a blind replace.",
                     "default": false
                 }
             },
@@ -151,6 +160,24 @@ impl Tool for WriteTool {
             return Ok(ToolResult::error(format!(
                 "Parent directory does not exist: {}. Use create_dirs: true to create it.",
                 parent.display()
+            )));
+        }
+
+        // Partial-view overwrite guard (#1168): a windowed read is not a
+        // basis for replacing a file wholesale — lines outside the window
+        // would be destroyed unseen. Require either a prior full read in
+        // this session or an explicit confirm.
+        if path.exists()
+            && !input.overwrite_read_confirm
+            && !super::read_state::was_fully_read(context.session_id, &path)
+        {
+            let size = fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+            return Ok(ToolResult::error(format!(
+                "Refusing to overwrite '{}': file exists ({} bytes) but was not fully read \
+                 in this session — a windowed read doesn't count. Read the whole file first, \
+                 or pass \"overwrite_read_confirm\": true to confirm.",
+                path.display(),
+                size
             )));
         }
 

@@ -23,6 +23,7 @@ pub mod grep;
 pub mod hashline;
 pub mod ls;
 pub mod read;
+pub mod read_state;
 pub mod write;
 
 // Tool implementations - Phase 2: Advanced Features
