@@ -2302,7 +2302,13 @@ task_type = "build"
 commands = ["cargo clippy --all-features -- -D warnings", "cargo test"]
 ```
 
-`criteria_policy` decides what happens when a task declares acceptance criteria that nothing verifies: `downgrade` records the belief as uncertain rather than verified, `strict` rejects the completion, `off` leaves criteria advisory.
+`criteria_policy` decides what happens when a task declares acceptance criteria that nothing verifies: `downgrade` records the belief as uncertain rather than verified, `strict` rejects the completion, `off` leaves criteria advisory. A change to this value is recorded as a belief with its old and new setting, so a mid-loop flip is visible afterwards rather than silent.
+
+**Exit 0 is not enough.** A command that exits cleanly having run *no* tests is rejected as a vacuous pass — a filter that matches nothing, or a disabled suite, is not a verified completion. The check reads each runner's own way of saying it ran nothing, including the ones that never print a zero count: pytest's `no tests ran`, go's `[no test files]`, flutter's `+0`. Output with no test summary at all (a lint, a build, a grep) is left alone rather than read as zero.
+
+**`task_type_commands` is optional.** The example above pins cargo because this repository is Rust. A task type with no entry is verified with the runner the project's own manifest implies — `zig build test` where there is a `build.zig`, `flutter test` for a `pubspec.yaml`, `pytest`, `npm test`, `go test ./...` — resolved from the session's working directory, walking up to the nearest manifest so a session parked in a subdirectory still finds its project. An explicit entry always wins. Only `build` and `test` are answered this way; a refactor or documentation task has no unambiguous command and stays unverified rather than being handed one that does not describe it.
+
+Because this file governs every project that has no `ralph_loop.toml` of its own, naming a toolchain here forces it on all of them. Leaving `task_type_commands` empty is usually what you want; put project-specific commands in a `<working_dir>/ralph_loop.toml`, which is authoritative when present.
 
 **Note:** if the file is missing or fails to parse, the gate is simply absent — completions pass unverified. Unlike the bash blocklist, there is no hardcoded floor beneath this one.
 
