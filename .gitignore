@@ -94,3 +94,11 @@ dist/
 # `git add -A` sweeps every one of them into whatever commit is open.
 desktop/src-tauri/target/
 desktop/dist/
+
+# The rest of desktop/ too, for now. The two rules above left the directory
+# itself untracked rather than ignored, so it still showed up as a pending
+# addition — 12GB of it — and a `git add -A` would still take it. The GUI
+# lives on the `desktop-gui` branch, which is where its sources are tracked;
+# ignoring the path here does not affect files already tracked there. Drop
+# this line when the branch lands on main.
+desktop/
