@@ -12,14 +12,23 @@ fn test_tool_metadata() {
 
 #[tokio::test]
 async fn test_missing_slash() {
+    // Since #1167 a missing leading '/' is autocorrected, so "cd" must
+    // behave exactly like "/cd" instead of being rejected.
     let tool = SlashCommandTool;
     let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
-    let result = tool
+    let bare = tool
         .execute(serde_json::json!({"command": "cd"}), &ctx)
         .await
         .unwrap();
-    assert!(!result.success);
-    assert!(result.error.unwrap().contains("must start with '/'"));
+    let slashed = tool
+        .execute(serde_json::json!({"command": "/cd"}), &ctx)
+        .await
+        .unwrap();
+    assert_eq!(
+        bare.success, slashed.success,
+        "autocorrect makes 'cd' equivalent to '/cd'"
+    );
+    assert_eq!(bare.output, slashed.output);
 }
 
 #[tokio::test]
