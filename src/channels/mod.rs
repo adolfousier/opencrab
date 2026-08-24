@@ -8,6 +8,7 @@ pub mod commands;
 mod factory;
 pub mod manager;
 pub(crate) mod model_menu;
+pub mod question_common;
 pub mod session_init;
 pub mod session_resolve;
 pub(crate) mod typing_tick;

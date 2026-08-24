@@ -91,35 +91,30 @@ impl Tool for FollowUpQuestionTool {
             ));
         }
 
-        let options: Vec<String> = parsed
-            .options
-            .into_iter()
-            .map(|o| o.trim().to_string())
-            .filter(|o| !o.is_empty())
-            .collect();
-        if options.len() < 2 {
-            return Ok(ToolResult::error(
-                "follow_up_question needs at least 2 non-empty options. If you only have one \
-                 option, just do it instead of asking."
-                    .into(),
-            ));
-        }
-        if options.len() > MAX_OPTIONS {
-            return Ok(ToolResult::error(format!(
-                "Too many options ({}). Cap is {}. Narrow the question.",
-                options.len(),
-                MAX_OPTIONS
-            )));
-        }
-        let mut seen = std::collections::HashSet::new();
-        for opt in &options {
-            if !seen.insert(opt.as_str()) {
-                return Ok(ToolResult::error(format!(
-                    "Duplicate option '{}'. Options must be distinct.",
-                    opt
-                )));
-            }
-        }
+        // Shared mechanics (#764 R1); this tool's own wording kept verbatim.
+        let options =
+            match crate::channels::question_common::check_options(parsed.options, 2, MAX_OPTIONS) {
+                Ok(o) => o,
+                Err(crate::channels::question_common::OptionsError::TooFew { .. }) => {
+                    return Ok(ToolResult::error(
+                    "follow_up_question needs at least 2 non-empty options. If you only have one \
+                     option, just do it instead of asking."
+                        .into(),
+                ));
+                }
+                Err(crate::channels::question_common::OptionsError::TooMany(n)) => {
+                    return Ok(ToolResult::error(format!(
+                        "Too many options ({}). Cap is {}. Narrow the question.",
+                        n, MAX_OPTIONS
+                    )));
+                }
+                Err(crate::channels::question_common::OptionsError::Duplicate(opt)) => {
+                    return Ok(ToolResult::error(format!(
+                        "Duplicate option '{}'. Options must be distinct.",
+                        opt
+                    )));
+                }
+            };
 
         let cb = match context.question_callback.as_ref() {
             Some(c) => c.clone(),

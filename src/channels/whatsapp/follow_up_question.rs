@@ -65,27 +65,19 @@ pub(crate) fn make_question_callback(
             // Flush in-flight intermediate text spawns before posting
             // the question, so the user sees context above the numbered
             // list instead of below (issue #142).
-            let pending = {
-                let mut g = intermediate_handles.lock().expect("poisoned");
-                std::mem::take(&mut *g)
-            };
-            for h in pending {
-                if let Err(e) = h.await {
-                    tracing::warn!(error = %e, "WhatsApp follow-up task panicked");
-                }
-            }
+            // Shared drain (#764 R3).
+            crate::channels::question_common::drain_intermediate_handles(
+                &intermediate_handles,
+                "WhatsApp",
+            )
+            .await;
 
             if let Err(e) = client.send_message(chat_jid, text_msg).await {
                 return Err(AgentError::Internal(format!("WhatsApp send failed: {}", e)));
             }
 
-            match tokio::time::timeout(std::time::Duration::from_secs(600), rx).await {
-                Ok(Ok(answer)) => Ok(answer),
-                Ok(Err(_)) => Err(AgentError::Internal(
-                    "follow_up_question oneshot closed".into(),
-                )),
-                Err(_) => Err(AgentError::Internal("follow_up_question timed out".into())),
-            }
+            // Shared timeout ladder (#764 R2).
+            crate::channels::question_common::await_answer(rx).await
         })
     })
 }

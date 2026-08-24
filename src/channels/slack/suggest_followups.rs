@@ -33,12 +33,14 @@ pub(crate) async fn render_suggestions(
         Some(t) => t,
         None => return,
     };
-    let channel_id = match state.session_channel(session_id).await {
-        Some(id) => id,
-        None => match state.owner_channel_id().await {
-            Some(id) => id,
-            None => return,
-        },
+    // Session→owner fallback via shared helper (#764 R5, silent twin).
+    let Some(channel_id) = crate::channels::question_common::resolve_channel_or_silent(
+        state.session_channel(session_id),
+        state.owner_channel_id(),
+    )
+    .await
+    else {
+        return;
     };
 
     // Slack ActionsBlock allows up to 25 elements — well above the 4-suggestion

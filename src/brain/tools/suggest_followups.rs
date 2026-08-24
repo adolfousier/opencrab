@@ -106,31 +106,22 @@ impl Tool for SuggestFollowupsTool {
 }
 
 /// Trim, drop empties, enforce the 1..=MAX distinct contract. Extracted so the
-/// validation is unit-testable without a live progress callback.
+/// validation is unit-testable without a live progress callback. The mechanics
+/// live in `question_common::check_options` (#764 R1); this wrapper keeps the
+/// tool's own error wording (pinned by tests).
 pub(crate) fn sanitize_options(raw: Vec<String>) -> std::result::Result<Vec<String>, String> {
-    let options: Vec<String> = raw
-        .into_iter()
-        .map(|o| o.trim().to_string())
-        .filter(|o| !o.is_empty())
-        .collect();
-
-    if options.is_empty() {
-        return Err("suggest_followups needs at least 1 non-empty option.".into());
-    }
-    if options.len() > MAX_SUGGESTIONS {
-        return Err(format!(
-            "Too many suggestions ({}). Cap is {}.",
-            options.len(),
-            MAX_SUGGESTIONS
-        ));
-    }
-    let mut seen = std::collections::HashSet::new();
-    for opt in &options {
-        if !seen.insert(opt.as_str()) {
-            return Err(format!(
-                "Duplicate suggestion '{opt}'. Suggestions must be distinct."
-            ));
+    use crate::channels::question_common::{OptionsError, check_options};
+    match check_options(raw, 1, MAX_SUGGESTIONS) {
+        Ok(options) => Ok(options),
+        Err(OptionsError::TooFew { .. }) => {
+            Err("suggest_followups needs at least 1 non-empty option.".into())
         }
+        Err(OptionsError::TooMany(n)) => Err(format!(
+            "Too many suggestions ({}). Cap is {}.",
+            n, MAX_SUGGESTIONS
+        )),
+        Err(OptionsError::Duplicate(opt)) => Err(format!(
+            "Duplicate suggestion '{opt}'. Suggestions must be distinct."
+        )),
     }
-    Ok(options)
 }

@@ -38,15 +38,12 @@ pub(crate) fn make_question_callback(
                 }
             };
 
-            let channel_id = match state.session_channel(info.session_id).await {
-                Some(id) => id,
-                None => match state.owner_channel_id().await {
-                    Some(id) => id,
-                    None => {
-                        return Err(AgentError::Internal("no channel_id for session".into()));
-                    }
-                },
-            };
+            // Session→owner fallback via shared helper (#764 R5).
+            let channel_id = crate::channels::question_common::resolve_channel_or_error(
+                state.session_channel(info.session_id),
+                state.owner_channel_id(),
+            )
+            .await?;
 
             let question_id = uuid::Uuid::new_v4().to_string();
 
@@ -97,16 +94,12 @@ pub(crate) fn make_question_callback(
 
             // Flush in-flight intermediate text spawns before posting
             // the question, so the user sees context above the buttons
-            // instead of below (issue #142).
-            let pending = {
-                let mut g = intermediate_handles.lock().expect("poisoned");
-                std::mem::take(&mut *g)
-            };
-            for h in pending {
-                if let Err(e) = h.await {
-                    tracing::warn!(error = %e, "Discord follow-up task panicked");
-                }
-            }
+            // instead of below (issue #142). Shared drain (#764 R3).
+            crate::channels::question_common::drain_intermediate_handles(
+                &intermediate_handles,
+                "Discord",
+            )
+            .await;
 
             if let Err(e) = ChannelId::new(channel_id)
                 .send_message(&http, CreateMessage::new().content(&text).components(rows))
@@ -115,13 +108,8 @@ pub(crate) fn make_question_callback(
                 return Err(AgentError::Internal(format!("Discord send failed: {}", e)));
             }
 
-            match tokio::time::timeout(std::time::Duration::from_secs(600), rx).await {
-                Ok(Ok(answer)) => Ok(answer),
-                Ok(Err(_)) => Err(AgentError::Internal(
-                    "follow_up_question oneshot closed".into(),
-                )),
-                Err(_) => Err(AgentError::Internal("follow_up_question timed out".into())),
-            }
+            // Shared timeout ladder (#764 R2).
+            crate::channels::question_common::await_answer(rx).await
         })
     })
 }

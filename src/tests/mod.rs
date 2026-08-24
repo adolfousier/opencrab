@@ -717,6 +717,7 @@ pub mod telegram_send_caption_test;
 pub mod telegram_send_input_file_test;
 pub mod telegram_md_to_html_test;
 pub mod telegram_send_string_coercion_test;
+pub mod question_common_test;
 pub mod telegram_send_thread_id_override_test;
 pub mod telegram_split_message_test;
 pub mod telegram_status_message_test;
