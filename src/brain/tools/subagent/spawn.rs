@@ -476,12 +476,28 @@ impl Tool for SpawnAgentTool {
                             .unwrap_or_else(|e| tracing::warn!("status write failed: {e}"));
 
                         manager.update_output(&agent_id_clone, response.content.clone());
-                        // Flip to AwaitingInput so wait_agent can observe
-                        // round-boundary progress instead of blocking on
-                        // task-join semantics (the task never terminates
-                        // at a round — only on input/cancel — so the old
-                        // `handle.await` in wait.rs always hit its
-                        // timeout_secs and the LLM gave up the turn).
+                        // Natural completion (#1184): the internal tool loop
+                        // only returns with a pending tool call when the round
+                        // is genuinely gated (approval prompt or iteration
+                        // cap). Any other stop reason means the model finished
+                        // its answer — completing here delivers the result to
+                        // the parent instead of parking the agent as
+                        // phantom-"Running" forever. Interactive follow-ups
+                        // remain available via `resume_agent`, which accepts
+                        // Completed agents.
+                        if response.stop_reason
+                            != Some(crate::brain::provider::types::StopReason::ToolUse)
+                        {
+                            tracing::info!(
+                                "Sub-agent {} round {} complete naturally, delivering result",
+                                agent_id_clone,
+                                iteration
+                            );
+                            break response.content;
+                        }
+                        // Genuinely gated (pending approval / cap): park so
+                        // wait_agent can observe round-boundary progress and
+                        // the parent can nudge with input.
                         manager.mark_awaiting_input(&agent_id_clone);
                         tracing::info!(
                             "Sub-agent {} round {} complete, waiting for input",

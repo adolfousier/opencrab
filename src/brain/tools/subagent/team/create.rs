@@ -301,8 +301,19 @@ impl Tool for TeamCreateTool {
                     match result {
                         Ok(response) => {
                             manager.update_output(&agent_id_clone, response.content.clone());
-                            // Flip to AwaitingInput so wait_agent can observe
-                            // round-boundary progress (same pattern as spawn.rs).
+                            // Natural completion (#1184), same rule as
+                            // spawn.rs: only a genuinely gated round keeps
+                            // waiting; a finished answer delivers instead of
+                            // parking the agent forever.
+                            if response.stop_reason
+                                != Some(crate::brain::provider::types::StopReason::ToolUse)
+                            {
+                                tracing::info!(
+                                    "Team agent {} round complete naturally, delivering result",
+                                    agent_id_clone
+                                );
+                                break response.content;
+                            }
                             manager.mark_awaiting_input(&agent_id_clone);
                             tracing::info!(
                                 "Team agent {} round complete, waiting for input",
