@@ -45,10 +45,26 @@ fn get_str<'a>(input: &'a Value, key: &str) -> std::result::Result<&'a str, Tool
     }
 }
 
+/// Extract an i64 from a JSON value, coercing numeric strings (#646).
+/// Schemas declare "integer" but models often quote the value
+/// (`"chat_id": "123456"`), and the old `as_i64()` silently dropped it —
+/// `get_id` errored on required params and `chat_or_err` misrouted to the
+/// session fallback.
+pub(crate) fn value_as_i64(v: &Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+}
+
+/// Same string coercion for f64 params — latitude/longitude (#646).
+pub(crate) fn value_as_f64(v: &Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+}
+
 /// Parse a required integer param as i64.
 #[allow(clippy::result_large_err)]
 fn get_id(input: &Value, key: &str) -> std::result::Result<i64, ToolResult> {
-    match input.get(key).and_then(|v| v.as_i64()) {
+    match input.get(key).and_then(value_as_i64) {
         Some(id) => Ok(id),
         None => Err(ToolResult::error(format!(
             "Missing required parameter '{key}' (must be an integer)."
@@ -118,7 +134,7 @@ pub(crate) async fn resolve_thread_id(
     session_id: Uuid,
     state: &TelegramState,
 ) -> Option<teloxide::types::ThreadId> {
-    if let Some(tid) = input.get("thread_id").and_then(|v| v.as_i64())
+    if let Some(tid) = input.get("thread_id").and_then(value_as_i64)
         && let Ok(tid_i32) = i32::try_from(tid)
     {
         return Some(teloxide::types::ThreadId(teloxide::types::MessageId(
@@ -242,7 +258,7 @@ async fn chat_or_err(
     state: &TelegramState,
     session_id: Uuid,
 ) -> std::result::Result<i64, ToolResult> {
-    if let Some(id) = input.get("chat_id").and_then(|v| v.as_i64()) {
+    if let Some(id) = input.get("chat_id").and_then(value_as_i64) {
         return guard_cron_target(id);
     }
     // Session origin chat — where this interaction started, same map
@@ -871,7 +887,7 @@ impl TelegramSendTool {
             )));
         }
         let file = pget!(resolve_input_file(&reference, "photo_url").await);
-        let reply_to = input.get("message_id").and_then(|v| v.as_i64());
+        let reply_to = input.get("message_id").and_then(value_as_i64);
         match send_retrying_rate_limit("telegram_send send_photo", || {
             let mut req = crate::channels::telegram::send::photo_in_thread(
                 bot,
@@ -956,7 +972,7 @@ impl TelegramSendTool {
             )));
         }
         let file = pget!(resolve_input_file(&reference, "document_url").await);
-        let reply_to = input.get("message_id").and_then(|v| v.as_i64());
+        let reply_to = input.get("message_id").and_then(value_as_i64);
         match send_retrying_rate_limit("telegram_send send_document", || {
             let mut req = crate::channels::telegram::send::document_in_thread(
                 bot,
@@ -1018,7 +1034,7 @@ impl TelegramSendTool {
     ) -> Result<ToolResult> {
         let NewTarget { chat_id, thread_id } =
             pget!(resolve_new_target(input, context.session_id, &self.telegram_state).await);
-        let lat = match input.get("latitude").and_then(|v| v.as_f64()) {
+        let lat = match input.get("latitude").and_then(value_as_f64) {
             Some(v) => v,
             None => {
                 return Ok(ToolResult::error(
@@ -1026,7 +1042,7 @@ impl TelegramSendTool {
                 ));
             }
         };
-        let lng = match input.get("longitude").and_then(|v| v.as_f64()) {
+        let lng = match input.get("longitude").and_then(value_as_f64) {
             Some(v) => v,
             None => {
                 return Ok(ToolResult::error(

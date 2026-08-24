@@ -329,7 +329,6 @@ pub mod tasks_list_test;
 pub mod telegram_cancel_token_no_drop_test;
 pub mod telegram_dedup_approval_test;
 #[cfg(feature = "telegram")]
-pub mod telegram_md_to_html_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_mentions_other_bot_test;
 #[cfg(feature = "telegram")]
@@ -716,6 +715,7 @@ pub mod telegram_rich_test;
 pub mod telegram_rich_wrap_p_test;
 pub mod telegram_send_caption_test;
 pub mod telegram_send_input_file_test;
+pub mod telegram_send_string_coercion_test;
 pub mod telegram_send_thread_id_override_test;
 pub mod telegram_split_message_test;
 pub mod telegram_status_message_test;
