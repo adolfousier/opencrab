@@ -35,7 +35,7 @@ async fn seed_session(
     updated_at: chrono::DateTime<Utc>,
     count: i32,
 ) -> Session {
-    let mut session = Session::new(Some(title.to_string()), Some("m".to_string()), None);
+    let session = Session::new(Some(title.to_string()), Some("m".to_string()), None);
     repo.create(&session).await.unwrap();
     for i in 1..=count {
         msg_repo
