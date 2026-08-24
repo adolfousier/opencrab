@@ -45,6 +45,7 @@
 - [Brain Constitution](src/docs/reference/BRAIN_CONSTITUTION.md)
 - [Adding New Providers](src/docs/reference/ADDING_NEW_PROVIDERS.md)
 - [Plan JSON Specification](src/docs/reference/plans/plan-json-spec.md)
+- [Dynamic Workflows Guide](src/docs/reference/DYNAMIC_WORKFLOWS.md) — orchestrate agents with scripts: fan-out, pipelines, structured outputs, checkpointing
 
 ### Brain File Templates
 - [SOUL.md](src/docs/reference/templates/SOUL.md) — personality and voice
