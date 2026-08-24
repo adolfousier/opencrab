@@ -60,7 +60,34 @@ pub fn extract_react_marker_lenient(text: &str) -> (String, Option<String>) {
     extract_react_marker_inner(text, false)
 }
 
-fn extract_react_marker_inner(text: &str, respect_code_spans: bool) -> (String, Option<String>) {
+fn extract_react_marker_inner(
+    text_arg: &str,
+    respect_code_spans: bool,
+) -> (String, Option<String>) {
+    // Pass 1: the plain scanner. Fires on canonical turns and preserves all
+    // code-span semantics; the ONLY path taken when the text has no backticks.
+    let plain = scan_react_text(text_arg, respect_code_spans);
+    if plain.1.is_some() || !text_arg.contains('`') {
+        return plain;
+    }
+    // Pass 2 (#1182): strict found nothing and backticks are present — try
+    // orphan-fence recovery. A full junk-prefixed directive means the text is
+    // a mangled REACTION TURN; recovery captures its emoji and returns the
+    // remaining body. Prose about the feature disqualifies itself (real words
+    // sit before the marker), so docs examples stay text. Recovery runs AFTER
+    // strict, never instead of it: an empty prefix is legal fence-junk, so a
+    // recovery-first order would eat every well-formed marker that merely
+    // carries a trailing code fence.
+    match recover_orphan_fenced_directive(text_arg) {
+        Some((cleaned, emoji)) => (cleaned.trim().to_string(), Some(emoji)),
+        None => plain,
+    }
+}
+
+/// Single left-to-right scan extracting the first reaction marker, honouring
+/// the code-span guard when `respect_code_spans` is set. Shared by both
+/// passes of [`extract_react_marker_inner`].
+fn scan_react_text(text: &str, respect_code_spans: bool) -> (String, Option<String>) {
     let mut out = String::with_capacity(text.len());
     let mut emoji: Option<String> = None;
     let mut in_code = false;
@@ -92,6 +119,88 @@ fn extract_react_marker_inner(text: &str, respect_code_spans: bool) -> (String, 
     }
 
     (out.trim().to_string(), emoji)
+}
+
+/// Recovery pass for reaction directives mangled by an orphan code fence (#1182).
+///
+/// Shape observed in production: the message OPENS with junk made only of
+/// fence/lang tokens (`<`, backticks, `\`, `~`, whitespace, an ascii-alnum
+/// language tag like `html`) and a valid directive sits inside that junk
+/// region. That prefix shape cannot be legitimate prose about the feature
+/// (real discussion puts the marker after words like "use" or ":"), so a full
+/// match (open + terminator + emoji payload) found there means the text is a
+/// mangled REACTION TURN: slice past the junk and drop the paired trailing
+/// lone-fence line. Anything else returns borrowed and unchanged.
+/// True when everything before the directive is orphan-fence debris: an
+/// optional stray `<` or `\`, an opening ``` fence with an optional short
+/// language tag, then only whitespace/backticks/angle-brackets. Any real
+/// word (letters outside the lang-tag slot) disqualifies, so prose like
+/// ``use `<<react:👍>>` to react`` keeps its code-span semantics (#1182).
+fn is_fence_junk_prefix(prefix: &str) -> bool {
+    let mut rest = prefix.trim_start_matches([' ', '\t', '\r', '\n']);
+    if let Some(r) = rest.strip_prefix('<').or_else(|| rest.strip_prefix('\\')) {
+        rest = r.trim_start_matches([' ', '\t', '\r', '\n']);
+    }
+    if let Some(r) = rest.strip_prefix("```") {
+        rest = r;
+        let tag_len = rest.chars().take_while(|c| c.is_alphanumeric()).count();
+        if tag_len > 12 {
+            return false;
+        }
+        rest = &rest[tag_len..];
+    }
+    rest.bytes()
+        .all(|b| matches!(b, b'`' | b'<' | b'\\' | b' ' | b'\t' | b'\r' | b'\n'))
+}
+
+/// Recovery pass for reaction directives mangled by an orphan code fence (#1182).
+///
+/// Shape observed in production: the message OPENS with junk made only of
+/// fence/lang tokens (`<`, backticks, `\`, whitespace, an ascii-alnum
+/// language tag like `html`) and a valid directive sits inside that junk
+/// region. That prefix shape cannot be legitimate prose about the feature
+/// (real discussion puts the marker after words like "use" or ":"), so a full
+/// match (open + terminator + emoji payload) found there means the text is a
+/// mangled REACTION TURN. Returns the body after the directive with the paired
+/// trailing lone-fence line dropped, plus the captured emoji; `None` when no
+/// junk-prefixed directive exists.
+fn recover_orphan_fenced_directive(text: &str) -> Option<(String, String)> {
+    if !text.contains('`') {
+        return None;
+    }
+    let scan_end = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .find(|&i| i >= 240)
+        .unwrap_or(text.len());
+    let mut found: Option<(usize, String)> = None;
+    for (i, ch) in text[..scan_end].char_indices() {
+        if ch != '<' {
+            continue;
+        }
+        if !is_fence_junk_prefix(&text[..i]) {
+            continue;
+        }
+        if let Some(open_len) = match_react_open(&text[i..])
+            && let Some((rel_end, term_len)) = find_react_close(&text[i + open_len..])
+            && is_reaction_emoji(text[i + open_len..i + open_len + rel_end].trim())
+        {
+            let emoji = text[i + open_len..i + open_len + rel_end]
+                .trim()
+                .to_string();
+            found = Some((i + open_len + rel_end + term_len, emoji));
+            break;
+        }
+    }
+    let (after, emoji) = found?;
+    let mut owned = text[after..].to_string();
+    if let Some(pos) = owned.rfind('\n')
+        && owned[pos + 1..].trim_start().starts_with("```")
+    {
+        owned.truncate(pos);
+    }
+    Some((owned, emoji))
 }
 
 /// Match a reaction-marker opening at the start of `s`, tolerating prefixes
