@@ -1,0 +1,47 @@
+name: Quick Linux Build
+
+# Super-quick Linux amd64 binary, on demand. Minimal features:
+# telegram, browser, rtk. No tests, no matrix, no ALSA, no multi-platform.
+#
+# Sync-from-origin-first: the checkout step pins the UPSTREAM repo (main),
+# so every dispatch compiles adolfousier/opencrabs main tip — never a stale
+# fork branch.
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Linux amd64 (upstream main, minimal features)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync from origin (adolfousier/opencrabs main)
+        uses: actions/checkout@v5
+        with:
+          repository: adolfousier/opencrabs
+          ref: main
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build (release, minimal features, no tests)
+        run: cargo build --locked --release --no-default-features --features "telegram,browser,rtk"
+
+      - name: Strip
+        run: strip target/release/opencrabs
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencrabs-linux-amd64
+          path: target/release/opencrabs
+          if-no-files-found: error
