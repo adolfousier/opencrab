@@ -253,6 +253,24 @@ impl TelegramAgent {
                         if let Some(data) = query.data.as_deref() {
                             tracing::info!("Telegram callback query received: data={}", data);
 
+                            // Stale keyboard from before the follow-up tools
+                            // were merged into suggest_options (#1178 M7): the
+                            // deleted question tool emitted `q:{id}:{idx}`
+                            // buttons. Ignore them explicitly and loudly — a
+                            // silent fall-through would route the tap into the
+                            // generic unknown-callback path (echoed to the
+                            // agent as user text), which reads as a bug.
+                            if data.starts_with("q:") {
+                                tracing::warn!("stale keyboard, ignored: {data}");
+                                crate::channels::telegram::keyboards::ack_callback(
+                                    &bot,
+                                    &query,
+                                    "This keyboard is outdated.",
+                                )
+                                .await;
+                                return ResponseResult::Ok(());
+                            }
+
                             // Optional follow-up suggestion tapped (#597): inject
                             // the chosen suggestion as the user's next message (a
                             // fresh turn). Non-blocking — the whole set is consumed.

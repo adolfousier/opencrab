@@ -52,6 +52,29 @@ pub(crate) fn echo_fallback(text: &str, chooser: Option<&str>) -> String {
 
 /// Post the follow-up suggestion buttons under the response and stash the option
 /// list on state so the tap handler can resolve `idx -> text`. No-op on empty.
+/// Fold-in is a FALLBACK (#1178 D3): full-text buttons primary, but if ANY
+/// option exceeds 30 chars the texts fold into the message body as a
+/// numbered list and the buttons collapse to one row of numbers (D4) —
+/// a column of long labels is unreadable and a row of them overflows.
+/// The stash always holds the ORIGINAL options either way, so taps
+/// resolve verbatim text, never bare digits.
+fn should_fold(options: &[String]) -> bool {
+    options.iter().any(|o| o.chars().count() > 30)
+}
+
+/// The message body: bare header in full-text mode; header plus the numbered
+/// option list when folded.
+fn build_body(fold: bool, options: &[String]) -> String {
+    if !fold {
+        return String::from("\u{1f4a1} Suggested next:");
+    }
+    let mut b = String::from("\u{1f4a1} Suggested next:");
+    for (i, opt) in options.iter().enumerate() {
+        b.push_str(&format!("\n{}. {opt}", i + 1));
+    }
+    b
+}
+
 pub(crate) async fn render_suggestions(
     bot: &teloxide::Bot,
     state: &Arc<TelegramState>,
@@ -66,33 +89,57 @@ pub(crate) async fn render_suggestions(
         return;
     }
 
-    // One button per suggestion, single column so long labels stay readable.
-    // The absolute index is encoded in the callback data; the text itself can
-    // exceed Telegram's 64-byte callback-data limit, so we never put it there.
-    let rows: Vec<Vec<InlineKeyboardButton>> = options
-        .iter()
-        .enumerate()
-        .map(|(i, opt)| {
-            let label = if opt.chars().count() > 60 {
-                let mut s: String = opt.chars().take(57).collect();
-                s.push_str("...");
-                s
-            } else {
-                opt.clone()
-            };
-            vec![InlineKeyboardButton::callback(
-                label,
-                format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
-            )]
-        })
-        .collect();
+    // Fold-in is a FALLBACK (#1178 D3): full-text buttons primary, but if ANY
+    // option exceeds 30 chars the texts fold into the message body as a
+    // numbered list and the buttons collapse to one row of numbers (D4) —
+    // a column of long labels is unreadable and a row of them overflows.
+    // The stash always holds the ORIGINAL options either way, so taps
+    // resolve verbatim text, never bare digits.
+    let fold = should_fold(&options);
+    let body = build_body(fold, &options);
+
+    // Full-text mode: one button per suggestion in a single column so long
+    // labels stay readable. Folded mode: one row of numeric buttons (D4).
+    // The absolute index is encoded in the callback data; the option text
+    // itself can exceed Telegram's 64-byte callback-data limit, so we never
+    // put it there.
+    let rows: Vec<Vec<InlineKeyboardButton>> = if fold {
+        vec![
+            options
+                .iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    InlineKeyboardButton::callback(
+                        (i + 1).to_string(),
+                        format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
+                    )
+                })
+                .collect(),
+        ]
+    } else {
+        options
+            .iter()
+            .enumerate()
+            .map(|(i, opt)| {
+                let label = if opt.chars().count() > 60 {
+                    let mut s: String = opt.chars().take(57).collect();
+                    s.push_str("...");
+                    s
+                } else {
+                    opt.clone()
+                };
+                vec![InlineKeyboardButton::callback(
+                    label,
+                    format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
+                )]
+            })
+            .collect()
+    };
 
     state.set_pending_followups(session_id, options).await;
 
     let keyboard = InlineKeyboardMarkup::new(rows);
-    let mut req = bot
-        .send_message(chat_id, "\u{1f4a1} Suggested next:")
-        .reply_markup(keyboard);
+    let mut req = bot.send_message(chat_id, body).reply_markup(keyboard);
     req = req.parse_mode(ParseMode::Html);
     if let Some(tid) = thread_id {
         req = req.message_thread_id(tid);
@@ -102,5 +149,39 @@ pub(crate) async fn render_suggestions(
         // The buttons never landed — drop the stash so a stale entry can't
         // swallow an unrelated future tap.
         state.clear_pending_followups(session_id).await;
+    }
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::*;
+
+    #[test]
+    fn no_fold_when_all_options_short() {
+        let opts = vec!["Ship it".to_string(), "Hold".to_string()];
+        assert!(!should_fold(&opts));
+        assert_eq!(build_body(false, &opts), "\u{1f4a1} Suggested next:");
+    }
+
+    #[test]
+    fn folds_when_any_option_exceeds_30_chars() {
+        let short = "Ship it".to_string();
+        let long =
+            "this is a very long option that definitely exceeds thirty characters".to_string();
+        assert!(long.chars().count() > 30);
+        let opts = vec![short.clone(), long.clone()];
+        assert!(should_fold(&opts));
+        let body = build_body(true, &opts);
+        assert!(body.starts_with("\u{1f4a1} Suggested next:"));
+        assert!(body.contains("1. Ship it"));
+        assert!(body.contains(&format!("2. {long}")));
+    }
+
+    #[test]
+    fn boundary_exactly_30_does_not_fold() {
+        // 30 chars exactly: threshold is EXCLUSIVE (>30 folds).
+        let exact = "x".repeat(30);
+        let opts = vec![exact];
+        assert!(!should_fold(&opts));
     }
 }
