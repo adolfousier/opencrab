@@ -78,7 +78,7 @@ jobs:
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           ARCHIVE="opencrabs-v${VERSION}-pre-${SHA}-${{ matrix.asset_suffix }}"
           cd target/${{ matrix.target }}/release
-          tar czf "../../../../${ARCHIVE}.tar.gz" opencrabs rtk
+          tar czf "../../../${ARCHIVE}.tar.gz" opencrabs rtk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -140,7 +140,7 @@ jobs:
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           ARCHIVE="opencrabs-v${VERSION}-pre-${SHA}-${{ matrix.asset_suffix }}"
           cd target/${{ matrix.target }}/release
-          tar czf "../../../../${ARCHIVE}.tar.gz" opencrabs rtk
+          tar czf "../../../${ARCHIVE}.tar.gz" opencrabs rtk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -192,7 +192,7 @@ jobs:
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           ARCHIVE="opencrabs-v${VERSION}-pre-${SHA}-windows-amd64"
           cd target/x86_64-pc-windows-msvc/release
-          7z a "../../../../${ARCHIVE}.zip" opencrabs.exe rtk.exe
+          7z a "../../../${ARCHIVE}.zip" opencrabs.exe rtk.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
