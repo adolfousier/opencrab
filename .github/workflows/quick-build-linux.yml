@@ -1,7 +1,12 @@
 name: Quick Linux Build
 
-# Super-quick Linux amd64 binary, on demand. Minimal features:
-# telegram, browser, rtk. No tests, no matrix, no ALSA, no multi-platform.
+# Super-quick Linux amd64 binary, on demand. Default channels minus voice
+# (no local-stt / local-tts): skips whisper.cpp + rodio/ALSA — the heavy
+# half of the build. No tests, no matrix, no multi-platform.
+#
+# NOTE: upstream lacks full #[cfg] gates — dropping channel features
+# (discord/slack/whatsapp) breaks the compile (verified 2026-08-24, run
+# 32785342664). Only voice features are safely removable today.
 #
 # Sync-from-origin-first: the checkout step pins the UPSTREAM repo (main),
 # so every dispatch compiles adolfousier/opencrabs main tip — never a stale
@@ -33,8 +38,8 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Build (release, minimal features, no tests)
-        run: cargo build --locked --release --no-default-features --features "telegram,browser,rtk"
+      - name: Build (release, default minus voice, no tests)
+        run: cargo build --locked --release --no-default-features --features "telegram,whatsapp,discord,slack,trello,browser,rtk"
 
       - name: Strip
         run: strip target/release/opencrabs
