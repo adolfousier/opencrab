@@ -6334,7 +6334,14 @@ impl AgentService {
                                 };
                                 match exec_result {
                                     Ok(result) => {
-                                        if tool_name == "suggest_options" {
+                                        // Halt policy lives on the tool via
+                                        // Tool::halts_turn, consulted through
+                                        // the registry; only a SUCCESSFUL run
+                                        // ends the turn (a failed options call
+                                        // must not kill it) — audit fix.
+                                        if self.tool_registry.halts_turn(&tool_name)
+                                            && result.success
+                                        {
                                             halt_turn_requested = true;
                                         }
                                         let success = result.success;
@@ -6565,8 +6572,7 @@ impl AgentService {
 
                                 // #1178 M1 turn-halt: suggest_options ends the turn once its result is
                                 // flushed - the user picks an option and the next turn resumes from it.
-                                // Name-based because the loop holds only the tool name here; the trait
-                                // method `halts_turn` documents the policy owner.
+                                // Policy routes through ToolRegistry::halts_turn (Tool::halts_turn).
                                 if halt_turn_requested {
                                     tracing::info!(
                                         "🛑 Turn halted by option-surface tool (suggest_options)"
@@ -6639,7 +6645,9 @@ impl AgentService {
                 };
                 match exec_result {
                     Ok(result) => {
-                        if tool_name == "suggest_options" {
+                        // Registry-routed halt policy, success-gated (audit
+                        // fix) — mirrors the approval-path site above.
+                        if self.tool_registry.halts_turn(&tool_name) && result.success {
                             halt_turn_requested = true;
                         }
                         let success = result.success;
@@ -6853,8 +6861,7 @@ impl AgentService {
 
                 // #1178 M1 turn-halt: suggest_options ends the turn once its result is
                 // flushed - the user picks an option and the next turn resumes from it.
-                // Name-based because the loop holds only the tool name here; the trait
-                // method `halts_turn` documents the policy owner.
+                // Policy routes through ToolRegistry::halts_turn (Tool::halts_turn).
                 if halt_turn_requested {
                     tracing::info!("🛑 Turn halted by option-surface tool (suggest_options)");
                     break;

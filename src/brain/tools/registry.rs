@@ -150,6 +150,15 @@ impl ToolRegistry {
         self.tools.read().unwrap().get(name).cloned()
     }
 
+    /// Whether the named tool's successful execution should end the agent
+    /// turn after its results flush (e.g. `suggest_options`). Unknown tools
+    /// never halt. The policy lives on the tool itself via
+    /// [`Tool::halts_turn`]; this is how the tool loop consults it instead
+    /// of string-matching names at call sites (#1178 audit finding).
+    pub fn halts_turn(&self, name: &str) -> bool {
+        self.get(name).is_some_and(|tool| tool.halts_turn())
+    }
+
     /// Check if a tool is registered
     pub fn has_tool(&self, name: &str) -> bool {
         self.tools.read().unwrap().contains_key(name)
