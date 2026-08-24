@@ -864,55 +864,7 @@ impl TelegramAgent {
                                 return ResponseResult::Ok(());
                             }
 
-                            // Follow-up question callback: `q:<id>:<idx>`.
-                            // Handled separately from the approve/deny chain
-                            // because it returns an option string, not a
-                            // boolean.
-                            if let Some(rest) = data.strip_prefix("q:") {
-                                let mut parts = rest.splitn(2, ':');
-                                let q_id = parts.next().unwrap_or("");
-                                let idx_str = parts.next().unwrap_or("");
-                                let idx: usize = idx_str.parse().unwrap_or(usize::MAX);
-                                let resolved = state
-                                    .resolve_pending_question(q_id, idx)
-                                    .await;
-                                tracing::info!(
-                                    "Telegram follow_up_question resolved: id={} idx={} answer={:?}",
-                                    q_id,
-                                    idx,
-                                    resolved
-                                );
-                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "resolution").await;
-                                if let Some(answer) = resolved
-                                    && let Some(msg) = &query.message
-                                {
-                                    let original_text = match msg {
-                                        teloxide::types::MaybeInaccessibleMessage::Regular(m) => {
-                                            m.text().unwrap_or("").to_string()
-                                        }
-                                        _ => String::new(),
-                                    };
-                                    let updated =
-                                        format!("{}\n\n✅ {}", original_text, answer);
-                                    use teloxide::payloads::EditMessageTextSetters;
-                                    use teloxide::prelude::Requester;
-                                    if let Err(e) = bot
-                                        .edit_message_text(msg.chat().id, msg.id(), &updated)
-                                        .reply_markup(
-                                            teloxide::types::InlineKeyboardMarkup::default(),
-                                        )
-                                        .await
-                                    {
-                                        tracing::error!(
-                                            "Telegram: failed to edit question message: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                                return ResponseResult::Ok(());
-                            }
-
-                            // Directory browser callbacks: cd:sel:{idx}, cd:up, cd:pg:{n}, cd:here, cd:noop
+// Directory browser callbacks: cd:sel:{idx}, cd:up, cd:pg:{n}, cd:here, cd:noop
                             if data.starts_with("cd:") {
                                 // Owner-only: the browser exposes the host
                                 // filesystem. Even though /cd is owner-gated, the

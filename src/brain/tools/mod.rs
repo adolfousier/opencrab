@@ -54,7 +54,6 @@ pub mod cron_manage;
 pub mod evolve;
 pub mod feedback_analyze;
 pub mod feedback_record;
-pub mod follow_up_question;
 pub mod generate_image;
 pub mod goal_manage;
 pub mod http;

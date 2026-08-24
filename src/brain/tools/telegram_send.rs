@@ -119,7 +119,7 @@ pub(crate) async fn resolve_input_file(
 ///      though the last message came from #dev").
 ///   2. Session origin topic via `session_topic(session_id)` — the
 ///      forum topic this interaction started in, the same in-memory
-///      map `follow_up_question` routes through (#450). Makes replies
+///      map the interactive-question tool routed through (#450). Makes replies
 ///      land back in the originating topic with no explicit routing.
 ///   3. Auto-lookup via `latest_thread_id_for_chat(chat_id)` — the
 ///      fallback that closed #130, picking up the most recently
@@ -142,7 +142,7 @@ pub(crate) async fn resolve_thread_id(
         )));
     }
     // Session origin topic — the forum topic this interaction started in, the
-    // same in-memory map follow_up_question routes through (#450). This is why
+    // same in-memory map the interactive-question tool routed through (#450). This is why
     // a reply sent from a topic lands back in that topic without the agent
     // passing thread_id. Cold/cron sessions have no entry, so this is skipped.
     if let Some(tid) = state.session_topic(session_id).await {
@@ -262,7 +262,7 @@ async fn chat_or_err(
         return guard_cron_target(id);
     }
     // Session origin chat — where this interaction started, same map
-    // follow_up_question uses (#450).
+    // the interactive-question tool used (#450).
     if let Some(id) = state.session_chat(session_id).await {
         return guard_cron_target(id);
     }

@@ -472,7 +472,6 @@ impl AgentService {
         cancel_token: Option<CancellationToken>,
         override_approval_callback: Option<ApprovalCallback>,
         override_progress_callback: Option<ProgressCallback>,
-        override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
         track_pending: bool,
@@ -541,11 +540,6 @@ impl AgentService {
         // Effective question callback: per-call override wins over the
         // service-level fallback. Channels with native button surfaces
         // pass their own callback per message; everyone else passes
-        // None and the `follow_up_question` tool degrades gracefully,
-        // returning the question as plain text to relay (#716).
-        let question_callback: Option<QuestionCallback> =
-            override_question_callback.or_else(|| self.question_callback.clone());
-
         // Notify TUI when a remote channel starts/finishes processing so it can
         // block concurrent sends on the same session and avoid garbled display.
         if has_progress_override && let Some(ref tx) = self.session_updated_tx {
@@ -580,7 +574,6 @@ impl AgentService {
                     approval_callback.clone(),
                     has_progress_override,
                     progress_callback.clone(),
-                    question_callback.clone(),
                 )
                 .await;
 
@@ -672,7 +665,6 @@ impl AgentService {
         approval_callback: Option<ApprovalCallback>,
         has_progress_override: bool,
         progress_callback: Option<ProgressCallback>,
-        question_callback: Option<QuestionCallback>,
     ) -> Result<AgentResponse> {
         // Snapshot the manual-switch epoch at turn start. If the user
         // switches provider/model while this turn is in flight, an automatic
@@ -1290,7 +1282,6 @@ impl AgentService {
         tool_context.ssh_callback = self.ssh_callback.clone();
         tool_context.shared_working_directory = Some(Arc::clone(&session_cwd));
         tool_context.service_context = Some(self.context.clone());
-        tool_context.question_callback = question_callback.clone();
         tool_context.progress_callback = progress_callback.clone();
         tool_context.background_manager = self.background_manager.clone();
         tool_context.plan_session_override = self.plan_session_override;
@@ -6320,7 +6311,6 @@ impl AgentService {
                                         .shared_working_directory
                                         .clone(),
                                     service_context: tool_context.service_context.clone(),
-                                    question_callback: tool_context.question_callback.clone(),
                                     progress_callback: tool_context.progress_callback.clone(),
                                     background_manager: tool_context.background_manager.clone(),
                                     plan_session_override: tool_context.plan_session_override,

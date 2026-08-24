@@ -1303,7 +1303,6 @@ async fn cmd_chat_inner(
                                     Some(token),
                                     None,
                                     None,
-                                    None,
                                     &channel,
                                     channel_chat_id.as_deref(),
                                 )

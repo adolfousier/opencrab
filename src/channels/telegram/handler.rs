@@ -2326,23 +2326,6 @@ pub(crate) async fn handle_message(
         Some(guard) => guard,
         None => {
             // A turn is already in flight for this session.
-            // If it is blocked on a `follow_up_question`, the user's text IS
-            // the answer (#500). Fire the oneshot so the tool unblocks and
-            // returns the text, instead of queueing: the tool is suspended
-            // inside `rx.await`, so no tool round ever ends to drain the
-            // queue, and a queued answer would sit until a button click or
-            // the 10-min timeout.
-            if telegram_state
-                .resolve_pending_question_with_text(session_id, text.clone())
-                .await
-            {
-                tracing::info!(
-                    "Telegram: text answered a pending follow_up_question on session {}",
-                    session_id
-                );
-                fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
-                return Ok(());
-            }
             tracing::info!(
                 "Telegram: message arrived mid-turn on session {} — queued for injection \
                  between tool rounds",
@@ -2423,10 +2406,6 @@ pub(crate) async fn handle_message(
     // Build Telegram-native approval + follow-up-question callbacks
     // for this session
     let approval_cb = make_approval_callback(telegram_state.clone());
-    let question_cb = super::follow_up_question::make_question_callback(
-        telegram_state.clone(),
-        streaming.clone(),
-    );
 
     // ── Agent call ────────────────────────────────────────────────────────────
     let cancel_token = tokio_util::sync::CancellationToken::new();
@@ -2448,7 +2427,6 @@ pub(crate) async fn handle_message(
             Some(cancel_token.clone()),
             Some(approval_cb),
             Some(progress_cb.clone()),
-            Some(question_cb),
             "telegram",
             Some(&chat_id_str),
         )
@@ -2479,10 +2457,6 @@ pub(crate) async fn handle_message(
                         .register_session_chat(new_id, msg.chat.id.0, topic_id)
                         .await;
                     let approval_cb2 = make_approval_callback(telegram_state.clone());
-                    let question_cb2 = super::follow_up_question::make_question_callback(
-                        telegram_state.clone(),
-                        streaming.clone(),
-                    );
                     let cancel_token2 = tokio_util::sync::CancellationToken::new();
                     telegram_state
                         .store_cancel_token(new_id, cancel_token2.clone())
@@ -2499,7 +2473,6 @@ pub(crate) async fn handle_message(
                             Some(cancel_token2),
                             Some(approval_cb2),
                             Some(progress_cb),
-                            Some(question_cb2),
                             "telegram",
                             Some(&chat_id_str),
                         )

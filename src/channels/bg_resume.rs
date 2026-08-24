@@ -59,7 +59,6 @@ pub(crate) async fn run_resume_turn(
             None,
             None,
             None,
-            None,
             channel,
             Some(target),
         )

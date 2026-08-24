@@ -204,7 +204,7 @@ pub async fn process_comment(
     let approval_cb: crate::brain::agent::ApprovalCallback =
         Arc::new(|_info| Box::pin(async { Ok((true, false)) }));
 
-    // Trello cards don't host buttons; follow_up_question has no
+    // Trello cards don't host buttons; interactive prompts have no
     // rendering surface here so the tool itself surfaces a clear error
     // back to the agent.
     let response = match agent
@@ -215,7 +215,6 @@ pub async fn process_comment(
             None,
             None,
             Some(approval_cb),
-            None,
             None,
             "trello",
             Some(&card_id),

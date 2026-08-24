@@ -1,6 +1,6 @@
 //! Slack-side rendering for the OPTIONAL `suggest_followups` tool (#599).
 //!
-//! Non-blocking counterpart to `follow_up_question`: the agent surfaces
+//! Non-blocking option surface: the agent surfaces
 //! `ProgressEvent::SuggestedFollowups`, and we post a Block Kit ActionsBlock
 //! with one button per suggestion under the finished response. Tapping a button
 //! injects that suggestion as the user's next message (a fresh turn). Typing

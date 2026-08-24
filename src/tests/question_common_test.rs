@@ -18,7 +18,7 @@ fn trims_and_drops_empties() {
 #[test]
 fn too_few_reports_counts() {
     assert_eq!(
-        check_options(vec!["only".into(), "" .into()], 2, 8),
+        check_options(vec!["only".into(), "".into()], 2, 8),
         Err(OptionsError::TooFew { got: 1, min: 2 })
     );
 }
@@ -40,8 +40,7 @@ fn duplicate_rejected() {
 #[test]
 fn distinct_options_pass() {
     assert_eq!(
-        check_options(vec!["x".into(), "y".into()], 2, 8)
-            .expect("distinct pair"),
+        check_options(vec!["x".into(), "y".into()], 2, 8).expect("distinct pair"),
         vec!["x", "y"]
     );
 }

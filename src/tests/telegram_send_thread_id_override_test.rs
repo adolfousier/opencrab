@@ -99,7 +99,7 @@ async fn explicit_thread_id_zero_is_returned() {
 #[tokio::test]
 async fn session_origin_topic_is_used_when_no_explicit_thread_id() {
     // #450: with no explicit thread_id, the resolver inherits the forum topic
-    // this session started in (the same session_topic map follow_up_question
+    // this session started in (the same session_topic map the interactive-question tool
     // uses), so a reply routes back to the originating topic automatically.
     let state = empty_state();
     let session_id = Uuid::from_u128(0xABCD);

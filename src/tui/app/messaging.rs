@@ -2601,7 +2601,6 @@ impl App {
                     Some(token),
                     None,
                     None,
-                    None,
                     "tui",
                     None,
                 )

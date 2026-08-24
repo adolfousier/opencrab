@@ -35,21 +35,6 @@ fn channel_send_not_connected_is_recoverable() {
 }
 
 #[test]
-fn follow_up_question_cancel_is_recoverable() {
-    assert!(is_recoverable_tool_failure(
-        "follow_up_question",
-        Some("user cancelled the prompt")
-    ));
-    assert!(is_recoverable_tool_failure(
-        "follow_up_question",
-        Some("timed out waiting for an answer")
-    ));
-    assert!(is_recoverable_tool_failure(
-        "follow_up_question",
-        Some("user declined")
-    ));
-}
-
 #[test]
 fn genuine_defects_are_not_recoverable() {
     // A real bug in a tool's own logic must still count as a failure.
@@ -118,7 +103,6 @@ fn bash_commands_the_model_got_wrong_stay_failures() {
 fn missing_error_text_is_not_recoverable() {
     // No error string → cannot be classified benign; must count normally.
     assert!(!is_recoverable_tool_failure("hashline_edit", None));
-    assert!(!is_recoverable_tool_failure("follow_up_question", None));
 }
 
 #[test]

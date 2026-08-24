@@ -1,7 +1,7 @@
 //! `suggest_followups` tool.
 //!
 //! Lets the agent surface OPTIONAL next-step suggestions the user may accept or
-//! ignore. Unlike `follow_up_question` this is non-blocking: it fires a
+//! ignore. This is non-blocking: it fires a
 //! `ProgressEvent::SuggestedFollowups` and returns immediately without awaiting
 //! any answer. Each surface renders the options as its own INTERACTIVE UI —
 //! tap-to-send buttons under the reply on chat channels (Telegram/Discord/…), a
@@ -11,7 +11,7 @@
 //!
 //! Intended for "here's a likely next thing you might ask" — a convenience, not
 //! a question. If the agent genuinely cannot proceed without a choice, it should
-//! use `follow_up_question` (blocking) instead.
+//! ask directly in your reply instead.
 
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
@@ -49,8 +49,7 @@ impl Tool for SuggestFollowupsTool {
          next directions (2-4 options). Each option must be a complete, \
          ready-to-send user message phrased in the user's voice (e.g. \"Add tests \
          for the new endpoint\", not \"I could add tests\"). Keep each under ~60 \
-         chars. Do NOT use this to ask a question you need answered to proceed (use \
-         follow_up_question), and do not also repeat the options in your prose."
+         chars. Do NOT use this to ask a question you need answered to proceed `do not also repeat the options in your prose."
     }
 
     fn input_schema(&self) -> Value {

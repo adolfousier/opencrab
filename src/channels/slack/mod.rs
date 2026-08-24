@@ -6,7 +6,6 @@
 mod agent;
 pub(crate) mod blocks;
 pub(crate) mod final_body;
-pub(crate) mod follow_up_question;
 pub(crate) mod formatting_prompt;
 pub(crate) mod handler;
 pub(crate) mod reactions;
@@ -25,9 +24,6 @@ use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// One pending `follow_up_question` on Slack: oneshot half + options.
-type PendingSlackQuestion = (oneshot::Sender<String>, Vec<String>);
-
 /// Shared Slack state for proactive messaging.
 ///
 /// Set when the bot connects via Socket Mode.
@@ -45,7 +41,6 @@ pub struct SlackState {
     /// options). Same shape as the other channels — action_id only
     /// carries the option index, the click handler maps it back via
     /// the stored options list.
-    pending_questions: Mutex<HashMap<String, PendingSlackQuestion>>,
     /// Per-session OPTIONAL follow-up suggestions from `suggest_followups`
     /// (#599). Non-blocking: buttons ride under the response and a tap injects
     /// the chosen suggestion as a new turn. Keyed by session; the tap handler
@@ -73,7 +68,6 @@ impl SlackState {
             owner_channel_id: Mutex::new(None),
             session_channels: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
-            pending_questions: Mutex::new(HashMap::new()),
             pending_followups: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             tool_groups: Mutex::new((Vec::new(), HashMap::new())),
@@ -117,29 +111,6 @@ impl SlackState {
         let group = map.get_mut(ts)?;
         group.expanded = !group.expanded;
         Some(group.clone())
-    }
-
-    /// Register a pending `follow_up_question`. The action-block click
-    /// handler resolves by option index.
-    pub async fn register_pending_question(
-        &self,
-        id: String,
-        tx: oneshot::Sender<String>,
-        options: Vec<String>,
-    ) {
-        self.pending_questions
-            .lock()
-            .await
-            .insert(id, (tx, options));
-    }
-
-    /// Resolve a pending question by option index. Returns the chosen
-    /// option string if the question + index are both valid.
-    pub async fn resolve_pending_question(&self, id: &str, idx: usize) -> Option<String> {
-        let (tx, options) = self.pending_questions.lock().await.remove(id)?;
-        let answer = options.get(idx)?.clone();
-        let _ = tx.send(answer.clone());
-        Some(answer)
     }
 
     /// Stash this session's optional follow-up suggestions (#599).

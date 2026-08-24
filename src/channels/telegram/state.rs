@@ -11,12 +11,6 @@ use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// One pending `follow_up_question`: the oneshot half that the
-/// `follow_up_question` tool is awaiting, plus the option list the
-/// click handler uses to translate the button-index callback data
-/// back into the chosen option string.
-type PendingQuestion = (oneshot::Sender<String>, Vec<String>, Uuid);
-
 /// Photo buffer entry: (img_marker, Optional caption)
 type PhotoEntry = (String, Option<String>);
 
@@ -58,19 +52,7 @@ pub struct TelegramState {
     /// Pending follow-up questions: question_id → (oneshot sender of
     /// the chosen option string, list of options keyed by index). The
     /// inline-keyboard callback data only carries the option index (to
-    /// stay under Telegram's 64-byte callback-data limit), so the
-    /// option list is stashed here for the click handler to resolve
-    /// `idx -> option string` before sending it back to the suspended
-    /// `follow_up_question` tool.
-    pending_questions: Mutex<HashMap<String, PendingQuestion>>,
-    /// Reverse map: session_id → question_id of the follow-up question this
-    /// session is currently blocked on. Lets a mid-turn TEXT message answer a
-    /// pending question directly (#500): the `follow_up_question` tool blocks
-    /// inside `rx.await`, so a queued-between-rounds text never reaches it — no
-    /// round ever ends while the tool is suspended. When a text arrives on a
-    /// session with an entry here, we fire the oneshot with the text so the
     /// tool unblocks and returns it as the answer, instead of queueing.
-    session_pending_question: Mutex<HashMap<Uuid, String>>,
     /// Per-session OPTIONAL follow-up suggestions surfaced by the
     /// `suggest_followups` tool (#597). Unlike `pending_questions` these are
     /// non-blocking: the buttons ride under the response and a tap injects the
@@ -237,8 +219,6 @@ impl TelegramState {
             chat_sessions: Mutex::new(HashMap::new()),
             session_topic: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
-            pending_questions: Mutex::new(HashMap::new()),
-            session_pending_question: Mutex::new(HashMap::new()),
             pending_followups: Mutex::new(HashMap::new()),
             solo_evaluated: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
@@ -473,7 +453,7 @@ impl TelegramState {
 
     /// Look up the forum topic_id for a given session_id. Returns `Some(tid)`
     /// for forum-topic sessions, `None` for DMs / non-forum groups / General.
-    /// Used by `follow_up_question` and `make_approval_callback` to route
+    /// Used by `make_approval_callback` to route
     /// messages to the correct forum topic (#247, #249).
     pub async fn session_topic(&self, session_id: Uuid) -> Option<i32> {
         self.session_topic
@@ -543,78 +523,6 @@ impl TelegramState {
         }
     }
 
-    /// Register a pending follow-up question by id. The click handler
-    /// later calls `resolve_pending_question(id, idx)` to deliver the
-    /// chosen option string from `options[idx]`. `session_id` is stored
-    /// alongside so the reverse map (session → question) can be cleaned
-    /// up on resolve, and so a mid-turn text can answer it (#500).
-    pub async fn register_pending_question(
-        &self,
-        id: String,
-        session_id: Uuid,
-        tx: oneshot::Sender<String>,
-        options: Vec<String>,
-    ) {
-        self.pending_questions
-            .lock()
-            .await
-            .insert(id.clone(), (tx, options, session_id));
-        self.session_pending_question
-            .lock()
-            .await
-            .insert(session_id, id);
-    }
-
-    /// Resolve a pending follow-up question by option index (button-click
-    /// path). Returns the chosen option string if the question was found
-    /// and the index is in range, otherwise None. Also clears the reverse
-    /// session → question entry so a later text is not mistaken for an
-    /// answer to an already-resolved question.
-    pub async fn resolve_pending_question(&self, id: &str, idx: usize) -> Option<String> {
-        let entry = self.pending_questions.lock().await.remove(id);
-        let (tx, options, session_id) = entry?;
-        self.session_pending_question
-            .lock()
-            .await
-            .remove(&session_id);
-        let answer = options.get(idx)?.clone();
-        let _ = tx.send(answer.clone());
-        Some(answer)
-    }
-
-    /// Resolve this session's pending follow-up question with free-form
-    /// TEXT (mid-turn steering path, #500). The user typed an answer
-    /// instead of tapping a button: fire the oneshot with the text so the
-    /// blocked `follow_up_question` tool unblocks and returns it. Returns
-    /// `true` only when a live question was pending and the oneshot was
-    /// delivered; `false` (fall through to normal queueing) when no
-    /// question is pending or its receiver was already gone.
-    pub async fn resolve_pending_question_with_text(&self, session_id: Uuid, text: String) -> bool {
-        let id = match self
-            .session_pending_question
-            .lock()
-            .await
-            .remove(&session_id)
-        {
-            Some(id) => id,
-            None => return false,
-        };
-        let entry = self.pending_questions.lock().await.remove(&id);
-        let (tx, _options, _session_id) = match entry {
-            Some(entry) => entry,
-            None => return false,
-        };
-        if tx.send(text).is_err() {
-            tracing::warn!(
-                "Telegram: pending question for session {} had a closed receiver \
-                 (already resolved or timed out) — falling back to queueing",
-                session_id
-            );
-            return false;
-        }
-        true
-    }
-
     /// Stash this session's optional follow-up suggestions (#597) so the tap
     /// handler can resolve `idx -> suggestion string`. Replaces any prior set.
     pub async fn set_pending_followups(&self, session_id: Uuid, options: Vec<String>) {
@@ -637,18 +545,6 @@ impl TelegramState {
     /// own message, so the buttons are stale).
     pub async fn clear_pending_followups(&self, session_id: Uuid) {
         self.pending_followups.lock().await.remove(&session_id);
-    }
-
-    /// Clear a pending question's bookkeeping from both maps. Idempotent;
-    /// called by the tool when the question lapses (timeout / channel
-    /// closed) so a dead entry never lingers in the reverse map and
-    /// swallows the user's next text (#500).
-    pub async fn clear_pending_question(&self, id: &str, session_id: Uuid) {
-        self.pending_questions.lock().await.remove(id);
-        self.session_pending_question
-            .lock()
-            .await
-            .remove(&session_id);
     }
 
     /// Store a cancel token for a session (before starting an agent call).

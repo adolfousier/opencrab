@@ -40,16 +40,6 @@ pub fn is_recoverable_tool_failure(tool_name: &str, error: Option<&str>) -> bool
         n if n.ends_with("_send") || n.ends_with("_connect") => {
             e.contains("not connected") || e.contains("connect")
         }
-        // The user declined, cancelled, or ignored the interactive prompt.
-        // That is a user choice, not a tool failure.
-        "follow_up_question" => {
-            e.contains("cancel")
-                || e.contains("declin")
-                || e.contains("timeout")
-                || e.contains("timed out")
-                || e.contains("no answer")
-                || e.contains("no response")
-        }
         // bash carries two failure populations under one tool name (#1068). A
         // correctly written command that hit a missing file, a closed port or a
         // dead service says nothing about the tool, and counting it as a defect

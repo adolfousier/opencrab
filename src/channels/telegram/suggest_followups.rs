@@ -1,6 +1,6 @@
 //! Telegram-side rendering for the OPTIONAL `suggest_followups` tool (#597).
 //!
-//! Unlike `follow_up_question` this is non-blocking: the agent surfaces
+//! Non-blocking: the agent surfaces
 //! `ProgressEvent::SuggestedFollowups`, and we post an inline keyboard under the
 //! finished response with one button per suggestion. Tapping a button injects
 //! that suggestion as the user's next message (a fresh turn) — see the

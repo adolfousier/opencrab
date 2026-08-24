@@ -500,25 +500,6 @@ pub(crate) async fn handle_message(
             }
             return;
         }
-
-        // Follow-up question intercept: if this phone has a pending
-        // question and the incoming text parses as a 1-based option
-        // number, resolve the question instead of forwarding to the
-        // agent. Any other reply falls through (user can "abandon" a
-        // question by typing something unrelated).
-        if wa_state.has_pending_question(&phone).await
-            && let Some(raw_text) = extract_text(&msg)
-            && let Some(answer) = wa_state
-                .resolve_pending_question(&phone, raw_text.trim())
-                .await
-        {
-            tracing::info!(
-                "WhatsApp follow_up_question resolved from {}: {}",
-                phone,
-                answer
-            );
-            return;
-        }
     }
 
     let text_preview = text
@@ -1332,13 +1313,6 @@ pub(crate) async fn handle_message(
         .await;
 
     let wa_chat_id = format!("{}", info.source.chat);
-    let question_cb = super::follow_up_question::make_question_callback(
-        client.clone(),
-        reply_target.clone(),
-        phone.clone(),
-        wa_state.clone(),
-        intermediate_handles.clone(),
-    );
     let result = agent
         .send_message_with_tools_and_display(
             session_id,
@@ -1348,7 +1322,6 @@ pub(crate) async fn handle_message(
             Some(cancel_token),
             Some(approval_cb),
             Some(progress_cb),
-            Some(question_cb),
             "whatsapp",
             Some(&wa_chat_id),
         )
@@ -1672,7 +1645,6 @@ pub(crate) async fn send_connection_greeting(
         .send_message_with_tools_and_display(
             session_id,
             prompt,
-            None,
             None,
             None,
             None,

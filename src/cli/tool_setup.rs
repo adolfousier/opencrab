@@ -28,9 +28,8 @@ pub(crate) fn register_core_agent_tools(
 ) -> Arc<crate::brain::tools::subagent::SubAgentManager> {
     use crate::brain::tools::{
         bash::BashTool, code_exec::CodeExecTool, config_tool::ConfigTool, context::ContextTool,
-        doc_gen::GenerateDocumentTool, doc_parser::DocParserTool, edit::EditTool,
-        follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
-        http::HttpClientTool, load_brain_file::LoadBrainFileTool, ls::LsTool,
+        doc_gen::GenerateDocumentTool, doc_parser::DocParserTool, edit::EditTool, glob::GlobTool,
+        grep::GrepTool, http::HttpClientTool, load_brain_file::LoadBrainFileTool, ls::LsTool,
         memory_search::MemorySearchTool, notebook::NotebookEditTool,
         pdf_to_images::PdfToImagesTool, plan_tool::PlanTool, read::ReadTool,
         rename_session::RenameSessionTool, session_search::SessionSearchTool,
@@ -109,7 +108,6 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(RenameSessionTool));
     // Follow-up question — agent asks the user a multi-choice question
     // mid-task and blocks until they click an option button.
-    tool_registry.register(Arc::new(FollowUpQuestionTool));
     tool_registry.register(Arc::new(SuggestFollowupsTool));
     // Tool discovery — lets the agent activate extended tools on demand
     // (lazy-tools mode). Holds the registry Arc so it can search all tools;

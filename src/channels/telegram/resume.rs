@@ -320,10 +320,6 @@ pub(crate) async fn resume_session(
         .await;
 
     let chat_id_str = chat_id.0.to_string();
-    let question_cb = super::follow_up_question::make_question_callback(
-        telegram_state.clone(),
-        streaming.clone(),
-    );
     let result = agent
         .resume_interrupted_turn(
             session_id,
@@ -332,7 +328,6 @@ pub(crate) async fn resume_session(
             Some(cancel_token.clone()),
             None, // no approval callback for resume
             Some(progress_cb),
-            Some(question_cb),
             "telegram",
             Some(&chat_id_str),
         )

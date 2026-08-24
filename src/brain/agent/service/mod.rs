@@ -43,7 +43,6 @@ pub use phantom::{
 };
 pub use types::{
     AgentResponse, AgentStreamResponse, ApprovalCallback, ChannelSessionEvent,
-    FollowUpQuestionInfo, MessageEnqueueCallback, MessageQueueCallback, ProgressCallback,
-    ProgressEvent, QuestionCallback, QueuedUserMessage, SshPasswordCallback, SudoCallback,
-    ToolApprovalInfo,
+    MessageEnqueueCallback, MessageQueueCallback, ProgressCallback, ProgressEvent,
+    QueuedUserMessage, SshPasswordCallback, SudoCallback, ToolApprovalInfo,
 };

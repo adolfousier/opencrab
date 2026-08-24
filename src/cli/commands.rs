@@ -762,7 +762,6 @@ pub(crate) async fn cmd_run(
             None,
             None, // no stdin prompt for single-shot run; auto_approve_tools gates it
             Some(crate::cli::headless_callbacks::cli_progress_callback()),
-            None,
             "cli",
             None,
         )
@@ -1057,7 +1056,6 @@ pub(crate) async fn cmd_agent_interactive(
                 None,
                 approval,
                 Some(crate::cli::headless_callbacks::cli_progress_callback()),
-                None,
                 "cli",
                 None,
             )
@@ -2245,7 +2243,6 @@ pub(crate) async fn cmd_evolve(config: &crate::config::Config, check_only: bool)
         ssh_callback: None,
         shared_working_directory: None,
         service_context: None,
-        question_callback: None,
         progress_callback: None,
         background_manager: None,
         plan_session_override: None,

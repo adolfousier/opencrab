@@ -1394,7 +1394,6 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "config_manager",
     "slash_command",
     "rename_session",
-    "follow_up_question",
     "analyze_image",
     "analyze_video",
     "generate_image",
