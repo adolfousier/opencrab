@@ -35,7 +35,6 @@ fn channel_send_not_connected_is_recoverable() {
 }
 
 #[test]
-#[test]
 fn genuine_defects_are_not_recoverable() {
     // A real bug in a tool's own logic must still count as a failure.
     assert!(!is_recoverable_tool_failure(
