@@ -12,7 +12,6 @@ use crate::services::ServiceContext;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, watch};
-use uuid::Uuid;
 
 use super::agent_service_mocks::MockProvider;
 
