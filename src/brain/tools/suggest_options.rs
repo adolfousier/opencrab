@@ -1,8 +1,8 @@
-//! `suggest_followups` tool.
+//! `suggest_options` tool.
 //!
 //! Lets the agent surface OPTIONAL next-step suggestions the user may accept or
 //! ignore. This is non-blocking: it fires a
-//! `ProgressEvent::SuggestedFollowups` and returns immediately without awaiting
+//! `ProgressEvent::SuggestedOptions` and returns immediately without awaiting
 //! any answer. Each surface renders the options as its own INTERACTIVE UI —
 //! tap-to-send buttons under the reply on chat channels (Telegram/Discord/…), a
 //! pick-list or gray ghost-text accept in the TUI. The rendering is the tool's
@@ -20,11 +20,11 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// Hard cap on suggestions. One renders as ghost text; a few render as a
-/// pick-list. More than a handful is noise the user won't read.
-pub const MAX_SUGGESTIONS: usize = 4;
+/// Hard cap on options. More than a handful is noise the user won't read;
+/// 8 accommodates branchy decisions without truncation (#1178).
+pub const MAX_OPTIONS: usize = 8;
 
-pub struct SuggestFollowupsTool;
+pub struct SuggestOptionsTool;
 
 #[derive(Debug, Deserialize)]
 struct SuggestInput {
@@ -32,24 +32,13 @@ struct SuggestInput {
 }
 
 #[async_trait]
-impl Tool for SuggestFollowupsTool {
+impl Tool for SuggestOptionsTool {
     fn name(&self) -> &str {
-        "suggest_followups"
+        "suggest_options"
     }
 
     fn description(&self) -> &str {
-        "Optionally surface 1-4 short follow-up messages the user might send next. \
-         Non-blocking and CHANNEL-AGNOSTIC: each surface renders the options as \
-         interactive UI — tap-to-send buttons under your reply on chat channels \
-         (Telegram/Discord/…), a pick-list or gray ghost-text accept in the TUI — \
-         and the user may accept, edit, or ignore them. You MUST call the tool to \
-         make the options interactive: writing them as plain text in your reply \
-         leaves dead text with no button to tap. Call this at the END of a turn \
-         when there is an obvious next step (1 option) or a small set of distinct \
-         next directions (2-4 options). Each option must be a complete, \
-         ready-to-send user message phrased in the user's voice (e.g. \"Add tests \
-         for the new endpoint\", not \"I could add tests\"). Keep each under ~60 \
-         chars. Do NOT use this to ask a question you need answered to proceed `do not also repeat the options in your prose."
+        "Surface up to 8 short option messages for the user to pick from as their next input. CHANNEL-AGNOSTIC interactive UI: tap-to-send buttons under your reply on chat channels (Telegram/Discord/...), a pick-list or gray ghost-text accept in the TUI. You MUST call this tool to make options interactive: writing them as plain text leaves dead text with no button to tap. If this is your final action of the turn, the turn ends with the options pending the user's pick (#1178 turn-halt); mid-turn calls attach the options to your message without stopping you. Use ONE option for an obvious single next step, 2-8 for distinct next directions. Each option must be a complete, ready-to-send user message phrased in the user's voice (e.g. \"Add tests for the new endpoint\", not \"I could add tests\"). Keep each under ~60 chars. Do NOT use this to ask a question you need answered to proceed; do not also repeat the options in your prose."
     }
 
     fn input_schema(&self) -> Value {
@@ -60,12 +49,16 @@ impl Tool for SuggestFollowupsTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "minItems": 1,
-                    "maxItems": MAX_SUGGESTIONS,
-                    "description": "1 to 4 distinct, ready-to-send follow-up messages in the user's voice. Rendered as interactive UI on every surface (tap-to-send buttons on chat channels; ghost-text/pick-list in the TUI) — never as plain text."
+                    "maxItems": MAX_OPTIONS,
+                    "description": "1 to 8 distinct, ready-to-send option messages in the user's voice. Rendered as interactive UI on every surface (tap-to-send buttons on chat channels; ghost-text/pick-list in the TUI) — never as plain text."
                 }
             },
             "required": ["options"]
         })
+    }
+
+    fn halts_turn(&self) -> bool {
+        true
     }
 
     fn capabilities(&self) -> Vec<ToolCapability> {
@@ -92,10 +85,7 @@ impl Tool for SuggestFollowupsTool {
         // suggestions are always optional.
         let count = options.len();
         if let Some(cb) = context.progress_callback.as_ref() {
-            cb(
-                context.session_id,
-                ProgressEvent::SuggestedFollowups(options),
-            );
+            cb(context.session_id, ProgressEvent::SuggestedOptions(options));
         }
 
         Ok(ToolResult::success(format!(
@@ -110,14 +100,14 @@ impl Tool for SuggestFollowupsTool {
 /// tool's own error wording (pinned by tests).
 pub(crate) fn sanitize_options(raw: Vec<String>) -> std::result::Result<Vec<String>, String> {
     use crate::channels::question_common::{OptionsError, check_options};
-    match check_options(raw, 1, MAX_SUGGESTIONS) {
+    match check_options(raw, 1, MAX_OPTIONS) {
         Ok(options) => Ok(options),
         Err(OptionsError::TooFew { .. }) => {
-            Err("suggest_followups needs at least 1 non-empty option.".into())
+            Err("suggest_options needs at least 1 non-empty option.".into())
         }
         Err(OptionsError::TooMany(n)) => Err(format!(
             "Too many suggestions ({}). Cap is {}.",
-            n, MAX_SUGGESTIONS
+            n, MAX_OPTIONS
         )),
         Err(OptionsError::Duplicate(opt)) => Err(format!(
             "Duplicate suggestion '{opt}'. Suggestions must be distinct."

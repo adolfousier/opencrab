@@ -1175,7 +1175,7 @@ pub(crate) async fn handle_message(
             // Optional follow-up suggestions (#600): no button UI, so post a
             // numbered list. A bare numeric reply selects one (see the inbound
             // router); anything else clears the set.
-            ProgressEvent::SuggestedFollowups(options) if !options.is_empty() => {
+            ProgressEvent::SuggestedOptions(options) if !options.is_empty() => {
                 let client = client_cb.clone();
                 let jid = jid_cb.clone();
                 let wa = wa_state_cb.clone();

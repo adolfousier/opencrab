@@ -6319,6 +6319,8 @@ impl AgentService {
                                 };
 
                                 // Execute the tool with approved context, racing against cancel
+                                // #1178 M1: set inside the Ok arm below when the tool ends the turn
+                                let mut halt_turn_requested = false;
                                 let exec_result = tokio::select! {
                                     biased;
                                     _ = async {
@@ -6326,11 +6328,15 @@ impl AgentService {
                                     } => {
                                         tracing::warn!("🛑 Tool '{}' cancelled mid-execution", tool_name);
                                         break;
+
                                     }
                                     r = self.tool_registry.execute(&tool_name, tool_input, &approved_tool_context) => r,
                                 };
                                 match exec_result {
                                     Ok(result) => {
+                                        if tool_name == "suggest_options" {
+                                            halt_turn_requested = true;
+                                        }
                                         let success = result.success;
                                         let images = result.images;
                                         let content = build_tool_result_content(
@@ -6556,6 +6562,18 @@ impl AgentService {
                                         });
                                     }
                                 }
+
+                                // #1178 M1 turn-halt: suggest_options ends the turn once its result is
+                                // flushed - the user picks an option and the next turn resumes from it.
+                                // Name-based because the loop holds only the tool name here; the trait
+                                // method `halts_turn` documents the policy owner.
+                                if halt_turn_requested {
+                                    tracing::info!(
+                                        "🛑 Turn halted by option-surface tool (suggest_options)"
+                                    );
+                                    break;
+                                }
+
                                 continue; // Skip the normal execution path below
                             }
                             Err(e) => {
@@ -6606,9 +6624,12 @@ impl AgentService {
                 let mut approved_context = tool_context.clone();
                 approved_context.auto_approve = true;
                 let tool_start = std::time::Instant::now();
+                // #1178 M1: set inside the Ok arm below when the tool ends the turn
+                let mut halt_turn_requested = false;
                 let exec_result = tokio::select! {
                     biased;
                     _ = async {
+
                         if let Some(ref t) = cancel_token { t.cancelled().await } else { std::future::pending().await }
                     } => {
                         tracing::warn!("🛑 Tool '{}' cancelled mid-execution", tool_name);
@@ -6618,6 +6639,9 @@ impl AgentService {
                 };
                 match exec_result {
                     Ok(result) => {
+                        if tool_name == "suggest_options" {
+                            halt_turn_requested = true;
+                        }
                         let success = result.success;
                         let images = result.images;
                         let result_output_for_evidence = result.output.clone();
@@ -6825,6 +6849,15 @@ impl AgentService {
                             is_error: Some(true),
                         });
                     }
+                }
+
+                // #1178 M1 turn-halt: suggest_options ends the turn once its result is
+                // flushed - the user picks an option and the next turn resumes from it.
+                // Name-based because the loop holds only the tool name here; the trait
+                // method `halts_turn` documents the policy owner.
+                if halt_turn_requested {
+                    tracing::info!("🛑 Turn halted by option-surface tool (suggest_options)");
+                    break;
                 }
             }
 

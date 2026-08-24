@@ -65,8 +65,7 @@ pub async fn on_interaction(
 
                 // Optional follow-up suggestion tapped (#599): inject the chosen
                 // suggestion as the user's next message (a fresh turn).
-                if let Some(rest) =
-                    action_id.strip_prefix(super::suggest_followups::FOLLOWUP_PREFIX)
+                if let Some(rest) = action_id.strip_prefix(super::suggest_options::FOLLOWUP_PREFIX)
                 {
                     if let Some((sid_str, idx_str)) = rest.rsplit_once(':')
                         && let Ok(sid) = uuid::Uuid::parse_str(sid_str)
@@ -1896,10 +1895,10 @@ async fn handle_message(
                 }
                 // Optional follow-up suggestions (#599): post tap-to-send
                 // buttons under the response; a tap injects a new turn.
-                ProgressEvent::SuggestedFollowups(options) => {
+                ProgressEvent::SuggestedOptions(options) => {
                     let state = slack_state_grp.clone();
                     tokio::spawn(async move {
-                        super::suggest_followups::render_suggestions(&state, session_id, options)
+                        super::suggest_options::render_suggestions(&state, session_id, options)
                             .await;
                     });
                 }

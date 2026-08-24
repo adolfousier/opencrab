@@ -122,10 +122,10 @@ pub enum ProgressEvent {
         reason: String,
     },
     /// Optional follow-up suggestions the user MAY accept or ignore, surfaced
-    /// by the `suggest_followups` tool (non-blocking). The TUI renders one
+    /// by the `suggest_options` tool (non-blocking). The TUI renders one
     /// option as ghost text in the input (Tab fills it) and several as a
     /// pick-list; accepting fills the input as editable text, never submits.
-    SuggestedFollowups(Vec<String>),
+    SuggestedOptions(Vec<String>),
 }
 
 /// Callback for reporting progress during agent execution.

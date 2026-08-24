@@ -10,7 +10,7 @@ pub(crate) mod formatting_prompt;
 pub(crate) mod handler;
 pub(crate) mod reactions;
 pub(crate) mod resume;
-pub(crate) mod suggest_followups;
+pub(crate) mod suggest_options;
 pub(crate) mod table_convert;
 pub(crate) mod tool_group;
 pub(crate) mod upload;
@@ -41,7 +41,7 @@ pub struct SlackState {
     /// options). Same shape as the other channels — action_id only
     /// carries the option index, the click handler maps it back via
     /// the stored options list.
-    /// Per-session OPTIONAL follow-up suggestions from `suggest_followups`
+    /// Per-session OPTIONAL follow-up suggestions from `suggest_options`
     /// (#599). Non-blocking: buttons ride under the response and a tap injects
     /// the chosen suggestion as a new turn. Keyed by session; the tap handler
     /// resolves `idx -> text`. Cleared on tap or when the user sends anything.

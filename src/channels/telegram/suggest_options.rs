@@ -1,7 +1,7 @@
-//! Telegram-side rendering for the OPTIONAL `suggest_followups` tool (#597).
+//! Telegram-side rendering for the OPTIONAL `suggest_options` tool (#597).
 //!
 //! Non-blocking: the agent surfaces
-//! `ProgressEvent::SuggestedFollowups`, and we post an inline keyboard under the
+//! `ProgressEvent::SuggestedOptions`, and we post an inline keyboard under the
 //! finished response with one button per suggestion. Tapping a button injects
 //! that suggestion as the user's next message (a fresh turn) — see the
 //! `followup:` arm in the callback dispatcher. Typing your own message is always
@@ -98,7 +98,7 @@ pub(crate) async fn render_suggestions(
         req = req.message_thread_id(tid);
     }
     if let Err(e) = req.await {
-        tracing::warn!("Telegram suggest_followups: send failed: {e}");
+        tracing::warn!("Telegram suggest_options: send failed: {e}");
         // The buttons never landed — drop the stash so a stale entry can't
         // swallow an unrelated future tap.
         state.clear_pending_followups(session_id).await;

@@ -50,7 +50,7 @@ pub struct WhatsAppState {
     /// the chosen option string plus the option list. WhatsApp's
     /// ButtonsMessage is deprecated, so we render the question as a
     /// numbered text list and parse the user's next numeric reply.
-    /// Per-session OPTIONAL follow-up suggestions from `suggest_followups`
+    /// Per-session OPTIONAL follow-up suggestions from `suggest_options`
     /// (#600). WhatsApp has no working button UI, so these render as a numbered
     /// text list; a bare numeric reply selects the matching suggestion. Keyed by
     /// session; consumed on a valid numeric reply, cleared on any other message.

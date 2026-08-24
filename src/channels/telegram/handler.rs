@@ -2746,7 +2746,7 @@ pub(crate) async fn handle_message(
         .pending_suggestions
         .take();
     if let Some(options) = suggestions {
-        super::suggest_followups::render_suggestions(
+        super::suggest_options::render_suggestions(
             &bot,
             &telegram_state,
             session_id,

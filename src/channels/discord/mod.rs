@@ -8,7 +8,7 @@ pub(crate) mod handler;
 pub(crate) mod interactions;
 pub(crate) mod reactions;
 pub(crate) mod resume;
-pub(crate) mod suggest_followups;
+pub(crate) mod suggest_options;
 pub(crate) mod tool_group;
 pub(crate) mod typing;
 

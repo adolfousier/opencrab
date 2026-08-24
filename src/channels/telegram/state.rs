@@ -54,7 +54,7 @@ pub struct TelegramState {
     /// inline-keyboard callback data only carries the option index (to
     /// tool unblocks and returns it as the answer, instead of queueing.
     /// Per-session OPTIONAL follow-up suggestions surfaced by the
-    /// `suggest_followups` tool (#597). Unlike `pending_questions` these are
+    /// `suggest_options` tool (#597). Unlike `pending_questions` these are
     /// non-blocking: the buttons ride under the response and a tap injects the
     /// chosen suggestion as the user's next message. Keyed by session so the
     /// tap handler resolves `idx -> suggestion string`; cleared on tap or when

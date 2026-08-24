@@ -45,7 +45,7 @@ pub(crate) fn check_options(
 }
 
 /// Silent twin of [`resolve_channel_or_error`] for the non-blocking tool:
-/// suggest_followups just returns without rendering when neither lands.
+/// suggest_options just returns without rendering when neither lands.
 pub(crate) async fn resolve_channel_or_silent<T>(
     session_lookup: impl std::future::Future<Output = Option<T>>,
     owner_lookup: impl std::future::Future<Output = Option<T>>,

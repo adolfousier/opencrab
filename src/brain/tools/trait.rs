@@ -41,7 +41,7 @@ pub struct ToolExecutionContext {
     pub service_context: Option<crate::services::ServiceContext>,
 
     /// Non-blocking progress-event sink. Tools that surface fire-and-forget
-    /// UI signals (e.g. `suggest_followups`) emit a `ProgressEvent` through
+    /// UI signals (e.g. `suggest_options`) emit a `ProgressEvent` through
     /// this without awaiting the user. None on surfaces that wire no progress
     /// bridge. Distinct from `question_callback`, which blocks for an answer.
     pub progress_callback: Option<crate::brain::agent::ProgressCallback>,
@@ -286,6 +286,14 @@ pub trait Tool: Send + Sync {
 
     /// Get the tool's capabilities
     fn capabilities(&self) -> Vec<ToolCapability>;
+
+    /// Whether executing this tool should end the agent's turn after the
+    /// result is flushed (#1178 M1). Only `suggest_options` overrides this:
+    /// its options ARE the turn's ending - the user picks one and the next
+    /// turn resumes from that choice.
+    fn halts_turn(&self) -> bool {
+        false
+    }
 
     /// Get the tool's MCP-style behavioral risk hints.
     ///

@@ -297,16 +297,14 @@ pub(crate) async fn resume_session(
                     )));
                 }
             }
-            ProgressEvent::SuggestedFollowups(options) => {
+            ProgressEvent::SuggestedOptions(options) => {
                 let bot = bot_typing.clone();
                 let tg = tg_followups.clone();
                 let chat = chat_typing;
                 let tid = thread_id;
                 tokio::spawn(async move {
-                    super::suggest_followups::render_suggestions(
-                        &bot, &tg, sid, chat, tid, options,
-                    )
-                    .await;
+                    super::suggest_options::render_suggestions(&bot, &tg, sid, chat, tid, options)
+                        .await;
                 });
             }
             _ => {}

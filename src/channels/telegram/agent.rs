@@ -257,7 +257,7 @@ impl TelegramAgent {
                             // the chosen suggestion as the user's next message (a
                             // fresh turn). Non-blocking — the whole set is consumed.
                             if let Some(rest) = data.strip_prefix(
-                                crate::channels::telegram::suggest_followups::FOLLOWUP_PREFIX,
+                                crate::channels::telegram::suggest_options::FOLLOWUP_PREFIX,
                             ) {
                                 crate::channels::telegram::keyboards::ack_callback(&bot, &query, "followup").await;
                                 tracing::info!("Telegram followup tap: rest={rest}");
@@ -337,7 +337,7 @@ impl TelegramAgent {
                                         // already dead after one tap.
                                         let picked =
                                             crate::channels::telegram::handler::md_to_html(
-                                                &crate::channels::telegram::suggest_followups::
+                                                &crate::channels::telegram::suggest_options::
                                                     picked_block(&text, chooser.as_deref()),
                                             );
                                         let recorded = match prompt_msg_id {
@@ -362,7 +362,7 @@ impl TelegramAgent {
                                             // what was chosen.
                                             let echo =
                                                 crate::channels::telegram::handler::md_to_html(
-                                                    &crate::channels::telegram::suggest_followups::
+                                                    &crate::channels::telegram::suggest_options::
                                                         echo_fallback(&text, chooser.as_deref()),
                                                 );
                                             if let Err(e) =

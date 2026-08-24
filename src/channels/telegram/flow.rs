@@ -61,7 +61,7 @@ pub(crate) struct StreamingState {
     /// Whether this session's chat is a DM (owner-private). Drives scope-aware
     /// redaction: secrets show in DMs, scrub in group/channel chats (#677).
     pub(crate) is_dm: bool,
-    /// Buffered `suggest_followups` options (#724). The tool fires its event
+    /// Buffered `suggest_options` options (#724). The tool fires its event
     /// mid-turn, but the buttons must be the LAST thing in the chat, so we stash
     /// the options here and render them once, after the final delivery. Only the
     /// latest set is kept if the tool fires more than once.

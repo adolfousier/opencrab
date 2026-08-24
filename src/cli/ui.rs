@@ -744,8 +744,8 @@ async fn cmd_chat_inner(
                     session_id,
                     text: format!("⏳ Retry {}/{} — {}", attempt, max, reason),
                 }),
-                ProgressEvent::SuggestedFollowups(options) => {
-                    progress_sender.send(TuiEvent::SuggestedFollowups {
+                ProgressEvent::SuggestedOptions(options) => {
+                    progress_sender.send(TuiEvent::SuggestedOptions {
                         session_id,
                         options,
                     })

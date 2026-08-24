@@ -266,7 +266,7 @@ impl EventHandler for Handler {
             // Optional follow-up suggestion tapped (#598): inject the chosen
             // suggestion as the user's next message (a fresh turn). Options were
             // stashed under `followup:<id>:<idx>` via the TTL-bounded select map.
-            if let Some(rest) = custom_id.strip_prefix(super::suggest_followups::FOLLOWUP_PREFIX) {
+            if let Some(rest) = custom_id.strip_prefix(super::suggest_options::FOLLOWUP_PREFIX) {
                 let ttl = self.config_rx.borrow().channels.discord.component_ttl_hours;
                 let picked: Option<String> = if let Some((id, idx_str)) = rest.rsplit_once(':') {
                     match (

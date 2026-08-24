@@ -187,12 +187,12 @@ pub enum TuiEvent {
         reason: String,
     },
 
-    /// Optional follow-up suggestions surfaced by the `suggest_followups` tool.
+    /// Optional follow-up suggestions surfaced by the `suggest_options` tool.
     /// Carries the originating session id so suggestions only appear in that
     /// session's input. One option renders as ghost text in the input (Tab
     /// fills it); several render as a pick-list. Accepting fills the input as
     /// editable text and never submits.
-    SuggestedFollowups {
+    SuggestedOptions {
         session_id: Uuid,
         options: Vec<String>,
     },

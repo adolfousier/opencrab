@@ -447,7 +447,7 @@ fn read_only_filter_strips_mutators_keeps_reads() {
         caps: vec![ToolCapability::Network],
     }));
     registry.register(Arc::new(CapTool {
-        name: "suggest_followups",
+        name: "suggest_options",
         caps: vec![],
     }));
     // Mutators (destructive trio) must be stripped by the read_only hint.
@@ -473,7 +473,7 @@ fn read_only_filter_strips_mutators_keeps_reads() {
         "network read must survive"
     );
     assert!(
-        registry.has_tool("suggest_followups"),
+        registry.has_tool("suggest_options"),
         "the suggestion tool must survive"
     );
     assert!(!registry.has_tool("edit_file"), "writes must be stripped");
