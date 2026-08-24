@@ -107,8 +107,10 @@ impl Tool for SpawnAgentTool {
 
     fn description(&self) -> &str {
         "Spawn a child agent to handle a sub-task autonomously. The child gets its own session \
-         and runs in the background. Returns an agent_id you can use with wait_agent, send_input, \
-         close_agent, or resume_agent. Use this to delegate independent work items. \
+         and runs in the background, completing naturally when its task is done (its result is \
+         delivered to you automatically). Returns an agent_id you can use with wait_agent, \
+         send_input (only while Running/AwaitingInput), close_agent, or resume_agent (to \
+         continue a completed agent). Use this to delegate independent work items. \
          \n\nProvider and model resolution (highest priority first): \
          (1) the optional `provider` / `model` parameters on THIS call, \
          (2) the user's config.toml `[agent]` keys `subagent_provider` / `subagent_model`, \
