@@ -14,6 +14,7 @@ pub(crate) mod detached_status;
 pub(crate) use context::{format_editing_reminder, format_plan_reminder, plan_state_block};
 pub(crate) mod fallback_suggest;
 pub(crate) mod feedback;
+pub(crate) mod fenced_command;
 mod gaslighting;
 pub(crate) mod helpers;
 mod messaging;

@@ -4914,6 +4914,15 @@ impl AgentService {
                                 &iteration_text,
                                 &phantom_tool_names,
                             ))
+                        // Structural tell (#1194): a zero-tool iteration whose
+                        // text hands back a runnable shell command in a
+                        // shell-tagged fence. Caught here as well as at turn
+                        // end so the self-heal nudge still has budget to make
+                        // the call, rather than only replacing the answer.
+                        || (tool_calls_completed_this_turn == 0
+                            && super::fenced_command::narrates_unrun_shell_block(
+                                &iteration_text,
+                            ))
                         // Verify-by-construction (#680): a zero-tool turn that
                         // claims 2+ high-stakes side-effects (ship / push / tag /
                         // version bump / changelog write / post) is fabricating —
@@ -7319,7 +7328,12 @@ impl AgentService {
             && !final_text.trim().is_empty()
             && (super::phantom::has_phantom_tool_intent_no_tools(&final_text)
                 || super::phantom::claims_unbacked_side_effects(&final_text)
-                || super::phantom::claims_unbacked_media_result(&final_text))
+                || super::phantom::claims_unbacked_media_result(&final_text)
+                // Structural tell (#1194): the answer IS a shell command in a
+                // shell-tagged fence, and no tool ran. Carries no phrase list,
+                // so it holds where the phrase detectors above have their next
+                // gap — and it is what the reported turn actually was.
+                || super::fenced_command::narrates_unrun_shell_block(&final_text))
         {
             tracing::warn!(
                 "Turn-end phantom verdict: 0 tools ran but the answer narrates action — \
