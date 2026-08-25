@@ -401,6 +401,7 @@ pub mod image_util_test;
 pub mod incident_log_dedup_test;
 pub mod stream_cancel_test;
 //pub mod integration_test;
+pub mod channel_route_expectation_test;
 pub mod cli_context_window_test;
 pub mod click_to_expand_test;
 pub mod kimi_reasoning_test;
