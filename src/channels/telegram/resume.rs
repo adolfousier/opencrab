@@ -179,8 +179,7 @@ pub(crate) async fn resume_session(
         let st = streaming.clone();
         let bot_typing = bot.clone();
         let chat_typing = chat_id;
-        let tg_followups = telegram_state.clone();
-        Arc::new(move |sid, event| match event {
+        Arc::new(move |_sid, event| match event {
             // Auto-compaction silent window — immediate typing refresh.
             // See handle_message for the full rationale.
             ProgressEvent::Compacting => {
@@ -299,14 +298,14 @@ pub(crate) async fn resume_session(
                 }
             }
             ProgressEvent::SuggestedOptions(options) => {
-                let bot = bot_typing.clone();
-                let tg = tg_followups.clone();
-                let chat = chat_typing;
-                let tid = thread_id;
-                tokio::spawn(async move {
-                    super::suggest_options::render_suggestions(&bot, &tg, sid, chat, tid, options)
-                        .await;
-                });
+                // Stash only (#724): buttons must be the FINAL message in the
+                // chat, so render_suggestions runs after deliver_final_response
+                // below — where it can also merge into the answer bubble
+                // (#tg-suggest-merge). The old mid-stream spawn posted the
+                // keyboard ABOVE the final answer on resumed turns.
+                if let Ok(mut s) = st.lock() {
+                    s.pending_suggestions = Some(options);
+                }
             }
             _ => {}
         })
@@ -455,6 +454,33 @@ pub(crate) async fn resume_session(
         plan_kb,
     )
     .await;
+
+    // Render buffered follow-up suggestions LAST (#724), same as handle_message:
+    // buttons must be the final message in the chat, and a tap always resolves
+    // to a live entry (#723). The merge host comes from deliver_final_response's
+    // capture (#tg-suggest-merge) — attaching the keyboard to the answer bubble
+    // kills the separate suggestions bubble on resumed turns too.
+    let suggestions = streaming
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pending_suggestions
+        .take();
+    if let Some(options) = suggestions {
+        let merge_host = {
+            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            s.final_bubble.take()
+        };
+        super::suggest_options::render_suggestions(
+            &bot,
+            &telegram_state,
+            session_id,
+            chat_id,
+            thread_id,
+            options,
+            merge_host,
+        )
+        .await;
+    }
 
     Ok(())
 }
