@@ -269,6 +269,31 @@ impl SubAgentManager {
         }
     }
 
+    /// Mark the child completed AND deliver its final output to the spawning
+    /// session in one step - the single completion path for every spawner
+    /// (#1197 review DRY). Delivery fires only when nobody is collecting via
+    /// `wait_agent` ([`Self::mark_completed`]'s bool): a waiter reads the
+    /// result inline, and pushing anyway would duplicate it in the parent
+    /// chat. Returns whether the result was delivered.
+    pub fn complete_and_deliver(
+        &self,
+        id: &str,
+        output: String,
+        parent_session_id: uuid::Uuid,
+        label: &str,
+    ) -> bool {
+        let should_push = self.mark_completed(id, output.clone());
+        if should_push {
+            crate::brain::tools::subagent::spawn::push_result(
+                parent_session_id,
+                label,
+                id,
+                Ok(&output),
+            );
+        }
+        should_push
+    }
+
     /// Update agent state after failure. Returns whether to push, on the same
     /// terms as [`Self::mark_completed`]: a failure nobody is waiting on is
     /// still a result the parent needs.

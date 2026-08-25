@@ -622,14 +622,12 @@ impl Tool for SpawnAgentTool {
                 }
                 None => final_output,
             };
-            if manager.mark_completed(&agent_id_clone, final_output.clone()) {
-                push_result(
-                    parent_session_id,
-                    &label_clone,
-                    &agent_id_clone,
-                    Ok(&final_output),
-                );
-            }
+            manager.complete_and_deliver(
+                &agent_id_clone,
+                final_output,
+                parent_session_id,
+                &label_clone,
+            );
         });
 
         // Register in manager

@@ -378,12 +378,11 @@ impl Tool for TeamCreateTool {
                     }
                 };
 
-                manager.mark_completed(&agent_id_clone, final_output.clone());
-                crate::brain::tools::subagent::spawn::push_result(
+                manager.complete_and_deliver(
+                    &agent_id_clone,
+                    final_output,
                     parent_of_member,
                     &member_label,
-                    &agent_id_clone,
-                    Ok(&final_output),
                 );
             });
 

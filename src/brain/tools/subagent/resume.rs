@@ -307,14 +307,15 @@ impl Tool for ResumeAgentTool {
                 }
             };
 
-            manager.mark_completed(&agent_id_clone, final_output.clone());
-            if let (Some(parent), Some(label)) = (parent_of_child, child_label) {
-                crate::brain::tools::subagent::spawn::push_result(
-                    parent,
-                    &label,
-                    &agent_id_clone,
-                    Ok(&final_output),
-                );
+            match (parent_of_child, child_label) {
+                (Some(parent), Some(label)) => {
+                    manager.complete_and_deliver(&agent_id_clone, final_output, parent, &label);
+                }
+                _ => {
+                    // Legacy entry with no recorded parent: mark completed,
+                    // nowhere to deliver.
+                    manager.mark_completed(&agent_id_clone, final_output);
+                }
             }
         });
 
