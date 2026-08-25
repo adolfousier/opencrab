@@ -12,7 +12,7 @@
 
 #![cfg(feature = "browser")]
 
-use crate::brain::tools::browser::build_inventory_js;
+use crate::brain::tools::browser::{build_inventory_js, inventory_header};
 
 #[test]
 fn inventory_targets_interactive_element_union() {
@@ -99,4 +99,96 @@ fn inventory_has_no_user_supplied_string_to_escape() {
         "no concatenation into the selector string"
     );
     assert!(js.contains("querySelectorAll(sel)"));
+}
+
+// ---------- #1191: nested-duplicate dedup + collapse count ----------
+
+#[test]
+fn inventory_dedups_generic_wrappers_contained_in_accepted_elements() {
+    // A generic click candidate (a/button/role=button/link/tabindex span)
+    // whose rect sits fully inside an ALREADY-accepted element's rect is
+    // the same visual target — it must be skipped (collapsed), not given
+    // its own index. The button+icon+span page yields ONE index for the
+    // button, not three.
+    let js = build_inventory_js(50);
+    assert!(js.contains("acceptedRects"), "containment tracker present");
+    assert!(
+        js.contains("acceptedRects.some(r =>"),
+        "containment check against already-accepted rects"
+    );
+    // ±1px tolerance so sub-pixel layout rounding cannot split a real
+    // wrapper from its container.
+    assert!(js.contains("r.left - 1 <= rect.left"), "left tolerance");
+    assert!(js.contains("rect.right <= r.right + 1"), "right tolerance");
+    assert!(js.contains("r.top - 1 <= rect.top"), "top tolerance");
+    assert!(
+        js.contains("rect.bottom <= r.bottom + 1"),
+        "bottom tolerance"
+    );
+    assert!(js.contains("collapsed++"), "collapse counter incremented");
+}
+
+#[test]
+fn inventory_dedup_preserves_own_semantics_elements() {
+    // The containment skip is gated on !own: elements with click semantics
+    // of their own survive even when visually nested inside another accepted
+    // element — a checkbox wrapped in a label keeps BOTH indices (the label
+    // toggles, the checkbox toggles-and-selects; different actions).
+    let js = build_inventory_js(50);
+    // Own-semantics classification comes BEFORE the containment check.
+    let own_pos = js
+        .find("const own = el.tagName === 'INPUT'")
+        .expect("own-semantics classification present");
+    let dup_pos = js
+        .find("const dup = acceptedRects.some")
+        .expect("containment check present");
+    let gate_pos = js.find("if (!own)").expect("gate present");
+    assert!(
+        own_pos < gate_pos && gate_pos < dup_pos,
+        "classification → gate → containment, in that order"
+    );
+    for token in [
+        "'INPUT'",
+        "'SELECT'",
+        "'TEXTAREA'",
+        "'SUMMARY'",
+        "'checkbox'",
+        "'menuitem'",
+        "'tab'",
+        "'option'",
+        "isContentEditable",
+    ] {
+        assert!(js.contains(token), "own-semantics set includes {token}");
+    }
+}
+
+#[test]
+fn inventory_attaches_collapse_count_for_header() {
+    // The collector stashes the collapsed count on the nodes array so the
+    // shared serializer can surface it without a second DOM pass.
+    let js = build_inventory_js(50);
+    assert!(js.contains("visible.collapsed = collapsed"));
+    assert!(js.contains("typeof nodes.collapsed === 'number'"));
+    assert!(js.contains("items: out"));
+}
+
+#[test]
+fn inventory_header_mentions_collapsed_count_only_when_nonzero() {
+    // Zero collapses: header identical to the pre-#1191 wording.
+    let plain = inventory_header(12, 0);
+    assert!(plain.starts_with("12 visible interactive elements on this page"));
+    assert!(!plain.contains("collapsed"), "no collapse note at zero");
+
+    // Non-zero: count appears in the header, singular and plural forms.
+    let multi = inventory_header(9, 3);
+    assert!(multi.contains("(3 nested duplicates collapsed)"), "{multi}");
+    let single = inventory_header(5, 1);
+    assert!(
+        single.contains("(1 nested duplicate collapsed)"),
+        "{single}"
+    );
+
+    // Selector handoff instruction survives in all variants.
+    assert!(plain.contains("[data-opencrabs-match=\"N\"]"));
+    assert!(multi.contains("[data-opencrabs-match=\"N\"]"));
 }

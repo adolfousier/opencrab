@@ -135,7 +135,10 @@ impl Tool for BrowserFindTool {
             }
         };
 
-        let matches = raw.as_array().cloned().unwrap_or_default();
+        // Inventory mode wraps its result as {items, collapsed}; search
+        // mode carries the same shape with collapsed = 0 (#1191).
+        let collapsed = usize::try_from(raw["collapsed"].as_u64().unwrap_or(0)).unwrap_or(0);
+        let matches = raw["items"].as_array().cloned().unwrap_or_default();
         if matches.is_empty() {
             return Ok(ToolResult::success(match pattern {
                 Some(p) => format!("No elements matched {mode}:{p}"),
@@ -151,12 +154,7 @@ impl Tool for BrowserFindTool {
                 if count == 1 { "" } else { "es" },
             ),
             None => {
-                let body = format!(
-                    "{count} visible interactive element{} on this page \
-                     (indexed — pass the `[data-opencrabs-match=\"N\"]` selector to \
-                     `browser_click`):\n\n{formatted}",
-                    if count == 1 { "" } else { "s" },
-                );
+                let body = format!("{}\n\n{formatted}", inventory_header(count, collapsed),);
                 // If we hit the cap there may be more elements we did not
                 // show. Tell the model explicitly so it does not assume the
                 // list is exhaustive (mirrors the read_file truncation note).
@@ -203,7 +201,14 @@ fn wrap_with_index(nodes_expr: &str) -> String {
                     visible: visible,
                 }});
             }}
-            return out;
+            // Inventory mode attaches `collapsed` to the nodes array (a
+            // JS-array property survives in-process, unlike through JSON);
+            // search mode leaves it undefined → 0. Surfaced so the header
+            // can say how many nested duplicates were folded (#1191).
+            return {{
+                items: out,
+                collapsed: typeof nodes.collapsed === 'number' ? nodes.collapsed : 0,
+            }};
         }})()
         "#
     )
@@ -288,19 +293,68 @@ textarea, summary, [role="button"], [role="link"], [role="checkbox"], \
 [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
             const all = Array.from(document.querySelectorAll(sel));
             const visible = [];
+            const acceptedRects = [];
+            let collapsed = 0;
             for (const el of all) {{
                 if (visible.length >= {limit}) break;
                 const rect = el.getBoundingClientRect();
                 if (rect.width > 0 && rect.height > 0
                     && getComputedStyle(el).visibility !== 'hidden'
                     && getComputedStyle(el).display !== 'none') {{
+                    // Own-semantics elements always keep their index even
+                    // when visually nested: a checkbox inside a label, a
+                    // tab inside a tablist — each is its own click target.
+                    const role = el.getAttribute('role');
+                    const own = el.tagName === 'INPUT'
+                        || el.tagName === 'SELECT'
+                        || el.tagName === 'TEXTAREA'
+                        || el.tagName === 'SUMMARY'
+                        || el.isContentEditable === true
+                        || role === 'checkbox' || role === 'menuitem'
+                        || role === 'tab' || role === 'option';
+                    if (!own) {{
+                        // Collapsible duplicate: a generic click wrapper
+                        // (a/button/role=button/link/tabindex span) fully
+                        // contained (±1px tolerance) in an already-accepted
+                        // element's rect is the SAME visual target — index
+                        // the container only (#1191).
+                        const dup = acceptedRects.some(r =>
+                            r.left - 1 <= rect.left
+                            && rect.right <= r.right + 1
+                            && r.top - 1 <= rect.top
+                            && rect.bottom <= r.bottom + 1);
+                        if (dup) {{ collapsed++; continue; }}
+                    }}
                     visible.push(el);
+                    acceptedRects.push(rect);
                 }}
             }}
+            visible.collapsed = collapsed;
             return visible;
         }})()"#
     );
     wrap_with_index(&nodes_expr)
+}
+
+/// Inventory header line (#1191): count, optional collapse note when
+/// nested duplicates were folded, and the selector handoff instruction.
+/// Pure so tests can pin the wording without a live page.
+pub(crate) fn inventory_header(count: usize, collapsed: usize) -> String {
+    let mut s = format!(
+        "{count} visible interactive element{} on this page",
+        if count == 1 { "" } else { "s" },
+    );
+    if collapsed > 0 {
+        s.push_str(&format!(
+            " ({collapsed} nested duplicate{} collapsed)",
+            if collapsed == 1 { "" } else { "s" },
+        ));
+    }
+    s.push_str(
+        " (indexed — pass the `[data-opencrabs-match=\"N\"]` \
+         selector to `browser_click`):",
+    );
+    s
 }
 
 fn format_matches(matches: &[Value]) -> String {
