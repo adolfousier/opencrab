@@ -60,16 +60,29 @@ fn should_fold(options: &[String]) -> bool {
     options.iter().any(|o| o.chars().count() > 30)
 }
 
-/// The folded option list as rich HTML: bold indices, escaped option text.
+/// The folded option list as rich HTML. REUSES the canonical inline
+/// primitives from `super::markdown` — `escape_html` → `format_inline`,
+/// the exact pair the outbound renderer's default line branch applies —
+/// instead of a private formatter. Options are independent ONE-line texts,
+/// so they deliberately skip document-level interpretation (a stray `|`
+/// must not turn the list into a table); inline markup (`code`, bold) and
+/// HTML escaping behave identically to every other Telegram surface.
 /// No "Suggested next" header — the list rides directly under the answer
 /// text in the same bubble (#tg-suggest-merge), so the label would only
 /// duplicate what the buttons already say.
 fn folded_list_html(options: &[String]) -> String {
-    let mut b = String::new();
-    for (i, opt) in options.iter().enumerate() {
-        b.push_str(&format!("\n<b>{}</b> {}", i + 1, super::markdown::escape_html(opt)));
-    }
-    b
+    options
+        .iter()
+        .enumerate()
+        .map(|(i, opt)| {
+            format!(
+                "{}. {}",
+                i + 1,
+                super::markdown::format_inline(&super::markdown::escape_html(opt))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(crate) async fn render_suggestions(
@@ -213,9 +226,10 @@ mod fold_tests {
         let body = folded_list_html(&opts);
         // Header is gone (#tg-suggest-merge) — the list rides under the answer.
         assert!(!body.contains("Suggested next"));
-        // Rich formatting: bold indices.
-        assert!(body.contains("<b>1</b> Ship it"));
-        assert!(body.contains("<b>2</b> Review &amp; merge"));
+        // Canonical renderer output: numbered lines, HTML-escaped text
+        // (& → &amp; proves the shared pipeline escaped, not a private one).
+        assert!(body.contains("1. Ship it"));
+        assert!(body.contains("2. Review &amp; merge"));
     }
 
     #[test]
@@ -227,8 +241,8 @@ mod fold_tests {
         let opts = vec![short.clone(), long.clone()];
         assert!(should_fold(&opts));
         let body = folded_list_html(&opts);
-        assert!(body.contains("<b>1</b> Ship it"));
-        assert!(body.contains(&format!("<b>2</b> {long}")));
+        assert!(body.contains("1. Ship it"));
+        assert!(body.contains(&format!("2. {long}")));
     }
 
     #[test]
