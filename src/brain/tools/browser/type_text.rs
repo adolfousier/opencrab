@@ -1,6 +1,6 @@
 //! browser_type — Type text into an element or the focused element.
 
-use super::manager::BrowserManager;
+use super::manager::{split_frame_selector, BrowserManager};
 use crate::brain::tools::error::Result;
 use crate::brain::tools::r#trait::{
     Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult,
@@ -83,9 +83,27 @@ impl Tool for BrowserTypeTool {
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
 
+        // Frame-routed selectors (#1190): `f2:14` — resolve the owning
+        // OOPIF page and strip the prefix (same contract as click).
         let (page, selector): (chromiumoxide::Page, Option<String>) =
-            (page, selector_input.map(|s| s.to_string()));
-
+            if let Some(sel) = selector_input {
+                if let Some((label, rest)) = split_frame_selector(sel) {
+                    match self.manager.oopif_page_by_label(context.session_id, &label).await {
+                        Ok(Some(p)) => (p, Some(rest)),
+                        Ok(None) => {
+                            return Ok(ToolResult::error(format!(
+                                "Frame '{label}' not found. The frame may have navigated away — \
+                                 re-run `browser_find` to get a fresh inventory."
+                            )))
+                        }
+                        Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
+                    }
+                } else {
+                    (page, Some(sel.to_string()))
+                }
+            } else {
+                (page, None)
+            };
         let selector = selector.as_deref();
 
         // JSON-encode both values so any quotes/backslashes/newlines in the

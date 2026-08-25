@@ -154,16 +154,66 @@ impl Tool for BrowserFindTool {
         let formatted = format_matches(&matches);
         let count = matches.len();
 
+        // OOPIF inventory pass (#1190): cross-origin iframes are
+        // site-isolated; the enumeration above only saw the main frame.
+        // Run the same JS per frame page and namespace every element's
+        // index with the frame label (`f2:14`), so the model can both
+        // see frame membership and click/type through the prefix.
+        let mut frame_sections: Vec<String> = Vec::new();
+        let mut frame_total = 0usize;
+        match self.manager.oopif_pages(context.session_id).await {
+            Ok(frames) if !frames.is_empty() => {
+                for (label, url, fpage) in frames {
+                    let fraw = match fpage.evaluate(enumerate_js.as_str()).await {
+                        Ok(r) => r.value().cloned().unwrap_or(Value::Null),
+                        Err(e) => {
+                            frame_sections.push(format!(
+                                "[{label} {url}] inventory failed: {e}"
+                            ));
+                            continue;
+                        }
+                    };
+                    let fitems = fraw["items"].as_array().cloned().unwrap_or_default();
+                    if fitems.is_empty() {
+                        continue;
+                    }
+                    // Namespace each selector: `[data-opencrabs-match="3"]`
+                    // → `f2:[data-opencrabs-match="3"]`.
+                    let namespaced: Vec<Value> = fitems
+                        .into_iter()
+                        .map(|mut it| {
+                            if let Some(s) = it["selector"].as_str() {
+                                it["selector"] = Value::String(format!("{label}:{s}"));
+                            }
+                            it
+                        })
+                        .collect();
+                    frame_total += namespaced.len();
+                    let fformatted = format_matches(&namespaced);
+                    frame_sections.push(format!("[{label} {url}]\n{fformatted}"));
+                }
+            }
+            _ => {}
+        }
+        let frames_note = if frame_sections.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\nCross-origin frames ({frame_total} element{}):\n{}",
+                if frame_total == 1 { "" } else { "s" },
+                frame_sections.join("\n\n")
+            )
+        };
 
         Ok(ToolResult::success(super::events::append_line(
             match pattern {
                 Some(p) => format!(
-                    "Found {count} match{} for {mode}:{p}\n\n{formatted}",
+                    "Found {count} match{} for {mode}:{p}\n\n{formatted}{frames_note}",
                     if count == 1 { "" } else { "es" },
                 ),
                 None => {
                     let body = format!(
-                        "{}\n\n{formatted}",
+                        "{}\n\n{formatted}{frames_note}",
                         inventory_header(count, collapsed, occluded),
                     );
                     // If we hit the cap there may be more elements we did not

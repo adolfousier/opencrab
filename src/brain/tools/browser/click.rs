@@ -1,6 +1,6 @@
 //! browser_click — Click an element by CSS selector.
 
-use super::manager::BrowserManager;
+use super::manager::{split_frame_selector, BrowserManager};
 use crate::brain::tools::error::Result;
 use crate::brain::tools::r#trait::{
     Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult,
@@ -78,9 +78,26 @@ impl Tool for BrowserClickTool {
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
 
-
+        // Frame-routed selectors (#1190): `f2:14` or `f2:[data-...]` —
+        // the model copied a namespaced index from a cross-origin
+        // iframe's inventory. Resolve the owning frame page and strip
+        // the prefix before the normal CSS path runs. Plain selectors
+        // keep working on the main page exactly as before.
         let (page, selector): (chromiumoxide::Page, String) =
-            (page, selector_input.to_string());
+            if let Some((label, rest)) = split_frame_selector(selector_input) {
+                match self.manager.oopif_page_by_label(context.session_id, &label).await {
+                    Ok(Some(p)) => (p, rest),
+                    Ok(None) => {
+                        return Ok(ToolResult::error(format!(
+                            "Frame '{label}' not found. The frame may have navigated away — \
+                             re-run `browser_find` to get a fresh inventory."
+                        )))
+                    }
+                    Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
+                }
+            } else {
+                (page, selector_input.to_string())
+            };
 
         // `text=...` and `xpath=...` selectors are Playwright-style and not
         // valid CSS — translate them to a JS evaluator that finds the first
