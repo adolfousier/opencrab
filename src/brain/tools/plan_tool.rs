@@ -1389,6 +1389,19 @@ impl Tool for PlanTool {
         let mut plan: Option<PlanDocument> = crate::utils::plan_files::load_plan(plan_sid).await;
         let state = crate::utils::plan_files::plan_mode_state(plan_sid).await;
 
+        // #1195: delegated plan workers have NO plan tool access — not for
+        // mutations, not for reads. They do the assigned work and report the
+        // outcome in their final message; the PARENT session owns every
+        // checklist transition (single-writer invariant).
+        if context.plan_session_override.is_some() {
+            return Ok(ToolResult::error(
+                "⛔ Plan tool is unavailable to delegated worker sessions. Do the assigned \
+                 work with real tool calls, then report the outcome in your final message — \
+                 your parent session records the verdict on the checklist."
+                    .to_string(),
+            ));
+        }
+
         let result = match operation {
             PlanOperation::Init {
                 title,
@@ -2060,10 +2073,10 @@ impl Tool for PlanTool {
                                     );
                                     match spawn_plan_worker(context, plan_sid, order, brief).await {
                                         Ok(worker_output) => {
-                                            // Disk verdict — the worker's own
-                                            // claims mean nothing (#908: a
-                                            // deterministic check beats
-                                            // narrative).
+                                            // Collect, don't trust: workers
+                                            // hold no plan pen (#1195), so
+                                            // the parent reviews the summary
+                                            // and records the verdict itself.
                                             let reloaded =
                                                 crate::utils::plan_files::load_plan(plan_sid).await;
                                             let (ok, report) = report_after_worker(
@@ -2072,18 +2085,13 @@ impl Tool for PlanTool {
                                                 &worker_output,
                                             );
                                             tracing::info!(
-                                                "plan start #{order}: worker returned, disk verdict ok={ok}"
+                                                "plan start #{order}: worker collected, verdict recording pending ok={ok}"
                                             );
-                                            let notice =
-                                                subagent_outcome_notice(ok);
+                                            let notice = subagent_outcome_notice(ok);
                                             return Ok(if ok {
-                                                ToolResult::success(format!(
-                                                    "{notice}\n\n{report}"
-                                                ))
+                                                ToolResult::success(format!("{notice}\n\n{report}"))
                                             } else {
-                                                ToolResult::error(format!(
-                                                    "{notice}\n\n{report}"
-                                                ))
+                                                ToolResult::error(format!("{notice}\n\n{report}"))
                                             });
                                         }
                                         Err(e) => {
@@ -2143,10 +2151,7 @@ impl Tool for PlanTool {
                         };
                         match isolation_note {
                             Some(note) => format!("{result}\n\n{note}"),
-                            None => format!(
-                                "{result}\n\n{}",
-                                inline_executor_suffix()
-                            ),
+                            None => format!("{result}\n\n{}", inline_executor_suffix()),
                         }
                     }
                 }
@@ -2531,16 +2536,19 @@ pub(crate) fn subagent_outcome_notice(completed: bool) -> String {
     if completed {
         "🤖 A subagent completed this task: a dedicated subagent \
          session was spawned, finished the work, and its result was \
-         verified against the plan on disk.".to_string()
+         verified against the plan on disk."
+            .to_string()
     } else {
         "🤖 A subagent was spawned for this task but did NOT complete \
-         it — verdict below.".to_string()
+         it — verdict below."
+            .to_string()
     }
 }
 
 pub(crate) fn inline_executor_suffix() -> String {
     "🤖 executor=self: no subagent was spawned — you do this task \
-     in your own session.".to_string()
+     in your own session."
+        .to_string()
 }
 
 // ── #908 option A: isolated plan-task execution ───────────────────────────
@@ -2634,8 +2642,9 @@ pub(crate) fn build_worker_brief(
     epistemic_note: &str,
 ) -> String {
     let mut brief = format!(
-        "You are a plan-task worker running in a fresh session. The parent's plan file is \
-         threaded to you: your `plan` tool operates on the PARENT's checklist.\n\n\
+        "You are a plan-task worker running in a fresh session. You have NO plan tool \
+         access: you do not touch any checklist. Your parent session reads your final \
+         message and records the verdict for you.\n\n\
          ▶️ Task #{}: {}\n",
         order, task.title
     );
@@ -2652,20 +2661,22 @@ pub(crate) fn build_worker_brief(
     if !epistemic_note.trim().is_empty() {
         brief.push_str(&format!("\n{epistemic_note}\n"));
     }
-    brief.push_str(&format!(
+    brief.push_str(
         "\nRules:\n\
          1. Do the work with real tool calls. Verify with real commands before claiming anything.\n\
-         2. When the task is done, call `plan` with operation=complete, task_order={}, \
-         action=success|fail, and an honest output summary. Never claim success you did not verify.\n\
-         3. Work ONLY this task. Do not start other tasks; do not init, approve, or discard plans.\n",
-        order
-    ));
+         2. You have NO plan tool access. When done, report the outcome in your FINAL MESSAGE: \
+         success or failure plus an honest summary. Never claim success you did not verify; \
+         your parent session records the verdict on the checklist.\n\
+         3. Work ONLY this task. Do not start other tasks; do not touch plans at all.\n",
+    );
     brief
 }
 
-/// Honest post-spawn verdict. The worker's own claims mean nothing here —
-/// completion is read from the plan file on disk (deterministic check
-/// beats narrative). Returns (success, report).
+/// Post-spawn collection. Workers have NO plan access (#1195): they cannot
+/// mark, skip, or fail rows, so the row is expected to still be InProgress
+/// when the subagent returns. False is reserved for real anomalies (plan
+/// vanished / task missing) — a pending verdict is NOT an error; the parent
+/// records it after reviewing the worker's summary.
 pub(crate) fn report_after_worker(
     order: usize,
     reloaded: Option<&PlanDocument>,
@@ -2693,32 +2704,27 @@ pub(crate) fn report_after_worker(
         .filter(|t| matches!(t.status, TaskStatus::Completed))
         .count();
     let progress = format!("Progress: {done}/{} done.", plan.tasks.len());
+    let record_hint = format!(
+        "Record the verdict yourself: `complete` with task_order={order} and \
+         action=success|fail (skip only if genuinely obsolete), passing this \
+         summary as the output."
+    );
     match &task.status {
-        TaskStatus::Completed => (
+        TaskStatus::InProgress | TaskStatus::Pending => (
             true,
             format!(
-                "✅ Task #{} ({}) completed by the isolated worker — verified on disk.\n{progress}\n\nWorker summary: {worker_output}",
-                order, task.title
-            ),
-        ),
-        TaskStatus::Failed => (
-            false,
-            format!(
-                "❌ Task #{} ({}) FAILED in the isolated worker (disk-verified).\n{progress}\n\nWorker summary: {worker_output}\n\nRetry with start task_order={order}.",
-                order, task.title
-            ),
-        ),
-        TaskStatus::Skipped => (
-            true,
-            format!(
-                "⏭️ Task #{} ({}) skipped by the isolated worker (disk-verified).\n{progress}",
+                "🤖 Task #{} ({}) — isolated subagent finished; the row is intentionally left \
+                 InProgress because workers hold no plan pen (#1195).\n{progress}\n\
+                 {record_hint}\n\nWorker summary:\n{worker_output}",
                 order, task.title
             ),
         ),
         other => (
-            false,
+            true,
             format!(
-                "⚠️ The isolated worker ended but task #{order} is still {other:?} on disk — NOT counting it as done.\n{progress}\n\nWorker summary: {worker_output}\n\nRetry with start task_order={order}."
+                "🤖 Task #{} ({}) — isolated subagent finished; the row already records {other:?}.\n\
+                 {progress}\n\nWorker summary:\n{worker_output}",
+                order, task.title
             ),
         ),
     }
