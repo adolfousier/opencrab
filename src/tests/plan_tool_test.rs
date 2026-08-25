@@ -1524,3 +1524,33 @@ fn audit_criteria_policy_unchanged_no_belief() {
 
     // No beliefs should be emitted for unchanged policies
 }
+
+// ── #1195 task 2: subagent ontology announcements ──────────────────
+
+#[test]
+fn start_announcements_name_the_subagent_explicitly() {
+    use crate::brain::tools::plan_tool::{inline_executor_suffix, subagent_outcome_notice};
+
+    // Isolated mode receipt: parent learns a subagent DID the work.
+    let ok = subagent_outcome_notice(true);
+    assert!(ok.contains("A subagent completed this task"));
+    assert!(ok.contains("dedicated subagent session was spawned"));
+    assert!(ok.contains("verified against the plan on disk"));
+
+    let failed = subagent_outcome_notice(false);
+    assert!(failed.contains("did NOT complete"));
+
+    // Inline mode echo: parent learns NO subagent exists.
+    let inline = inline_executor_suffix();
+    assert!(inline.contains("no subagent was spawned"));
+    assert!(inline.contains("executor=self"));
+}
+
+#[test]
+fn start_schema_teaches_subagent_spawn_not_isolation_jargon() {
+    // The schema is the parent's first contact with the semantics: it must
+    // say a subagent session does the work, not "isolated" jargon (#1195).
+    let schema = PlanTool.input_schema().to_string();
+    assert!(schema.contains("DEDICATED SUBAGENT SESSION"));
+    assert!(!schema.contains("freshly spawned isolated worker session"));
+}

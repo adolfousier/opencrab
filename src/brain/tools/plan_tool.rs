@@ -62,13 +62,13 @@ enum PlanOperation {
     Start {
         #[serde(default)]
         task_order: Option<usize>,
-        /// Isolation request for this start (#908 option A). `Some(true)`
-        /// forces the task into a freshly spawned worker session when the
-        /// machinery allows (overriding the InProgress-retry-inline rule,
-        /// since `start` blocks and no live worker can exist mid-call);
-        /// `Some(false)` forces inline; `None` uses the config default
-        /// (`agent.plan_isolated_execution`). Ralph loops pass their
-        /// `fresh_context` value here.
+        /// Executor choice for this start (#908 option A). `Some(true)`
+        /// spawns a dedicated subagent session that completes the task
+        /// (overriding the InProgress-retry-inline rule, since `start`
+        /// blocks and no live subagent can exist mid-call); `Some(false)`
+        /// means no subagent - you do the work inline; `None` uses the
+        /// config default (`agent.plan_isolated_execution`). Ralph loops
+        /// pass their `fresh_context` value here.
         #[serde(default)]
         isolated: Option<bool>,
     },
@@ -1315,7 +1315,7 @@ impl Tool for PlanTool {
                 },
                 "isolated": {
                     "type": "boolean",
-                    "description": "start only: true forces this task to run in a freshly spawned isolated worker session (fresh context, ONLY the task brief plus the plan file — no parent conversation); false forces inline execution in the current session. Omit to use the config default (agent.plan_isolated_execution)."
+                    "description": "start only: true = a DEDICATED SUBAGENT SESSION is spawned to complete this task; this call blocks until the subagent returns and its result is verified against the plan on disk. false = no subagent is spawned; you execute the task yourself inline. Omit = config decides (agent.plan_isolated_execution, default true = one subagent per task)."
                 },
                 "action": {
                     "type": "string",
@@ -2074,10 +2074,16 @@ impl Tool for PlanTool {
                                             tracing::info!(
                                                 "plan start #{order}: worker returned, disk verdict ok={ok}"
                                             );
+                                            let notice =
+                                                subagent_outcome_notice(ok);
                                             return Ok(if ok {
-                                                ToolResult::success(report)
+                                                ToolResult::success(format!(
+                                                    "{notice}\n\n{report}"
+                                                ))
                                             } else {
-                                                ToolResult::error(report)
+                                                ToolResult::error(format!(
+                                                    "{notice}\n\n{report}"
+                                                ))
                                             });
                                         }
                                         Err(e) => {
@@ -2089,7 +2095,7 @@ impl Tool for PlanTool {
                                                 "plan start #{order}: isolated spawn failed ({e}); falling back inline"
                                             );
                                             isolation_note = Some(format!(
-                                                "⚠️ Isolated execution was requested but the spawn failed: {e}. Running this task inline instead."
+                                                "⚠️ A subagent was supposed to complete this task, but its spawn failed: {e}. No subagent is running — the task stays in-progress; do the work inline."
                                             ));
                                         }
                                     }
@@ -2097,7 +2103,7 @@ impl Tool for PlanTool {
                                 TaskExecutionPath::Inline { reason } => {
                                     if isolated.is_some() {
                                         isolation_note = Some(format!(
-                                            "⚠️ Isolation was requested but is unavailable: {reason}. Running inline."
+                                            "⚠️ No subagent could be spawned for this task ({reason}). No subagent is running — executing inline."
                                         ));
                                     }
                                     tracing::debug!(
@@ -2137,7 +2143,10 @@ impl Tool for PlanTool {
                         };
                         match isolation_note {
                             Some(note) => format!("{result}\n\n{note}"),
-                            None => result,
+                            None => format!(
+                                "{result}\n\n{}",
+                                inline_executor_suffix()
+                            ),
                         }
                     }
                 }
@@ -2513,6 +2522,25 @@ pub(crate) fn render_epistemic_flags(
         ));
     }
     block
+}
+
+/// Parent-facing ontology (#1195): every start names its executor in
+/// subagent terms — never "isolated", which hides that a separate
+/// session does the work.
+pub(crate) fn subagent_outcome_notice(completed: bool) -> String {
+    if completed {
+        "🤖 A subagent completed this task: a dedicated subagent \
+         session was spawned, finished the work, and its result was \
+         verified against the plan on disk.".to_string()
+    } else {
+        "🤖 A subagent was spawned for this task but did NOT complete \
+         it — verdict below.".to_string()
+    }
+}
+
+pub(crate) fn inline_executor_suffix() -> String {
+    "🤖 executor=self: no subagent was spawned — you do this task \
+     in your own session.".to_string()
 }
 
 // ── #908 option A: isolated plan-task execution ───────────────────────────
