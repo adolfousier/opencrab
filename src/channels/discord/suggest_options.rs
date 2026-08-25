@@ -18,8 +18,6 @@ use serenity::model::application::ButtonStyle;
 use serenity::model::id::ChannelId;
 use uuid::Uuid;
 
-use crate::utils::truncate_str;
-
 /// Callback-id prefix for a tapped follow-up suggestion: `followup:<id>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 
@@ -60,7 +58,10 @@ pub(crate) async fn render_suggestions(
                     .iter()
                     .map(|(idx, opt)| {
                         CreateButton::new(format!("{FOLLOWUP_PREFIX}{followup_id}:{idx}"))
-                            .label(truncate_str(opt, 80))
+                            .label(crate::channels::question_common::truncate_label(
+                                opt,
+                                crate::channels::question_common::DISCORD_LABEL_BUDGET,
+                            ))
                             .style(ButtonStyle::Secondary)
                     })
                     .collect(),

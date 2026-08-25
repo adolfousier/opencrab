@@ -68,7 +68,10 @@ impl Tool for BrowserWaitTool {
         {
             let secs = secs.min(30);
             tokio::time::sleep(Duration::from_secs(secs)).await;
-            return Ok(ToolResult::success(format!("Waited {secs} seconds")));
+            return Ok(ToolResult::success(super::events::append_line(
+                format!("Waited {secs} seconds"),
+                self.manager.drain_recent_events(),
+            )));
         }
 
         let sel = match selector {
@@ -93,8 +96,9 @@ impl Tool for BrowserWaitTool {
         loop {
             match page.find_element(sel).await {
                 Ok(_) => {
-                    return Ok(ToolResult::success(format!(
-                        "Element '{sel}' found on page"
+                    return Ok(ToolResult::success(super::events::append_line(
+                        format!("Element '{sel}' found on page"),
+                        self.manager.drain_recent_events(),
                     )));
                 }
                 Err(_) => {

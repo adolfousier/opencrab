@@ -227,6 +227,10 @@ impl Tool for ResumeAgentTool {
         let manager = self.manager.clone();
         let agent_id_clone = agent_id_str.clone();
         let prompt_clone = prompt.clone();
+        // Delivery identity (#1197): on natural completion the parent must
+        // be woken even though nobody registered a waiter for this resume.
+        let parent_of_child = self.manager.get_parent_session_id(agent_id);
+        let child_label = self.manager.get_label(agent_id);
         let model_override = subagent_model;
         let mut input_rx = input_rx;
 
@@ -282,6 +286,10 @@ impl Tool for ResumeAgentTool {
 
                         match next {
                             Some(text) => {
+                                // Flip back to Running so the in-memory state
+                                // matches the round now in flight — same as
+                                // spawn.rs / team-create.rs (#1183).
+                                manager.mark_running_again(&agent_id_clone);
                                 tracing::info!(
                                     "Sub-agent {} received follow-up input",
                                     agent_id_clone
@@ -299,7 +307,16 @@ impl Tool for ResumeAgentTool {
                 }
             };
 
-            manager.mark_completed(&agent_id_clone, final_output);
+            match (parent_of_child, child_label) {
+                (Some(parent), Some(label)) => {
+                    manager.complete_and_deliver(&agent_id_clone, final_output, parent, &label);
+                }
+                _ => {
+                    // Legacy entry with no recorded parent: mark completed,
+                    // nowhere to deliver.
+                    manager.mark_completed(&agent_id_clone, final_output);
+                }
+            }
         });
 
         self.manager.set_join_handle(&agent_id_str, handle);

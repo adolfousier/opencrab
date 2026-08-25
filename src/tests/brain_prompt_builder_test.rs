@@ -559,3 +559,24 @@ fn the_clarify_instruction_carries_its_own_brakes() {
         "must keep the do-not-block escape so questions never stall delivery"
     );
 }
+
+// ── #1176 G2: follow-up guidance must not restate numeric budgets ───────────
+
+#[test]
+fn followup_guidance_is_free_of_magic_numbers() {
+    let preamble = crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    let line = preamble
+        .lines()
+        .find(|l| l.starts_with("FOLLOW-UP SUGGESTIONS"))
+        .expect("follow-up guidance paragraph must exist in the preamble");
+    for token in ["1-4", "2-4", "~60"] {
+        assert!(
+            !line.contains(token),
+            "guidance restates '{token}'; budgets live in code, not prose (#1176)"
+        );
+    }
+    assert!(
+        line.contains("suggest_options"),
+        "guidance must keep naming the tool"
+    );
+}

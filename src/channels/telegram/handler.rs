@@ -44,7 +44,7 @@ pub(crate) use super::keyboards::*;
 pub(crate) use super::resume::resume_session;
 // Final-response delivery moved to delivery.rs (#471 phase 4).
 pub(crate) use super::delivery::{
-    bg_indicator_for, deliver_final_response, drain_remaining_display,
+    bg_indicator_for, deliver_final_response, drain_remaining_display, subagent_counts_for,
 };
 
 /// Guard that cancels a CancellationToken on drop (used for typing loop).
@@ -2372,6 +2372,7 @@ pub(crate) async fn handle_message(
         flow_outcome: None,
         bg_indicator: None,
         bg_count: None,
+        subagent_counts: Default::default(),
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -2620,6 +2621,10 @@ pub(crate) async fn handle_message(
         let (bg_indicator, bg_count) = bg_indicator_for(&agent, session_id);
         s.bg_indicator = bg_indicator;
         s.bg_count = bg_count;
+        // Sub-agents are the second background registry (#1183): the header
+        // must wait on them too, split working vs awaiting collection, or a
+        // turn ending with agents mid-work reads "✅ Finished".
+        s.subagent_counts = subagent_counts_for(&agent, session_id);
     }
     // Recompute sections now that the turn has settled: the plan Approve/Discard
     // keyboard attaches only at turn end (load_plan_state_section keys off

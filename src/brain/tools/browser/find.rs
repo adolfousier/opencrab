@@ -135,41 +135,100 @@ impl Tool for BrowserFindTool {
             }
         };
 
-        let matches = raw.as_array().cloned().unwrap_or_default();
+        // Inventory mode wraps its result as {items, collapsed, occluded};
+        // search mode carries the same shape with both counters at 0
+        // (#1191, #1187).
+        let collapsed = usize::try_from(raw["collapsed"].as_u64().unwrap_or(0)).unwrap_or(0);
+        let occluded = usize::try_from(raw["occluded"].as_u64().unwrap_or(0)).unwrap_or(0);
+        let matches = raw["items"].as_array().cloned().unwrap_or_default();
         if matches.is_empty() {
-            return Ok(ToolResult::success(match pattern {
-                Some(p) => format!("No elements matched {mode}:{p}"),
-                None => "No visible interactive elements found on this page.".to_string(),
-            }));
+            return Ok(ToolResult::success(super::events::append_line(
+                match pattern {
+                    Some(p) => format!("No elements matched {mode}:{p}"),
+                    None => "No visible interactive elements found on this page.".to_string(),
+                },
+                self.manager.drain_recent_events(),
+            )));
         }
 
         let formatted = format_matches(&matches);
         let count = matches.len();
-        Ok(ToolResult::success(match pattern {
-            Some(p) => format!(
-                "Found {count} match{} for {mode}:{p}\n\n{formatted}",
-                if count == 1 { "" } else { "es" },
-            ),
-            None => {
-                let body = format!(
-                    "{count} visible interactive element{} on this page \
-                     (indexed — pass the `[data-opencrabs-match=\"N\"]` selector to \
-                     `browser_click`):\n\n{formatted}",
-                    if count == 1 { "" } else { "s" },
-                );
-                // If we hit the cap there may be more elements we did not
-                // show. Tell the model explicitly so it does not assume the
-                // list is exhaustive (mirrors the read_file truncation note).
-                if count >= limit {
-                    format!(
-                        "{body}\n\n(Inventory capped at {limit} visible elements. \
-                         Narrow with a `pattern`/`mode` to see beyond this list.)"
-                    )
-                } else {
-                    body
+
+        // OOPIF inventory pass (#1190): cross-origin iframes are
+        // site-isolated; the enumeration above only saw the main frame.
+        // Run the same JS per frame page and namespace every element's
+        // index with the frame label (`f2:14`), so the model can both
+        // see frame membership and click/type through the prefix.
+        let mut frame_sections: Vec<String> = Vec::new();
+        let mut frame_total = 0usize;
+        match self.manager.oopif_pages(context.session_id).await {
+            Ok(frames) if !frames.is_empty() => {
+                for (label, url, fpage) in frames {
+                    let fraw = match fpage.evaluate(enumerate_js.as_str()).await {
+                        Ok(r) => r.value().cloned().unwrap_or(Value::Null),
+                        Err(e) => {
+                            frame_sections.push(format!("[{label} {url}] inventory failed: {e}"));
+                            continue;
+                        }
+                    };
+                    let fitems = fraw["items"].as_array().cloned().unwrap_or_default();
+                    if fitems.is_empty() {
+                        continue;
+                    }
+                    // Namespace each selector: `[data-opencrabs-match="3"]`
+                    // → `f2:[data-opencrabs-match="3"]`.
+                    let namespaced: Vec<Value> = fitems
+                        .into_iter()
+                        .map(|mut it| {
+                            if let Some(s) = it["selector"].as_str() {
+                                it["selector"] = Value::String(format!("{label}:{s}"));
+                            }
+                            it
+                        })
+                        .collect();
+                    frame_total += namespaced.len();
+                    let fformatted = format_matches(&namespaced);
+                    frame_sections.push(format!("[{label} {url}]\n{fformatted}"));
                 }
             }
-        }))
+            _ => {}
+        }
+        let frames_note = if frame_sections.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\nCross-origin frames ({frame_total} element{}):\n{}",
+                if frame_total == 1 { "" } else { "s" },
+                frame_sections.join("\n\n")
+            )
+        };
+
+        Ok(ToolResult::success(super::events::append_line(
+            match pattern {
+                Some(p) => format!(
+                    "Found {count} match{} for {mode}:{p}\n\n{formatted}{frames_note}",
+                    if count == 1 { "" } else { "es" },
+                ),
+                None => {
+                    let body = format!(
+                        "{}\n\n{formatted}{frames_note}",
+                        inventory_header(count, collapsed, occluded),
+                    );
+                    // If we hit the cap there may be more elements we did not
+                    // show. Tell the model explicitly so it does not assume the
+                    // list is exhaustive (mirrors the read_file truncation note).
+                    if count >= limit {
+                        format!(
+                            "{body}\n\n(Inventory capped at {limit} visible elements. \
+                             Narrow with a `pattern`/`mode` to see beyond this list.)"
+                        )
+                    } else {
+                        body
+                    }
+                }
+            },
+            self.manager.drain_recent_events(),
+        )))
     }
 }
 
@@ -203,7 +262,15 @@ fn wrap_with_index(nodes_expr: &str) -> String {
                     visible: visible,
                 }});
             }}
-            return out;
+            // Inventory mode attaches `collapsed` to the nodes array (a
+            // JS-array property survives in-process, unlike through JSON);
+            // search mode leaves it undefined → 0. Surfaced so the header
+            // can say how many nested duplicates were folded (#1191).
+            return {{
+                items: out,
+                collapsed: typeof nodes.collapsed === 'number' ? nodes.collapsed : 0,
+                occluded: typeof nodes.occluded === 'number' ? nodes.occluded : 0,
+            }};
         }})()
         "#
     )
@@ -288,19 +355,96 @@ textarea, summary, [role="button"], [role="link"], [role="checkbox"], \
 [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
             const all = Array.from(document.querySelectorAll(sel));
             const visible = [];
+            const acceptedRects = [];
+            let collapsed = 0;
+            let occluded = 0;
             for (const el of all) {{
                 if (visible.length >= {limit}) break;
                 const rect = el.getBoundingClientRect();
                 if (rect.width > 0 && rect.height > 0
                     && getComputedStyle(el).visibility !== 'hidden'
                     && getComputedStyle(el).display !== 'none') {{
+                    // Own-semantics elements always keep their index even
+                    // when visually nested: a checkbox inside a label, a
+                    // tab inside a tablist — each is its own click target.
+                    const role = el.getAttribute('role');
+                    const own = el.tagName === 'INPUT'
+                        || el.tagName === 'SELECT'
+                        || el.tagName === 'TEXTAREA'
+                        || el.tagName === 'SUMMARY'
+                        || el.isContentEditable === true
+                        || role === 'checkbox' || role === 'menuitem'
+                        || role === 'tab' || role === 'option';
+                    if (!own) {{
+                        // Collapsible duplicate: a generic click wrapper
+                        // (a/button/role=button/link/tabindex span) fully
+                        // contained (±1px tolerance) in an already-accepted
+                        // element's rect is the SAME visual target — index
+                        // the container only (#1191).
+                        const dup = acceptedRects.some(r =>
+                            r.left - 1 <= rect.left
+                            && rect.right <= r.right + 1
+                            && r.top - 1 <= rect.top
+                            && rect.bottom <= r.bottom + 1);
+                        if (dup) {{ collapsed++; continue; }}
+                    }}
+                    // Occlusion v1 (#1187): hit-test the rect center —
+                    // when something opaque covers the candidate, the
+                    // element returned is neither the candidate nor one
+                    // of its descendants. pointer-events:none overlays
+                    // pass through elementFromPoint by construction, so
+                    // underlying content stays indexed. Centers clamped
+                    // into the viewport; fully off-screen candidates
+                    // (clamped center still outside) skip the test
+                    // rather than being dropped on a technicality.
+                    const vw = document.documentElement.clientWidth;
+                    const vh = document.documentElement.clientHeight;
+                    const cx = Math.min(Math.max(rect.left + rect.width / 2, 0), vw - 1);
+                    const cy = Math.min(Math.max(rect.top + rect.height / 2, 0), vh - 1);
+                    const inViewport = rect.right >= 0 && rect.bottom >= 0
+                        && rect.left <= vw && rect.top <= vh;
+                    if (inViewport) {{
+                        const hit = document.elementFromPoint(cx, cy);
+                        if (hit && hit !== el && !el.contains(hit)) {{
+                            occluded++; continue;
+                        }}
+                    }}
                     visible.push(el);
+                    acceptedRects.push(rect);
                 }}
             }}
+            visible.collapsed = collapsed;
+            visible.occluded = occluded;
             return visible;
         }})()"#
     );
     wrap_with_index(&nodes_expr)
+}
+
+/// Inventory header line (#1191, #1187): count, optional collapse note
+/// when nested duplicates were folded, optional occlusion note when
+/// candidates were hidden under opaque overlays, and the selector
+/// handoff instruction. Pure so tests can pin the wording without a
+/// live page.
+pub(crate) fn inventory_header(count: usize, collapsed: usize, occluded: usize) -> String {
+    let mut s = format!(
+        "{count} visible interactive element{} on this page",
+        if count == 1 { "" } else { "s" },
+    );
+    if collapsed > 0 {
+        s.push_str(&format!(
+            " ({collapsed} nested duplicate{} collapsed)",
+            if collapsed == 1 { "" } else { "s" },
+        ));
+    }
+    if occluded > 0 {
+        s.push_str(&format!(", {occluded} hidden (occluded)",));
+    }
+    s.push_str(
+        " (indexed — pass the `[data-opencrabs-match=\"N\"]` \
+         selector to `browser_click`):",
+    );
+    s
 }
 
 fn format_matches(matches: &[Value]) -> String {

@@ -103,3 +103,19 @@ fn tool_is_non_blocking_metadata() {
     assert_eq!(tool.name(), "suggest_options");
     assert!(!tool.requires_approval());
 }
+
+#[test]
+fn description_cap_tracks_max_options_const() {
+    use crate::brain::tools::Tool;
+    use crate::brain::tools::suggest_options::{MAX_OPTIONS, SuggestOptionsTool};
+
+    let d = Tool::description(&SuggestOptionsTool);
+    assert!(
+        d.contains(&format!("up to {MAX_OPTIONS}")),
+        "description cap must track MAX_OPTIONS, not a restated literal (#1176)"
+    );
+    assert!(
+        !d.contains("1-4"),
+        "stale pre-merge cap range must not return to the description"
+    );
+}

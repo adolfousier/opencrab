@@ -62,17 +62,17 @@ enum PlanOperation {
     Start {
         #[serde(default)]
         task_order: Option<usize>,
-        /// Isolation request for this start (#908 option A). `Some(true)`
-        /// forces the task into a freshly spawned worker session when the
-        /// machinery allows (overriding the InProgress-retry-inline rule,
-        /// since `start` blocks and no live worker can exist mid-call);
-        /// `Some(false)` forces inline; `None` uses the config default
-        /// (`agent.plan_isolated_execution`). Ralph loops pass their
-        /// `fresh_context` value here.
+        /// Executor choice for this start (#908 option A). `Some(true)`
+        /// spawns a dedicated subagent session that completes the task
+        /// (overriding the InProgress-retry-inline rule, since `start`
+        /// blocks and no live subagent can exist mid-call); `Some(false)`
+        /// means no subagent - you do the work inline; `None` uses the
+        /// config default (`agent.plan_isolated_execution`). Ralph loops
+        /// pass their `fresh_context` value here.
         #[serde(default)]
         isolated: Option<bool>,
     },
-    /// Finish a task and auto-start the next one (returning its full details).
+    /// Finish a task (pure state transition). Auto-start of the next task is/// opt-in via `[agent] plan_auto_start` (#1195); default reports a hint only.
     Complete {
         task_order: usize,
         /// "success" (default), "fail", or "skip".
@@ -1208,7 +1208,8 @@ impl Tool for PlanTool {
          when no plan is live), `add_tasks` (append one or more tasks in a single call — the \
          primary append op), `add_task` (alias appending a single task), `start` (begin the \
          next task, or a specific one via `task_order`), `complete` (finish a task and \
-         auto-start the next), `discard` (USER-ONLY: refused for the agent unless the \
+         next eligible row is reported as a hint; auto-start is opt-in via
+         `[agent] plan_auto_start`), `discard` (USER-ONLY: refused unless the \
          session granted plan autonomy — the user discards via /discard or the plan card's \
          Discard button), `show_plan` (read-only: report the current plan + checklist progress, e.g. \
          to answer 'what's the plan / where are we'). `add_tasks`/`add_task`/`start`/`complete` \
@@ -1220,7 +1221,7 @@ impl Tool for PlanTool {
          granted. Even with autonomy you may still leave the plan for the user to Approve when \
          you judge it needs review. `revoke_autonomy` turns self-approval back off. \
          \n\nFLOW (checklist, no autonomy): init with `tasks` → WAIT for user Approve → start → (do the work) → complete → \
-         (auto-starts next) → complete → … `start` and `complete` return the FULL task details \
+         (next eligible reported as hint; cascade opt-in via plan_auto_start) → complete → … `start` and `complete` return the FULL task details \
          (description, acceptance criteria, dependencies), so the plan doubles as durable \
          memory across context compactions — call `start` with no args to re-surface the \
          in-progress task's details after a compaction. \
@@ -1261,7 +1262,7 @@ impl Tool for PlanTool {
                 "operation": {
                     "type": "string",
                     "enum": ["init", "add_tasks", "add_task", "start", "complete", "approve", "discard", "show_plan", "grant_autonomy", "revoke_autonomy"],
-                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task, auto-start next), approve (self-approve Editing→Active, only if the user granted autonomy), discard (abandon the live plan → no plan; call only when the user asks to scrap/replace it), show_plan (return the current plan state, read-only), grant_autonomy (allow self-approval this session — call only when the user says to proceed without approving), revoke_autonomy (require user Approve again)"
+                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task; reports next eligible as a hint), approve (self-approve Editing→Active, only if the user granted autonomy), discard (abandon the live plan → no plan; call only when the user asks to scrap/replace it), show_plan (return the current plan state, read-only), grant_autonomy (allow self-approval this session — call only when the user says to proceed without approving), revoke_autonomy (require user Approve again)"
                 },
                 "mode": {
                     "type": "string",
@@ -1314,7 +1315,7 @@ impl Tool for PlanTool {
                 },
                 "isolated": {
                     "type": "boolean",
-                    "description": "start only: true forces this task to run in a freshly spawned isolated worker session (fresh context, ONLY the task brief plus the plan file — no parent conversation); false forces inline execution in the current session. Omit to use the config default (agent.plan_isolated_execution)."
+                    "description": "start only: true = a DEDICATED SUBAGENT SESSION is spawned to complete this task; this call blocks until the subagent returns and its result is verified against the plan on disk. false = no subagent is spawned; you execute the task yourself inline. Omit = config decides (agent.plan_isolated_execution, default true = one subagent per task)."
                 },
                 "action": {
                     "type": "string",
@@ -1387,6 +1388,19 @@ impl Tool for PlanTool {
         // files.
         let mut plan: Option<PlanDocument> = crate::utils::plan_files::load_plan(plan_sid).await;
         let state = crate::utils::plan_files::plan_mode_state(plan_sid).await;
+
+        // #1195: delegated plan workers have NO plan tool access — not for
+        // mutations, not for reads. They do the assigned work and report the
+        // outcome in their final message; the PARENT session owns every
+        // checklist transition (single-writer invariant).
+        if context.plan_session_override.is_some() {
+            return Ok(ToolResult::error(
+                "⛔ Plan tool is unavailable to delegated worker sessions. Do the assigned \
+                 work with real tool calls, then report the outcome in your final message — \
+                 your parent session records the verdict on the checklist."
+                    .to_string(),
+            ));
+        }
 
         let result = match operation {
             PlanOperation::Init {
@@ -2059,10 +2073,10 @@ impl Tool for PlanTool {
                                     );
                                     match spawn_plan_worker(context, plan_sid, order, brief).await {
                                         Ok(worker_output) => {
-                                            // Disk verdict — the worker's own
-                                            // claims mean nothing (#908: a
-                                            // deterministic check beats
-                                            // narrative).
+                                            // Collect, don't trust: workers
+                                            // hold no plan pen (#1195), so
+                                            // the parent reviews the summary
+                                            // and records the verdict itself.
                                             let reloaded =
                                                 crate::utils::plan_files::load_plan(plan_sid).await;
                                             let (ok, report) = report_after_worker(
@@ -2071,12 +2085,13 @@ impl Tool for PlanTool {
                                                 &worker_output,
                                             );
                                             tracing::info!(
-                                                "plan start #{order}: worker returned, disk verdict ok={ok}"
+                                                "plan start #{order}: worker collected, verdict recording pending ok={ok}"
                                             );
+                                            let notice = subagent_outcome_notice(ok);
                                             return Ok(if ok {
-                                                ToolResult::success(report)
+                                                ToolResult::success(format!("{notice}\n\n{report}"))
                                             } else {
-                                                ToolResult::error(report)
+                                                ToolResult::error(format!("{notice}\n\n{report}"))
                                             });
                                         }
                                         Err(e) => {
@@ -2088,7 +2103,7 @@ impl Tool for PlanTool {
                                                 "plan start #{order}: isolated spawn failed ({e}); falling back inline"
                                             );
                                             isolation_note = Some(format!(
-                                                "⚠️ Isolated execution was requested but the spawn failed: {e}. Running this task inline instead."
+                                                "⚠️ A subagent was supposed to complete this task, but its spawn failed: {e}. No subagent is running — the task stays in-progress; do the work inline."
                                             ));
                                         }
                                     }
@@ -2096,7 +2111,7 @@ impl Tool for PlanTool {
                                 TaskExecutionPath::Inline { reason } => {
                                     if isolated.is_some() {
                                         isolation_note = Some(format!(
-                                            "⚠️ Isolation was requested but is unavailable: {reason}. Running inline."
+                                            "⚠️ No subagent could be spawned for this task ({reason}). No subagent is running — executing inline."
                                         ));
                                     }
                                     tracing::debug!(
@@ -2136,7 +2151,7 @@ impl Tool for PlanTool {
                         };
                         match isolation_note {
                             Some(note) => format!("{result}\n\n{note}"),
-                            None => result,
+                            None => format!("{result}\n\n{}", inline_executor_suffix()),
                         }
                     }
                 }
@@ -2304,30 +2319,43 @@ impl Tool for PlanTool {
                     msg.push_str(&format!("\nOutput: {o}"));
                 }
 
-                // Auto-start the next executable task and surface its details.
+                // Auto-start is OPT-IN (#1195): complete is a pure state
+                // transition by default - mark done, report the next eligible
+                // row as a passive hint, spawn nothing. Separating starting
+                // from completing means parents ticking off work they did
+                // inline can never trigger worker spawns by accident.
+                let auto_start = crate::config::Config::load()
+                    .map(|c| c.agent.plan_auto_start)
+                    .unwrap_or(false);
                 let next_order = current_plan.next_executable_task().map(|t| t.order);
-                if let Some(no) = next_order {
-                    current_plan.get_task_by_order_mut(no).unwrap().start();
-                    current_plan.status = PlanStatus::Active;
-                    let next = current_plan.get_task_by_order(no).unwrap();
-                    let details = render_task_details(current_plan, next);
-                    msg.push_str(&format!(
-                        "\n\n▶️ Started Task #{no}: {}\n{details}",
-                        next.title
-                    ));
-                } else if current_plan
+                let all_done = current_plan
                     .tasks
                     .iter()
-                    .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
-                {
+                    .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped));
+                if all_done {
                     msg.push_str(&format!(
-                        "\n\n✅ Plan complete. All {} tasks done. The checklist stays \
+                        "\n\n\u{2705} Plan complete. All {} tasks done. The checklist stays \
                          visible until this turn settles, then the plan archives.",
                         current_plan.tasks.len()
                     ));
+                } else if let Some(no) = next_order {
+                    if auto_start {
+                        current_plan.get_task_by_order_mut(no).unwrap().start();
+                        current_plan.status = PlanStatus::Active;
+                        let next = current_plan.get_task_by_order(no).unwrap();
+                        let details = render_task_details(current_plan, next);
+                        msg.push_str(&format!(
+                            "\n\n\u{25b6}\u{fe0f} Started Task #{no}: {}\n{details}",
+                            next.title
+                        ));
+                    } else {
+                        msg.push_str(&format!(
+                            "\n\nNext eligible: Task #{no} \u{2014} call 'start' with task_order={no} to begin it."
+                        ));
+                    }
                 } else {
                     msg.push_str(
-                        "\n\nNo unblocked task is ready next — remaining tasks are blocked or \
+                        "\n\nNo unblocked task is ready next \u{2014} remaining tasks are blocked or \
                          failed. Use 'start' with a task_order to retry a failed task.",
                     );
                 }
@@ -2501,6 +2529,28 @@ pub(crate) fn render_epistemic_flags(
     block
 }
 
+/// Parent-facing ontology (#1195): every start names its executor in
+/// subagent terms — never "isolated", which hides that a separate
+/// session does the work.
+pub(crate) fn subagent_outcome_notice(completed: bool) -> String {
+    if completed {
+        "🤖 A subagent completed this task: a dedicated subagent \
+         session was spawned, finished the work, and its result was \
+         verified against the plan on disk."
+            .to_string()
+    } else {
+        "🤖 A subagent was spawned for this task but did NOT complete \
+         it — verdict below."
+            .to_string()
+    }
+}
+
+pub(crate) fn inline_executor_suffix() -> String {
+    "🤖 executor=self: no subagent was spawned — you do this task \
+     in your own session."
+        .to_string()
+}
+
 // ── #908 option A: isolated plan-task execution ───────────────────────────
 //
 // A started plan task runs either INLINE (the current session executes it,
@@ -2536,7 +2586,7 @@ pub(crate) enum TaskExecutionPath {
 ///    isolation is explicitly forced. `start` blocks until the worker
 ///    returns, so when start is callable there is never a live worker: an
 ///    InProgress task under explicit isolation is a crashed leftover or an
-///    auto-started next task, both safe to hand to a fresh worker.
+///    explicitly started afterwards, both safe to hand to a fresh worker.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_task_execution(
     explicit_request: Option<bool>,
@@ -2592,8 +2642,9 @@ pub(crate) fn build_worker_brief(
     epistemic_note: &str,
 ) -> String {
     let mut brief = format!(
-        "You are a plan-task worker running in a fresh session. The parent's plan file is \
-         threaded to you: your `plan` tool operates on the PARENT's checklist.\n\n\
+        "You are a plan-task worker running in a fresh session. You have NO plan tool \
+         access: you do not touch any checklist. Your parent session reads your final \
+         message and records the verdict for you.\n\n\
          ▶️ Task #{}: {}\n",
         order, task.title
     );
@@ -2610,20 +2661,22 @@ pub(crate) fn build_worker_brief(
     if !epistemic_note.trim().is_empty() {
         brief.push_str(&format!("\n{epistemic_note}\n"));
     }
-    brief.push_str(&format!(
+    brief.push_str(
         "\nRules:\n\
          1. Do the work with real tool calls. Verify with real commands before claiming anything.\n\
-         2. When the task is done, call `plan` with operation=complete, task_order={}, \
-         action=success|fail, and an honest output summary. Never claim success you did not verify.\n\
-         3. Work ONLY this task. Do not start other tasks; do not init, approve, or discard plans.\n",
-        order
-    ));
+         2. You have NO plan tool access. When done, report the outcome in your FINAL MESSAGE: \
+         success or failure plus an honest summary. Never claim success you did not verify; \
+         your parent session records the verdict on the checklist.\n\
+         3. Work ONLY this task. Do not start other tasks; do not touch plans at all.\n",
+    );
     brief
 }
 
-/// Honest post-spawn verdict. The worker's own claims mean nothing here —
-/// completion is read from the plan file on disk (deterministic check
-/// beats narrative). Returns (success, report).
+/// Post-spawn collection. Workers have NO plan access (#1195): they cannot
+/// mark, skip, or fail rows, so the row is expected to still be InProgress
+/// when the subagent returns. False is reserved for real anomalies (plan
+/// vanished / task missing) — a pending verdict is NOT an error; the parent
+/// records it after reviewing the worker's summary.
 pub(crate) fn report_after_worker(
     order: usize,
     reloaded: Option<&PlanDocument>,
@@ -2651,32 +2704,27 @@ pub(crate) fn report_after_worker(
         .filter(|t| matches!(t.status, TaskStatus::Completed))
         .count();
     let progress = format!("Progress: {done}/{} done.", plan.tasks.len());
+    let record_hint = format!(
+        "Record the verdict yourself: `complete` with task_order={order} and \
+         action=success|fail (skip only if genuinely obsolete), passing this \
+         summary as the output."
+    );
     match &task.status {
-        TaskStatus::Completed => (
+        TaskStatus::InProgress | TaskStatus::Pending => (
             true,
             format!(
-                "✅ Task #{} ({}) completed by the isolated worker — verified on disk.\n{progress}\n\nWorker summary: {worker_output}",
-                order, task.title
-            ),
-        ),
-        TaskStatus::Failed => (
-            false,
-            format!(
-                "❌ Task #{} ({}) FAILED in the isolated worker (disk-verified).\n{progress}\n\nWorker summary: {worker_output}\n\nRetry with start task_order={order}.",
-                order, task.title
-            ),
-        ),
-        TaskStatus::Skipped => (
-            true,
-            format!(
-                "⏭️ Task #{} ({}) skipped by the isolated worker (disk-verified).\n{progress}",
+                "🤖 Task #{} ({}) — isolated subagent finished; the row is intentionally left \
+                 InProgress because workers hold no plan pen (#1195).\n{progress}\n\
+                 {record_hint}\n\nWorker summary:\n{worker_output}",
                 order, task.title
             ),
         ),
         other => (
-            false,
+            true,
             format!(
-                "⚠️ The isolated worker ended but task #{order} is still {other:?} on disk — NOT counting it as done.\n{progress}\n\nWorker summary: {worker_output}\n\nRetry with start task_order={order}."
+                "🤖 Task #{} ({}) — isolated subagent finished; the row already records {other:?}.\n\
+                 {progress}\n\nWorker summary:\n{worker_output}",
+                order, task.title
             ),
         ),
     }
@@ -2703,11 +2751,17 @@ async fn spawn_plan_worker(
         .clone()
         .ok_or_else(|| ToolError::Execution("no parent tool registry wired".to_string()))?;
     let spawn_tool = crate::brain::tools::subagent::SpawnAgentTool::new(manager, registry);
+    // Worker purity (#1195): plan workers are spawned unable to nest further
+    // sub-agents or background tasks. Opt-out: [agent] plan_worker_allow_nested.
+    let worker_nesting = crate::config::Config::load()
+        .map(|c| c.agent.plan_worker_allow_nested)
+        .unwrap_or(false);
     let input = serde_json::json!({
         "prompt": brief,
         "label": format!("plan-task-{order}"),
         "agent_type": "general",
         "plan_session": plan_sid.to_string(),
+        "allow_nested": worker_nesting,
     });
     let res = spawn_tool.execute(input, context).await?;
     if !res.success {

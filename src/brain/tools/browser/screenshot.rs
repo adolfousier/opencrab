@@ -158,6 +158,9 @@ impl Tool for BrowserScreenshotTool {
 
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
-        Ok(ToolResult::success(format!("data:image/png;base64,{b64}")))
+        Ok(ToolResult::success(super::events::append_line(
+            format!("data:image/png;base64,{b64}"),
+            self.manager.drain_recent_events(),
+        )))
     }
 }

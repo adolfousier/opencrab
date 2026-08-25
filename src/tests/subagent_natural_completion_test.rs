@@ -75,3 +75,28 @@ fn parking_is_now_the_exception_not_the_default() {
         );
     }
 }
+
+// #1197: resume and team-create completion paths must HONOR mark_completed's
+// no-waiter contract by delivering the result to the parent — spawn already
+// did; these two discarded the bool and left parents un-woken.
+#[test]
+fn resumed_and_team_created_agents_deliver_results_to_parent() {
+    let resume_src = include_str!("../brain/tools/subagent/resume.rs");
+    let team_src = include_str!("../brain/tools/subagent/team/create.rs");
+    // (#1198 DRY): resume and team deliver through the shared manager helper
+    assert!(
+        resume_src.contains("complete_and_deliver(") && team_src.contains("complete_and_deliver("),
+        "resume and team paths must deliver through complete_and_deliver (#1197/#1198)"
+    );
+    let spawn_src = include_str!("../brain/tools/subagent/spawn.rs");
+    assert!(
+        spawn_src.contains("push_result("),
+        "spawn path must push its result to the parent session (#1197)"
+    );
+    let manager_src = include_str!("../brain/tools/subagent/manager.rs");
+    assert!(
+        manager_src.contains("pub fn get_parent_session_id")
+            && manager_src.contains("pub fn get_label"),
+        "manager must expose delivery-identity getters for non-spawn paths (#1197)"
+    );
+}

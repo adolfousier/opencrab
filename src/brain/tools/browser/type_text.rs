@@ -1,6 +1,6 @@
 //! browser_type — Type text into an element or the focused element.
 
-use super::manager::BrowserManager;
+use super::manager::{BrowserManager, split_frame_selector};
 use crate::brain::tools::error::Result;
 use crate::brain::tools::r#trait::{
     Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult,
@@ -72,7 +72,7 @@ impl Tool for BrowserTypeTool {
             Some(t) if !t.is_empty() => t,
             _ => return Ok(ToolResult::error("'text' is required".into())),
         };
-        let selector = input["selector"].as_str();
+        let selector_input = input["selector"].as_str();
 
         let page = match self
             .manager
@@ -82,6 +82,33 @@ impl Tool for BrowserTypeTool {
             Ok(p) => p,
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
+
+        // Frame-routed selectors (#1190): `f2:14` — resolve the owning
+        // OOPIF page and strip the prefix (same contract as click).
+        let (page, selector): (chromiumoxide::Page, Option<String>) =
+            if let Some(sel) = selector_input {
+                if let Some((label, rest)) = split_frame_selector(sel) {
+                    match self
+                        .manager
+                        .oopif_page_by_label(context.session_id, &label)
+                        .await
+                    {
+                        Ok(Some(p)) => (p, Some(rest)),
+                        Ok(None) => {
+                            return Ok(ToolResult::error(format!(
+                                "Frame '{label}' not found. The frame may have navigated away — \
+                                 re-run `browser_find` to get a fresh inventory."
+                            )));
+                        }
+                        Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
+                    }
+                } else {
+                    (page, Some(sel.to_string()))
+                }
+            } else {
+                (page, None)
+            };
+        let selector = selector.as_deref();
 
         // JSON-encode both values so any quotes/backslashes/newlines in the
         // text or selector are injected into the script safely.
@@ -141,7 +168,10 @@ impl Tool for BrowserTypeTool {
                 self.manager
                     .reset_identical_screenshot_count(context.session_id)
                     .await;
-                let mut result = ToolResult::success(format!("Typed into {target}"));
+                let mut result = ToolResult::success(super::events::append_line(
+                    format!("Typed into {target}"),
+                    self.manager.drain_recent_events(),
+                ));
                 // Auto-screenshot: give the model vision after typing.
                 self.manager
                     .attach_screenshot(context.session_id, &mut result)

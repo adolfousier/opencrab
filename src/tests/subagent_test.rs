@@ -17,17 +17,13 @@ mod manager {
     fn make_agent(id: &str, label: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-            id: id.to_string(),
-            label: label.to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                id.to_string(),
+                label.to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         }
     }
 
@@ -65,6 +61,44 @@ mod manager {
     fn get_state_missing_returns_none() {
         let mgr = SubAgentManager::new();
         assert_eq!(mgr.get_state("nonexistent"), None);
+    }
+
+    #[test]
+    fn alive_counts_for_splits_working_and_awaiting_per_parent() {
+        // #1183: the settle card counts only THIS session's children, split
+        // working vs parked-awaiting-collection. The manager is process-global
+        // (one instance wired into every channel agent), so an unfiltered
+        // count would report another chat's fan-out as this chat's pending
+        // work. Terminal agents never count.
+        let mgr = SubAgentManager::new();
+        let parent = Uuid::new_v4();
+        let other_chat = Uuid::new_v4();
+
+        let mut working = make_agent("w1", "working");
+        working.parent_session_id = parent;
+        let mut parked = make_agent("p1", "parked");
+        parked.parent_session_id = parent;
+        let mut done = make_agent("d1", "done");
+        done.parent_session_id = parent;
+        let mut foreign = make_agent("f1", "other-chat");
+        foreign.parent_session_id = other_chat;
+
+        mgr.insert(working);
+        mgr.insert(parked);
+        mgr.insert(done);
+        mgr.insert(foreign);
+
+        mgr.mark_awaiting_input("p1");
+        mgr.mark_completed("d1", "finished".to_string());
+
+        assert_eq!(mgr.alive_counts_for(parent), (1, 1));
+        assert_eq!(mgr.alive_counts_for(other_chat), (1, 0));
+        assert_eq!(mgr.alive_counts_for(Uuid::new_v4()), (0, 0));
+
+        // Follow-up input flips the parked agent back to working: the split
+        // must track the state machine, not a static snapshot.
+        mgr.mark_running_again("p1");
+        assert_eq!(mgr.alive_counts_for(parent), (2, 0));
     }
 
     #[test]
@@ -322,17 +356,13 @@ mod manager {
         let mgr = SubAgentManager::new();
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: "a1".to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                "a1".to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         mgr.insert(agent);
 
@@ -382,17 +412,13 @@ mod send_input_tool {
     fn make_running_agent(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         (agent, rx)
     }
@@ -454,11 +480,13 @@ mod send_input_tool {
         assert!(!result.success);
         // #1184 ripple: completed agents are pointed at resume_agent instead of
         // the old generic "not running" rejection.
-        assert!(result
-            .error
-            .as_ref()
-            .unwrap()
-            .contains("use resume_agent to continue"));
+        assert!(
+            result
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("use resume_agent to continue")
+        );
     }
 
     #[tokio::test]
@@ -486,17 +514,13 @@ mod send_input_tool {
         let mgr = Arc::new(SubAgentManager::new());
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: "a1".to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                "a1".to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         mgr.insert(agent);
 
@@ -549,17 +573,13 @@ mod close_agent_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         }
     }
 
@@ -681,17 +701,13 @@ mod wait_agent_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         }
     }
 
@@ -852,17 +868,13 @@ mod lifecycle {
     fn make_agent(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: id.to_string(),
-            label: "lifecycle-test".to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                id.to_string(),
+                "lifecycle-test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         (agent, rx)
     }
@@ -1129,17 +1141,14 @@ mod agent_type {
         use uuid::Uuid;
         let mgr = SubAgentManager::new();
         mgr.insert(SubAgent {
-            id: "ro1".into(),
-            label: "ro".into(),
-            session_id: Uuid::new_v4(),
             read_only: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: None,
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                "ro1".to_string(),
+                "ro".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         });
         assert_eq!(mgr.get_read_only("ro1"), Some(true));
         assert_eq!(mgr.get_read_only("missing"), None);
@@ -1300,17 +1309,13 @@ mod team_delete_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         }
     }
 
@@ -1432,17 +1437,13 @@ mod team_broadcast_tool {
     fn make_agent_with_channel(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            read_only: false,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
             input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         (agent, rx)
     }

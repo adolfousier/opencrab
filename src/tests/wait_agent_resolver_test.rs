@@ -16,17 +16,13 @@ use uuid::Uuid;
 fn mk_agent(id: &str, label: &str) -> SubAgent {
     let (tx, _rx) = mpsc::unbounded_channel::<String>();
     SubAgent {
-        id: id.to_string(),
-        label: label.to_string(),
-        session_id: Uuid::new_v4(),
-        read_only: false,
-        state: SubAgentState::Running,
-        cancel_token: CancellationToken::new(),
-        join_handle: None,
         input_tx: Some(tx),
-        output: None,
-        spawned_at: chrono::Utc::now(),
-        waiters: 0,
+        ..SubAgent::new(
+            id.to_string(),
+            label.to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
     }
 }
 

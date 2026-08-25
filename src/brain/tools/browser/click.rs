@@ -1,6 +1,6 @@
 //! browser_click — Click an element by CSS selector.
 
-use super::manager::BrowserManager;
+use super::manager::{BrowserManager, split_frame_selector};
 use crate::brain::tools::error::Result;
 use crate::brain::tools::r#trait::{
     Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult,
@@ -64,7 +64,7 @@ impl Tool for BrowserClickTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
-        let selector = match input["selector"].as_str() {
+        let selector_input = match input["selector"].as_str() {
             Some(s) if !s.is_empty() => s,
             _ => return Ok(ToolResult::error("'selector' is required".into())),
         };
@@ -77,6 +77,31 @@ impl Tool for BrowserClickTool {
             Ok(p) => p,
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
+
+        // Frame-routed selectors (#1190): `f2:14` or `f2:[data-...]` —
+        // the model copied a namespaced index from a cross-origin
+        // iframe's inventory. Resolve the owning frame page and strip
+        // the prefix before the normal CSS path runs. Plain selectors
+        // keep working on the main page exactly as before.
+        let (page, selector): (chromiumoxide::Page, String) =
+            if let Some((label, rest)) = split_frame_selector(selector_input) {
+                match self
+                    .manager
+                    .oopif_page_by_label(context.session_id, &label)
+                    .await
+                {
+                    Ok(Some(p)) => (p, rest),
+                    Ok(None) => {
+                        return Ok(ToolResult::error(format!(
+                            "Frame '{label}' not found. The frame may have navigated away — \
+                             re-run `browser_find` to get a fresh inventory."
+                        )));
+                    }
+                    Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
+                }
+            } else {
+                (page, selector_input.to_string())
+            };
 
         // `text=...` and `xpath=...` selectors are Playwright-style and not
         // valid CSS — translate them to a JS evaluator that finds the first
@@ -119,7 +144,10 @@ impl Tool for BrowserClickTool {
                             self.manager
                                 .reset_identical_screenshot_count(context.session_id)
                                 .await;
-                            let mut tr = ToolResult::success(format!("Clicked: {selector}"));
+                            let mut tr = ToolResult::success(super::events::append_line(
+                                format!("Clicked: {selector}"),
+                                self.manager.drain_recent_events(),
+                            ));
                             self.manager
                                 .attach_screenshot(context.session_id, &mut tr)
                                 .await;
@@ -172,7 +200,10 @@ impl Tool for BrowserClickTool {
                             self.manager
                                 .reset_identical_screenshot_count(context.session_id)
                                 .await;
-                            let mut tr = ToolResult::success(format!("Clicked: {selector}"));
+                            let mut tr = ToolResult::success(super::events::append_line(
+                                format!("Clicked: {selector}"),
+                                self.manager.drain_recent_events(),
+                            ));
                             self.manager
                                 .attach_screenshot(context.session_id, &mut tr)
                                 .await;
@@ -196,7 +227,7 @@ impl Tool for BrowserClickTool {
             }
         }
 
-        let element = match page.find_element(selector).await {
+        let element = match page.find_element(&selector).await {
             Ok(el) => el,
             Err(e) => {
                 // Surface the recovery path inline so the agent doesn't

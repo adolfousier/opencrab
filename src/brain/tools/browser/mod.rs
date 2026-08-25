@@ -1,10 +1,12 @@
 //! Browser automation tools — navigate, click, type, screenshot, eval JS, extract content.
 //! Gated behind the `browser` feature flag.
 
+mod act;
 mod click;
 mod close;
 mod content;
 mod eval;
+pub(crate) mod events;
 mod find;
 pub(crate) mod manager;
 mod navigate;
@@ -12,11 +14,17 @@ mod screenshot;
 mod type_text;
 mod wait;
 
+pub use act::BrowserActTool;
 pub use click::BrowserClickTool;
 pub use close::BrowserCloseTool;
 pub use content::BrowserContentTool;
 pub use eval::BrowserEvalTool;
 pub use find::BrowserFindTool;
+
+// Batched-action pure cores — re-exported only for test fixtures
+// (src/tests/browser_act_test.rs).
+#[cfg(test)]
+pub(crate) use act::{Act, build_pre_flight_js, format_prefix_report, parse_actions};
 
 // Eval output cap — re-exported only for test fixtures
 // (src/tests/browser_eval_cap_test.rs).
@@ -32,6 +40,8 @@ pub(crate) use find::build_find_js;
 // (src/tests/browser_inventory_test.rs).
 #[cfg(test)]
 pub(crate) use find::build_inventory_js;
+#[cfg(test)]
+pub(crate) use find::inventory_header;
 pub use manager::{BrowserManager, CloseOutcome};
 pub use navigate::BrowserNavigateTool;
 pub use screenshot::BrowserScreenshotTool;

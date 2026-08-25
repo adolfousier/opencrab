@@ -14,17 +14,13 @@ use uuid::Uuid;
 fn manager_with_agent(id: &str) -> SubAgentManager {
     let manager = SubAgentManager::new();
     manager.insert(SubAgent {
-        id: id.to_string(),
-        label: "worker".to_string(),
-        session_id: Uuid::new_v4(),
-        read_only: false,
-        state: SubAgentState::Running,
-        cancel_token: CancellationToken::new(),
-        join_handle: None,
         input_tx: None,
-        output: None,
-        spawned_at: chrono::Utc::now(),
-        waiters: 0,
+        ..SubAgent::new(
+            id.to_string(),
+            "worker".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
     });
     manager
 }

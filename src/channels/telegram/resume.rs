@@ -142,6 +142,7 @@ pub(crate) async fn resume_session(
         flow_outcome: None,
         bg_indicator: None,
         bg_count: None,
+        subagent_counts: Default::default(),
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -429,6 +430,9 @@ pub(crate) async fn resume_session(
         let (bg_indicator, bg_count) = super::handler::bg_indicator_for(&agent, session_id);
         s.bg_indicator = bg_indicator;
         s.bg_count = bg_count;
+        // Sub-agent counts ride the same settle stamp as the crash-resume
+        // path's background tasks (#1183 parity with handle_message).
+        s.subagent_counts = super::handler::subagent_counts_for(&agent, session_id);
     }
     // Recompute sections at settle so the plan Approve/Discard keyboard, which
     // attaches only at turn end (#571), materializes on the final render — the

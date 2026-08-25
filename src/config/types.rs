@@ -1014,6 +1014,22 @@ pub struct AgentConfig {
     /// overrides this flag either way.
     #[serde(default = "default_plan_isolated_execution")]
     pub plan_isolated_execution: bool,
+    /// Auto-start the next plan task when `complete` succeeds (#1195).
+    /// Default FALSE: `complete` is a pure state transition - it marks the
+    /// task done and reports the next eligible row as a hint, but never
+    /// starts anything. Set true to restore the legacy cascade where
+    /// completing a task immediately marks+surfaces the next one. Only
+    /// an explicit `plan start` launches an isolated worker either way;
+    /// this flag governs whether that launch may happen implicitly.
+    #[serde(default = "default_plan_auto_start")]
+    pub plan_auto_start: bool,
+
+    /// Whether isolated plan-task workers may themselves spawn sub-agents or
+    /// background tasks (#1195). Default false: a plan worker executes one
+    /// item solo - nested spawns orphan grandchildren and race the parent's
+    /// disk verdict.
+    #[serde(default)]
+    pub plan_worker_allow_nested: bool,
 
     /// Auto-install new releases on startup without prompting (default: true).
     /// When false, the user is shown an update prompt dialog instead.
@@ -1206,6 +1222,10 @@ fn default_plan_isolated_execution() -> bool {
     true
 }
 
+fn default_plan_auto_start() -> bool {
+    false
+}
+
 fn default_subagent_session_ttl_days() -> u32 {
     7
 }
@@ -1224,6 +1244,8 @@ impl Default for AgentConfig {
             execute_provider: None,
             execute_model: None,
             plan_isolated_execution: true,
+            plan_auto_start: default_plan_auto_start(),
+            plan_worker_allow_nested: false,
             auto_update: default_auto_update(),
             subagent_session_ttl_days: default_subagent_session_ttl_days(),
             self_improvement_provider: None,

@@ -64,6 +64,7 @@ fn cowork_state_lifecycle() {
 }
 
 #[test]
+#[cfg(feature = "whatsapp")]
 fn invite_qr_generation() {
     let result = build_invite_qr("https://t.me/+AbCdEfGh");
     assert!(result.is_some());

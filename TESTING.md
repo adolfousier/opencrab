@@ -6,6 +6,25 @@ Comprehensive test coverage for OpenCrabs. All tests run with:
 cargo test --all-features
 ```
 
+## Fixture Constants Convention
+
+**Fixture expectations derive from the source constant; they never restate its value.**
+
+```rust
+// BAD - silently wrong after any cap change
+let options = build_n_options(5);
+assert!(!result.success); // "over cap" (cap was 4)
+
+// GOOD - survives every future cap change
+let options = build_n_options(MAX_OPTIONS + 1);
+assert!(!result.success);
+```
+
+- Boundary tests use `CONST - 1` / `CONST` / `CONST + 1`, never literal numbers.
+- If a test genuinely pins a literal contract (e.g. a wire-format value fixed by an external spec), prefix a comment naming that external contract.
+
+Born from two real incidents (#646, #1178): hard-coded fixture constants broke on legitimate contract changes and each cost a debug cycle whose only finding was "the test pinned a constant."
+
 ## Quick Reference
 
 | Category | Tests | Location |

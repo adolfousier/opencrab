@@ -3,7 +3,7 @@
 //! Sub-agent progress is streamed to `~/.opencrabs/tmp/subagents/<agent_id>.json`
 //! so the main orchestrator can track status without session_search.
 
-use super::manager::{SubAgent, SubAgentManager, SubAgentState};
+use super::manager::{SubAgent, SubAgentManager};
 use super::status::AgentStatus;
 use crate::brain::tools::error::{Result, ToolError};
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
@@ -27,18 +27,29 @@ pub(crate) fn completion_message(
     outcome: std::result::Result<&str, &str>,
 ) -> crate::brain::agent::QueuedUserMessage {
     let (context_text, display_text) = match outcome {
-        Ok(output) => (
-            format!(
-                "[System: the sub-agent you spawned has finished.\n\
-                 Agent: {label} (id {agent_id})\n\
-                 Status: completed\n\
-                 Output:\n{}\n\n\
-                 Report the result to the user and continue anything that was waiting on it. \
-                 Do not re-spawn the agent — this IS its result.]",
-                truncate_output(output)
-            ),
-            format!("🤖 sub-agent finished: {label}"),
-        ),
+        Ok(output) => {
+            let full_report_hint = if output.chars().count() > PUSHED_OUTPUT_LIMIT {
+                format!(
+                    "Preview truncated - the FULL untruncated report is available via the \
+                     wait_agent tool with agent id {agent_id}.\n"
+                )
+            } else {
+                String::new()
+            };
+            (
+                format!(
+                    "[System: the sub-agent you spawned has finished.\n\
+                     Agent: {label} (id {agent_id})\n\
+                     Status: completed\n\
+                     Output:\n{}\n\n\
+                     {full_report_hint}\
+                     Report the result to the user and continue anything that was waiting on it. \
+                     Do not re-spawn the agent — this IS its result.]",
+                    truncate_output(output)
+                ),
+                format!("🤖 sub-agent finished: {label}"),
+            )
+        }
         Err(error) => (
             format!(
                 "[System: the sub-agent you spawned has failed.\n\
@@ -69,7 +80,7 @@ fn truncate_output(output: &str) -> String {
 }
 
 /// Deliver a finished sub-agent's outcome to the session that spawned it.
-fn push_result(
+pub(crate) fn push_result(
     parent_session_id: uuid::Uuid,
     label: &str,
     agent_id: &str,
@@ -133,6 +144,10 @@ impl Tool for SpawnAgentTool {
                     "type": "string",
                     "description": "Short human-readable label for this sub-agent (e.g., 'refactor-auth', 'test-runner')"
                 },
+                "allow_nested": {
+                    "type": "boolean",
+                    "description": "Whether THIS CHILD may spawn further sub-agents or background tasks (#1195). Default true. Set false for pure workers: any spawn_agent/team_create call it makes is refused, and its long bash commands run attached instead of detached. Plan workers are always spawned with false."
+                },
                 "read_only": {
                     "type": "boolean",
                     "description": "Spawn this child with a read-restricted tool registry (#1173): file reads, glob/grep/ls and web research only — no writes, no bash, no spawning. Use for exploration, code review, and research children. Omit or false for a full-capability worker (still minus recursive/dangerous tools)."
@@ -163,6 +178,17 @@ impl Tool for SpawnAgentTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
+        // Nesting enforcement (#1195): children spawned with allow_nested=false
+        // are pure workers. Root / unmanaged sessions pass freely.
+        if let Some(ref mgr) = context.subagent_manager
+            && !mgr.nesting_allowed_for_session(context.session_id)
+        {
+            return Ok(ToolResult::error(
+                "refused: this agent was spawned without nesting permissions \
+                 (allow_nested=false) and may not spawn further sub-agents"
+                    .to_string(),
+            ));
+        }
         let prompt = input
             .get("prompt")
             .and_then(|v| v.as_str())
@@ -178,6 +204,21 @@ impl Tool for SpawnAgentTool {
         // Resolve the child's capability grant (#1173). Explicit `read_only`
         // wins; a deprecated typed `agent_type` maps to its historical
         // effective grant (loudly); anything else defaults to full access.
+        // Nesting grant (#1195): absent = true (backward compatible). A
+        // non-boolean is a hard error, mirroring read_only above.
+        let allow_nested = match input.get("allow_nested") {
+            None | Some(serde_json::Value::Bool(_)) => input
+                .get("allow_nested")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            Some(_) => {
+                return Ok(ToolResult::error(
+                    "'allow_nested' must be a boolean (true = child may nest spawns/detach, false = pure worker)"
+                        .to_string(),
+                ));
+            }
+        };
+
         // A non-boolean `read_only` is a hard error, not a silent default —
         // the caller asked for a specific capability and must not get a
         // different one because of a type mistake.
@@ -499,8 +540,17 @@ impl Tool for SpawnAgentTool {
                         }
                         // Genuinely gated (pending approval / cap): park so
                         // wait_agent can observe round-boundary progress and
-                        // the parent can nudge with input.
+                        // the parent can nudge with input. The status file
+                        // parks too (#1183): a parked agent reading
+                        // `state: "Running"` with `completed_at: null` misled
+                        // every consumer into waiting on finished work.
                         manager.mark_awaiting_input(&agent_id_clone);
+                        if let Err(e) = status.mark_awaiting_input() {
+                            tracing::warn!(
+                                "Failed to write awaiting-input status for {}: {e}",
+                                agent_id_clone
+                            );
+                        }
                         tracing::info!(
                             "Sub-agent {} round {} complete, waiting for input",
                             agent_id_clone,
@@ -519,6 +569,12 @@ impl Tool for SpawnAgentTool {
                         match next {
                             Some(text) => {
                                 manager.mark_running_again(&agent_id_clone);
+                                if let Err(e) = status.mark_running() {
+                                    tracing::warn!(
+                                        "Failed to write running status for {}: {e}",
+                                        agent_id_clone
+                                    );
+                                }
                                 tracing::info!(
                                     "Sub-agent {} received follow-up input",
                                     agent_id_clone
@@ -577,29 +633,27 @@ impl Tool for SpawnAgentTool {
                 }
                 None => final_output,
             };
-            if manager.mark_completed(&agent_id_clone, final_output.clone()) {
-                push_result(
-                    parent_session_id,
-                    &label_clone,
-                    &agent_id_clone,
-                    Ok(&final_output),
-                );
-            }
+            manager.complete_and_deliver(
+                &agent_id_clone,
+                final_output,
+                parent_session_id,
+                &label_clone,
+            );
         });
 
         // Register in manager
         self.manager.insert(SubAgent {
-            id: agent_id.clone(),
-            label: label.clone(),
-            session_id: child_session_id,
             read_only,
-            state: SubAgentState::Running,
+            allow_nested,
             cancel_token,
             join_handle: Some(handle),
             input_tx: Some(input_tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+            ..SubAgent::new(
+                agent_id.clone(),
+                label.clone(),
+                child_session_id,
+                context.session_id,
+            )
         });
 
         Ok(ToolResult::success(format!(

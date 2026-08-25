@@ -32,6 +32,10 @@ pub enum CloseOutcome {
 pub struct BrowserManager {
     inner: Arc<Mutex<ManagerInner>>,
     config: Arc<ConfigBrowserConfig>,
+    /// CDP event ring (#1189). Held directly (its own std Mutex, no
+    /// async lock) so sync drains from tool result paths never touch
+    /// the tokio-guarded inner state.
+    pub(crate) events: super::events::EventLog,
 }
 
 struct ManagerInner {
@@ -136,6 +140,7 @@ impl BrowserManager {
                 consecutive_identical_screenshots: HashMap::new(),
             })),
             config: Arc::new(config),
+            events: super::events::EventLog::default(),
         }
     }
 
@@ -418,6 +423,11 @@ impl BrowserManager {
         // state; the new-document registration fixes this.
         Self::install_stealth_on_new_document(&page).await;
 
+        // CDP event listeners (#1189): js dialogs, downloads, popups,
+        // crashes, detachments feed the shared ring; every browser tool
+        // result drains it as a `recent_events:` line.
+        super::events::attach_page_listeners(&page, self.events.clone());
+
         inner.pages.insert(session_name, page.clone());
         Ok(page)
     }
@@ -628,6 +638,89 @@ impl BrowserManager {
     }
 
     /// Get the current consecutive-identical screenshot count for a session.
+    /// Drain pending CDP events (#1189) formatted as the
+    /// `recent_events: [...]` line, `None` when nothing fired since the
+    /// last drain. Browser tools append this to their result text so
+    /// spontaneous page activity (dialogs, downloads, crashes) surfaces
+    /// exactly once, in the next result after it happened.
+    pub fn drain_recent_events(&self) -> Option<String> {
+        self.events.take_formatted()
+    }
+
+    /// Enumerate cross-origin (OOPIF) frame pages for the given session's
+    /// main page (#1190). Chromium site-isolates cross-origin iframes into
+    /// their own targets; chromey's auto-attach (flatten) already joins
+    /// their sessions to the connection, so each frame is addressable as
+    /// a `Page` via `Browser::get_page`.
+    ///
+    /// Returns `(frame_label, url, Page)` triples for every cross-origin
+    /// child frame currently in the page's frame tree. Frames are matched
+    /// to targets by URL (`type == "iframe"` targets carry the frame URL).
+    /// Same-origin iframes are skipped — their DOM is reachable from the
+    /// main frame's execution context, so the existing find/click JS
+    /// already covers them.
+    pub async fn oopif_pages(
+        &self,
+        session_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<(String, String, Page)>> {
+        use chromiumoxide::cdp::browser_protocol::page::GetFrameTreeParams;
+
+        let page = self.get_or_create_session_page(session_id).await?;
+        let tree = page
+            .execute(GetFrameTreeParams::default())
+            .await?
+            .result
+            .frame_tree;
+
+        // Walk the tree collecting cross-origin children (any depth).
+        let main_origin = origin_of(&tree.frame.url);
+        let mut cross: Vec<(String, String)> = Vec::new();
+        collect_cross_origin(&tree, &main_origin, &mut cross);
+
+        if cross.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Map frame URLs to iframe targets, then to Pages.
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Browser not initialized"))?;
+        let targets = browser.fetch_targets().await?;
+        let mut out = Vec::new();
+        for (label, url) in cross {
+            let target = targets
+                .iter()
+                .find(|t| t.r#type == "iframe" && t.url == url);
+            if let Some(t) = target {
+                match browser.get_page(t.target_id.clone()).await {
+                    Ok(p) => out.push((label, url, p)),
+                    Err(e) => {
+                        tracing::debug!("browser: OOPIF page resolve failed for {url}: {e}")
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Resolve a single OOPIF page by its inventory label (`f1`, `f2`, …).
+    /// `None` when the label doesn't match any current cross-origin frame
+    /// (navigation changed the frame tree).
+    pub async fn oopif_page_by_label(
+        &self,
+        session_id: uuid::Uuid,
+        label: &str,
+    ) -> anyhow::Result<Option<Page>> {
+        Ok(self
+            .oopif_pages(session_id)
+            .await?
+            .into_iter()
+            .find(|(l, _, _)| l == label)
+            .map(|(_, _, p)| p))
+    }
+
     pub async fn identical_screenshot_count(&self, session_id: uuid::Uuid) -> u32 {
         self.inner
             .lock()
@@ -1279,4 +1372,58 @@ pub(crate) fn detect_browser() -> Option<BrowserInfo> {
 
     tracing::warn!("No Chromium-based browser found on system");
     None
+}
+
+/// Split a frame-routed selector (#1190): `f2:14` → `("f2", "14")`,
+/// `f1:[data-opencrabs-match="3"]` → `("f1", "[data-opencrabs-match=\"3\"]")`.
+/// Returns `None` for plain selectors (no `fN:` prefix). `f` must be
+/// followed by digits and a colon; anything else is a normal selector —
+/// so a CSS like `form:has(input)` stays untouched.
+pub(crate) fn split_frame_selector(selector: &str) -> Option<(String, String)> {
+    let rest = selector.strip_prefix('f')?;
+    let digits_end = rest.find(':')?;
+    let digits = &rest[..digits_end];
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    // Reject `f1::x` (empty remainder) — a colon-only tail is not a
+    // usable selector.
+    let tail = &rest[digits_end + 1..];
+    if tail.is_empty() {
+        return None;
+    }
+    Some((format!("f{digits}"), tail.to_string()))
+}
+
+/// scheme://host:port of a URL, or the raw string when parsing fails
+/// (about:blank and friends — such frames are never cross-origin in a
+/// meaningful way, so treating them as their own origin is harmless).
+pub(crate) fn origin_of(url: &str) -> String {
+    url::Url::parse(url)
+        .map(|u| match u.port() {
+            Some(p) => format!("{}://{}:{}", u.scheme(), u.host_str().unwrap_or(""), p),
+            None => format!("{}://{}", u.scheme(), u.host_str().unwrap_or("")),
+        })
+        .unwrap_or_else(|_| url.to_string())
+}
+
+/// Depth-first walk of the frame tree collecting cross-origin child
+/// frames (relative to `main_origin`), labeled `f1`, `f2`, … in walk
+/// order. Same-origin frames are skipped entirely — including their
+/// subtrees' bookkeeping, since a cross-origin frame nested inside a
+/// same-origin frame still gets its own entry.
+pub(crate) fn collect_cross_origin(
+    node: &chromiumoxide::cdp::browser_protocol::page::FrameTree,
+    main_origin: &str,
+    out: &mut Vec<(String, String)>,
+) {
+    if let Some(children) = &node.child_frames {
+        for child in children {
+            if origin_of(&child.frame.url) != main_origin {
+                let label = format!("f{}", out.len() + 1);
+                out.push((label, child.frame.url.clone()));
+            }
+            collect_cross_origin(child, main_origin, out);
+        }
+    }
 }

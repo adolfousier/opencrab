@@ -2,7 +2,7 @@
 
 use super::manager::TeamManager;
 use crate::brain::tools::error::{Result, ToolError};
-use crate::brain::tools::subagent::manager::{SubAgent, SubAgentManager, SubAgentState};
+use crate::brain::tools::subagent::manager::{SubAgent, SubAgentManager};
 use crate::brain::tools::subagent::map_deprecated_agent_type;
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
@@ -71,6 +71,10 @@ impl Tool for TeamCreateTool {
                                 "type": "string",
                                 "description": "Short label for this agent"
                             },
+                            "allow_nested": {
+                                "type": "boolean",
+                                "description": "Whether THIS MEMBER may spawn further sub-agents or background tasks (#1195). Default true. false = pure worker."
+                            },
                             "read_only": {
                                 "type": "boolean",
                                 "description": "Spawn this member with a read-restricted tool registry (#1173): reads/search/research only. Omit or false for full capability."
@@ -101,6 +105,16 @@ impl Tool for TeamCreateTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
+        // Nesting enforcement (#1195), mirroring spawn_agent.
+        if let Some(ref mgr) = context.subagent_manager
+            && !mgr.nesting_allowed_for_session(context.session_id)
+        {
+            return Ok(ToolResult::error(
+                "refused: this agent was spawned without nesting permissions \
+                 (allow_nested=false) and may not create teams"
+                    .to_string(),
+            ));
+        }
         let team_name = input
             .get("team_name")
             .and_then(|v| v.as_str())
@@ -165,6 +179,17 @@ impl Tool for TeamCreateTool {
                 .get("agent_type")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
+            // Nesting grant (#1195): absent = true; non-boolean = hard error.
+            let member_allow_nested = match agent_def.get("allow_nested") {
+                None => true,
+                Some(serde_json::Value::Bool(b)) => *b,
+                Some(_) => {
+                    return Ok(ToolResult::error(format!(
+                        "Team member '{label}': 'allow_nested' must be a boolean"
+                    )));
+                }
+            };
+
             let (read_only, member_grant_note) = match (member_read_only, deprecated_raw) {
                 (Some(ro), _) => (ro, None),
                 (None, Some(raw)) => {
@@ -282,6 +307,10 @@ impl Tool for TeamCreateTool {
             let manager = self.subagent_manager.clone();
             let agent_id_clone = agent_id.clone();
             let model_clone = model_override.clone();
+            // Delivery identity (#1197): team members must wake the parent
+            // on completion, same contract as spawned agents.
+            let parent_of_member = context.session_id;
+            let member_label = label.clone();
 
             let handle = tokio::spawn(async move {
                 tracing::info!("Team agent {} starting", agent_id_clone);
@@ -329,7 +358,15 @@ impl Tool for TeamCreateTool {
                             };
 
                             match next {
-                                Some(text) => current_prompt = text,
+                                Some(text) => {
+                                    // Flip back to Running so the in-memory
+                                    // state matches the round now in flight —
+                                    // without this a wait_agent during the new
+                                    // round reads the parked state and returns
+                                    // the PREVIOUS round's stale output (#1183).
+                                    manager.mark_running_again(&agent_id_clone);
+                                    current_prompt = text;
+                                }
                                 None => break response.content,
                             }
                         }
@@ -341,22 +378,27 @@ impl Tool for TeamCreateTool {
                     }
                 };
 
-                manager.mark_completed(&agent_id_clone, final_output);
+                manager.complete_and_deliver(
+                    &agent_id_clone,
+                    final_output,
+                    parent_of_member,
+                    &member_label,
+                );
             });
 
             // Register in subagent manager
             self.subagent_manager.insert(SubAgent {
-                id: agent_id.clone(),
-                label: label.clone(),
-                session_id: child_session_id,
                 read_only,
-                state: SubAgentState::Running,
+                allow_nested: member_allow_nested,
                 cancel_token,
                 join_handle: Some(handle),
                 input_tx: Some(input_tx),
-                output: None,
-                spawned_at: chrono::Utc::now(),
-                waiters: 0,
+                ..SubAgent::new(
+                    agent_id.clone(),
+                    label.clone(),
+                    child_session_id,
+                    context.session_id,
+                )
             });
 
             spawned_ids.push(agent_id.clone());

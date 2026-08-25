@@ -18,6 +18,8 @@ use super::TelegramState;
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 
+/// Label-length budget above which Telegram folds suggestions into the body
+
 /// What the suggestion block becomes once one of its options is tapped.
 ///
 /// Replaces the prompt and its keyboard in place. The Bot API has no

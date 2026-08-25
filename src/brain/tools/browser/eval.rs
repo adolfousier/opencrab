@@ -72,7 +72,10 @@ impl Tool for BrowserEvalTool {
                     Value::Null => "(undefined)".to_string(),
                     other => serde_json::to_string_pretty(other).unwrap_or_default(),
                 };
-                Ok(ToolResult::success(cap_eval_output(output)))
+                Ok(ToolResult::success(super::events::append_line(
+                    cap_eval_output(output),
+                    self.manager.drain_recent_events(),
+                )))
             }
             Err(e) => Ok(ToolResult::error(format!("JS execution failed: {e}"))),
         }
