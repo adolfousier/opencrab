@@ -86,9 +86,30 @@ pub(crate) fn push_result(
     agent_id: &str,
     outcome: std::result::Result<&str, &str>,
 ) {
+    use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
+
     let msg = completion_message(label, agent_id, outcome);
-    if crate::brain::agent::service::session_routes::deliver_to_session(parent_session_id, msg) {
-        tracing::info!("Sub-agent {agent_id} reported its result to session {parent_session_id}");
+    match deliver_to_session(parent_session_id, msg) {
+        Delivery::Delivered => {
+            tracing::info!(
+                "Sub-agent {agent_id} reported its result to session {parent_session_id}"
+            );
+        }
+        Delivery::Parked => {
+            // Not lost: it leaves when the owning channel claims the session.
+            tracing::info!(
+                "Sub-agent {agent_id}'s result is parked for session {parent_session_id} until \
+                 its channel claims it"
+            );
+        }
+        Delivery::NoRoute => {
+            // The parent is waiting on this either way, so say so rather than
+            // returning quietly.
+            tracing::warn!(
+                "Sub-agent {agent_id}'s result had nowhere to go for session \
+                 {parent_session_id}; the parent will not hear about it"
+            );
+        }
     }
 }
 

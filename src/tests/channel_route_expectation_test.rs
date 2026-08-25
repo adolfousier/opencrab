@@ -25,7 +25,7 @@ use crate::brain::agent::service::restart_recovery::{
     awaits_channel_route, claim_session, expect_channel_route, parked_count, test_guard,
 };
 use crate::brain::agent::service::session_routes::{
-    deliver_to_session, register_session_route, resolve_route,
+    Delivery, deliver_to_session, register_session_route, resolve_route,
 };
 
 type Seen = Arc<Mutex<Vec<(Uuid, String)>>>;
@@ -139,11 +139,12 @@ fn a_sub_agent_result_for_a_revived_session_parks_too() {
     let session = Uuid::new_v4();
 
     expect_channel_route(session);
-    let delivered = deliver_to_session(session, msg("sub-agent result"));
+    let outcome = deliver_to_session(session, msg("sub-agent result"));
 
-    assert!(
-        !delivered,
-        "#1206: reported as delivered while the owning channel never saw it"
+    assert_eq!(
+        outcome,
+        Delivery::Parked,
+        "#1206: the owning channel never saw it, so it must be held, not delivered"
     );
     assert_eq!(parked_count(), 1, "#1206: the result was not parked");
 }

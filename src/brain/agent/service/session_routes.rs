@@ -105,19 +105,36 @@ pub fn register_local_route(enqueue: MessageEnqueueCallback) {
     }
 }
 
+/// What happened to a message handed to [`deliver_to_session`].
+///
+/// A bare bool used to be enough, because the only two outcomes were "went
+/// out" and "nothing could take it". Parking added a third (#1206), and it
+/// reads as failure to a bool caller even though the message is safe and
+/// will leave on the next claim. `session_notify` reported exactly that as
+/// "no live route for this session", which is the opposite of what happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// Handed to the surface that owns the session, or to the local one.
+    Delivered,
+    /// Held for a channel that has not claimed the session yet. Not lost.
+    Parked,
+    /// Nothing can receive it and nothing is holding it.
+    NoRoute,
+}
+
 /// Deliver `msg` to whoever owns `session_id`, falling back to the booting
-/// surface. Returns whether it went anywhere at all.
-pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> bool {
+/// surface, parking it when a channel owns the session but has not claimed it.
+pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> Delivery {
     if let Some(route) = session_route(session_id) {
         route(session_id, msg);
-        return true;
+        return Delivery::Delivered;
     }
     // Same reasoning as `resolve_route`: an unclaimed session that recovery
     // knows came from a channel must wait for that channel, not be handed to
     // whatever this process booted on (#1206).
     if super::restart_recovery::awaits_channel_route(session_id) {
         super::restart_recovery::parking_route()(session_id, msg);
-        return false;
+        return Delivery::Parked;
     }
     let local = match LOCAL_ROUTE.lock() {
         Ok(guard) => guard.clone(),
@@ -132,7 +149,7 @@ pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> bool {
     match local {
         Some(route) => {
             route(session_id, msg);
-            true
+            Delivery::Delivered
         }
         None => {
             tracing::error!(
@@ -140,7 +157,7 @@ pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> bool {
                 "Nothing can receive a message for session {session_id}; it is dropped: {}",
                 msg.display_text
             );
-            false
+            Delivery::NoRoute
         }
     }
 }
