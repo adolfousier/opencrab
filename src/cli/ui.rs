@@ -1079,15 +1079,32 @@ async fn cmd_chat_inner(
     // finishes, push the completion into the session as a TuiEvent so the TUI
     // injects it mid-turn (if the session is processing) or starts a fresh turn
     // (if idle).
+    //
+    // A daemon has no TUI to inject into. It builds `app` all the same, but
+    // never runs its event loop, so pushing a completion into that channel
+    // delivered it nowhere and the discarded send error kept it silent — the
+    // whole of #1206. Its only surfaces are channels, so an unclaimed session
+    // parks and leaves the moment its channel claims it.
     let bg_event_sender = app.event_sender();
-    let message_enqueue_callback: crate::brain::agent::service::MessageEnqueueCallback =
+    let message_enqueue_callback: crate::brain::agent::service::MessageEnqueueCallback = if headless
+    {
+        crate::brain::agent::service::restart_recovery::parking_route()
+    } else {
         Arc::new(move |session_id, msg| {
-            let _ = bg_event_sender.send(crate::tui::events::TuiEvent::BackgroundTaskDone {
+            if let Err(e) = bg_event_sender.send(crate::tui::events::TuiEvent::BackgroundTaskDone {
                 session_id,
                 context_text: msg.context_text,
                 display_text: msg.display_text,
-            });
-        });
+            }) {
+                // The completion is gone at this point. Say so: a silently
+                // discarded send is what made this class of loss invisible.
+                tracing::error!(
+                    target: "background_task",
+                    "Could not hand session {session_id}'s completion to the TUI: {e}"
+                );
+            }
+        })
+    };
 
     // Fallback destination for a session no channel claims. A sub-agent is
     // reached from a tool with no service context, so unlike a detached
@@ -1101,9 +1118,10 @@ async fn cmd_chat_inner(
     // and sub-agents alike. Account for both and report each into the session
     // that owns it, instead of leaving that session waiting on a result that
     // can never arrive (#763, #1037, #1038).
-    let interrupted =
-        crate::brain::agent::service::restart_recovery::recover(message_enqueue_callback.clone())
-            .await;
+    let interrupted = crate::brain::agent::service::restart_recovery::recover(
+        (!headless).then(|| message_enqueue_callback.clone()),
+    )
+    .await;
     if interrupted > 0 {
         tracing::info!("Recovered {interrupted} item(s) interrupted by restart");
     }
@@ -1196,6 +1214,19 @@ async fn cmd_chat_inner(
                         let ev_tx = resume_event_sender.clone();
                         let channel = req.channel.clone();
                         let channel_chat_id = req.channel_chat_id.clone();
+                        // This revive runs a turn without passing through the
+                        // ingress handler that would claim the session, so
+                        // until its channel sees another inbound message the
+                        // route map says nothing about it. Record who it
+                        // belongs to now, so a detached command or sub-agent
+                        // finishing during that window parks for the right
+                        // channel instead of falling back to whatever this
+                        // process booted on (#1206).
+                        if channel != "tui" {
+                            crate::brain::agent::service::restart_recovery::expect_channel_route(
+                                session_id,
+                            );
+                        }
                         tracing::info!(
                             "Resuming session {} (channel: {}, chat_id: {:?})",
                             &req.session_id[..8.min(req.session_id.len())],
