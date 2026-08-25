@@ -74,7 +74,7 @@ impl Tool for SessionNotifyTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidInput("'message' is required".into()))?;
         if message.trim().is_empty() {
-            return Ok(ToolResult::error("Refusing to send an empty message"));
+            return Ok(ToolResult::error("Refusing to send an empty message".to_string()));
         }
 
         // Mechanical sender signature — from execution context, not model text.
