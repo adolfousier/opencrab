@@ -609,10 +609,16 @@ async fn complete_auto_starts_next_task() {
             "completion must confirm task 1, got: {}",
             result.output
         );
+        // #1195: auto-start is opt-in ([agent] plan_auto_start, default
+        // false) - complete must NOT start task 2, only hint at it.
         assert!(
-            result.output.contains("Started Task #2")
-                && result.output.contains("Description for task 2"),
-            "complete must auto-start task 2 with its details, got: {}",
+            !result.output.contains("Started Task #2"),
+            "complete must not auto-start task 2 by default, got: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("Next eligible: Task #2"),
+            "complete must report task 2 as the next eligible hint, got: {}",
             result.output
         );
     })
@@ -923,8 +929,9 @@ async fn plan_session_override_resolves_parent_plan() {
             .unwrap();
         assert!(done.success, "child complete failed: {:?}", done.error);
 
-        // Disk truth: the PARENT's plan advanced — task 1 Completed, task 2
-        // auto-started.
+        // Disk truth: the PARENT's plan advanced — task 1 Completed, and
+        // task 2 stays Pending (#1195: complete is a pure state transition,
+        // auto-start is opt-in via [agent] plan_auto_start).
         let parent_plan = load_plan(parent_sid)
             .await
             .expect("parent plan must still exist");
@@ -934,7 +941,7 @@ async fn plan_session_override_resolves_parent_plan() {
         );
         assert_eq!(
             parent_plan.tasks[1].status,
-            crate::tui::plan::TaskStatus::InProgress
+            crate::tui::plan::TaskStatus::Pending
         );
 
         // The child's own session never grew plan state.

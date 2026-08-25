@@ -72,7 +72,7 @@ enum PlanOperation {
         #[serde(default)]
         isolated: Option<bool>,
     },
-    /// Finish a task and auto-start the next one (returning its full details).
+    /// Finish a task (pure state transition). Auto-start of the next task is/// opt-in via `[agent] plan_auto_start` (#1195); default reports a hint only.
     Complete {
         task_order: usize,
         /// "success" (default), "fail", or "skip".
@@ -1208,7 +1208,8 @@ impl Tool for PlanTool {
          when no plan is live), `add_tasks` (append one or more tasks in a single call — the \
          primary append op), `add_task` (alias appending a single task), `start` (begin the \
          next task, or a specific one via `task_order`), `complete` (finish a task and \
-         auto-start the next), `discard` (USER-ONLY: refused for the agent unless the \
+         next eligible row is reported as a hint; auto-start is opt-in via
+         `[agent] plan_auto_start`), `discard` (USER-ONLY: refused unless the \
          session granted plan autonomy — the user discards via /discard or the plan card's \
          Discard button), `show_plan` (read-only: report the current plan + checklist progress, e.g. \
          to answer 'what's the plan / where are we'). `add_tasks`/`add_task`/`start`/`complete` \
@@ -1220,7 +1221,7 @@ impl Tool for PlanTool {
          granted. Even with autonomy you may still leave the plan for the user to Approve when \
          you judge it needs review. `revoke_autonomy` turns self-approval back off. \
          \n\nFLOW (checklist, no autonomy): init with `tasks` → WAIT for user Approve → start → (do the work) → complete → \
-         (auto-starts next) → complete → … `start` and `complete` return the FULL task details \
+         (next eligible reported as hint; cascade opt-in via plan_auto_start) → complete → … `start` and `complete` return the FULL task details \
          (description, acceptance criteria, dependencies), so the plan doubles as durable \
          memory across context compactions — call `start` with no args to re-surface the \
          in-progress task's details after a compaction. \
@@ -1261,7 +1262,7 @@ impl Tool for PlanTool {
                 "operation": {
                     "type": "string",
                     "enum": ["init", "add_tasks", "add_task", "start", "complete", "approve", "discard", "show_plan", "grant_autonomy", "revoke_autonomy"],
-                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task, auto-start next), approve (self-approve Editing→Active, only if the user granted autonomy), discard (abandon the live plan → no plan; call only when the user asks to scrap/replace it), show_plan (return the current plan state, read-only), grant_autonomy (allow self-approval this session — call only when the user says to proceed without approving), revoke_autonomy (require user Approve again)"
+                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task; reports next eligible as a hint), approve (self-approve Editing→Active, only if the user granted autonomy), discard (abandon the live plan → no plan; call only when the user asks to scrap/replace it), show_plan (return the current plan state, read-only), grant_autonomy (allow self-approval this session — call only when the user says to proceed without approving), revoke_autonomy (require user Approve again)"
                 },
                 "mode": {
                     "type": "string",
@@ -2304,30 +2305,43 @@ impl Tool for PlanTool {
                     msg.push_str(&format!("\nOutput: {o}"));
                 }
 
-                // Auto-start the next executable task and surface its details.
+                // Auto-start is OPT-IN (#1195): complete is a pure state
+                // transition by default - mark done, report the next eligible
+                // row as a passive hint, spawn nothing. Separating starting
+                // from completing means parents ticking off work they did
+                // inline can never trigger worker spawns by accident.
+                let auto_start = crate::config::Config::load()
+                    .map(|c| c.agent.plan_auto_start)
+                    .unwrap_or(false);
                 let next_order = current_plan.next_executable_task().map(|t| t.order);
-                if let Some(no) = next_order {
-                    current_plan.get_task_by_order_mut(no).unwrap().start();
-                    current_plan.status = PlanStatus::Active;
-                    let next = current_plan.get_task_by_order(no).unwrap();
-                    let details = render_task_details(current_plan, next);
-                    msg.push_str(&format!(
-                        "\n\n▶️ Started Task #{no}: {}\n{details}",
-                        next.title
-                    ));
-                } else if current_plan
+                let all_done = current_plan
                     .tasks
                     .iter()
-                    .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
-                {
+                    .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped));
+                if all_done {
                     msg.push_str(&format!(
-                        "\n\n✅ Plan complete. All {} tasks done. The checklist stays \
+                        "\n\n\u{2705} Plan complete. All {} tasks done. The checklist stays \
                          visible until this turn settles, then the plan archives.",
                         current_plan.tasks.len()
                     ));
+                } else if let Some(no) = next_order {
+                    if auto_start {
+                        current_plan.get_task_by_order_mut(no).unwrap().start();
+                        current_plan.status = PlanStatus::Active;
+                        let next = current_plan.get_task_by_order(no).unwrap();
+                        let details = render_task_details(current_plan, next);
+                        msg.push_str(&format!(
+                            "\n\n\u{25b6}\u{fe0f} Started Task #{no}: {}\n{details}",
+                            next.title
+                        ));
+                    } else {
+                        msg.push_str(&format!(
+                            "\n\nNext eligible: Task #{no} \u{2014} call 'start' with task_order={no} to begin it."
+                        ));
+                    }
                 } else {
                     msg.push_str(
-                        "\n\nNo unblocked task is ready next — remaining tasks are blocked or \
+                        "\n\nNo unblocked task is ready next \u{2014} remaining tasks are blocked or \
                          failed. Use 'start' with a task_order to retry a failed task.",
                     );
                 }
@@ -2536,7 +2550,7 @@ pub(crate) enum TaskExecutionPath {
 ///    isolation is explicitly forced. `start` blocks until the worker
 ///    returns, so when start is callable there is never a live worker: an
 ///    InProgress task under explicit isolation is a crashed leftover or an
-///    auto-started next task, both safe to hand to a fresh worker.
+///    explicitly started afterwards, both safe to hand to a fresh worker.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_task_execution(
     explicit_request: Option<bool>,
