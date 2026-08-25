@@ -14,6 +14,15 @@ name: Quick Linux Build
 
 on:
   workflow_dispatch:
+    inputs:
+      source_repository:
+        description: 'Repository to check out (owner/name)'
+        required: false
+        default: 'adolfousier/opencrabs'
+      source_ref:
+        description: 'Git ref to build (branch/tag/sha)'
+        required: false
+        default: 'main'
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,14 +30,14 @@ env:
 
 jobs:
   build:
-    name: Linux amd64 (upstream main, minimal features)
+    name: Linux amd64 (${{ inputs.source_ref }}, minimal features)
     runs-on: ubuntu-latest
     steps:
-      - name: Sync from origin (adolfousier/opencrabs main)
+      - name: Sync from origin
         uses: actions/checkout@v5
         with:
-          repository: adolfousier/opencrabs
-          ref: main
+          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.source_ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
