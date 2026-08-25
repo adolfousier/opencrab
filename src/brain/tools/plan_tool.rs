@@ -2645,7 +2645,7 @@ pub(crate) fn resolve_task_execution(
 /// `working_dir` is currently unused in v1 validation but is reserved for
 /// future per-host checks (e.g. paths under `/etc` even if relative-looking
 /// via symlinks). Pass it through so the signature does not need to change.
-pub(crate) fn validate_task_scope(scope: &TaskScope, working_dir: &Path) -> Result<(), String> {
+pub(crate) fn validate_task_scope(scope: &TaskScope, working_dir: &Path) -> Result<()> {
     use std::collections::HashSet;
     let _ = working_dir; // reserved for future per-host checks
 
@@ -2654,35 +2654,35 @@ pub(crate) fn validate_task_scope(scope: &TaskScope, working_dir: &Path) -> Resu
 
     let overlap: Vec<&&str> = do_write.intersection(&do_not_write).collect();
     if !overlap.is_empty() {
-        return Err(format!(
+        return Err(ToolError::InvalidInput(format!(
             "TaskScope overlap (paths in both do_write and do_not_write): {:?}",
             overlap
-        ));
+        )));
     }
 
     for path in do_write.iter().chain(do_not_write.iter()) {
         let p = std::path::Path::new(path);
         if p.is_absolute() {
-            return Err(format!(
+            return Err(ToolError::InvalidInput(format!(
                 "TaskScope path must be relative to working_dir ({} is absolute)",
                 path
-            ));
+            )));
         }
         if path.split(['/', '\\']).any(|seg| seg == "..") {
-            return Err(format!(
+            return Err(ToolError::InvalidInput(format!(
                 "TaskScope path must not contain '..' ({} escapes working_dir)",
                 path
-            ));
+            )));
         }
     }
 
     for tool in scope.do_call.iter().flatten() {
         if ALWAYS_EXCLUDED.contains(&tool.as_str()) {
-            return Err(format!(
+            return Err(ToolError::InvalidInput(format!(
                 "TaskScope.do_call cannot contain ALWAYS_EXCLUDED tool '{}' \
                  (harness always strips it; listing it here is a contradiction)",
                 tool
-            ));
+            )));
         }
     }
 
