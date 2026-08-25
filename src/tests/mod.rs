@@ -348,6 +348,7 @@ pub mod telegram_suggest_merge_test;
 pub mod telegram_table_render_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_topic_routing_test;
+pub mod telegram_userbot_config_test;
 pub mod tool_search_child_registry_test;
 pub mod tools_md_regression_test;
 pub mod write_opencrabs_file_inline_test;

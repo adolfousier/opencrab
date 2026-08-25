@@ -395,9 +395,33 @@ where
     }))
 }
 
+/// Telegram userbot configuration — the receive-only MTProto user session.
+///
+/// This plane logs in as the user's account, receives updates from chats the
+/// Bot API cannot see, and forwards only `allowed_chats` through the existing
+/// bot handler. It exposes no outbound-as-user capability.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelegramUserbotConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Telegram app api_id (my.telegram.org → API development tools).
+    pub api_id: Option<i64>,
+    /// Telegram app api_hash — a secret; belongs in keys.toml.
+    pub api_hash: Option<String>,
+    /// Login phone in international format (e.g. +2547…).
+    pub phone: Option<String>,
+    /// Local session path. Default: <opencrabs home>/telegram_userbot.session
+    pub session_path: Option<String>,
+    /// Chat IDs whose inbound messages may reach the agent. Empty = dry mode.
+    #[serde(default)]
+    pub allowed_chats: Vec<String>,
+}
+
 /// Telegram channel configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelegramConfig {
+    #[serde(default)]
+    pub userbot: TelegramUserbotConfig,
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]

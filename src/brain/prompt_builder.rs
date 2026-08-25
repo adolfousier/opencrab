@@ -892,6 +892,9 @@ pub(crate) fn compiled_features() -> Vec<&'static str> {
     if cfg!(feature = "telegram") {
         out.push("telegram");
     }
+    if cfg!(feature = "telegram-userbot") {
+        out.push("telegram-userbot");
+    }
     if cfg!(feature = "whatsapp") {
         out.push("whatsapp");
     }
