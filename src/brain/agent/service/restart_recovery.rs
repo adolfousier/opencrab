@@ -245,10 +245,10 @@ pub(crate) fn clear_parked_for_test() {
     if let Ok(mut parked) = PARKED.lock() {
         parked.clear();
     }
-    if let Ok(mut awaiting) = AWAITING_CHANNEL.lock() {
-        if let Some(set) = awaiting.as_mut() {
-            set.clear();
-        }
+    if let Ok(mut awaiting) = AWAITING_CHANNEL.lock()
+        && let Some(set) = awaiting.as_mut()
+    {
+        set.clear();
     }
 }
 
