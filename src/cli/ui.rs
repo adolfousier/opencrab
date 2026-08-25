@@ -1206,8 +1206,11 @@ async fn cmd_chat_inner(
                         // TUI: wire cancel token and send response via TuiEvent
                         // Non-TUI: send response back to the originating channel
                         let tg = telegram_state.clone();
+                        #[cfg(feature = "discord")]
                         let dc = discord_state.clone();
+                        #[cfg(feature = "whatsapp")]
                         let wa = whatsapp_state.clone();
+                        #[cfg(feature = "slack")]
                         let sk = slack_state.clone();
                         let token = tokio_util::sync::CancellationToken::new();
                         if channel == "tui" {
@@ -1324,6 +1327,7 @@ async fn cmd_chat_inner(
                                                 },
                                             );
                                         }
+                                        #[cfg(feature = "discord")]
                                         "discord" => {
                                             if let Some(ref cid) = channel_chat_id
                                                 && let Ok(ch_id) = cid.parse::<u64>()
@@ -1355,6 +1359,7 @@ async fn cmd_chat_inner(
                                                 }
                                             }
                                         }
+                                        #[cfg(feature = "slack")]
                                         "slack" => {
                                             if let Some(ref cid) = channel_chat_id
                                                 && let (Some(token_val), Some(client)) =

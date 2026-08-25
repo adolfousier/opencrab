@@ -88,13 +88,24 @@ pub fn build_cowork_deep_link(bot_username: &str, session_id: &str) -> String {
 
 /// Generate a QR code PNG from an invite link. Returns (png_bytes, file_path).
 /// Reuses `render_qr_png` from whatsapp_connect.
+#[cfg(feature = "whatsapp")]
 pub fn build_invite_qr(invite_link: &str) -> Option<(Vec<u8>, std::path::PathBuf)> {
     let png_bytes = crate::brain::tools::whatsapp_connect::render_qr_png(invite_link)?;
+    write_invite_qr(&png_bytes)
+}
+
+#[cfg(not(feature = "whatsapp"))]
+pub fn build_invite_qr(_invite_link: &str) -> Option<(Vec<u8>, std::path::PathBuf)> {
+    // QR rendering lives behind the whatsapp feature (qrcode dep); degrade gracefully
+    None
+}
+
+fn write_invite_qr(png_bytes: &[u8]) -> Option<(Vec<u8>, std::path::PathBuf)> {
     let dir = opencrabs_home().join("tmp");
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("cowork_invite_qr.png");
-    std::fs::write(&path, &png_bytes).ok()?;
-    Some((png_bytes, path))
+    std::fs::write(&path, png_bytes).ok()?;
+    Some((png_bytes.to_vec(), path))
 }
 
 /// Append a user_id to a group's per-group allowlist
