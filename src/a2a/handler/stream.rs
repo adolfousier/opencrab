@@ -13,7 +13,6 @@ use uuid::Uuid;
 pub type StreamTx = mpsc::Sender<StreamEvent>;
 
 /// Handle `message/stream` -- creates a task, spawns background processing,
-#[allow(clippy::result_large_err)] // pre-existing signature; clippy 1.98 tightened this lint after this code shipped
 /// returns a receiver that yields SSE events.
 // The error variant is a full `JsonRpcResponse`, which is the protocol reply
 // this handler must produce on the failure path; boxing it would only move

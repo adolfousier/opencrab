@@ -454,11 +454,13 @@ mod send_input_tool {
         assert!(!result.success);
         // #1184 ripple: completed agents are pointed at resume_agent instead of
         // the old generic "not running" rejection.
-        assert!(result
-            .error
-            .as_ref()
-            .unwrap()
-            .contains("use resume_agent to continue"));
+        assert!(
+            result
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("use resume_agent to continue")
+        );
     }
 
     #[tokio::test]
