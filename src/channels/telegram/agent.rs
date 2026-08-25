@@ -407,7 +407,7 @@ impl TelegramAgent {
                                                     }
                                                     host_info => {
                                                         let req = match host_info {
-                                                            Some((full, false)) => bot_clone
+                                                            Some((full, _)) => bot_clone
                                                                 .edit_message_text(
                                                                     chat_id, mid, &full,
                                                                 )
