@@ -96,6 +96,12 @@ pub(crate) struct StreamingState {
     pub(crate) flow_rich: bool,
     /// Response text from streaming chunks — own message at bottom
     pub(crate) response: String,
+    /// The bubble the FINAL response landed in (id + exact HTML), captured on
+    /// the classic HTML delivery path so `suggest_options` can merge its
+    /// keyboard onto the answer instead of posting a separate "Suggested
+    /// next" message. Rich/voice deliveries stay None (their bubbles are not
+    /// safe to re-edit as HTML); None = suggestions fall back to standalone.
+    pub(crate) final_bubble: Option<(MessageId, String)>,
     pub(crate) dirty: bool,
     /// When true, the edit loop deletes the response message and creates a fresh one
     /// at the bottom of the chat (so it appears below tool/approval messages).

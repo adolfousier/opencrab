@@ -50,11 +50,9 @@ pub(crate) fn echo_fallback(text: &str, chooser: Option<&str>) -> String {
     }
 }
 
-/// Post the follow-up suggestion buttons under the response and stash the option
-/// list on state so the tap handler can resolve `idx -> text`. No-op on empty.
 /// Fold-in is a FALLBACK (#1178 D3): full-text buttons primary, but if ANY
-/// option exceeds 30 chars the texts fold into the message body as a
-/// numbered list and the buttons collapse to one row of numbers (D4) —
+/// option exceeds 30 chars the texts fold into the host message body as a
+/// rich numbered list and the buttons collapse to one row of numbers (D4) —
 /// a column of long labels is unreadable and a row of them overflows.
 /// The stash always holds the ORIGINAL options either way, so taps
 /// resolve verbatim text, never bare digits.
@@ -62,15 +60,14 @@ fn should_fold(options: &[String]) -> bool {
     options.iter().any(|o| o.chars().count() > 30)
 }
 
-/// The message body: bare header in full-text mode; header plus the numbered
-/// option list when folded.
-fn build_body(fold: bool, options: &[String]) -> String {
-    if !fold {
-        return String::from("\u{1f4a1} Suggested next:");
-    }
-    let mut b = String::from("\u{1f4a1} Suggested next:");
+/// The folded option list as rich HTML: bold indices, escaped option text.
+/// No "Suggested next" header — the list rides directly under the answer
+/// text in the same bubble (#tg-suggest-merge), so the label would only
+/// duplicate what the buttons already say.
+fn folded_list_html(options: &[String]) -> String {
+    let mut b = String::new();
     for (i, opt) in options.iter().enumerate() {
-        b.push_str(&format!("\n{}. {opt}", i + 1));
+        b.push_str(&format!("\n<b>{}</b> {}", i + 1, super::markdown::escape_html(opt)));
     }
     b
 }
@@ -82,6 +79,11 @@ pub(crate) async fn render_suggestions(
     chat_id: ChatId,
     thread_id: Option<ThreadId>,
     options: Vec<String>,
+    // Merge candidate captured by deliver_final_response: the bubble the final
+    // response landed in (id + exact HTML). Some = attach the keyboard to THAT
+    // bubble — one message instead of two, no "Suggested next" header. None or
+    // failed edit = standalone fallback below.
+    merge_host: Option<(teloxide::types::MessageId, String)>,
 ) {
     use teloxide::prelude::Requester;
 
@@ -89,14 +91,7 @@ pub(crate) async fn render_suggestions(
         return;
     }
 
-    // Fold-in is a FALLBACK (#1178 D3): full-text buttons primary, but if ANY
-    // option exceeds 30 chars the texts fold into the message body as a
-    // numbered list and the buttons collapse to one row of numbers (D4) —
-    // a column of long labels is unreadable and a row of them overflows.
-    // The stash always holds the ORIGINAL options either way, so taps
-    // resolve verbatim text, never bare digits.
     let fold = should_fold(&options);
-    let body = build_body(fold, &options);
 
     // Full-text mode: one button per suggestion in a single column so long
     // labels stay readable. Folded mode: one row of numeric buttons (D4).
@@ -136,19 +131,69 @@ pub(crate) async fn render_suggestions(
             .collect()
     };
 
-    state.set_pending_followups(session_id, options).await;
-
     let keyboard = InlineKeyboardMarkup::new(rows);
-    let mut req = bot.send_message(chat_id, body).reply_markup(keyboard);
-    req = req.parse_mode(ParseMode::Html);
-    if let Some(tid) = thread_id {
-        req = req.message_thread_id(tid);
+
+    // Primary path: MERGE onto the answer bubble (#tg-suggest-merge). In fold
+    // mode the rich numbered list is appended under the answer text; in full
+    // mode the buttons carry everything and no text is added at all.
+    let mut placed = false;
+    if let Some((mid, ref html)) = merge_host {
+        let mut new_html = html.clone();
+        if fold {
+            new_html.push_str("\n");
+            new_html.push_str(folded_list_html(&options).trim_start());
+        }
+        match bot
+            .edit_message_text(chat_id, mid, &new_html)
+            .parse_mode(ParseMode::Html)
+            .reply_markup(keyboard.clone())
+            .await
+        {
+            Ok(_) => {
+                placed = true;
+                state
+                    .set_pending_followups(
+                        session_id,
+                        options.clone(),
+                        Some(super::state::MergedHost {
+                            message_id: mid,
+                            html: new_html,
+                        }),
+                    )
+                    .await;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Telegram suggest_options: merge onto msg {mid} failed ({e}) — standalone fallback"
+                );
+            }
+        }
     }
-    if let Err(e) = req.await {
-        tracing::warn!("Telegram suggest_options: send failed: {e}");
-        // The buttons never landed — drop the stash so a stale entry can't
-        // swallow an unrelated future tap.
-        state.clear_pending_followups(session_id).await;
+
+    // Fallback (no merge candidate, or the edit lost a race / grew too old):
+    // standalone block. The header sentence is still gone per #tg-suggest-merge
+    // — folded mode shows just the rich list, full mode needs SOME text for the
+    // Bot API to accept the message, so it degrades to the bare 💡 marker.
+    if !placed {
+        let body = if fold {
+            folded_list_html(&options).trim_start().to_string()
+        } else {
+            String::from("\u{1f4a1}")
+        };
+        state
+            .set_pending_followups(session_id, options.clone(), None)
+            .await;
+        let mut req = bot.send_message(chat_id, body).reply_markup(keyboard);
+        req = req.parse_mode(ParseMode::Html);
+        if let Some(tid) = thread_id {
+            req = req.message_thread_id(tid);
+        }
+        if let Err(e) = req.await {
+            tracing::warn!("Telegram suggest_options: send failed: {e}");
+            // The buttons never landed — drop the stash so a stale entry can't
+            // swallow an unrelated future tap.
+            state.clear_pending_followups(session_id).await;
+        }
     }
 }
 
@@ -160,7 +205,17 @@ mod fold_tests {
     fn no_fold_when_all_options_short() {
         let opts = vec!["Ship it".to_string(), "Hold".to_string()];
         assert!(!should_fold(&opts));
-        assert_eq!(build_body(false, &opts), "\u{1f4a1} Suggested next:");
+    }
+
+    #[test]
+    fn folded_list_is_rich_html_without_header() {
+        let opts = vec!["Ship it".to_string(), "Review & merge".to_string()];
+        let body = folded_list_html(&opts);
+        // Header is gone (#tg-suggest-merge) — the list rides under the answer.
+        assert!(!body.contains("Suggested next"));
+        // Rich formatting: bold indices.
+        assert!(body.contains("<b>1</b> Ship it"));
+        assert!(body.contains("<b>2</b> Review &amp; merge"));
     }
 
     #[test]
@@ -171,10 +226,9 @@ mod fold_tests {
         assert!(long.chars().count() > 30);
         let opts = vec![short.clone(), long.clone()];
         assert!(should_fold(&opts));
-        let body = build_body(true, &opts);
-        assert!(body.starts_with("\u{1f4a1} Suggested next:"));
-        assert!(body.contains("1. Ship it"));
-        assert!(body.contains(&format!("2. {long}")));
+        let body = folded_list_html(&opts);
+        assert!(body.contains("<b>1</b> Ship it"));
+        assert!(body.contains(&format!("<b>2</b> {long}")));
     }
 
     #[test]

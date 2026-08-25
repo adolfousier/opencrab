@@ -292,7 +292,12 @@ impl TelegramAgent {
                                                  or never set)"
                                             );
                                         }
-                                        t.map(|text| (sid, text))
+                                        // (session, chosen text, merged host). The host is
+                                        // Some when the keyboard was merged onto the answer
+                                        // bubble (#tg-suggest-merge) — the pick record must
+                                        // then PRESERVE that answer text instead of
+                                        // replacing it.
+                                        t.map(|(text, host)| (sid, text, host))
                                     }
                                     None => {
                                         tracing::warn!(
@@ -302,7 +307,7 @@ impl TelegramAgent {
                                         None
                                     }
                                 };
-                                if let Some((sid, text)) = taken {
+                                if let Some((sid, text, merged_host)) = taken {
                                     let (chat_id, thread_id, prompt_msg_id) = query
                                         .message
                                         .as_ref()
@@ -359,18 +364,48 @@ impl TelegramAgent {
                                                     picked_block(&text, chooser.as_deref()),
                                             );
                                         let recorded = match prompt_msg_id {
-                                            Some(mid) => bot_clone
-                                                .edit_message_text(chat_id, mid, &picked)
-                                                .parse_mode(teloxide::types::ParseMode::Html)
-                                                .await
-                                                .map_err(|e| {
-                                                    tracing::warn!(
-                                                        "Telegram followup tap: could not edit the \
-                                                         suggestion block ({e}) — falling back to \
-                                                         a quoted echo"
-                                                    );
-                                                })
-                                                .is_ok(),
+                                            Some(mid) => {
+                                                // Merged keyboard (#tg-suggest-merge): the
+                                                // buttons live ON the answer bubble, so a
+                                                // whole-text replace would ERASE the answer.
+                                                // When this bubble is the recorded host,
+                                                // keep its HTML and append the pick record
+                                                // instead — and strip the now-dead buttons
+                                                // with an empty markup.
+                                                let preserved =
+                                                    merged_host.as_ref().and_then(|h| {
+                                                        (h.message_id == mid)
+                                                            .then(|| {
+                                                                format!("{}\n\n{}", h.html, picked)
+                                                            })
+                                                    });
+                                                let edit_req = match preserved {
+                                                    Some(full) => bot_clone
+                                                        .edit_message_text(chat_id, mid, &full)
+                                                        .parse_mode(
+                                                            teloxide::types::ParseMode::Html,
+                                                        )
+                                                        .reply_markup(
+                                                            teloxide::types::InlineKeyboardMarkup::
+                                                                new(Vec::new()),
+                                                        ),
+                                                    None => bot_clone
+                                                        .edit_message_text(chat_id, mid, &picked)
+                                                        .parse_mode(
+                                                            teloxide::types::ParseMode::Html,
+                                                        ),
+                                                };
+                                                edit_req
+                                                    .await
+                                                    .map_err(|e| {
+                                                        tracing::warn!(
+                                                            "Telegram followup tap: could not edit the \
+                                                             suggestion block ({e}) — falling back to \
+                                                             a quoted echo"
+                                                        );
+                                                    })
+                                                    .is_ok()
+                                            }
                                             None => false,
                                         };
                                         if !recorded {

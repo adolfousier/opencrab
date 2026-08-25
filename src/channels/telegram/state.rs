@@ -7,9 +7,32 @@
 use super::cowork;
 use std::collections::HashMap;
 use teloxide::prelude::Bot;
+use teloxide::types::MessageId;
 use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+/// The answer bubble a merged suggestion keyboard rides on.
+///
+/// When `suggest_options` attaches its buttons to the final response bubble
+/// instead of posting a separate "Suggested next" message, the tap handler
+/// needs the bubble's exact HTML to record the pick WITHOUT erasing the
+/// answer text (`edit_message_text` replaces the whole body).
+#[derive(Clone)]
+pub(crate) struct MergedHost {
+    pub message_id: MessageId,
+    /// HTML last rendered in that bubble (final response text, plus the
+    /// folded option list when present).
+    pub html: String,
+}
+
+/// One session's pending follow-up suggestion set: the options themselves
+/// plus, when the buttons were merged onto the answer bubble, that host.
+#[derive(Clone)]
+pub(crate) struct PendingFollowupSet {
+    pub options: Vec<String>,
+    pub host: Option<MergedHost>,
+}
 
 /// Photo buffer entry: (img_marker, Optional caption)
 type PhotoEntry = (String, Option<String>);
@@ -59,7 +82,7 @@ pub struct TelegramState {
     /// chosen suggestion as the user's next message. Keyed by session so the
     /// tap handler resolves `idx -> suggestion string`; cleared on tap or when
     /// the user sends anything.
-    pending_followups: Mutex<HashMap<Uuid, Vec<String>>>,
+    pending_followups: Mutex<HashMap<Uuid, PendingFollowupSet>>,
     /// Solo-owner auto-registration cache (#1155): chat_id → decision already
     /// reached. `true` = eligible solo group, full owner catalog registered;
     /// `false` = evaluated and ineligible. Cleared on membership events so the
@@ -525,20 +548,34 @@ impl TelegramState {
 
     /// Stash this session's optional follow-up suggestions (#597) so the tap
     /// handler can resolve `idx -> suggestion string`. Replaces any prior set.
-    pub async fn set_pending_followups(&self, session_id: Uuid, options: Vec<String>) {
-        self.pending_followups
-            .lock()
-            .await
-            .insert(session_id, options);
+    /// `host` is set when the keyboard was MERGED onto the final response
+    /// bubble: the tap handler uses it to record the pick without erasing
+    /// the answer text.
+    pub async fn set_pending_followups(
+        &self,
+        session_id: Uuid,
+        options: Vec<String>,
+        host: Option<MergedHost>,
+    ) {
+        self.pending_followups.lock().await.insert(
+            session_id,
+            PendingFollowupSet { options, host },
+        );
     }
 
     /// Take a tapped follow-up suggestion by index, consuming the WHOLE set for
     /// the session (one suggestion starts one turn; the rest are stale). Returns
-    /// the suggestion string, or None if nothing is pending or the index is out
+    /// the suggestion string plus the merged host (when the keyboard lived on
+    /// the answer bubble), or None if nothing is pending or the index is out
     /// of range.
-    pub async fn take_pending_followup(&self, session_id: Uuid, idx: usize) -> Option<String> {
-        let options = self.pending_followups.lock().await.remove(&session_id)?;
-        options.get(idx).cloned()
+    pub async fn take_pending_followup(
+        &self,
+        session_id: Uuid,
+        idx: usize,
+    ) -> Option<(String, Option<MergedHost>)> {
+        let set = self.pending_followups.lock().await.remove(&session_id)?;
+        let host = set.host;
+        set.options.get(idx).cloned().map(|text| (text, host))
     }
 
     /// Drop this session's pending follow-up suggestions (the user sent their

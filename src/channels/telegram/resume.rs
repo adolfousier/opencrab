@@ -129,6 +129,7 @@ pub(crate) async fn resume_session(
         flow_status: None,
         flow_rich: false,
         response: String::new(),
+        final_bubble: None,
         dirty: false,
         recreate: false,
         header_preview: None,
