@@ -45,6 +45,11 @@ fn handle_alive(handles: &HashMap<String, JoinHandle<()>>, name: &str) -> bool {
     handles.get(name).is_some_and(|h| !h.is_finished())
 }
 
+#[cfg(feature = "telegram-userbot")]
+pub(crate) fn userbot_action(enabled: bool, session_exists: bool, alive: bool) -> ChannelAction {
+    channel_action(enabled && session_exists, alive)
+}
+
 /// Manages running channel agents, allowing dynamic spawn/stop on config reload.
 pub struct ChannelManager {
     handles: tokio::sync::Mutex<HashMap<String, JoinHandle<()>>>,
@@ -97,6 +102,9 @@ impl ChannelManager {
 
         #[cfg(feature = "telegram")]
         self.reconcile_telegram(config, &mut handles).await;
+
+        #[cfg(feature = "telegram-userbot")]
+        self.reconcile_telegram_userbot(config, &mut handles).await;
 
         #[cfg(feature = "whatsapp")]
         self.reconcile_whatsapp(config, &mut handles).await;
@@ -186,6 +194,51 @@ impl ChannelManager {
             ChannelAction::Stop => {
                 if let Some(handle) = handles.remove("telegram") {
                     tracing::info!("ChannelManager: stopping Telegram bot");
+                    handle.abort();
+                }
+            }
+            ChannelAction::Noop => {}
+        }
+    }
+
+    /// Independently reconcile passive MTProto capture. No Bot API token or
+    /// agent service is required because this plane only persists allowlisted
+    /// text for explicit retrieval through `channel_search`.
+    #[cfg(feature = "telegram-userbot")]
+    async fn reconcile_telegram_userbot(
+        &self,
+        config: &Config,
+        handles: &mut HashMap<String, JoinHandle<()>>,
+    ) {
+        let userbot = &config.channels.telegram.userbot;
+        let session_exists = crate::channels::telegram::userbot::login::session_exists(userbot);
+        if userbot.enabled && !session_exists {
+            tracing::info!(
+                "ChannelManager: Telegram userbot enabled but not logged in; run \
+                 `opencrabs channel userbot-login`"
+            );
+        }
+        match userbot_action(
+            userbot.enabled,
+            session_exists,
+            handle_alive(handles, "telegram-userbot"),
+        ) {
+            ChannelAction::Start => {
+                let messages = crate::db::ChannelMessageRepository::new(self.db_pool.clone());
+                match crate::channels::telegram::userbot::watch::spawn(userbot.clone(), messages)
+                    .await
+                {
+                    Ok(handle) => {
+                        handles.insert("telegram-userbot".to_owned(), handle);
+                    }
+                    Err(error) => {
+                        tracing::error!("ChannelManager: Telegram userbot failed to start: {error}")
+                    }
+                }
+            }
+            ChannelAction::Stop => {
+                if let Some(handle) = handles.remove("telegram-userbot") {
+                    tracing::info!("ChannelManager: stopping Telegram userbot");
                     handle.abort();
                 }
             }

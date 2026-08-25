@@ -76,3 +76,38 @@ fn file_is_owner_only() {
         & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+#[test]
+fn relative_session_path_is_profile_scoped() {
+    let home = crate::config::opencrabs_home();
+    let config = crate::config::TelegramUserbotConfig {
+        session_path: Some("sessions/userbot.json".to_owned()),
+        ..Default::default()
+    };
+    assert_eq!(
+        crate::channels::telegram::userbot::session_file(&config),
+        home.join("sessions/userbot.json")
+    );
+}
+
+#[tokio::test]
+async fn failed_dirty_save_is_retried() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let blocked_parent = dir.path().join("blocked");
+    std::fs::write(&blocked_parent, "not a directory").expect("block parent");
+    let path = blocked_parent.join("session.json");
+    let session = FileSession::load(&path).expect("load");
+    session.set_home_dc_id(4).await.expect("mutate");
+    assert!(session.save_if_dirty().is_err());
+
+    std::fs::remove_file(&blocked_parent).expect("remove blocker");
+    std::fs::create_dir(&blocked_parent).expect("repair parent");
+    session.save_if_dirty().expect("retry dirty save");
+    assert_eq!(
+        FileSession::load(&path)
+            .expect("reload")
+            .home_dc_id()
+            .expect("home dc"),
+        4
+    );
+}

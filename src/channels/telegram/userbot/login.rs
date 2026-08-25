@@ -311,3 +311,9 @@ pub(crate) async fn cmd_userbot_login(config: &Config, use_code: bool) -> Result
     );
     Ok(())
 }
+
+/// True when the local session file exists. Authorization is verified by the
+/// watch loop before it starts consuming updates.
+pub(crate) fn session_exists(config: &TelegramUserbotConfig) -> bool {
+    session_file(config).is_file()
+}

@@ -95,23 +95,46 @@ impl FileSession {
         })
     }
 
-    /// Persist unconditionally: tmp file + rename, owner-only permissions.
+    /// Persist unconditionally with an owner-only temp file and atomic replace.
     pub(crate) fn save(&self) -> anyhow::Result<()> {
+        use std::io::Write as _;
+
         let snapshot = {
             let guard = self
                 .data()
-                .map_err(|e| anyhow::anyhow!("saving session: {e}"))?;
+                .map_err(|error| anyhow::anyhow!("saving session: {error}"))?;
             PersistedSession::from(&*guard)
         };
         let json = serde_json::to_vec_pretty(&snapshot)?;
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)?;
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("session path has no parent"))?;
+        std::fs::create_dir_all(parent)?;
+
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(".telegram-userbot-").suffix(".tmp");
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+            use std::os::unix::fs::PermissionsExt as _;
+            builder.permissions(std::fs::Permissions::from_mode(0o600));
         }
-        std::fs::rename(&tmp, &self.path)?;
+        let mut file = builder.tempfile_in(parent)?;
+        file.write_all(&json)?;
+        file.as_file().sync_all()?;
+        file.persist(&self.path).map_err(|error| error.error)?;
+        Ok(())
+    }
+
+    /// Persist only when the MTProto session mutated since the previous tick.
+    pub(crate) fn save_if_dirty(&self) -> anyhow::Result<()> {
+        if !self.dirty.swap(false, Ordering::Relaxed) {
+            return Ok(());
+        }
+        if let Err(error) = self.save() {
+            self.mark_dirty();
+            return Err(error);
+        }
         Ok(())
     }
 

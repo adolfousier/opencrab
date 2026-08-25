@@ -10,16 +10,18 @@ This branch adds only a locally authenticated, receive-only Telegram userbot ing
 
 ## Included
 
-1. Cargo feature gating and the minimum gramers dependencies.
+1. Cargo feature gating and the minimum grammers dependencies.
 2. QR/code/2FA login with a local session file written atomically and permissioned `0600` on Unix.
-3. A receive-only update loop.
+3. A receive-only update loop that passively stores text under the `telegram-userbot` channel key.
 4. A pre-conversion, pre-storage chat allowlist; empty means dry mode.
-5. Independent ChannelManager lifecycle/reconciliation.
+5. Independent ChannelManager lifecycle/reconciliation; no Bot API token required.
 6. Own-message, via-bot, and bot-sender loop prevention.
-7. Focused configuration, login, session, reconciliation, and watch tests.
+7. Explicit retrieval through the existing `channel_search` tool; no automatic LLM invocation.
+8. Focused configuration, session, lifecycle, boundary, and retrieval-schema tests.
 
 ## Explicit non-goals
 
+- No automatic LLM invocation or Bot API reply from captured messages.
 - No `userbot/tools/` module or dynamic tool definitions.
 - No message send, edit, reaction, scheduling, wait-for-reply, or send-to-phone path.
 - No media download or filesystem output surface.
