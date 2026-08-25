@@ -135,7 +135,6 @@ async fn normal_turn_is_tracked_resume_turn_is_not() {
             None,
             None,
             None,
-            None,
             "tui",
             None,
         )

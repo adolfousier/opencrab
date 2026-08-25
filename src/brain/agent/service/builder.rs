@@ -302,13 +302,11 @@ pub struct AgentService {
     /// Callback for requesting tool approval from user
     pub(super) approval_callback: Option<ApprovalCallback>,
 
-    /// Callback the `follow_up_question` tool uses to ask the user a
+    /// Deprecated stub kept for layout stability.
     /// discrete-choice question and block until they pick an option.
     /// Set by channel handlers during agent service construction
     /// (Telegram inline keyboard, Discord components, etc.); None on
     /// channels with no interactive surface.
-    pub(super) question_callback: Option<super::QuestionCallback>,
-
     /// Callback for reporting progress during tool execution
     pub(super) progress_callback: Option<ProgressCallback>,
 
@@ -423,7 +421,6 @@ impl AgentService {
             context_limit: config.agent.context_limit,
             max_tokens: config.agent.max_tokens,
             approval_callback: None,
-            question_callback: None,
             progress_callback: None,
             message_queue_callback: None,
             message_enqueue_callback: None,
@@ -677,13 +674,6 @@ impl AgentService {
     /// Set the approval callback for interactive tool approval
     pub fn with_approval_callback(mut self, callback: Option<ApprovalCallback>) -> Self {
         self.approval_callback = callback;
-        self
-    }
-
-    /// Set the question callback the `follow_up_question` tool uses to
-    /// ask the user a discrete-choice question.
-    pub fn with_question_callback(mut self, callback: Option<super::QuestionCallback>) -> Self {
-        self.question_callback = callback;
         self
     }
 

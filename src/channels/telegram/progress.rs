@@ -161,7 +161,7 @@ pub(crate) fn build_progress_cb(
             // Optional follow-up suggestions (#597): post tap-to-send
             // buttons under the response. Non-blocking — spawned like the
             // other async arms; a tap injects the suggestion as a new turn.
-            ProgressEvent::SuggestedFollowups(options) => {
+            ProgressEvent::SuggestedOptions(options) => {
                 // Buffer the options and render AFTER the final delivery so the
                 // buttons are always the last thing in the chat, and the stash
                 // is set fresh at turn end (#724 / #723). Only the latest set

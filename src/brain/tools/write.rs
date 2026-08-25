@@ -23,6 +23,10 @@ struct WriteInput {
     /// Whether to create parent directories if they don't exist
     #[serde(default)]
     create_dirs: bool,
+
+    /// Confirm overwriting a file this session has not fully read (#1168)
+    #[serde(default)]
+    overwrite_read_confirm: bool,
 }
 
 #[async_trait]
@@ -50,6 +54,11 @@ impl Tool for WriteTool {
                 "create_dirs": {
                     "type": "boolean",
                     "description": "Whether to create parent directories if they don't exist (default: false)",
+                    "default": false
+                },
+                "overwrite_read_confirm": {
+                    "type": "boolean",
+                    "description": "Required to overwrite an existing file that this session has not fully read (a windowed start_line/line_count read does not count). Confirms you intend a blind replace.",
                     "default": false
                 }
             },
@@ -154,6 +163,24 @@ impl Tool for WriteTool {
             )));
         }
 
+        // Partial-view overwrite guard (#1168): a windowed read is not a
+        // basis for replacing a file wholesale — lines outside the window
+        // would be destroyed unseen. Require either a prior full read in
+        // this session or an explicit confirm.
+        if path.exists()
+            && !input.overwrite_read_confirm
+            && !super::read_state::was_fully_read(context.session_id, &path)
+        {
+            let size = fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+            return Ok(ToolResult::error(format!(
+                "Refusing to overwrite '{}': file exists ({} bytes) but was not fully read \
+                 in this session — a windowed read doesn't count. Read the whole file first, \
+                 or pass \"overwrite_read_confirm\": true to confirm.",
+                path.display(),
+                size
+            )));
+        }
+
         // Never let a raw write corrupt the OpenCrabs config.toml/keys.toml (#713):
         // a broken write there takes down all API keys and the bot token. Deny it,
         // tell the agent why, and leave the file untouched.
@@ -178,10 +205,17 @@ impl Tool for WriteTool {
             )));
         }
 
+        // One writer at a time on this path (#1153). Advisory, held only
+        // across the write; a contended write proceeds and says so rather
+        // than refusing, since a blocked save is worse than an interleave.
+        let write_lock = super::path_lock::acquire(&path);
+        let contended = write_lock.as_ref().is_some_and(|l| !l.is_held());
+
         // Write the file
         fs::write(&path, &input.content)
             .await
             .map_err(ToolError::Io)?;
+        drop(write_lock);
 
         // The session now knows the file as what it just wrote, so its next
         // write is not mistaken for a stale one.
@@ -195,11 +229,15 @@ impl Tool for WriteTool {
                 .await;
         }
 
-        let message = format!(
+        let mut message = format!(
             "Successfully wrote {} bytes to {}",
             input.content.len(),
             path.display()
         );
+        // An overlapping write is reported rather than swallowed.
+        if contended {
+            message.push_str(&super::path_lock::contention_notice(&path));
+        }
 
         Ok(ToolResult::success(message)
             .with_metadata("path".to_string(), path.display().to_string())

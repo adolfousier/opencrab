@@ -28,13 +28,12 @@ pub(crate) fn register_core_agent_tools(
 ) -> Arc<crate::brain::tools::subagent::SubAgentManager> {
     use crate::brain::tools::{
         bash::BashTool, code_exec::CodeExecTool, config_tool::ConfigTool, context::ContextTool,
-        doc_gen::GenerateDocumentTool, doc_parser::DocParserTool, edit::EditTool,
-        follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
-        http::HttpClientTool, load_brain_file::LoadBrainFileTool, ls::LsTool,
+        doc_gen::GenerateDocumentTool, doc_parser::DocParserTool, edit::EditTool, glob::GlobTool,
+        grep::GrepTool, http::HttpClientTool, load_brain_file::LoadBrainFileTool, ls::LsTool,
         memory_search::MemorySearchTool, notebook::NotebookEditTool,
         pdf_to_images::PdfToImagesTool, plan_tool::PlanTool, read::ReadTool,
         rename_session::RenameSessionTool, session_search::SessionSearchTool,
-        slash_command::SlashCommandTool, suggest_followups::SuggestFollowupsTool,
+        slash_command::SlashCommandTool, suggest_options::SuggestOptionsTool,
         web_search::WebSearchTool, write::WriteTool, write_opencrabs_file::WriteOpenCrabsFileTool,
     };
     // Phase 1: Essential file operations
@@ -94,6 +93,13 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(crate::brain::tools::goal_manage::GoalManageTool));
     // A2A send — agent can communicate with remote A2A agents
     tool_registry.register(Arc::new(crate::brain::tools::a2a_send::A2aSendTool::new()));
+    tool_registry.register(Arc::new(
+        crate::brain::tools::profile_list::ProfileListTool::new(),
+    ));
+    // Tasks list — one roster of sub-agents + detached commands (#1160)
+    tool_registry.register(Arc::new(
+        crate::brain::tools::tasks_list::TasksListTool::new(),
+    ));
     // Config management (read/write config.toml, commands.toml)
     tool_registry.register(Arc::new(ConfigTool));
     // Slash command invocation (agent can call any slash command)
@@ -102,8 +108,7 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(RenameSessionTool));
     // Follow-up question — agent asks the user a multi-choice question
     // mid-task and blocks until they click an option button.
-    tool_registry.register(Arc::new(FollowUpQuestionTool));
-    tool_registry.register(Arc::new(SuggestFollowupsTool));
+    tool_registry.register(Arc::new(SuggestOptionsTool));
     // Tool discovery — lets the agent activate extended tools on demand
     // (lazy-tools mode). Holds the registry Arc so it can search all tools;
     // harmless when lazy_tools is off (just one more always-available tool).

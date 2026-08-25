@@ -7,6 +7,8 @@
 //! logged and the owner is notified even when the joining user isn't
 //! allowlisted yet (the "can't see bot ID" fix).
 
+use std::sync::Arc;
+
 use teloxide::Bot;
 use teloxide::prelude::Message;
 use teloxide::prelude::Requester;
@@ -27,7 +29,7 @@ pub(crate) async fn handle_member_event(
     msg: &Message,
     user: &User,
     cfg: &Config,
-    telegram_state: &TelegramState,
+    telegram_state: &Arc<TelegramState>,
 ) -> bool {
     let user_id = user.id.0 as i64;
     // ── Service message: member join detection ──────────────────────────
@@ -284,6 +286,20 @@ pub(crate) async fn handle_member_event(
                 }
             }
         }
+
+        // #1155: any join activity (the bot itself, a human, another bot) in an
+        // unconfigured group triggers solo-owner evaluation. Spawned so the
+        // service-message path never blocks on API round-trips.
+        {
+            let bot = bot.clone();
+            let cfg = cfg.clone();
+            let state = telegram_state.clone();
+            let chat_id = msg.chat.id.0;
+            tokio::spawn(async move {
+                super::menu_auto::maybe_auto_register(&bot, chat_id, &cfg, &state).await;
+            });
+        }
+
         // Service messages have no further content to process
         return true;
     }
@@ -302,6 +318,20 @@ pub(crate) async fn handle_member_event(
             name,
             left.is_bot,
         );
+
+        // #1155: membership changed in an unconfigured group — forget the
+        // cached solo-owner decision, and if the OWNER departed a
+        // solo-registered group, clear their scoped menu.
+        {
+            let bot = bot.clone();
+            let cfg = cfg.clone();
+            let state = telegram_state.clone();
+            tokio::spawn(async move {
+                super::menu_auto::handle_membership_change(&bot, chat_id, uid as i64, &cfg, &state)
+                    .await;
+            });
+        }
+
         return true;
     }
     false

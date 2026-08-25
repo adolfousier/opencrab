@@ -23,7 +23,7 @@
 //! gate's `RequireApproval`). Under yolo (`auto_approve = true`),
 //! `requires_approval` never prompts; this gate's `RequireApproval`
 //! only fires during Editing, which is entered only when the user hits
-//! `/plan` themselves (the interactive `question_callback` discriminator).
+//! `/plan` themselves (the interactive-prompt discriminator).
 //!
 //! Denials return deterministic, instructive strings so the model can
 //! navigate to the allowed alternative instead of flailing.

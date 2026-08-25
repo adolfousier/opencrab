@@ -266,7 +266,7 @@ impl EventHandler for Handler {
             // Optional follow-up suggestion tapped (#598): inject the chosen
             // suggestion as the user's next message (a fresh turn). Options were
             // stashed under `followup:<id>:<idx>` via the TTL-bounded select map.
-            if let Some(rest) = custom_id.strip_prefix(super::suggest_followups::FOLLOWUP_PREFIX) {
+            if let Some(rest) = custom_id.strip_prefix(super::suggest_options::FOLLOWUP_PREFIX) {
                 let ttl = self.config_rx.borrow().channels.discord.component_ttl_hours;
                 let picked: Option<String> = if let Some((id, idx_str)) = rest.rsplit_once(':') {
                     match (
@@ -756,29 +756,6 @@ impl EventHandler for Handler {
                         )
                         .await;
                 }
-                return;
-            }
-
-            // Follow-up question click: `q:<id>:<idx>`. Resolves the
-            // pending question and returns the chosen option string to
-            // the suspended `follow_up_question` tool.
-            if let Some(rest) = custom_id.strip_prefix("q:") {
-                let mut parts = rest.splitn(2, ':');
-                let q_id = parts.next().unwrap_or("");
-                let idx: usize = parts.next().unwrap_or("").parse().unwrap_or(usize::MAX);
-                let resolved = self.discord_state.resolve_pending_question(q_id, idx).await;
-                tracing::info!(
-                    "Discord follow_up_question resolved: id={} idx={} answer={:?}",
-                    q_id,
-                    idx,
-                    resolved
-                );
-                let _ = comp
-                    .create_response(
-                        &ctx.http,
-                        serenity::builder::CreateInteractionResponse::Acknowledge,
-                    )
-                    .await;
                 return;
             }
 

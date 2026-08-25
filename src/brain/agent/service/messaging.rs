@@ -190,7 +190,6 @@ impl AgentService {
             cancel_token,
             None,
             None,
-            None,
             "tui",
             None,
             true,
@@ -203,7 +202,7 @@ impl AgentService {
     /// `override_*_callback` parameters take precedence over the service-level
     /// callbacks (used by channels). Pass `None` to fall back to the
     /// service-level callback. `override_question_callback` is the
-    /// per-call surface for the `follow_up_question` tool — channels
+    /// per-call surface for interactive prompts — channels
     /// with native button surfaces construct one per message; non-
     /// interactive callers (CLI, RSI, A2A) pass None.
     ///
@@ -218,7 +217,6 @@ impl AgentService {
         cancel_token: Option<CancellationToken>,
         override_approval_callback: Option<ApprovalCallback>,
         override_progress_callback: Option<ProgressCallback>,
-        override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
     ) -> Result<AgentResponse> {
@@ -230,7 +228,6 @@ impl AgentService {
             cancel_token,
             override_approval_callback,
             override_progress_callback,
-            override_question_callback,
             channel,
             channel_chat_id,
             true,
@@ -254,7 +251,6 @@ impl AgentService {
         cancel_token: Option<CancellationToken>,
         override_approval_callback: Option<ApprovalCallback>,
         override_progress_callback: Option<ProgressCallback>,
-        override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
     ) -> Result<AgentResponse> {
@@ -266,7 +262,6 @@ impl AgentService {
             cancel_token,
             override_approval_callback,
             override_progress_callback,
-            override_question_callback,
             channel,
             channel_chat_id,
             false,
@@ -283,7 +278,7 @@ impl AgentService {
     /// in the channel.
     ///
     /// `override_question_callback` is the per-call surface for the
-    /// `follow_up_question` tool — same semantics as the callback-only
+    /// interactive-prompt variant — same semantics as the callback-only
     /// shim above.
     #[allow(clippy::too_many_arguments)]
     pub async fn send_message_with_tools_and_display(
@@ -295,7 +290,6 @@ impl AgentService {
         cancel_token: Option<CancellationToken>,
         override_approval_callback: Option<ApprovalCallback>,
         override_progress_callback: Option<ProgressCallback>,
-        override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
     ) -> Result<AgentResponse> {
@@ -307,7 +301,6 @@ impl AgentService {
             cancel_token,
             override_approval_callback,
             override_progress_callback,
-            override_question_callback,
             channel,
             channel_chat_id,
             true,

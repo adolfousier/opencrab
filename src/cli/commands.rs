@@ -183,7 +183,7 @@ pub(crate) async fn cmd_status(config: &crate::config::Config) -> Result<()> {
 }
 
 /// Run diagnostics
-pub(crate) async fn cmd_doctor(config: &crate::config::Config) -> Result<()> {
+pub(crate) async fn cmd_doctor(config: &crate::config::Config, fix: bool) -> Result<()> {
     use crate::db::Database;
 
     let version = env!("CARGO_PKG_VERSION");
@@ -239,6 +239,9 @@ pub(crate) async fn cmd_doctor(config: &crate::config::Config) -> Result<()> {
                 db.run_migrations().await.ok();
                 println!("  ✅ Database: {}", db_path.display());
                 pass += 1;
+                if fix {
+                    apply_fixes(config, db.pool()).await;
+                }
             }
             Err(e) => {
                 println!("  ❌ Database: failed to connect — {}", e);
@@ -759,7 +762,6 @@ pub(crate) async fn cmd_run(
             None,
             None, // no stdin prompt for single-shot run; auto_approve_tools gates it
             Some(crate::cli::headless_callbacks::cli_progress_callback()),
-            None,
             "cli",
             None,
         )
@@ -1054,7 +1056,6 @@ pub(crate) async fn cmd_agent_interactive(
                 None,
                 approval,
                 Some(crate::cli::headless_callbacks::cli_progress_callback()),
-                None,
                 "cli",
                 None,
             )
@@ -1257,6 +1258,60 @@ pub(crate) async fn cmd_userbot(
 }
 
 /// Shared channel diagnostics
+/// #1114: run every repair sweep and print the audit trail. Invoked only
+/// via explicit `--fix`; the startup sweep has its own gate ([doctor] auto_fix).
+async fn apply_fixes(config: &crate::config::Config, pool: &crate::db::Pool) {
+    println!("\n  🔧 Repairs (--fix):");
+    let roots = marker_roots(pool).await;
+    match crate::cli::doctor_fix::run_all(pool, &roots, &crate::config::opencrabs_home()).await {
+        Ok(reports) if reports.is_empty() => println!("    ✅ Nothing to repair"),
+        Ok(reports) => {
+            for r in &reports {
+                println!("    ✅ [{}] {}", r.action, r.detail);
+            }
+            println!("    {} repair(s) applied", reports.len());
+        }
+        Err(e) => println!("    ❌ Repair sweep failed: {e:#}"),
+    }
+    let _ = config;
+}
+
+/// Every directory that can hold `.opencrabs_plan_*.preinit` markers: the
+/// profile-default session dir, the legacy flat dir, and each project-bound
+/// session dir (`<projects_dir>/<slug>/session/`).
+pub(crate) async fn marker_roots(pool: &crate::db::Pool) -> Vec<std::path::PathBuf> {
+    let mut roots = vec![
+        crate::config::opencrabs_home().join("session"),
+        crate::config::opencrabs_home()
+            .join("agents")
+            .join("session"),
+    ];
+    let Ok(conn) = pool.get().await else {
+        return roots;
+    };
+    let names = conn
+        .interact(|conn| {
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT DISTINCT p.name FROM projects p JOIN sessions s ON s.project_id = p.id",
+            ) else {
+                return Vec::new();
+            };
+            stmt.query_map([], |r| r.get::<_, String>(0))
+                .map(|rows| rows.flatten().collect())
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+    for name in names {
+        roots.push(
+            crate::services::ProjectService::projects_dir()
+                .join(crate::services::file::slugify_project_name(&name))
+                .join("session"),
+        );
+    }
+    roots
+}
+
 fn cmd_doctor_channels(config: &crate::config::Config) {
     if config.channels.telegram.enabled {
         if config
@@ -2222,7 +2277,6 @@ pub(crate) async fn cmd_evolve(config: &crate::config::Config, check_only: bool)
         ssh_callback: None,
         shared_working_directory: None,
         service_context: None,
-        question_callback: None,
         progress_callback: None,
         background_manager: None,
         plan_session_override: None,

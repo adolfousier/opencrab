@@ -337,10 +337,20 @@ impl Tool for EditTool {
             return Err(ToolError::InvalidInput(msg));
         }
 
+        // One writer at a time on this path (#1153). Agents sharing a working
+        // tree otherwise write the same bytes with no arbitration, which is
+        // the case whenever sub-agent worktree isolation degrades to the
+        // parent's directory. The guard is advisory and held only across the
+        // write, and a contended write proceeds rather than failing: refusing
+        // to save is worse than an interleave the caller is told about.
+        let write_lock = super::path_lock::acquire(&path);
+        let contended = write_lock.as_ref().is_some_and(|l| !l.is_held());
+
         // Write modified content
         fs::write(&path, &new_content)
             .await
             .map_err(ToolError::Io)?;
+        drop(write_lock);
 
         // Track file in session (fire and forget, path-only)
         if let Some(ref sc) = context.service_context {
@@ -362,6 +372,11 @@ impl Tool for EditTool {
             lines_after
         );
         output.push_str(&diff);
+        // An overlapping write is reported, not swallowed: the file may hold
+        // neither writer's intent, and only the caller can decide what to do.
+        if contended {
+            output.push_str(&super::path_lock::contention_notice(&path));
+        }
 
         Ok(ToolResult::success(output))
     }

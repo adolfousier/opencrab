@@ -48,7 +48,7 @@ const SKIPPED_MODEL: &str = "skipped-too-large";
 
 /// Decode a little-endian f32 blob, the encoding `db.rs` writes.
 fn decode_embedding(bytes: &[u8]) -> Vec<f32> {
-    let (chunks, _) = bytes.as_chunks::<4>();
+    let (chunks, _remainder) = bytes.as_chunks::<4>();
     chunks.iter().map(|c| f32::from_le_bytes(*c)).collect()
 }
 

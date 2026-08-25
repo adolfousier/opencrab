@@ -18,6 +18,7 @@ fn agent(id: &str, label: &str, state: SubAgentState) -> SubAgent {
         id: id.to_string(),
         label: label.to_string(),
         session_id: Uuid::new_v4(),
+        read_only: false,
         state,
         cancel_token: CancellationToken::new(),
         join_handle: None,

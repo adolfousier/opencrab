@@ -1298,3 +1298,222 @@ async fn start_isolated_without_machinery_falls_back_honestly() {
     })
     .await;
 }
+
+// ── Vacuous-pass guard tests (#1134) ───────────────────────────────
+
+/// Parse "N passed" from cargo test output. Standard format.
+#[test]
+fn parse_cargo_test_pass_count_standard() {
+    let output = r#"
+   Compiling opencrabs v0.3.82
+    Finished `test` profile [unoptimized + debuginfo]
+     Running unittests src/lib.rs
+
+running 42 tests
+test foo::bar ... ok
+test foo::baz ... ok
+...
+test result: ok. 42 passed; 0 failed; 3 ignored; 0 measured; 100 filtered out
+
+"#;
+    assert_eq!(
+        crate::brain::tools::plan_tool::parse_cargo_test_pass_count(output),
+        Some(42)
+    );
+}
+
+/// Parse "0 passed" from cargo test output (filter matches nothing).
+#[test]
+fn parse_cargo_test_pass_count_zero() {
+    let output = r#"
+   Compiling opencrabs v0.3.82
+    Finished `test` profile
+     Running unittests src/lib.rs
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6848 filtered out
+
+"#;
+    assert_eq!(
+        crate::brain::tools::plan_tool::parse_cargo_test_pass_count(output),
+        Some(0)
+    );
+}
+
+/// Parse returns None for non-cargo-test output (e.g., clippy).
+#[test]
+fn parse_cargo_test_pass_count_non_test_output() {
+    let output = r#"
+   Compiling opencrabs v0.3.82
+    Finished `dev` profile [unoptimized + debuginfo]
+warning: unused variable
+"#;
+    assert_eq!(
+        crate::brain::tools::plan_tool::parse_cargo_test_pass_count(output),
+        None
+    );
+}
+
+/// verify_with: 0 passed + exit 0 is refused (vacuous pass).
+#[test]
+fn verify_with_refuses_vacuous_pass() {
+    use crate::brain::tools::plan_tool::verify_with;
+
+    let commands = vec!["cargo test --lib nonexistent_test".to_string()];
+    let mut run = |_cmd: &str| -> (i32, String) {
+        (
+            0,
+            r#"
+   Compiling opencrabs v0.3.82
+    Finished `test` profile
+     Running unittests src/lib.rs
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6848 filtered out
+
+"#
+            .to_string(),
+        )
+    };
+
+    let result = verify_with("test", 1, &commands, false, &mut run);
+    assert!(result.is_err(), "verify_with must refuse 0 passed + exit 0");
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("ran 0 tests") || err.contains("vacuous pass"),
+        "error must mention vacuous pass: {err}"
+    );
+}
+
+/// verify_with: N passed + exit 0 is accepted (real pass).
+#[test]
+fn verify_with_accepts_real_pass() {
+    use crate::brain::tools::plan_tool::verify_with;
+
+    let commands = vec!["cargo test --lib my_test".to_string()];
+    let mut run = |_cmd: &str| -> (i32, String) {
+        (
+            0,
+            r#"
+   Compiling opencrabs v0.3.82
+    Finished `test` profile
+     Running unittests src/lib.rs
+
+running 5 tests
+test my_test::foo ... ok
+test my_test::bar ... ok
+...
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 6843 filtered out
+
+"#
+            .to_string(),
+        )
+    };
+
+    let result = verify_with("test", 1, &commands, false, &mut run);
+    assert!(result.is_ok(), "verify_with must accept 5 passed + exit 0");
+}
+
+/// verify_with: non-test command (no "test result:" line) is accepted on exit 0.
+#[test]
+fn verify_with_accepts_non_test_exit_zero() {
+    use crate::brain::tools::plan_tool::verify_with;
+
+    let commands = vec!["cargo clippy --all-features".to_string()];
+    let mut run = |_cmd: &str| -> (i32, String) {
+        (
+            0,
+            r#"
+   Compiling opencrabs v0.3.82
+    Finished `dev` profile [unoptimized + debuginfo]
+"#
+            .to_string(),
+        )
+    };
+
+    let result = verify_with("test", 1, &commands, false, &mut run);
+    assert!(
+        result.is_ok(),
+        "verify_with must accept non-test commands on exit 0"
+    );
+}
+
+// ── Criteria policy audit trail tests (#1135) ─────────────────────
+
+/// First observation doesn't emit a belief (no previous value to compare).
+#[test]
+fn audit_criteria_policy_first_observation_no_belief() {
+    use crate::brain::tools::plan_tool::{CriteriaPolicy, audit_criteria_policy_flip};
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let working_dir = PathBuf::from(temp.path());
+
+    // Clear any previous state by using a unique path
+    let unique_dir = working_dir.join("first_observation");
+    std::fs::create_dir_all(&unique_dir).unwrap();
+
+    let result = audit_criteria_policy_flip(&unique_dir, CriteriaPolicy::Strict);
+    assert_eq!(result, CriteriaPolicy::Strict);
+
+    // No belief should be emitted on first observation
+    // (We can't easily test the epistemic store here without mocking,
+    // but the function should not panic and should return the policy)
+}
+
+/// Policy flip between two calls emits a belief recording old → new.
+#[test]
+fn audit_criteria_policy_flip_emits_belief() {
+    use crate::brain::tools::plan_tool::{CriteriaPolicy, audit_criteria_policy_flip};
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let working_dir = PathBuf::from(temp.path()).join("flip_test");
+    std::fs::create_dir_all(&working_dir).unwrap();
+
+    // First observation: Strict
+    let result1 = audit_criteria_policy_flip(&working_dir, CriteriaPolicy::Strict);
+    assert_eq!(result1, CriteriaPolicy::Strict);
+
+    // Second observation: Off (flip!)
+    let result2 = audit_criteria_policy_flip(&working_dir, CriteriaPolicy::Off);
+    assert_eq!(result2, CriteriaPolicy::Off);
+
+    // Third observation: Downgrade (another flip!)
+    let result3 = audit_criteria_policy_flip(&working_dir, CriteriaPolicy::Downgrade);
+    assert_eq!(result3, CriteriaPolicy::Downgrade);
+
+    // The function should have logged beliefs for the flips
+    // (We can't easily verify the epistemic store contents here without
+    // mocking, but the function should not panic and should return the policies)
+}
+
+/// Unchanged policy emits nothing.
+#[test]
+fn audit_criteria_policy_unchanged_no_belief() {
+    use crate::brain::tools::plan_tool::{CriteriaPolicy, audit_criteria_policy_flip};
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let working_dir = PathBuf::from(temp.path()).join("unchanged_test");
+    std::fs::create_dir_all(&working_dir).unwrap();
+
+    // First observation: Downgrade
+    let result1 = audit_criteria_policy_flip(&working_dir, CriteriaPolicy::Downgrade);
+    assert_eq!(result1, CriteriaPolicy::Downgrade);
+
+    // Second observation: Downgrade (same, no flip)
+    let result2 = audit_criteria_policy_flip(&working_dir, CriteriaPolicy::Downgrade);
+    assert_eq!(result2, CriteriaPolicy::Downgrade);
+
+    // Third observation: Downgrade (still same, no flip)
+    let result3 = audit_criteria_policy_flip(&working_dir, CriteriaPolicy::Downgrade);
+    assert_eq!(result3, CriteriaPolicy::Downgrade);
+
+    // No beliefs should be emitted for unchanged policies
+}

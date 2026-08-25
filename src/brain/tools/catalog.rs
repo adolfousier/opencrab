@@ -64,8 +64,7 @@ pub const CORE_TOOLS: &[&str] = &[
     "config_manager",
     "slash_command",
     "rename_session",
-    "follow_up_question",
-    "suggest_followups",
+    "suggest_options",
     // Vision — always available when configured (only registered if vision backend exists)
     "analyze_image",
     "analyze_video",
@@ -167,6 +166,8 @@ pub const EXTENDED_TOOL_INVENTORY: &[(&str, &[&str])] = &[
             "brave_search",
             "mission_control_report",
             "a2a_send",
+            "profile_list",
+            "tasks_list",
             "execute_code",
             "notebook_edit",
             "web_scrape",
@@ -235,6 +236,8 @@ pub fn is_protected_builtin(name: &str) -> bool {
                 | "channel_search"
                 | "mission_control_report"
                 | "a2a_send"
+                | "profile_list"
+                | "tasks_list"
                 | "tool_manage"
                 | "execute_code"
                 | "notebook_edit"
@@ -300,7 +303,9 @@ pub fn tool_category(name: &str) -> &'static str {
             || n == "goal_manage"
             || n == "session_search"
             || n == "channel_search"
-            || n == "a2a_send" =>
+            || n == "a2a_send"
+            || n == "profile_list"
+            || n == "tasks_list" =>
         {
             "utility"
         }

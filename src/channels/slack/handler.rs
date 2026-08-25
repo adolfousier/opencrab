@@ -65,8 +65,7 @@ pub async fn on_interaction(
 
                 // Optional follow-up suggestion tapped (#599): inject the chosen
                 // suggestion as the user's next message (a fresh turn).
-                if let Some(rest) =
-                    action_id.strip_prefix(super::suggest_followups::FOLLOWUP_PREFIX)
+                if let Some(rest) = action_id.strip_prefix(super::suggest_options::FOLLOWUP_PREFIX)
                 {
                     if let Some((sid_str, idx_str)) = rest.rsplit_once(':')
                         && let Ok(sid) = uuid::Uuid::parse_str(sid_str)
@@ -365,22 +364,6 @@ pub async fn on_interaction(
                             }
                         }
                     }
-                    continue;
-                }
-
-                // Follow-up question click: `q:<id>:<idx>`. Resolves
-                // the pending question with the chosen option string.
-                if let Some(rest) = action_id.strip_prefix("q:") {
-                    let mut parts = rest.splitn(2, ':');
-                    let q_id = parts.next().unwrap_or("");
-                    let idx: usize = parts.next().unwrap_or("").parse().unwrap_or(usize::MAX);
-                    let resolved = state.slack_state.resolve_pending_question(q_id, idx).await;
-                    tracing::info!(
-                        "Slack follow_up_question resolved: id={} idx={} answer={:?}",
-                        q_id,
-                        idx,
-                        resolved
-                    );
                     continue;
                 }
 
@@ -1252,12 +1235,15 @@ async fn handle_message(
                     .iter()
                     .take(25)
                     .map(|(name, label, configured)| {
-                        let display = if !*configured {
-                            format!("🔒 {} (setup)", label)
-                        } else if *name == resp.current_provider {
-                            format!("✓ {}", label)
-                        } else {
-                            label.clone()
+                        let marker = crate::channels::commands::provider_marker(
+                            name,
+                            &resp.current_provider,
+                            *configured,
+                        );
+                        let display = match marker {
+                            "🔒" => format!("🔒 {} (setup)", label),
+                            "✓" => format!("✓ {}", label),
+                            _ => label.clone(),
                         };
                         let cb = if *configured {
                             format!("provider:{}", name)
@@ -1909,10 +1895,10 @@ async fn handle_message(
                 }
                 // Optional follow-up suggestions (#599): post tap-to-send
                 // buttons under the response; a tap injects a new turn.
-                ProgressEvent::SuggestedFollowups(options) => {
+                ProgressEvent::SuggestedOptions(options) => {
                     let state = slack_state_grp.clone();
                     tokio::spawn(async move {
-                        super::suggest_followups::render_suggestions(&state, session_id, options)
+                        super::suggest_options::render_suggestions(&state, session_id, options)
                             .await;
                     });
                 }
@@ -1921,10 +1907,6 @@ async fn handle_message(
         })
     };
 
-    let question_cb = super::follow_up_question::make_question_callback(
-        state.slack_state.clone(),
-        intermediate_handles.clone(),
-    );
     let result = state
         .agent
         .send_message_with_tools_and_display(
@@ -1935,7 +1917,6 @@ async fn handle_message(
             Some(cancel_token),
             Some(approval_cb),
             Some(progress_cb),
-            Some(question_cb),
             "slack",
             Some(&channel_id),
         )

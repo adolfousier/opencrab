@@ -198,9 +198,20 @@ impl Tool for ResumeAgentTool {
                     })?
             };
 
-            // Resumed agents get General type (full parent tools minus recursive/dangerous)
-            let child_registry =
-                super::agent_type::AgentType::General.build_registry(&self.parent_registry);
+            // Rebuild the child's registry from its FROZEN grant (#1173,
+            // fixes F2): resume used to hand back a full General registry
+            // regardless of how the child was originally spawned, silently
+            // widening an explore-style child into full write access. The
+            // stored read_only flag is the single source of truth for the
+            // agent's whole life.
+            let child_registry = super::build_child_registry(&self.parent_registry);
+            if self.manager.get_read_only(agent_id).unwrap_or(false) {
+                crate::brain::tools::plan_gate::restrict_registry_to_read_only(&child_registry);
+                tracing::info!(
+                    "Resumed sub-agent {agent_id} holds a read-only grant: \
+                     registry rebuilt restricted (#1173)"
+                );
+            }
 
             Arc::new(
                 crate::brain::agent::AgentService::new(provider, service_context, &config)
@@ -238,13 +249,20 @@ impl Tool for ResumeAgentTool {
                 match result {
                     Ok(response) => {
                         manager.update_output(&agent_id_clone, response.content.clone());
-                        // Flip to AwaitingInput so wait_agent can observe
-                        // round-boundary progress — same pattern as
-                        // spawn.rs / team/create.rs. Without this the
-                        // resumed agent's task never terminates at a
-                        // round (only on input/cancel), so the old
-                        // `handle.await` in wait.rs always hit its
-                        // timeout_secs and the LLM gave up the turn.
+                        // Natural completion (#1184), same rule as spawn.rs:
+                        // only a genuinely gated round keeps waiting; a
+                        // finished answer completes the resumed run instead of
+                        // re-parking it forever.
+                        if response.stop_reason
+                            != Some(crate::brain::provider::types::StopReason::ToolUse)
+                        {
+                            tracing::info!(
+                                "Sub-agent {} resumed round complete naturally, delivering result",
+                                agent_id_clone
+                            );
+                            break response.content;
+                        }
+                        // Genuinely gated: park for the next input round.
                         manager.mark_awaiting_input(&agent_id_clone);
                         tracing::info!(
                             "Sub-agent {} round complete, waiting for input",

@@ -1,7 +1,7 @@
-//! Slack-side rendering for the OPTIONAL `suggest_followups` tool (#599).
+//! Slack-side rendering for the OPTIONAL `suggest_options` tool (#599).
 //!
-//! Non-blocking counterpart to `follow_up_question`: the agent surfaces
-//! `ProgressEvent::SuggestedFollowups`, and we post a Block Kit ActionsBlock
+//! Non-blocking option surface: the agent surfaces
+//! `ProgressEvent::SuggestedOptions`, and we post a Block Kit ActionsBlock
 //! with one button per suggestion under the finished response. Tapping a button
 //! injects that suggestion as the user's next message (a fresh turn). Typing
 //! your own message always works; there is no oneshot or timeout.
@@ -33,12 +33,14 @@ pub(crate) async fn render_suggestions(
         Some(t) => t,
         None => return,
     };
-    let channel_id = match state.session_channel(session_id).await {
-        Some(id) => id,
-        None => match state.owner_channel_id().await {
-            Some(id) => id,
-            None => return,
-        },
+    // Session→owner fallback via shared helper (#764 R5, silent twin).
+    let Some(channel_id) = crate::channels::question_common::resolve_channel_or_silent(
+        state.session_channel(session_id),
+        state.owner_channel_id(),
+    )
+    .await
+    else {
+        return;
     };
 
     // Slack ActionsBlock allows up to 25 elements — well above the 4-suggestion
@@ -71,7 +73,7 @@ pub(crate) async fn render_suggestions(
     let token = SlackApiToken::new(SlackApiTokenValue::from(bot_token));
     let session = client.open_session(&token);
     if let Err(e) = session.chat_post_message(&request).await {
-        tracing::warn!("Slack suggest_followups: send failed: {e}");
+        tracing::warn!("Slack suggest_options: send failed: {e}");
         state.clear_pending_followups(session_id).await;
     }
 }

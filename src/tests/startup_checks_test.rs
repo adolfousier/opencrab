@@ -71,3 +71,85 @@ fn unknown_default_provider_is_flagged() {
     assert_eq!(warns.len(), 1);
     assert!(warns[0].contains("does not match any configured provider section"));
 }
+
+// ── fallback-chain entries that name nothing ──────────────────────────
+
+/// A config whose custom providers are `defined`, with `chain` as the
+/// fallback provider list.
+fn config_with_chain(defined: &[&str], chain: &[&str]) -> Config {
+    use std::collections::BTreeMap;
+    let mut custom = BTreeMap::new();
+    for name in defined {
+        custom.insert(
+            (*name).to_string(),
+            ProviderConfig {
+                enabled: true,
+                api_key: Some("key".into()),
+                base_url: Some("https://example.invalid/v1".into()),
+                ..Default::default()
+            },
+        );
+    }
+    Config {
+        providers: ProviderConfigs {
+            custom: Some(custom),
+            fallback: Some(crate::config::types::FallbackProviderConfig {
+                enabled: true,
+                providers: chain.iter().map(|s| (*s).to_string()).collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_chain_entry_naming_nothing_is_reported() {
+    // The chain skips it and the next provider answers, so without this the
+    // user sees a model they never picked and no reason for it.
+    let cfg = config_with_chain(&["modelscope-qwen37-max"], &["modelscope-qwen37max"]);
+    let warns = startup_warnings(&cfg, None);
+    assert!(
+        warns
+            .iter()
+            .any(|w| w.contains("modelscope-qwen37max") && w.contains("skipped silently")),
+        "expected the dangling entry to be reported, got {warns:?}"
+    );
+}
+
+#[test]
+fn a_separator_slip_names_the_provider_that_was_meant() {
+    // One missing hyphen was the real case; the letters and digits match
+    // exactly, so naming the intended provider costs no guesswork.
+    let cfg = config_with_chain(&["modelscope-qwen37-max"], &["modelscope-qwen37max"]);
+    let warns = startup_warnings(&cfg, None);
+    assert!(
+        warns
+            .iter()
+            .any(|w| w.contains("did you mean \"modelscope-qwen37-max\"")),
+        "expected the near match to be suggested, got {warns:?}"
+    );
+}
+
+#[test]
+fn a_chain_of_configured_providers_is_quiet() {
+    let cfg = config_with_chain(&["alpha", "beta"], &["alpha", "beta"]);
+    let warns = startup_warnings(&cfg, None);
+    assert!(
+        !warns.iter().any(|w| w.contains("providers.fallback")),
+        "a correct chain must not warn, got {warns:?}"
+    );
+}
+
+#[test]
+fn an_unrelated_name_is_reported_without_a_guess() {
+    // No near match exists, so the warning must not invent one.
+    let cfg = config_with_chain(&["alpha"], &["something-else-entirely"]);
+    let warns = startup_warnings(&cfg, None);
+    let hit = warns
+        .iter()
+        .find(|w| w.contains("something-else-entirely"))
+        .expect("the dangling entry must still be reported");
+    assert!(!hit.contains("did you mean"), "must not guess, got {hit}");
+}

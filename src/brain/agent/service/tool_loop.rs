@@ -472,7 +472,6 @@ impl AgentService {
         cancel_token: Option<CancellationToken>,
         override_approval_callback: Option<ApprovalCallback>,
         override_progress_callback: Option<ProgressCallback>,
-        override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
         track_pending: bool,
@@ -541,11 +540,6 @@ impl AgentService {
         // Effective question callback: per-call override wins over the
         // service-level fallback. Channels with native button surfaces
         // pass their own callback per message; everyone else passes
-        // None and the `follow_up_question` tool degrades gracefully,
-        // returning the question as plain text to relay (#716).
-        let question_callback: Option<QuestionCallback> =
-            override_question_callback.or_else(|| self.question_callback.clone());
-
         // Notify TUI when a remote channel starts/finishes processing so it can
         // block concurrent sends on the same session and avoid garbled display.
         if has_progress_override && let Some(ref tx) = self.session_updated_tx {
@@ -554,21 +548,59 @@ impl AgentService {
             ));
         }
 
-        // Run the actual loop
-        let result = self
-            .run_tool_loop_inner(
-                session_id,
-                user_message,
-                display_text_override,
-                model,
-                cancel_token,
-                has_override_approval,
-                approval_callback,
-                has_progress_override,
-                progress_callback,
-                question_callback,
-            )
-            .await;
+        // Run the actual loop, rotating the chain if the loop detector kills it.
+        //
+        // The abort inside the loop returns `AnnouncementLoop`, a
+        // provider-attributable error chosen so a loop-detector kill could
+        // reach the fallback walk (#1023). It never did: the walk lives in the
+        // arm that handles an error from the PROVIDER CALL, and this arrives by
+        // `return` from deep inside the loop, so it bypassed the arm entirely
+        // and the turn was dropped with ten providers untried. Retrying here
+        // puts it back on the chain, which is what #1023 said it should do.
+        //
+        // Bounded by the chain itself: `force_next_fallback` reports false when
+        // there is nowhere left to go, and the counter is only a backstop.
+        const MAX_CHAIN_ROTATIONS: u32 = 12;
+        let mut rotations: u32 = 0;
+        let result = loop {
+            let attempt = self
+                .run_tool_loop_inner(
+                    session_id,
+                    user_message.clone(),
+                    display_text_override.clone(),
+                    model.clone(),
+                    cancel_token.clone(),
+                    has_override_approval,
+                    approval_callback.clone(),
+                    has_progress_override,
+                    progress_callback.clone(),
+                )
+                .await;
+
+            let killed_by_loop_detector = matches!(
+                &attempt,
+                Err(AgentError::Provider(
+                    crate::brain::provider::ProviderError::AnnouncementLoop(_)
+                ))
+            );
+            if !killed_by_loop_detector || rotations >= MAX_CHAIN_ROTATIONS {
+                break attempt;
+            }
+
+            let fb = self.provider_for_session(session_id);
+            if !fb.force_next_fallback(
+                "announcement_loop",
+                &self.provider_model_for_session(session_id),
+            ) {
+                // Chain exhausted: every provider was asked and none emitted
+                // the call. Now the error is the honest answer.
+                break attempt;
+            }
+            rotations += 1;
+            tracing::warn!(
+                "Loop-detector kill — handing the turn to the next provider                  (rotation {rotations}) instead of dropping it"
+            );
+        };
 
         if has_progress_override && let Some(ref tx) = self.session_updated_tx {
             let _ =
@@ -633,7 +665,6 @@ impl AgentService {
         approval_callback: Option<ApprovalCallback>,
         has_progress_override: bool,
         progress_callback: Option<ProgressCallback>,
-        question_callback: Option<QuestionCallback>,
     ) -> Result<AgentResponse> {
         // Snapshot the manual-switch epoch at turn start. If the user
         // switches provider/model while this turn is in flight, an automatic
@@ -926,6 +957,13 @@ impl AgentService {
                     &model_name,
                 );
             for msg in db_messages.iter_mut() {
+                // #1172: phantom-blocked sections must never re-enter LLM
+                // context (#86) — strip them before the generic artifact
+                // sweep, which would only remove their markers and leave the
+                // narration standing.
+                if msg.content.contains("<!-- phantom_blocked=1 -->") {
+                    msg.content = crate::utils::sanitize::strip_phantom_blocked(&msg.content);
+                }
                 if preserve_thinking && msg.role == "assistant" {
                     let (cleaned, reasoning) =
                         crate::utils::sanitize::hoist_reasoning_blocks(&msg.content);
@@ -1244,7 +1282,6 @@ impl AgentService {
         tool_context.ssh_callback = self.ssh_callback.clone();
         tool_context.shared_working_directory = Some(Arc::clone(&session_cwd));
         tool_context.service_context = Some(self.context.clone());
-        tool_context.question_callback = question_callback.clone();
         tool_context.progress_callback = progress_callback.clone();
         tool_context.background_manager = self.background_manager.clone();
         tool_context.plan_session_override = self.plan_session_override;
@@ -1320,7 +1357,6 @@ impl AgentService {
         // Iteration content withheld from the DB by the phantom persist-skip.
         // Flushed at turn close if that very iteration ends the turn (#458):
         // the reloadable history must always contain what the user saw.
-        let mut pending_phantom_content: Option<String> = None;
         let mut recent_tool_calls: Vec<String> = Vec::new(); // Track tool calls to detect loops
         // Normalized call signatures (#957, generalized #961): the
         // exact-match hard-break only fires on identical args, so loops
@@ -1365,7 +1401,20 @@ impl AgentService {
         // Set to true after we have forced a sticky fallback because
         // phantom retries exhausted. Guarantees we only swap once per
         // turn even if the fallback provider is also phantom-prone.
-        let mut phantom_sticky_swap_done: bool = false;
+        // How many times one turn may hand the work to the next provider when
+        // the current one will not call tools. The chain itself ends the
+        // rotation: `force_next_fallback` returns false once it is exhausted.
+        // This is only a backstop against a pathologically long chain.
+        const MAX_PHANTOM_SWAPS: u32 = 8;
+        let mut phantom_swaps_done: u32 = 0;
+        // Global detection ceiling (#1172): provider swaps reset the
+        // per-provider retry budget BY DESIGN (a fresh provider gets a fresh
+        // chance), but rotation then multiplies total detections — production
+        // saw 25 detections / 123 requests across 8 swaps in one stuck turn
+        // ($0 metered). This counter NEVER resets; crossing it forces the
+        // give-up path no matter how fresh the active provider's budget is.
+        let mut phantom_detections_total: u32 = 0;
+        const MAX_PHANTOM_DETECTIONS_TOTAL: u32 = MAX_PHANTOM_RETRIES * (MAX_PHANTOM_ROLLS + 1);
         // Bounded retry for the "reasoning-only, no answer" failure mode:
         // MLX Qwen models periodically emit finish_reason=stop after only
         // reasoning_content chunks — zero text, zero tool calls — so the
@@ -1715,6 +1764,17 @@ impl AgentService {
                     self.reset_primary_failure_streak(session_id);
                     resp
                 }
+                // /stop beats every recovery path (#1148): if the token fired
+                // while the call was in flight (handshake race, provider-
+                // internal rate-limit backoff, fallback walk), classify as
+                // Cancelled BEFORE any recovery machinery runs. Without this,
+                // a cancel landing in the pre-first-token window surfaces as
+                // a noisy Provider(Internal) after the chain was walked for
+                // nothing.
+                Err(_) if cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) => {
+                    tracing::info!("🛑 Stream aborted by cancellation (token fired during call)");
+                    return Err(AgentError::Cancelled);
+                }
                 // Budget-gated on purpose (#1021): once the nudges are spent
                 // this arm stops matching, so the error falls through to the
                 // fallback walk below instead of dead-ending here.
@@ -1722,7 +1782,8 @@ impl AgentService {
                     if matches!(
                         e,
                         crate::brain::provider::ProviderError::ThinkingLoopTimeout(_)
-                    ) && phantom_retries_used < MAX_PHANTOM_RETRIES =>
+                    ) && phantom_retries_used < MAX_PHANTOM_RETRIES
+                        && phantom_detections_total < MAX_PHANTOM_DETECTIONS_TOTAL =>
                 {
                     let secs =
                         if let crate::brain::provider::ProviderError::ThinkingLoopTimeout(s) = e {
@@ -1770,6 +1831,7 @@ impl AgentService {
                     // pathological model can't loop forever: once the cap is
                     // hit the normal phantom give-up path takes over.
                     phantom_retries_used += 1;
+                    phantom_detections_total += 1;
                     context.add_message(Message::user(super::nudge::no_tool_calls_nudge(
                         is_local_provider,
                     )));
@@ -2537,6 +2599,14 @@ impl AgentService {
                     let mut succeeded = None;
 
                     for attempt in 1..=MAX_STREAM_RETRIES {
+                        // /stop beats the retry budget (#1148): bail out
+                        // before spending another attempt.
+                        if cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
+                            tracing::info!(
+                                "🛑 Stream retry loop aborted — cancelled before attempt {attempt}"
+                            );
+                            return Err(AgentError::Cancelled);
+                        }
                         tracing::info!(
                             "Stream retry attempt {}/{} after: {}",
                             attempt,
@@ -2544,9 +2614,19 @@ impl AgentService {
                             last_err
                         );
 
-                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s
+                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s — raced against /stop
                         let backoff_ms = 500u64 * (1u64 << (attempt - 1));
-                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        if !crate::brain::agent::service::helpers::cancellable_backoff(
+                            cancel_token.as_ref(),
+                            tokio::time::Duration::from_millis(backoff_ms),
+                        )
+                        .await
+                        {
+                            tracing::info!(
+                                "🛑 Stream retry loop aborted — cancelled during backoff"
+                            );
+                            return Err(AgentError::Cancelled);
+                        }
 
                         // Rebuild request
                         let mut retry_req =
@@ -2958,6 +3038,14 @@ impl AgentService {
                     let mut succeeded = None;
 
                     for attempt in 1..=MAX_STREAM_RETRIES {
+                        // /stop beats the retry budget (#1148): bail out
+                        // before spending another attempt.
+                        if cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
+                            tracing::info!(
+                                "🛑 5xx retry loop aborted — cancelled before attempt {attempt}"
+                            );
+                            return Err(AgentError::Cancelled);
+                        }
                         tracing::info!(
                             "5xx retry attempt {}/{} after: {}",
                             attempt,
@@ -2965,9 +3053,17 @@ impl AgentService {
                             last_err
                         );
 
-                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s
+                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s — raced against /stop
                         let backoff_ms = 500u64 * (1u64 << (attempt - 1));
-                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        if !crate::brain::agent::service::helpers::cancellable_backoff(
+                            cancel_token.as_ref(),
+                            tokio::time::Duration::from_millis(backoff_ms),
+                        )
+                        .await
+                        {
+                            tracing::info!("🛑 5xx retry loop aborted — cancelled during backoff");
+                            return Err(AgentError::Cancelled);
+                        }
 
                         let mut retry_req =
                             LLMRequest::new(model_name.clone(), context.messages.clone())
@@ -4439,7 +4535,7 @@ impl AgentService {
                 }
                 if iteration_is_phantom {
                     tracing::debug!(
-                        "[phantom] Skipping DB persist for phantom iteration \
+                        "[phantom] Persisting phantom-blocked iteration with flag \
                          (text_len={}, has_reasoning={})",
                         iteration_text.len(),
                         reasoning_text
@@ -4447,19 +4543,29 @@ impl AgentService {
                             .map(|r| !r.trim().is_empty())
                             .unwrap_or(false),
                     );
-                    // Stash instead of drop: if the turn CLOSES on this
-                    // iteration, the text is the visible completion and the
-                    // turn-close flush persists it (#458).
                     if !iteration_text.is_empty() {
                         iter_content.push_str(&format!("{}\n\n", iteration_text));
                     }
-                    pending_phantom_content = if iter_content.is_empty() {
-                        None
-                    } else {
-                        Some(iter_content)
-                    };
+                    // #1172: a "phantom" iteration can BE the deliverable — a
+                    // verbose model narrating its (real, completed) work before
+                    // EndTurn. Persist every blocked iteration under an
+                    // explicit HTML-comment flag so it stays recoverable from
+                    // the DB while rendering invisibly in markdown. This
+                    // supersedes the #458 turn-close flush: nothing is withheld
+                    // any more, so there is nothing left to flush at close.
+                    // Never touches accumulated_text — the user surface still
+                    // sees none of it.
+                    if !iter_content.is_empty() {
+                        iter_content.insert_str(0, "<!-- phantom_blocked=1 -->\n");
+                        iter_content.push_str("\n<!-- /phantom_blocked=1 -->\n");
+                        if let Err(e) = message_service
+                            .append_content(assistant_db_msg.id, &iter_content)
+                            .await
+                        {
+                            tracing::warn!("failed to persist phantom-blocked iteration: {e}");
+                        }
+                    }
                 } else {
-                    pending_phantom_content = None;
                     // Skip a verbatim restatement of what the turn already
                     // carries (#1070). The DB append is skipped with it, so a
                     // resumed session doesn't surface the duplicate either.
@@ -4720,7 +4826,7 @@ impl AgentService {
                 // tool-call channel for this prompt and another nudge
                 // won't help.
                 let should_force_fallback = phantom_eligible
-                    && !phantom_sticky_swap_done
+                    && phantom_swaps_done < MAX_PHANTOM_SWAPS
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                     && (phantom_retries_used >= MAX_PHANTOM_RETRIES
                         || (stuck_loop_now && phantom_retries_used >= MAX_PHANTOM_RETRIES / 2));
@@ -4730,8 +4836,14 @@ impl AgentService {
                         "phantom_intent_loop_or_exhausted",
                         &self.provider_model_for_session(session_id),
                     ) {
-                        phantom_sticky_swap_done = true;
+                        phantom_swaps_done += 1;
                         phantom_retries_used = 0;
+                        // The rolls are what stand between a stuck provider and
+                        // the give-up path. Handing the turn to a different
+                        // provider is a fresh attempt, not a continuation of the
+                        // old one's failure, so it gets the budget back rather
+                        // than inheriting a counter the previous provider spent.
+                        phantom_rolls = 0;
                         // A swap replays this turn against another provider,
                         // which re-emits the calls already counted. Without
                         // this the replayed copies stack onto the run and trip
@@ -4782,6 +4894,7 @@ impl AgentService {
                     }
                 }
                 if phantom_retries_used < MAX_PHANTOM_RETRIES
+                    && phantom_detections_total < MAX_PHANTOM_DETECTIONS_TOTAL
                     && phantom_eligible
                     && (super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                         // Strict full-text detector (#589): the lead-in-only
@@ -4854,6 +4967,7 @@ impl AgentService {
                             &turn_tool_output,
                         ))
                 {
+                    phantom_detections_total += 1;
                     phantom_retries_used += 1;
                     tracing::warn!(
                         "Phantom tool call detected (local={}) — model described \
@@ -4932,17 +5046,24 @@ impl AgentService {
                 // narrating instead of calling tools must not loop forever
                 // (#746).
                 if phantom_eligible
-                    && phantom_retries_used >= MAX_PHANTOM_RETRIES
+                    && (phantom_retries_used >= MAX_PHANTOM_RETRIES
+                        || phantom_detections_total >= MAX_PHANTOM_DETECTIONS_TOTAL)
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
-                    if phantom_rolls < MAX_PHANTOM_ROLLS {
+                    // #1172: the global ceiling may trip this gate while rolls
+                    // remain. A roll resets the retry counter and re-nudges,
+                    // which would defeat the ceiling entirely — so no roll
+                    // once total detections are spent.
+                    if phantom_rolls < MAX_PHANTOM_ROLLS
+                        && phantom_detections_total < MAX_PHANTOM_DETECTIONS_TOTAL
+                    {
                         phantom_rolls += 1;
                         tracing::warn!(
-                            "Phantom retry cap rolling ({}/{} rolls, sticky_swapped={}) — \
+                            "Phantom retry cap rolling ({}/{} rolls, swaps_done={}) — \
                              resetting counter and re-nudging the active provider.",
                             phantom_rolls,
                             MAX_PHANTOM_ROLLS,
-                            phantom_sticky_swap_done
+                            phantom_swaps_done
                         );
                         self.record_provider_feedback(
                             session_id,
@@ -5003,30 +5124,34 @@ impl AgentService {
                             },
                         );
                     }
-                    // If the narration is an image-generation hallucination
-                    // ("here's your image" with no <<IMG:>> marker, no tool),
-                    // do NOT deliver the model's false claim — replace it with a
-                    // truthful message so the user is not told a fake image was
-                    // produced (#751). Otherwise deliver the narration as-is.
+                    // The narration describes work that was never done. Every
+                    // provider in the chain has now been asked and none called a
+                    // tool, so delivering it would hand over a description of
+                    // actions as though they had happened — the #751 image case
+                    // generalised: there the claim was an image, here it is
+                    // whatever was narrated. Say what is true instead, and wipe
+                    // the narration already streamed to the surface.
+                    if let Some(ref cb) = progress_callback {
+                        cb(
+                            session_id,
+                            ProgressEvent::StripStreamedContent {
+                                bytes: usize::MAX,
+                                reason: "unexecuted narration discarded".to_string(),
+                            },
+                        );
+                    }
                     let give_up_text =
                         if super::phantom::claims_unbacked_media_result(&iteration_text) {
-                            // Wipe the false narration already streamed to the surface.
-                            if let Some(ref cb) = progress_callback {
-                                cb(
-                                    session_id,
-                                    ProgressEvent::StripStreamedContent {
-                                        bytes: usize::MAX,
-                                        reason: "image-generation hallucination discarded"
-                                            .to_string(),
-                                    },
-                                );
-                            }
                             "I did not actually generate or edit an image — no image tool ran this \
                          turn, so there is nothing to show. If you want an image, ask me to \
                          generate one and I will call the image tool."
                                 .to_string()
                         } else {
-                            iteration_text.clone()
+                            "I could not complete this. I described the steps but never invoked a \
+                         tool, and retrying against every provider available did not change \
+                         that, so nothing was actually done. Nothing here was carried out — \
+                         please ask again, and narrow the request if it was a broad one."
+                                .to_string()
                         };
                     if !give_up_text.is_empty()
                         && !is_duplicate_iteration_text(&accumulated_text, &give_up_text)
@@ -5611,23 +5736,11 @@ impl AgentService {
                 } else {
                     tracing::info!("Agent responded with text only (no tool calls)");
                 }
-                // Turn-close flush (#458): the closing iteration's persist
-                // was withheld by the phantom skip, but the turn ended on it
-                // — that text IS the completion the user saw. Write it so a
-                // session reload shows the same history as the live view.
-                if let Some(content) = pending_phantom_content.take() {
-                    tracing::info!(
-                        "[phantom] persisting withheld closing-iteration content ({} chars) \
-                         at turn close (#458)",
-                        content.len()
-                    );
-                    if let Err(e) = message_service
-                        .append_content(assistant_db_msg.id, &content)
-                        .await
-                    {
-                        tracing::warn!("failed to persist withheld completion: {e}");
-                    }
-                }
+                // #458's turn-close flush was removed by #1172: blocked phantom
+                // iterations now persist immediately under a phantom_blocked=1
+                // flag at detection time, so there is nothing left to withhold
+                // and nothing to flush here.
+
                 final_response = Some(response);
 
                 // --- GOAL POST-TURN HOOK ---
@@ -6198,7 +6311,6 @@ impl AgentService {
                                         .shared_working_directory
                                         .clone(),
                                     service_context: tool_context.service_context.clone(),
-                                    question_callback: tool_context.question_callback.clone(),
                                     progress_callback: tool_context.progress_callback.clone(),
                                     background_manager: tool_context.background_manager.clone(),
                                     plan_session_override: tool_context.plan_session_override,
@@ -6207,6 +6319,8 @@ impl AgentService {
                                 };
 
                                 // Execute the tool with approved context, racing against cancel
+                                // #1178 M1: set inside the Ok arm below when the tool ends the turn
+                                let mut halt_turn_requested = false;
                                 let exec_result = tokio::select! {
                                     biased;
                                     _ = async {
@@ -6214,11 +6328,22 @@ impl AgentService {
                                     } => {
                                         tracing::warn!("🛑 Tool '{}' cancelled mid-execution", tool_name);
                                         break;
+
                                     }
                                     r = self.tool_registry.execute(&tool_name, tool_input, &approved_tool_context) => r,
                                 };
                                 match exec_result {
                                     Ok(result) => {
+                                        // Halt policy lives on the tool via
+                                        // Tool::halts_turn, consulted through
+                                        // the registry; only a SUCCESSFUL run
+                                        // ends the turn (a failed options call
+                                        // must not kill it) — audit fix.
+                                        if self.tool_registry.halts_turn(&tool_name)
+                                            && result.success
+                                        {
+                                            halt_turn_requested = true;
+                                        }
                                         let success = result.success;
                                         let images = result.images;
                                         let content = build_tool_result_content(
@@ -6444,6 +6569,17 @@ impl AgentService {
                                         });
                                     }
                                 }
+
+                                // #1178 M1 turn-halt: suggest_options ends the turn once its result is
+                                // flushed - the user picks an option and the next turn resumes from it.
+                                // Policy routes through ToolRegistry::halts_turn (Tool::halts_turn).
+                                if halt_turn_requested {
+                                    tracing::info!(
+                                        "🛑 Turn halted by option-surface tool (suggest_options)"
+                                    );
+                                    break;
+                                }
+
                                 continue; // Skip the normal execution path below
                             }
                             Err(e) => {
@@ -6494,9 +6630,12 @@ impl AgentService {
                 let mut approved_context = tool_context.clone();
                 approved_context.auto_approve = true;
                 let tool_start = std::time::Instant::now();
+                // #1178 M1: set inside the Ok arm below when the tool ends the turn
+                let mut halt_turn_requested = false;
                 let exec_result = tokio::select! {
                     biased;
                     _ = async {
+
                         if let Some(ref t) = cancel_token { t.cancelled().await } else { std::future::pending().await }
                     } => {
                         tracing::warn!("🛑 Tool '{}' cancelled mid-execution", tool_name);
@@ -6506,6 +6645,11 @@ impl AgentService {
                 };
                 match exec_result {
                     Ok(result) => {
+                        // Registry-routed halt policy, success-gated (audit
+                        // fix) — mirrors the approval-path site above.
+                        if self.tool_registry.halts_turn(&tool_name) && result.success {
+                            halt_turn_requested = true;
+                        }
                         let success = result.success;
                         let images = result.images;
                         let result_output_for_evidence = result.output.clone();
@@ -6713,6 +6857,14 @@ impl AgentService {
                             is_error: Some(true),
                         });
                     }
+                }
+
+                // #1178 M1 turn-halt: suggest_options ends the turn once its result is
+                // flushed - the user picks an option and the next turn resumes from it.
+                // Policy routes through ToolRegistry::halts_turn (Tool::halts_turn).
+                if halt_turn_requested {
+                    tracing::info!("🛑 Turn halted by option-surface tool (suggest_options)");
+                    break;
                 }
             }
 

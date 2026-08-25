@@ -449,3 +449,38 @@ fn strip_llm_artifacts_think_tags() {
     assert!(!out.contains("<think>"), "think tag leaked: {out}");
     assert!(out.contains("Response"), "response lost: {out}");
 }
+
+// ─── strip_phantom_blocked (#1172) ──────────────────────────────────────────
+
+#[test]
+fn phantom_strip_removes_whole_flagged_section() {
+    let input =
+        "kept text\n<!-- phantom_blocked=1 -->\nnarration body\n<!-- /phantom_blocked=1 -->\nafter";
+    let out = strip_phantom_blocked(input);
+    assert!(!out.contains("narration body"), "body leaked: {out}");
+    assert!(!out.contains("phantom_blocked"), "marker leaked: {out}");
+    assert!(out.contains("kept text"), "prefix lost: {out}");
+    assert!(out.contains("after"), "suffix lost: {out}");
+}
+
+#[test]
+fn phantom_strip_handles_multiple_sections() {
+    let input = "a <!-- phantom_blocked=1 -->x<!-- /phantom_blocked=1 --> b \
+                 <!-- phantom_blocked=1 -->y<!-- /phantom_blocked=1 --> c";
+    let out = strip_phantom_blocked(input);
+    assert_eq!(out, "a  b  c");
+}
+
+#[test]
+fn phantom_strip_unpaired_open_takes_tail() {
+    // Truncated write: open without close — everything to the end is suspect.
+    let input = "keep\n<!-- phantom_blocked=1 -->\ndangerous tail";
+    let out = strip_phantom_blocked(input);
+    assert_eq!(out, "keep\n");
+}
+
+#[test]
+fn phantom_strip_passthrough_without_marker() {
+    let input = "ordinary content with <!-- some other comment --> intact";
+    assert_eq!(strip_phantom_blocked(input), input);
+}

@@ -145,7 +145,6 @@ async fn persist_outgoing(jid: &Jid, content: &str) {
 
 /// Read a local file, expanding tilde. Returns (bytes, detected mime, filename).
 #[allow(clippy::result_large_err)]
-// pre-existing signature; clippy 1.98 tightened this lint after this code shipped
 async fn read_local_media(
     path: &str,
     default_mime: &str,
@@ -195,7 +194,7 @@ pub(crate) fn mime_from_extension(path: &str) -> Option<String> {
 }
 /// Upload media to WhatsApp servers and return the upload response.
 /// Uses the same pattern as the WhatsApp handler.
-#[allow(clippy::result_large_err)] // pre-existing signature; clippy 1.98 tightened this lint after this code shipped
+#[allow(clippy::result_large_err)]
 async fn upload_media(
     client: &whatsapp_rust::client::Client,
     data: Vec<u8>,

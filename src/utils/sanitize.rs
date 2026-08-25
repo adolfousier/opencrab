@@ -829,6 +829,48 @@ pub fn hoist_reasoning_blocks(content: &str) -> (String, Option<String>) {
     (cleaned, reasoning)
 }
 
+/// Remove every `<!-- phantom_blocked=1 -->` … `<!-- /phantom_blocked=1 -->`
+/// section from message content (#1172).
+///
+/// Phantom-blocked iterations are persisted to the DB under these paired
+/// markers so a misclassified deliverable stays recoverable to humans — but
+/// that same text re-entering LLM context as assistant history is what turned
+/// one Telegram session into 34 piled-up phantom entries (#86): the model
+/// reads its own discarded narrations and emits fresh ones from them.
+/// Callers rebuilding LLM context from DB rows strip whole flagged sections;
+/// TUI/CLI replay paths keep them, since there the content drives
+/// human-visible history.
+///
+/// An unpaired open marker strips everything to the end of the content (a
+/// truncated write must not leak the tail back into context). Content outside
+/// flagged sections passes through untouched.
+pub fn strip_phantom_blocked(content: &str) -> String {
+    const OPEN: &str = "<!-- phantom_blocked=1 -->";
+    const CLOSE: &str = "<!-- /phantom_blocked=1 -->";
+    if !content.contains(OPEN) {
+        return content.to_string();
+    }
+    let mut result = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find(OPEN) {
+        result.push_str(&rest[..start]);
+        match rest[start..].find(CLOSE) {
+            Some(close_rel) => {
+                // Cut marker + body + closing marker, then one following
+                // newline so consecutive blocks don't stack blank lines.
+                let after = &rest[start + close_rel + CLOSE.len()..];
+                rest = after.strip_prefix('\n').unwrap_or(after);
+            }
+            None => {
+                // Unpaired open: treat the tail as blocked (#86 fail-safe).
+                rest = "";
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 pub fn strip_llm_artifacts(text: &str) -> String {
     use crate::brain::agent::service::AgentService;
 

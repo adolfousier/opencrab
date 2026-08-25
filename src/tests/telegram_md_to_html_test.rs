@@ -61,3 +61,16 @@ fn unclosed_bold_still_balances() {
     // so Telegram does not reject it.
     assert_eq!(md_to_html("**oops"), "<b>oops</b>");
 }
+
+#[test]
+fn cron_path_line_converter_renders_fenced_blocks_issue_530() {
+    // #530 repro: cron deliver_to=telegram with a ```bash fence. The line-based
+    // converter (what send_markdown_outbox falls back to) renders the fence as
+    // <pre><code> instead of shipping raw backticks.
+    let html =
+        crate::channels::telegram::handler::markdown_to_telegram_html("```bash\necho hello\n```");
+    assert_eq!(
+        html,
+        "<pre><code class=\"language-bash\">echo hello\n</code></pre>"
+    );
+}

@@ -6,97 +6,12 @@
 //! only visibility widened to pub(crate) so the handler glob re-export
 //! keeps every existing call site and test import stable).
 
-use super::handler::{DisplayItem, StreamingState};
+use super::handler::StreamingState;
 use super::markdown::{markdown_to_telegram_html, split_message, strip_html_tags};
 use super::send::message_in_thread;
-use crate::utils::sanitize::redact_secrets;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{MessageId, ParseMode};
-
-pub(crate) async fn flush_intermediates(
-    bot: &Bot,
-    chat: ChatId,
-    thread_id: Option<teloxide::types::ThreadId>,
-    streaming: &Arc<std::sync::Mutex<StreamingState>>,
-) {
-    let pending: Vec<DisplayItem> = {
-        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        s.display_queue
-            .drain(..)
-            .filter(|item| matches!(item, DisplayItem::Intermediate(_)))
-            .collect()
-    };
-    for item in pending {
-        if let DisplayItem::Intermediate(text) = item {
-            let text = crate::utils::sanitize::strip_llm_artifacts(&text);
-            let text = redact_secrets(&text);
-            let (text, _img_paths) = crate::utils::extract_img_markers(&text);
-            // Strip <<react:emoji>> too; see edit-loop site in handle_message.
-            // flush_intermediates has no inbound user message in scope (called
-            // from resume + follow-up paths), so the directive is stripped but
-            // no reaction fires here (#261).
-            let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
-            // #690 follow-up (#980): re-expand a collapsed table BEFORE the
-            // dedup check, the #582 gate and the sends, so a collapsed report
-            // passes the gate and both delivery paths render a grid instead of
-            // raw pipes. Idempotent on well-formed tables.
-            let text = super::rich::reflow_collapsed_tables(&text);
-            {
-                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                if s.sent_intermediates.iter().any(|prev| prev == &text) {
-                    continue;
-                }
-            }
-            // Same gate the streaming path applies (#838). This function sent
-            // everything queued, so "an intermediate needs a table to earn its
-            // own message" held on one delivery path and not the other. A turn
-            // routed through resume or follow-up dumped its working-out
-            // verbatim, and the reply then arrived twice: once as the
-            // intermediate, once as the final answer saying the same thing in
-            // a different shape.
-            //
-            // Deliberately the shared function rather than a copy of its rule,
-            // so the two paths cannot drift again.
-            if !is_deliverable_rich_report(&text) {
-                continue;
-            }
-            if let Some(id) = try_send_intermediate_rich(bot, chat, thread_id, &text).await {
-                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                s.sent_intermediates.push(text.clone());
-                s.intermediate_msg_ids.push(id);
-                continue;
-            }
-            let html = markdown_to_telegram_html(&text);
-            if html.is_empty() {
-                continue;
-            }
-            let chunks: Vec<String> = split_message(&html, 4096)
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect();
-            let mut sent_ids: Vec<MessageId> = Vec::new();
-            let mut all_ok = true;
-            for chunk in &chunks {
-                match send_html_or_plain(bot, chat, thread_id, chunk, "turn").await {
-                    Ok(id) => sent_ids.push(id),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Telegram: flush intermediate send failed ({e}), leaving for edit loop"
-                        );
-                        all_ok = false;
-                        break;
-                    }
-                }
-            }
-            if all_ok {
-                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                s.sent_intermediates.push(text.clone());
-                s.intermediate_msg_ids.extend(sent_ids);
-            }
-        }
-    }
-}
 
 /// Send an HTML message, falling back to plain text if Telegram rejects the HTML.
 /// Returns the resulting `MessageId` so callers that need to track or later delete
@@ -199,6 +114,7 @@ pub(crate) async fn deliver_intermediate_message(
     chat: ChatId,
     thread_id: Option<teloxide::types::ThreadId>,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    tg: &super::state::TelegramState,
     text: &str,
 ) -> bool {
     // #690 follow-up (#980): re-expand a collapsed table once, up front, so the
@@ -213,6 +129,9 @@ pub(crate) async fn deliver_intermediate_message(
         }
     }
     if let Some(id) = try_send_intermediate_rich(bot, chat, thread_id, text).await {
+        // The bubble is non-sticky burial evidence (#1150): the flow block must
+        // restick below its own output on the next append.
+        tg.note_bot_bubble(chat.0, id.0);
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.sent_intermediates.push(text.to_string());
         s.intermediate_msg_ids.push(id);
@@ -225,7 +144,10 @@ pub(crate) async fn deliver_intermediate_message(
     let mut sent_ids: Vec<MessageId> = Vec::new();
     for chunk in split_message(&html, 4096) {
         match send_html_or_plain(bot, chat, thread_id, chunk, "turn").await {
-            Ok(id) => sent_ids.push(id),
+            Ok(id) => {
+                tg.note_bot_bubble(chat.0, id.0);
+                sent_ids.push(id);
+            }
             Err(e) => {
                 tracing::warn!("Telegram: rich-intermediate send failed ({e})");
                 return false;

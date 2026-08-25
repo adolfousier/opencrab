@@ -527,8 +527,8 @@ fn preamble_instructs_clarifying_before_implementation() {
         "the clarify instruction must survive preamble edits"
     );
     assert!(
-        brain.contains("follow_up_question"),
-        "discrete choices must be routed to the tool that renders buttons"
+        !brain.contains("follow_up_question"),
+        "the removed question tool must not linger in prompt text"
     );
 }
 

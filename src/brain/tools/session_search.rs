@@ -33,7 +33,9 @@ impl Tool for SessionSearchTool {
          search against the messages table. Always up-to-date and exhaustive. \
          Use 'list' to show all sessions with titles, dates, and message counts. \
          Use 'search' to find messages across sessions by substring query. \
-         'session' can be a number (1 = most recent), a title keyword, or 'all' (default)."
+         Use 'tail' to read the last N messages of one session (cheap on huge histories). \
+         'session' can be a number (1 = most recent), a title keyword, or 'all' (default; \
+         ignored by 'tail', which falls back to the newest session)."
     }
 
     fn input_schema(&self) -> Value {
@@ -42,8 +44,8 @@ impl Tool for SessionSearchTool {
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["list", "search"],
-                    "description": "'list' to show sessions, 'search' to find messages"
+                    "enum": ["list", "search", "tail"],
+                    "description": "'list' to show sessions, 'search' to find messages, 'tail' to read the last N messages of a session"
                 },
                 "query": {
                     "type": "string",
@@ -79,6 +81,20 @@ impl Tool for SessionSearchTool {
 
         match operation {
             "list" => self.list_sessions().await,
+            "tail" => {
+                let session_filter = input
+                    .get("session")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                // Default 10, clamped to 100 so a stray huge n can't dump a
+                // whole history into context.
+                let n = input
+                    .get("n")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10)
+                    .clamp(1, 100) as usize;
+                self.tail_session(session_filter.as_deref(), n).await
+            }
             "search" => {
                 let query = match input.get("query").and_then(|v| v.as_str()) {
                     Some(q) if !q.is_empty() => q.to_string(),
@@ -97,7 +113,7 @@ impl Tool for SessionSearchTool {
                     .await
             }
             _ => Ok(ToolResult::error(format!(
-                "Unknown operation '{}'. Use 'list' or 'search'.",
+                "Unknown operation '{}'. Use 'list', 'search', or 'tail'.",
                 operation
             ))),
         }
@@ -250,6 +266,113 @@ impl SessionSearchTool {
                 "**{}** [{} • {}]\n   {}\n\n",
                 title, role, date, snippet
             ));
+        }
+
+        Ok(ToolResult::success(output))
+    }
+
+    /// Read the last `n` messages of one session, oldest-first.
+    ///
+    /// Filter resolution mirrors `search_sessions` (number = position in the
+    /// most-recent-first list, else title keyword). With no filter, the
+    /// newest session is used. 'all' is rejected: tail needs one session.
+    async fn tail_session(&self, session_filter: Option<&str>, n: usize) -> Result<ToolResult> {
+        use crate::db::repository::{MessageRepository, SessionListOptions, SessionRepository};
+
+        if session_filter == Some("all") {
+            return Ok(ToolResult::error(
+                "'tail' needs a single session. Pass a session number (see 'list'), \
+                 a title keyword, or no 'session' to tail the newest one."
+                    .to_string(),
+            ));
+        }
+
+        let session_repo = SessionRepository::new(self.pool.clone());
+        let message_repo = MessageRepository::new(self.pool.clone());
+
+        let all_sessions = session_repo
+            .list(SessionListOptions {
+                include_archived: true,
+                limit: None,
+                offset: 0,
+                query: None,
+                include_subagents: false,
+            })
+            .await
+            .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
+
+        if all_sessions.is_empty() {
+            return Ok(ToolResult::success("No sessions found.".to_string()));
+        }
+
+        let target = match session_filter {
+            None => all_sessions.first().cloned(),
+            Some(filter) => {
+                // Raw session id (spec: "session id or newest default").
+                if let Ok(id) = filter.parse::<uuid::Uuid>() {
+                    all_sessions.iter().find(|s| s.id == id).cloned()
+                } else if let Ok(idx) = filter.parse::<usize>() {
+                    all_sessions.get(idx.saturating_sub(1)).cloned()
+                } else {
+                    let lower = filter.to_lowercase();
+                    all_sessions
+                        .iter()
+                        .find(|s| {
+                            s.title
+                                .as_deref()
+                                .unwrap_or("")
+                                .to_lowercase()
+                                .contains(&lower)
+                        })
+                        .cloned()
+                }
+            }
+        };
+
+        let Some(session) = target else {
+            return Ok(ToolResult::success(format!(
+                "No matching session found for '{}'. Use 'list' to see sessions.",
+                session_filter.unwrap_or("newest")
+            )));
+        };
+
+        let messages = message_repo
+            .find_recent_by_session(session.id, n)
+            .await
+            .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
+
+        let title = session.title.as_deref().unwrap_or("Untitled");
+        if messages.is_empty() {
+            return Ok(ToolResult::success(format!(
+                "Session \"{}\" has no messages.",
+                title
+            )));
+        }
+
+        let mut output = format!(
+            "Last {} of {} messages in \"{}\":\n\n",
+            messages.len(),
+            message_repo.count_by_session(session.id).await.unwrap_or(0),
+            title
+        );
+        for msg in &messages {
+            let date = msg.created_at.format("%Y-%m-%d %H:%M").to_string();
+            let role = if msg.role == "user" {
+                "user"
+            } else {
+                "assistant"
+            };
+            let body: String = msg.content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let body = if body.len() > 500 {
+                let mut end = 500.min(body.len());
+                while !body.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}...", &body[..end])
+            } else {
+                body
+            };
+            output.push_str(&format!("[{}] {}: {}\n\n", date, role, body));
         }
 
         Ok(ToolResult::success(output))

@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.83] - 2026-08-23
+
+52 commits since v0.3.82. 125 files changed, +8,152 / -834 lines.
+
+### ✨ Features
+
+- `a765bc60` **doctor --fix repair mode**: repairs stuck cron rows, stale markers and permissions instead of only reporting them
+- `ed103d2e` **One writer at a time per path**: concurrent writes to the same file serialize instead of racing
+- `9fe65235` **Sub-agent worktree isolation**: each child gets its own worktree so a fan-out stops colliding
+- `35057f13` **Type-aware acceptance criteria** (#1133): criteria are enforced against the plan's toolchain, not just counted
+- `e80730f9` **DeepSeek thinking knobs**: sends the parameters DeepSeek actually reads
+
+### 🔧 Fixes
+
+- `0c86df9e` **profile_list in KNOWN_TOOL_NAMES** (#1161): the custom OpenAI-compat provider stops rejecting the tool
+- `2c3fbf58` **Profile-addressed A2A gateway** (#1161): the gateway resolves the profile it serves
+- `1261e420` **tasks_list, detached status files, prompt hint** (#1160)
+- `3b398955` **A2A sessions resume by context id** (#1159): dead stream action dropped
+- `faa1a43c` **Tracked plan card finalized on completion** (#1158): instead of deleted
+- `884a6b01` **Scoped bot menus for solo-owner groups** (#1155): auto-registered
+- `e09a7f08` **Plan glyph sets converge on status_mark** (#1157)
+- `eb44eb41` **Checkbox glyphs replace the thin-dot pending mark** (#1154)
+- `8c4e396b` **A provider's config models are its own**: not the active one's
+- `3d810d18` **Folded-final reclaim suppressed after a dedup match** (#1152)
+- `3f02b37f` **Buried flow blocks restick** (#1150): bot-bubble evidence and a sticky budget
+- `56044d3c` **Model picker enumeration deduped** (#1149): between body and buttons
+- `9665dd34` **/stop cancels immediately** (#1148): during provider handshake and retry backoffs
+- `9e96cc28` **Stealth-model remap WARN healed** (#1147): and the context-window log stops lying
+- `918d430f` **Model picker pages and filters**: instead of arriving whole
+- `a0d33d86` **Waiting state in the settled card header**: while background tasks run
+- `9a6a1065` **Overlong follow-up option labels compacted**: per channel
+- `8b4cbfb5` **Plan-card prose pipeline unified** (#1142): soft-break parity, mermaid through the gated converter
+- `ad242aa4` **No design scaffold .md for checklist plans** (#1145)
+- `d2b77a24` **Plans find the project from the session's folder**
+- `03418282` **Plans verify with the project's toolchain**: not always cargo
+- `14978039` **A loop-detector kill walks the chain**: instead of dropping the turn
+- `ab70149b` **A cron job sends where it was configured to**: or nowhere
+- `f3302581` **Vacuous-pass guard and audit trail** (#1134, #1135): for criteria_policy flips
+- `8def58e3` **Shared status_mark() helper** (#1136): for the Telegram card
+- `29f65bc0` **Epistemic store resolves under the profile-aware home** (#1137)
+- `265235d2` **DeepSeek empty content string on tool-call-only turns**
+- `f146a08b` **Phantom detector rolls the whole chain**: never delivers work that was not done
+- `e6bf6e16` **A shared session answers only for its own chat**
+- `df3411de` **A reaction lands on the session that owns it**: or nowhere
+- `f523564f` **Restart into the binary the evolve signal named** (#1130)
+- `7c11f3a3` **A config reference that resolves to nothing is reported**
+- `50e4723f` **A turn that ran elsewhere cannot rewrite the session's model**
+- `57f5283c` **Context budgets against the provider's token count**: not our estimate
+
+### 📖 Documentation
+
+- `3ba07297` readme: refresh the test counts
+- `05ea47eb` readme: document sub-agent worktree isolation and path locks
+- `7626d24d` readme: record what the verification gate now checks
+- `93cd4c2d` prompt: state the commit rule once, in the preamble
+- `8642fe8b` template: tell agents how diagrams actually reach Telegram
+- `d5367ca0` testing: generate the coverage table from the test runner
+- `062aabdb` testing: regenerate the coverage table
+- `6deb0b45` changelog: correct the pre-release build trigger claim (#1111)
+
+### 🧹 Miscellaneous
+
+- `2d44e291` ignore desktop/ for now
+- `f2145df7` build A2aConfig in one initializer
+- `225da6cc` apply cargo fmt
+- `7424e3de` drop the startup-warning snapshot and its delivery (revert)
+- `67019229` clear the lints Rust 1.98 added
+
+### 📊 Stats
+
+- 52 commits since v0.3.82
+- 125 files changed, +8,152 / -834 lines
+- 6,997 tests (6,965 passed, 0 failed, 32 ignored)
+
+
 ## [0.3.82] - 2026-08-20
 
 79 commits since v0.3.81. 162 files changed, +11,298 / -4,874 lines.
@@ -7822,3 +7897,4 @@ fixes.
 [0.3.80]: https://github.com/adolfousier/opencrabs/compare/v0.3.79...v0.3.80
 [0.3.81]: https://github.com/adolfousier/opencrabs/compare/v0.3.80...v0.3.81
 [0.3.82]: https://github.com/adolfousier/opencrabs/compare/v0.3.81...v0.3.82
+[0.3.83]: https://github.com/adolfousier/opencrabs/compare/v0.3.82...v0.3.83

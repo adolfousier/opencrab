@@ -20,6 +20,7 @@ mod manager {
             id: id.to_string(),
             label: label.to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,
@@ -324,6 +325,7 @@ mod manager {
             id: "a1".to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,
@@ -369,7 +371,6 @@ mod send_input_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
-            question_callback: None,
             progress_callback: None,
             background_manager: None,
             plan_session_override: None,
@@ -384,6 +385,7 @@ mod send_input_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,
@@ -450,7 +452,13 @@ mod send_input_tool {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not running"));
+        // #1184 ripple: completed agents are pointed at resume_agent instead of
+        // the old generic "not running" rejection.
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("use resume_agent to continue"));
     }
 
     #[tokio::test]
@@ -481,6 +489,7 @@ mod send_input_tool {
             id: "a1".to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,
@@ -529,7 +538,6 @@ mod close_agent_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
-            question_callback: None,
             progress_callback: None,
             background_manager: None,
             plan_session_override: None,
@@ -544,6 +552,7 @@ mod close_agent_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,
@@ -661,7 +670,6 @@ mod wait_agent_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
-            question_callback: None,
             progress_callback: None,
             background_manager: None,
             plan_session_override: None,
@@ -676,6 +684,7 @@ mod wait_agent_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,
@@ -846,6 +855,7 @@ mod lifecycle {
             id: id.to_string(),
             label: "lifecycle-test".to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,
@@ -971,62 +981,13 @@ mod lifecycle {
     }
 }
 
-// ─── AgentType Tests ───────────────────────────────────────────────────────
+// ─── Child Registry & Grant Tests (#1173) ─────────────────────────────────
 
 mod agent_type {
-    use crate::brain::tools::subagent::AgentType;
+    use crate::brain::tools::subagent::SubAgentState;
+    use crate::brain::tools::subagent::map_deprecated_agent_type;
 
-    #[test]
-    fn parse_known_types() {
-        assert_eq!(AgentType::parse("explore"), AgentType::Explore);
-        assert_eq!(AgentType::parse("search"), AgentType::Explore);
-        assert_eq!(AgentType::parse("find"), AgentType::Explore);
-        assert_eq!(AgentType::parse("plan"), AgentType::Plan);
-        assert_eq!(AgentType::parse("architect"), AgentType::Plan);
-        assert_eq!(AgentType::parse("code"), AgentType::Code);
-        assert_eq!(AgentType::parse("implement"), AgentType::Code);
-        assert_eq!(AgentType::parse("write"), AgentType::Code);
-        assert_eq!(AgentType::parse("research"), AgentType::Research);
-        assert_eq!(AgentType::parse("web"), AgentType::Research);
-    }
-
-    #[test]
-    fn parse_unknown_defaults_to_general() {
-        assert_eq!(AgentType::parse(""), AgentType::General);
-        assert_eq!(AgentType::parse("foobar"), AgentType::General);
-        assert_eq!(AgentType::parse("random"), AgentType::General);
-    }
-
-    #[test]
-    fn parse_case_insensitive() {
-        assert_eq!(AgentType::parse("EXPLORE"), AgentType::Explore);
-        assert_eq!(AgentType::parse("Plan"), AgentType::Plan);
-        assert_eq!(AgentType::parse("CODE"), AgentType::Code);
-    }
-
-    #[test]
-    fn labels_are_lowercase() {
-        assert_eq!(AgentType::General.label(), "general");
-        assert_eq!(AgentType::Explore.label(), "explore");
-        assert_eq!(AgentType::Plan.label(), "plan");
-        assert_eq!(AgentType::Code.label(), "code");
-        assert_eq!(AgentType::Research.label(), "research");
-    }
-
-    #[test]
-    fn system_prompts_are_nonempty() {
-        for agent_type in &[
-            AgentType::General,
-            AgentType::Explore,
-            AgentType::Plan,
-            AgentType::Code,
-            AgentType::Research,
-        ] {
-            assert!(!agent_type.system_prompt().is_empty());
-        }
-    }
-
-    /// Build a mock parent registry with all common tools for testing filtering.
+    /// Build a mock parent registry with common tools for filtering tests.
     fn mock_parent_registry() -> crate::brain::tools::ToolRegistry {
         use std::sync::Arc;
         let reg = crate::brain::tools::ToolRegistry::new();
@@ -1044,23 +1005,9 @@ mod agent_type {
     }
 
     #[test]
-    fn explore_registry_is_read_only() {
+    fn child_registry_inherits_full_parent() {
         let parent = mock_parent_registry();
-        let registry = AgentType::Explore.build_registry(&parent);
-        let tools = registry.list_tools();
-        assert!(tools.contains(&"read_file".to_string()));
-        assert!(tools.contains(&"glob".to_string()));
-        assert!(tools.contains(&"grep".to_string()));
-        assert!(tools.contains(&"ls".to_string()));
-        assert!(!tools.contains(&"write_file".to_string()));
-        assert!(!tools.contains(&"edit_file".to_string()));
-        assert!(!tools.contains(&"bash".to_string()));
-    }
-
-    #[test]
-    fn general_registry_inherits_full_parent() {
-        let parent = mock_parent_registry();
-        let registry = AgentType::General.build_registry(&parent);
+        let registry = crate::brain::tools::subagent::build_child_registry(&parent);
         let tools = registry.list_tools();
         assert!(tools.contains(&"read_file".to_string()));
         assert!(tools.contains(&"write_file".to_string()));
@@ -1071,10 +1018,9 @@ mod agent_type {
     }
 
     #[test]
-    fn general_registry_excludes_recursive_tools() {
-        let parent = mock_parent_registry();
-        // Add a "spawn_agent" to parent — it should be filtered out
+    fn child_registry_excludes_recursive_tools() {
         use std::sync::Arc;
+        let parent = mock_parent_registry();
         let mgr = Arc::new(crate::brain::tools::subagent::SubAgentManager::new());
         parent.register(Arc::new(
             crate::brain::tools::subagent::SpawnAgentTool::new(
@@ -1082,37 +1028,18 @@ mod agent_type {
                 Arc::new(crate::brain::tools::ToolRegistry::new()),
             ),
         ));
-        let registry = AgentType::General.build_registry(&parent);
+        let registry = crate::brain::tools::subagent::build_child_registry(&parent);
         let tools = registry.list_tools();
-        assert!(!tools.contains(&"spawn_agent".to_string()));
+        assert!(
+            !tools.contains(&"spawn_agent".to_string()),
+            "recursive spawn must never reach a child"
+        );
     }
 
     #[test]
-    fn research_registry_has_web_no_write() {
-        let parent = mock_parent_registry();
-        let registry = AgentType::Research.build_registry(&parent);
-        let tools = registry.list_tools();
-        assert!(tools.contains(&"web_search".to_string()));
-        assert!(tools.contains(&"read_file".to_string()));
-        assert!(!tools.contains(&"write_file".to_string()));
-        assert!(!tools.contains(&"edit_file".to_string()));
-    }
-
-    #[test]
-    fn plan_registry_has_bash_for_analysis() {
-        let parent = mock_parent_registry();
-        let registry = AgentType::Plan.build_registry(&parent);
-        let tools = registry.list_tools();
-        assert!(tools.contains(&"bash".to_string()));
-        assert!(tools.contains(&"read_file".to_string()));
-        assert!(!tools.contains(&"write_file".to_string()));
-    }
-
-    #[test]
-    fn general_registry_excludes_team_tools() {
-        let parent = mock_parent_registry();
-        // Add team tools to parent
+    fn child_registry_excludes_team_tools() {
         use std::sync::Arc;
+        let parent = mock_parent_registry();
         let subagent_mgr = Arc::new(crate::brain::tools::subagent::SubAgentManager::new());
         let team_mgr = Arc::new(crate::brain::tools::subagent::TeamManager::new());
         parent.register(Arc::new(
@@ -1135,11 +1062,87 @@ mod agent_type {
             ),
         ));
 
-        let registry = AgentType::General.build_registry(&parent);
+        let registry = crate::brain::tools::subagent::build_child_registry(&parent);
         let tools = registry.list_tools();
         assert!(!tools.contains(&"team_create".to_string()));
         assert!(!tools.contains(&"team_delete".to_string()));
         assert!(!tools.contains(&"team_broadcast".to_string()));
+    }
+
+    #[test]
+    fn deprecated_read_only_types_map_true() {
+        for s in [
+            "explore",
+            "search",
+            "find",
+            "research",
+            "web",
+            "lookup",
+            "EXPLORE",
+            "  research  ",
+        ] {
+            assert_eq!(map_deprecated_agent_type(s), Ok(true), "input: {s}");
+        }
+    }
+
+    #[test]
+    fn deprecated_write_capable_types_map_false() {
+        // `plan` carried bash historically, so it was NEVER read-only.
+        for s in [
+            "general",
+            "plan",
+            "architect",
+            "design",
+            "code",
+            "implement",
+            "write",
+        ] {
+            assert_eq!(map_deprecated_agent_type(s), Ok(false), "input: {s}");
+        }
+    }
+
+    #[test]
+    fn unknown_type_fails_closed() {
+        for s in ["", "foobar", "Plan-X", "explor"] {
+            let err = map_deprecated_agent_type(s).unwrap_err();
+            assert!(err.contains("Unknown agent_type"), "input: {s}: {err}");
+        }
+    }
+
+    #[test]
+    fn restricted_registry_strips_mutating_tools() {
+        let parent = mock_parent_registry();
+        let reg = crate::brain::tools::subagent::build_child_registry(&parent);
+        crate::brain::tools::plan_gate::restrict_registry_to_read_only(&reg);
+        let tools = reg.list_tools();
+        assert!(tools.contains(&"read_file".to_string()));
+        assert!(tools.contains(&"glob".to_string()));
+        assert!(!tools.contains(&"write_file".to_string()));
+        assert!(!tools.contains(&"edit_file".to_string()));
+        assert!(!tools.contains(&"bash".to_string()));
+    }
+
+    #[test]
+    fn read_only_grant_frozen_in_manager() {
+        use crate::brain::tools::subagent::{SubAgent, SubAgentManager};
+        use tokio_util::sync::CancellationToken;
+        use uuid::Uuid;
+        let mgr = SubAgentManager::new();
+        mgr.insert(SubAgent {
+            id: "ro1".into(),
+            label: "ro".into(),
+            session_id: Uuid::new_v4(),
+            read_only: true,
+            state: SubAgentState::Running,
+            cancel_token: CancellationToken::new(),
+            join_handle: None,
+            input_tx: None,
+            output: None,
+            spawned_at: chrono::Utc::now(),
+            waiters: 0,
+        });
+        assert_eq!(mgr.get_read_only("ro1"), Some(true));
+        assert_eq!(mgr.get_read_only("missing"), None);
     }
 }
 
@@ -1286,7 +1289,6 @@ mod team_delete_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
-            question_callback: None,
             progress_callback: None,
             background_manager: None,
             plan_session_override: None,
@@ -1301,6 +1303,7 @@ mod team_delete_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,
@@ -1418,7 +1421,6 @@ mod team_broadcast_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
-            question_callback: None,
             progress_callback: None,
             background_manager: None,
             plan_session_override: None,
@@ -1433,6 +1435,7 @@ mod team_broadcast_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
             join_handle: None,

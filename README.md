@@ -45,6 +45,7 @@
 - [Brain Constitution](src/docs/reference/BRAIN_CONSTITUTION.md)
 - [Adding New Providers](src/docs/reference/ADDING_NEW_PROVIDERS.md)
 - [Plan JSON Specification](src/docs/reference/plans/plan-json-spec.md)
+- [Dynamic Workflows Guide](src/docs/reference/DYNAMIC_WORKFLOWS.md) — orchestrate agents with scripts: fan-out, pipelines, structured outputs, checkpointing
 
 ### Brain File Templates
 - [SOUL.md](src/docs/reference/templates/SOUL.md) — personality and voice
@@ -2302,7 +2303,13 @@ task_type = "build"
 commands = ["cargo clippy --all-features -- -D warnings", "cargo test"]
 ```
 
-`criteria_policy` decides what happens when a task declares acceptance criteria that nothing verifies: `downgrade` records the belief as uncertain rather than verified, `strict` rejects the completion, `off` leaves criteria advisory.
+`criteria_policy` decides what happens when a task declares acceptance criteria that nothing verifies: `downgrade` records the belief as uncertain rather than verified, `strict` rejects the completion, `off` leaves criteria advisory. A change to this value is recorded as a belief with its old and new setting, so a mid-loop flip is visible afterwards rather than silent.
+
+**Exit 0 is not enough.** A command that exits cleanly having run *no* tests is rejected as a vacuous pass — a filter that matches nothing, or a disabled suite, is not a verified completion. The check reads each runner's own way of saying it ran nothing, including the ones that never print a zero count: pytest's `no tests ran`, go's `[no test files]`, flutter's `+0`. Output with no test summary at all (a lint, a build, a grep) is left alone rather than read as zero.
+
+**`task_type_commands` is optional.** The example above pins cargo because this repository is Rust. A task type with no entry is verified with the runner the project's own manifest implies — `zig build test` where there is a `build.zig`, `flutter test` for a `pubspec.yaml`, `pytest`, `npm test`, `go test ./...` — resolved from the session's working directory, walking up to the nearest manifest so a session parked in a subdirectory still finds its project. An explicit entry always wins. Only `build` and `test` are answered this way; a refactor or documentation task has no unambiguous command and stays unverified rather than being handed one that does not describe it.
+
+Because this file governs every project that has no `ralph_loop.toml` of its own, naming a toolchain here forces it on all of them. Leaving `task_type_commands` empty is usually what you want; put project-specific commands in a `<working_dir>/ralph_loop.toml`, which is authoritative when present.
 
 **Note:** if the file is missing or fails to parse, the gate is simply absent — completions pass unverified. Unlike the bash blocklist, there is no hardcoded floor beneath this one.
 
@@ -3932,6 +3939,52 @@ flowchart TD
     AGG --> DELETE[Delete team]
 ```
 
+### Working-tree isolation
+
+Children used to inherit the parent's directory, so a fan-out collided by
+construction: several agents spawned at once wrote the same bytes with no
+arbitration. Each child now gets its own `git worktree` on a
+`subagent/<id>` branch and works there.
+
+The cost is the source, not the build. `.git` is shared between worktrees,
+so a checkout is a few tens of MB rather than a copy of the repository, and
+the build cache is cloned copy-on-write where the filesystem supports it
+(APFS `cp -c`), which takes no measurable time or disk. Elsewhere the child
+simply builds cold.
+
+Nothing about it is load-bearing. Outside a git repository, or if git
+refuses, the child works in the parent's directory exactly as before. A tree
+left behind by a crashed run is cleared and re-cut rather than being allowed
+to refuse isolation to every later child.
+
+**What happens to the work.** On completion a tree holding nothing is
+removed and never mentioned — the common case, since most children change
+nothing. A tree holding a commit or an uncommitted edit is kept, and the
+result the parent reads names the branch, the path, and the `git merge` that
+lands it. Work is judged by HEAD having moved off the commit the tree was
+cut from, so nothing is discarded silently.
+
+There is no worktree-specific merge to learn: it is one repository with two
+checkouts, and `subagent/<id>` is an ordinary branch.
+
+### One writer at a time
+
+Isolation degrades to the parent's directory outside a repository, and a
+fan-out is back to sharing one tree when it does. So `edit_file` and
+`write_file` take an advisory lock on the path they are writing, held across
+the write and released on drop — including on a panic, so a writer that dies
+mid-write costs a pause rather than a wedged file.
+
+Deliberately weak, because a lock that can block a save is worse than the
+collision it prevents. A contended write waits briefly and then proceeds
+anyway, reporting the overlap so the file's contents are known to be suspect
+rather than silently wrong. Every failure to lock degrades to writing.
+
+The guarantee is in the write path rather than in an instruction, so it does
+not depend on an agent remembering to check. It does not cover writes made
+through `bash` (a heredoc, `sed -i`, a build script), which is what the
+worktree covers.
+
 ## 8. Data Layer
 
 ```mermaid
@@ -4117,7 +4170,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (6,781 tests across 671 test modules; 32 slower tests are
+# Run tests (6,997 tests across 694 test modules; 32 slower tests are
 # #[ignore]d to keep the default run fast — profile tests that touch
 # ~/.opencrabs, browser end-to-end tests, and opencode provider tests.
 # Opt in with `cargo test --all-features -- --ignored` when needed)

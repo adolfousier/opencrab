@@ -188,3 +188,48 @@ async fn delete_trailing_unanswered_pair_leaves_answered_turn_alone() {
     assert_eq!(deleted, 0, "an answered turn is untouched");
     assert_eq!(repo.list_by_session(session.id).await.unwrap().len(), 2);
 }
+
+/// #1166: find_recent_by_session returns the LAST n messages in
+/// chronological order, pushing the LIMIT into SQL instead of loading the
+/// whole history.
+#[tokio::test]
+async fn find_recent_by_session_returns_chronological_tail() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let session_repo = SessionRepository::new(db.pool().clone());
+    let repo = MessageRepository::new(db.pool().clone());
+
+    let session = Session::new(Some("t".to_string()), Some("m".to_string()), None);
+    session_repo.create(&session).await.unwrap();
+
+    for i in 1..=5 {
+        repo.create(&Message::new(
+            session.id,
+            "user".into(),
+            format!("msg{}", i),
+            i,
+        ))
+        .await
+        .unwrap();
+    }
+
+    // Tail of 2 = [msg4, msg5] — oldest-first within the window.
+    let tail = repo.find_recent_by_session(session.id, 2).await.unwrap();
+    assert_eq!(tail.len(), 2);
+    assert_eq!(tail[0].content, "msg4");
+    assert_eq!(tail[1].content, "msg5");
+
+    // A limit larger than the history returns everything, still ordered.
+    let all = repo.find_recent_by_session(session.id, 100).await.unwrap();
+    assert_eq!(all.len(), 5);
+    assert_eq!(all[0].content, "msg1");
+
+    // Empty session yields an empty vec rather than an error.
+    let empty_session = Session::new(Some("e".to_string()), Some("m".to_string()), None);
+    session_repo.create(&empty_session).await.unwrap();
+    let none = repo
+        .find_recent_by_session(empty_session.id, 10)
+        .await
+        .unwrap();
+    assert!(none.is_empty());
+}

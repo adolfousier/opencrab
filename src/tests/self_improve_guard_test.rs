@@ -11,7 +11,6 @@ use crate::brain::tools::self_improve_guards::bans_builtin_tool;
 #[test]
 fn protected_builtins_include_the_reported_tools() {
     assert!(is_protected_builtin("hashline_edit"));
-    assert!(is_protected_builtin("follow_up_question"));
     assert!(is_protected_builtin("telegram_send"));
     assert!(is_protected_builtin("bash"));
     assert!(is_protected_builtin("browser_navigate"));

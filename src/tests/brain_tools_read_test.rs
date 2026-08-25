@@ -83,3 +83,50 @@ fn test_read_tool_schema() {
     let schema = tool.input_schema();
     assert!(schema.is_object());
 }
+
+// ── #1164: non-regular files rejected fast and self-describing ───────
+
+/// The issue's headline scenario: a char-device path must come back as an
+/// error well inside the tool timeout — never hang the call. The gate has
+/// existed since v0.2.21; this pins it plus the self-describing kind.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_read_char_device_rejected_fast() {
+    let tool = ReadTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4());
+
+    let input = serde_json::json!({ "path": "/dev/zero" });
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tool.execute(input, &context),
+    )
+    .await
+    .expect("read_file(/dev/zero) hung instead of erroring")
+    .unwrap();
+    assert!(!result.success);
+    let err = result.error.as_deref().unwrap_or_default();
+    assert!(
+        err.contains("character device"),
+        "error should name the file type: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_read_directory_names_the_kind() {
+    let temp_dir = TempDir::new().unwrap();
+    let tool = ReadTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4())
+        .with_working_directory(temp_dir.path().to_path_buf());
+
+    let result = tool
+        .execute(serde_json::json!({ "path": "." }), &context)
+        .await
+        .unwrap();
+    assert!(!result.success);
+    let err = result.error.as_deref().unwrap_or_default();
+    assert!(
+        err.contains("directory"),
+        "error should name the file type: {err}"
+    );
+}

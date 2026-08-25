@@ -15,6 +15,10 @@ pub type StreamTx = mpsc::Sender<StreamEvent>;
 /// Handle `message/stream` -- creates a task, spawns background processing,
 #[allow(clippy::result_large_err)] // pre-existing signature; clippy 1.98 tightened this lint after this code shipped
 /// returns a receiver that yields SSE events.
+// The error variant is a full `JsonRpcResponse`, which is the protocol reply
+// this handler must produce on the failure path; boxing it would only move
+// the allocation without changing what is returned.
+#[allow(clippy::result_large_err)]
 pub async fn handle_stream_message(
     id: serde_json::Value,
     params: serde_json::Value,
@@ -132,26 +136,34 @@ async fn process_task_streaming(
         "A2A: {}",
         &user_text[..user_text.floor_char_boundary(60.min(user_text.len()))]
     );
-    let session_id = match session_service.create_session(Some(title)).await {
-        Ok(session) => session.id,
-        Err(e) => {
-            tracing::error!(
-                "A2A stream: Failed to create session for task {}: {}",
-                task_id,
-                e
-            );
-            send_final_status(
-                &store,
-                &task_id,
-                &context_id,
-                TaskState::Failed,
-                &format!("Session creation failed: {}", e),
-                &pool,
-                &tx,
-            )
-            .await;
-            return;
-        }
+    // Conversation continuity (#1159): tasks sharing a context_id continue
+    // the same chat session instead of forking a fresh one per task.
+    let session_id = match persistence::lookup_session_for_context(&pool, &context_id).await {
+        Some(existing) => existing,
+        None => match session_service.create_session(Some(title)).await {
+            Ok(session) => {
+                persistence::save_context_session(&pool, &context_id, session.id).await;
+                session.id
+            }
+            Err(e) => {
+                tracing::error!(
+                    "A2A stream: Failed to create session for task {}: {}",
+                    task_id,
+                    e
+                );
+                send_final_status(
+                    &store,
+                    &task_id,
+                    &context_id,
+                    TaskState::Failed,
+                    &format!("Session creation failed: {}", e),
+                    &pool,
+                    &tx,
+                )
+                .await;
+                return;
+            }
+        },
     };
 
     let cancel_token = CancellationToken::new();

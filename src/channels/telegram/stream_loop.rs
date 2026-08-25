@@ -196,7 +196,7 @@ pub(crate) fn spawn_edit_loop(
                                     // the collapsed trace.
                                     if super::intermediates::is_deliverable_rich_report(&text) {
                                         super::intermediates::deliver_intermediate_message(
-                                            &bot, chat, thread_id, &st, &text,
+                                            &bot, chat, thread_id, &st, &tg, &text,
                                         )
                                         .await;
                                     } else {
@@ -222,7 +222,29 @@ pub(crate) fn spawn_edit_loop(
                         // sees no churn.
                         if !snap.display_items.is_empty() {
                             let newest = tg.newest_incoming_msg_id(chat.0);
-                            restick_flow_if_buried(&bot, chat, thread_id, &st, newest).await;
+                            if restick_flow_if_buried(&bot, chat, thread_id, &st, &tg, newest).await
+                            {
+                                // #1150: the relocated block landed at the absolute bottom,
+                                // which can sit BELOW an active plan card — burying exactly
+                                // the surface that owns Approve/Discard. One coordinated
+                                // remove+refresh under the SAME budget draw restores
+                                // [flow block][plan card]. The per-session card backoff
+                                // (#814) still wins: when suppressed, the next settle
+                                // fixes the order instead.
+                                if !tg.plan_card_suppressed(sid).await {
+                                    super::plan_card::remove_plan_card(&bot, chat, &tg, sid).await;
+                                    let plan_kb = {
+                                        st.lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .sections
+                                            .plan_kb
+                                    };
+                                    super::plan_card::refresh_plan_card(
+                                        &bot, chat, thread_id, &tg, &agent, sid, plan_kb,
+                                    )
+                                    .await;
+                                }
+                            }
                         }
 
                         // ── Update tool-group messages for tools that changed status ──

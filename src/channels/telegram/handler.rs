@@ -2348,23 +2348,6 @@ pub(crate) async fn handle_message(
         Some(guard) => guard,
         None => {
             // A turn is already in flight for this session.
-            // If it is blocked on a `follow_up_question`, the user's text IS
-            // the answer (#500). Fire the oneshot so the tool unblocks and
-            // returns the text, instead of queueing: the tool is suspended
-            // inside `rx.await`, so no tool round ever ends to drain the
-            // queue, and a queued answer would sit until a button click or
-            // the 10-min timeout.
-            if telegram_state
-                .resolve_pending_question_with_text(session_id, text.clone())
-                .await
-            {
-                tracing::info!(
-                    "Telegram: text answered a pending follow_up_question on session {}",
-                    session_id
-                );
-                fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
-                return Ok(());
-            }
             tracing::info!(
                 "Telegram: message arrived mid-turn on session {} — queued for injection \
                  between tool rounds",
@@ -2409,6 +2392,7 @@ pub(crate) async fn handle_message(
         turn_started_at: std::time::Instant::now(),
         flow_outcome: None,
         bg_indicator: None,
+        bg_count: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -2444,10 +2428,6 @@ pub(crate) async fn handle_message(
     // Build Telegram-native approval + follow-up-question callbacks
     // for this session
     let approval_cb = make_approval_callback(telegram_state.clone());
-    let question_cb = super::follow_up_question::make_question_callback(
-        telegram_state.clone(),
-        streaming.clone(),
-    );
 
     // ── Agent call ────────────────────────────────────────────────────────────
     let cancel_token = tokio_util::sync::CancellationToken::new();
@@ -2469,7 +2449,6 @@ pub(crate) async fn handle_message(
             Some(cancel_token.clone()),
             Some(approval_cb),
             Some(progress_cb.clone()),
-            Some(question_cb),
             "telegram",
             Some(&chat_id_str),
         )
@@ -2500,10 +2479,6 @@ pub(crate) async fn handle_message(
                         .register_session_chat(new_id, msg.chat.id.0, topic_id)
                         .await;
                     let approval_cb2 = make_approval_callback(telegram_state.clone());
-                    let question_cb2 = super::follow_up_question::make_question_callback(
-                        telegram_state.clone(),
-                        streaming.clone(),
-                    );
                     let cancel_token2 = tokio_util::sync::CancellationToken::new();
                     telegram_state
                         .store_cancel_token(new_id, cancel_token2.clone())
@@ -2520,7 +2495,6 @@ pub(crate) async fn handle_message(
                             Some(cancel_token2),
                             Some(approval_cb2),
                             Some(progress_cb),
-                            Some(question_cb2),
                             "telegram",
                             Some(&chat_id_str),
                         )
@@ -2664,7 +2638,9 @@ pub(crate) async fn handle_message(
     {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.flow_outcome = Some(flow_outcome);
-        s.bg_indicator = bg_indicator_for(&agent, session_id);
+        let (bg_indicator, bg_count) = bg_indicator_for(&agent, session_id);
+        s.bg_indicator = bg_indicator;
+        s.bg_count = bg_count;
     }
     // Recompute sections now that the turn has settled: the plan Approve/Discard
     // keyboard attaches only at turn end (load_plan_state_section keys off
@@ -2692,24 +2668,44 @@ pub(crate) async fn handle_message(
         // flood control and produced duplicate cards. Skipping the re-stick
         // still refreshes in place below, so the card stays correct; it just
         // stays where it is until the next re-stick is due.
-        const RESTICK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(90);
-        if telegram_state
-            .should_restick_plan_card(session_id, RESTICK_COOLDOWN)
-            .await
-        {
-            super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
-                .await;
-        }
-        super::plan_card::refresh_plan_card(
-            &bot,
-            msg.chat.id,
-            thread_id,
-            &telegram_state,
-            &agent,
+        if crate::utils::plan_files::recent_archived_plan(
             session_id,
-            plan_kb,
+            std::time::Duration::from_secs(120),
         )
-        .await;
+        .await
+        {
+            // Plan completed THIS settle (#1158): finalize the tracked card
+            // in place (✅ header, keyboard stripped, one-shot untrack)
+            // instead of re-sticking or refreshing a now-archived plan.
+            super::plan_card::finalize_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
+                .await;
+        } else {
+            const RESTICK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(90);
+            if telegram_state
+                .should_restick_plan_card(session_id, RESTICK_COOLDOWN)
+                .await
+                // Shared sticky-stack budget (#1150): a flow restick moments ago
+                // already spent this chat's delete+create allowance; skipping here
+                // is safe — the refresh below still edits in place, and the next
+                // settle or flow restick reorders.
+            && telegram_state.claim_sticky_action(
+                msg.chat.id.0,
+                super::state::TelegramState::STICKY_STACK_MIN_INTERVAL,
+            ) {
+                super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
+                    .await;
+            }
+            super::plan_card::refresh_plan_card(
+                &bot,
+                msg.chat.id,
+                thread_id,
+                &telegram_state,
+                &agent,
+                session_id,
+                plan_kb,
+            )
+            .await;
+        }
     }
 
     // Drop the active-turn guard before flushing so any reaction arriving during
@@ -2772,7 +2768,7 @@ pub(crate) async fn handle_message(
         .pending_suggestions
         .take();
     if let Some(options) = suggestions {
-        super::suggest_followups::render_suggestions(
+        super::suggest_options::render_suggestions(
             &bot,
             &telegram_state,
             session_id,
@@ -2801,7 +2797,6 @@ pub(crate) async fn handle_reaction(
     bot: Bot,
     reaction: teloxide::types::MessageReactionUpdated,
     agent: Arc<AgentService>,
-    shared_session: Arc<Mutex<Option<Uuid>>>,
     telegram_state: Arc<TelegramState>,
     config_rx: tokio::sync::watch::Receiver<Config>,
     channel_msg_repo: ChannelMessageRepository,
@@ -2860,11 +2855,11 @@ pub(crate) async fn handle_reaction(
     // ── 5. Look up the reacted-to message in channel_messages ───────────
     // Only proceed if the message was sent by the bot.
     let msg_id = reaction.message_id;
-    let content = match channel_msg_repo
-        .bot_content_by_platform_message_id("telegram", &chat_id_str, &msg_id.0.to_string())
+    let (content, reacted_thread_id) = match channel_msg_repo
+        .bot_message_with_thread("telegram", &chat_id_str, &msg_id.0.to_string())
         .await
     {
-        Ok(Some(c)) => c,
+        Ok(Some(row)) => row,
         Ok(None) => {
             tracing::debug!(
                 "Telegram reaction: message {} not a stored bot message — skipping",
@@ -2883,15 +2878,25 @@ pub(crate) async fn handle_reaction(
     };
 
     // ── 6. Resolve session ──────────────────────────────────────────────
-    // Reactions carry no forum-thread info, so topic_id = None.
-    let session_id = if let Some(sid) = telegram_state.chat_session(chat_id.0, None).await {
-        sid
-    } else if let Some(sid) = *shared_session.lock().await {
-        sid
-    } else {
+    // The reaction update carries no thread id, but the message it landed on
+    // was stored with one, and sessions are keyed by (chat_id, topic_id). A
+    // forum topic's session is registered under Some(topic), so looking up
+    // None could never match it and every reaction in a topic fell through.
+    let topic_id = reacted_thread_id
+        .as_deref()
+        .and_then(|t| t.parse::<i32>().ok());
+    // Exactly the session this message belongs to, or none at all. There is no
+    // fallback on purpose: the old one reached for a process-global handle with
+    // no relationship to this chat, so a reaction in a group was injected into
+    // whatever session happened to be current and answered there, in front of
+    // people with no access to it. Widening the key instead would be the same
+    // mistake in miniature, landing a topic's reaction on the chat's other
+    // session. A reaction that cannot be placed is dropped: one lost ack.
+    let Some(session_id) = telegram_state.chat_session(chat_id.0, topic_id).await else {
         tracing::debug!(
-            "Telegram reaction: no session for chat {} — skipping",
-            chat_id.0
+            "Telegram reaction: no session for chat {} topic {:?} — skipping",
+            chat_id.0,
+            topic_id
         );
         return Ok(());
     };

@@ -11,12 +11,6 @@ use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// One pending `follow_up_question`: the oneshot half that the
-/// `follow_up_question` tool is awaiting, plus the option list the
-/// click handler uses to translate the button-index callback data
-/// back into the chosen option string.
-type PendingQuestion = (oneshot::Sender<String>, Vec<String>, Uuid);
-
 /// Photo buffer entry: (img_marker, Optional caption)
 type PhotoEntry = (String, Option<String>);
 
@@ -58,26 +52,20 @@ pub struct TelegramState {
     /// Pending follow-up questions: question_id → (oneshot sender of
     /// the chosen option string, list of options keyed by index). The
     /// inline-keyboard callback data only carries the option index (to
-    /// stay under Telegram's 64-byte callback-data limit), so the
-    /// option list is stashed here for the click handler to resolve
-    /// `idx -> option string` before sending it back to the suspended
-    /// `follow_up_question` tool.
-    pending_questions: Mutex<HashMap<String, PendingQuestion>>,
-    /// Reverse map: session_id → question_id of the follow-up question this
-    /// session is currently blocked on. Lets a mid-turn TEXT message answer a
-    /// pending question directly (#500): the `follow_up_question` tool blocks
-    /// inside `rx.await`, so a queued-between-rounds text never reaches it — no
-    /// round ever ends while the tool is suspended. When a text arrives on a
-    /// session with an entry here, we fire the oneshot with the text so the
     /// tool unblocks and returns it as the answer, instead of queueing.
-    session_pending_question: Mutex<HashMap<Uuid, String>>,
     /// Per-session OPTIONAL follow-up suggestions surfaced by the
-    /// `suggest_followups` tool (#597). Unlike `pending_questions` these are
+    /// `suggest_options` tool (#597). Unlike `pending_questions` these are
     /// non-blocking: the buttons ride under the response and a tap injects the
     /// chosen suggestion as the user's next message. Keyed by session so the
     /// tap handler resolves `idx -> suggestion string`; cleared on tap or when
     /// the user sends anything.
     pending_followups: Mutex<HashMap<Uuid, Vec<String>>>,
+    /// Solo-owner auto-registration cache (#1155): chat_id → decision already
+    /// reached. `true` = eligible solo group, full owner catalog registered;
+    /// `false` = evaluated and ineligible. Cleared on membership events so the
+    /// next message re-evaluates instead of trusting a stale snapshot — the
+    /// exact staleness class Gap 2 of #1155 describes.
+    solo_evaluated: Mutex<HashMap<i64, bool>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Persistent plan-card message per session (#580): the single Telegram
@@ -167,13 +155,21 @@ pub struct TelegramState {
     /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
     /// session looking permanently busy.
     active_turns: std::sync::Mutex<std::collections::HashSet<Uuid>>,
-    /// Highest incoming Telegram message id seen per chat (#451). Recorded for
-    /// EVERY message reaching the handler, mention or not, so the streaming
-    /// edit loop can tell when its open flow block has been buried by newer
-    /// chatter (block message id < newest incoming id) and re-stick the block
-    /// to the bottom. Telegram message ids are per-chat monotonic, so a plain
-    /// max is a valid "is the block buried" test.
+    /// Newest NON-STICKY message id seen per chat (#451, semantics sharpened
+    /// by #1150). This is burial EVIDENCE for the flow block: user messages
+    /// (recorded in the handler) plus non-sticky bot bubbles — intermediate
+    /// reports (#582), follow-up questions. Sticky elements deliberately do
+    /// NOT feed it: flow-block reposts and plan-card reposts never call these
+    /// recorders, so one restick can never manufacture evidence that buries
+    /// the other sticky element (the ping-pong #1150 closes). Telegram message
+    /// ids are per-chat monotonic, so a plain max is a valid "is the block
+    /// buried" test.
     chat_newest_msg_id: std::sync::Mutex<HashMap<i64, i32>>,
+    /// Per-chat instant of the last sticky-stack action (#1150): a flow-block
+    /// restick or a plan-card move, each of which is a delete+create pair.
+    /// One shared flood-control budget instead of two independent gates —
+    /// uncoordinated bursts of both were exactly the #814 regression shape.
+    last_sticky_action: std::sync::Mutex<HashMap<i64, std::time::Instant>>,
     /// Dedup of outbound media uploaded via `telegram_send` so an identical
     /// file+caption isn't delivered twice back-to-back (#721).
     media_dedup: super::outbound_dedup::MediaSendDedup,
@@ -223,9 +219,8 @@ impl TelegramState {
             chat_sessions: Mutex::new(HashMap::new()),
             session_topic: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
-            pending_questions: Mutex::new(HashMap::new()),
-            session_pending_question: Mutex::new(HashMap::new()),
             pending_followups: Mutex::new(HashMap::new()),
+            solo_evaluated: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
             plan_card_store: Mutex::new(None),
@@ -245,6 +240,7 @@ impl TelegramState {
             pending_reactions: std::sync::Mutex::new(HashMap::new()),
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
             chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
+            last_sticky_action: std::sync::Mutex::new(HashMap::new()),
             media_dedup: super::outbound_dedup::MediaSendDedup::default(),
             callback_origins: std::sync::Mutex::new(HashMap::new()),
         }
@@ -278,6 +274,50 @@ impl TelegramState {
             *entry = msg_id;
         }
     }
+
+    /// Record a NON-STICKY bot-sent bubble as burial evidence (#1150):
+    /// intermediate rich reports (#582) and follow-up question bubbles land
+    /// below the flow block exactly like user chatter, but before this
+    /// recorder nothing tracked them, so the block stayed buried under its own
+    /// output for the rest of the turn. Sticky sends (flow-block reposts,
+    /// plan-card reposts) must NEVER call this — their ids are positions, not
+    /// evidence, and counting them is the restick ping-pong #1150 closes.
+    pub(crate) fn note_bot_bubble(&self, chat_id: i64, msg_id: i32) {
+        self.note_incoming_msg(chat_id, msg_id);
+    }
+
+    /// Claim permission for one sticky-stack action (flow-block restick or
+    /// plan-card move) in `chat_id` (#1150). Returns false when another such
+    /// action fired less than `min_interval` ago; the caller then skips its
+    /// delete+create pair instead of bursting toward Telegram's flood control
+    /// (#814). Both sticky mechanisms draw from this one budget so they can't
+    /// combine into the storm two independent gates allowed.
+    pub(crate) fn claim_sticky_action(
+        &self,
+        chat_id: i64,
+        min_interval: std::time::Duration,
+    ) -> bool {
+        let mut map = self
+            .last_sticky_action
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        if let Some(last) = map.get(&chat_id)
+            && now.duration_since(*last) < min_interval
+        {
+            return false;
+        }
+        map.insert(chat_id, now);
+        true
+    }
+
+    /// Minimum spacing between ANY sticky-stack actions in one chat (#1150):
+    /// a flow-block restick and its coordinated plan-card move count as ONE
+    /// action; the next restick (either mechanism) waits this long. Bounds
+    /// delete+create churn well under Telegram's group flood limits while
+    /// keeping #451 burial recovery responsive.
+    pub(crate) const STICKY_STACK_MIN_INTERVAL: std::time::Duration =
+        std::time::Duration::from_secs(15);
 
     /// Newest incoming message id seen in a chat, if any (#451). The streaming
     /// edit loop compares this against its open flow block's message id to
@@ -364,6 +404,22 @@ impl TelegramState {
         *self.bot_user_id.lock().await
     }
 
+    /// Cached solo-owner evaluation for a chat, if one was reached (#1155).
+    pub async fn solo_evaluated(&self, chat_id: i64) -> Option<bool> {
+        self.solo_evaluated.lock().await.get(&chat_id).copied()
+    }
+
+    /// Record a solo-owner evaluation outcome (#1155).
+    pub async fn set_solo_evaluated(&self, chat_id: i64, eligible: bool) {
+        self.solo_evaluated.lock().await.insert(chat_id, eligible);
+    }
+
+    /// Forget a chat's solo-owner evaluation — membership changed, next
+    /// message re-evaluates (#1155).
+    pub async fn clear_solo_evaluated(&self, chat_id: i64) {
+        self.solo_evaluated.lock().await.remove(&chat_id);
+    }
+
     /// Check if Telegram is currently connected.
     pub async fn is_connected(&self) -> bool {
         self.bot.lock().await.is_some()
@@ -397,7 +453,7 @@ impl TelegramState {
 
     /// Look up the forum topic_id for a given session_id. Returns `Some(tid)`
     /// for forum-topic sessions, `None` for DMs / non-forum groups / General.
-    /// Used by `follow_up_question` and `make_approval_callback` to route
+    /// Used by `make_approval_callback` to route
     /// messages to the correct forum topic (#247, #249).
     pub async fn session_topic(&self, session_id: Uuid) -> Option<i32> {
         self.session_topic
@@ -467,78 +523,6 @@ impl TelegramState {
         }
     }
 
-    /// Register a pending follow-up question by id. The click handler
-    /// later calls `resolve_pending_question(id, idx)` to deliver the
-    /// chosen option string from `options[idx]`. `session_id` is stored
-    /// alongside so the reverse map (session → question) can be cleaned
-    /// up on resolve, and so a mid-turn text can answer it (#500).
-    pub async fn register_pending_question(
-        &self,
-        id: String,
-        session_id: Uuid,
-        tx: oneshot::Sender<String>,
-        options: Vec<String>,
-    ) {
-        self.pending_questions
-            .lock()
-            .await
-            .insert(id.clone(), (tx, options, session_id));
-        self.session_pending_question
-            .lock()
-            .await
-            .insert(session_id, id);
-    }
-
-    /// Resolve a pending follow-up question by option index (button-click
-    /// path). Returns the chosen option string if the question was found
-    /// and the index is in range, otherwise None. Also clears the reverse
-    /// session → question entry so a later text is not mistaken for an
-    /// answer to an already-resolved question.
-    pub async fn resolve_pending_question(&self, id: &str, idx: usize) -> Option<String> {
-        let entry = self.pending_questions.lock().await.remove(id);
-        let (tx, options, session_id) = entry?;
-        self.session_pending_question
-            .lock()
-            .await
-            .remove(&session_id);
-        let answer = options.get(idx)?.clone();
-        let _ = tx.send(answer.clone());
-        Some(answer)
-    }
-
-    /// Resolve this session's pending follow-up question with free-form
-    /// TEXT (mid-turn steering path, #500). The user typed an answer
-    /// instead of tapping a button: fire the oneshot with the text so the
-    /// blocked `follow_up_question` tool unblocks and returns it. Returns
-    /// `true` only when a live question was pending and the oneshot was
-    /// delivered; `false` (fall through to normal queueing) when no
-    /// question is pending or its receiver was already gone.
-    pub async fn resolve_pending_question_with_text(&self, session_id: Uuid, text: String) -> bool {
-        let id = match self
-            .session_pending_question
-            .lock()
-            .await
-            .remove(&session_id)
-        {
-            Some(id) => id,
-            None => return false,
-        };
-        let entry = self.pending_questions.lock().await.remove(&id);
-        let (tx, _options, _session_id) = match entry {
-            Some(entry) => entry,
-            None => return false,
-        };
-        if tx.send(text).is_err() {
-            tracing::warn!(
-                "Telegram: pending question for session {} had a closed receiver \
-                 (already resolved or timed out) — falling back to queueing",
-                session_id
-            );
-            return false;
-        }
-        true
-    }
-
     /// Stash this session's optional follow-up suggestions (#597) so the tap
     /// handler can resolve `idx -> suggestion string`. Replaces any prior set.
     pub async fn set_pending_followups(&self, session_id: Uuid, options: Vec<String>) {
@@ -561,18 +545,6 @@ impl TelegramState {
     /// own message, so the buttons are stale).
     pub async fn clear_pending_followups(&self, session_id: Uuid) {
         self.pending_followups.lock().await.remove(&session_id);
-    }
-
-    /// Clear a pending question's bookkeeping from both maps. Idempotent;
-    /// called by the tool when the question lapses (timeout / channel
-    /// closed) so a dead entry never lingers in the reverse map and
-    /// swallows the user's next text (#500).
-    pub async fn clear_pending_question(&self, id: &str, session_id: Uuid) {
-        self.pending_questions.lock().await.remove(id);
-        self.session_pending_question
-            .lock()
-            .await
-            .remove(&session_id);
     }
 
     /// Store a cancel token for a session (before starting an agent call).

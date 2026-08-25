@@ -38,6 +38,13 @@ pub struct SubAgent {
     /// Session ID the child operates on
     pub session_id: Uuid,
 
+    /// Whether this child was spawned with a read-restricted tool registry.
+    ///
+    /// Frozen for the agent's lifetime (#1173): resume must rebuild the same
+    /// restriction, never widen it. External code should query via the
+    /// manager's `get_read_only` instead of reaching through the lock.
+    pub read_only: bool,
+
     /// Current state
     pub state: SubAgentState,
 
@@ -101,6 +108,18 @@ impl SubAgentManager {
             .expect("subagent manager lock poisoned")
             .get(id)
             .map(|a| a.state.clone())
+    }
+
+    /// Get the agent's read-only grant (#1173).
+    ///
+    /// `None` = no such agent; `Some(true)` = restricted for life, including
+    /// every resume; `Some(false)` = full (minus always-excluded) registry.
+    pub fn get_read_only(&self, id: &str) -> Option<bool> {
+        self.agents
+            .read()
+            .expect("subagent manager lock poisoned")
+            .get(id)
+            .map(|a| a.read_only)
     }
 
     /// Get the agent's output if completed.

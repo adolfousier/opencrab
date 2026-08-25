@@ -459,12 +459,15 @@ pub(crate) async fn handle_message(
                             chunk
                                 .iter()
                                 .map(|(name, label, configured)| {
-                                    let display = if !*configured {
-                                        format!("🔒 {} (setup)", label)
-                                    } else if *name == resp.current_provider {
-                                        format!("✓ {}", label)
-                                    } else {
-                                        label.clone()
+                                    let marker = crate::channels::commands::provider_marker(
+                                        name,
+                                        &resp.current_provider,
+                                        *configured,
+                                    );
+                                    let display = match marker {
+                                        "🔒" => format!("🔒 {} (setup)", label),
+                                        "✓" => format!("✓ {}", label),
+                                        _ => label.clone(),
                                     };
                                     let display = if display.len() > 80 {
                                         format!("{}…", display.chars().take(79).collect::<String>())
@@ -779,14 +782,6 @@ pub(crate) async fn handle_message(
     );
     let _typing_guard = super::typing::TypingGuard(typing_cancel);
 
-    // Track spawned intermediate sends so the follow-up-question
-    // callback can await them before posting the question (issue
-    // #142). Sync Mutex because the progress callback closure is
-    // synchronous. Declared here so `intermediate_handles` is visible
-    // at the `make_question_callback` call site below.
-    let intermediate_handles: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
-    let intermediate_handles_cb = intermediate_handles.clone();
     let sent_intermediates: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Build progress callback — sends tool call status as Discord messages
@@ -964,7 +959,7 @@ pub(crate) async fn handle_message(
                     let sent = sent_intermediates.clone();
                     let http = http.clone();
                     let channel = channel;
-                    let handle = tokio::spawn(async move {
+                    tokio::spawn(async move {
                         // Pre-send dedup: Discord doesn't support edit-
                         // in-place dedup across messages, so skip if
                         // this exact body was already posted.
@@ -981,9 +976,6 @@ pub(crate) async fn handle_message(
                             }
                         }
                     });
-                    if let Ok(mut g) = intermediate_handles_cb.lock() {
-                        g.push(handle);
-                    }
                 }
                 ProgressEvent::RetryAttempt {
                     attempt,
@@ -1014,11 +1006,11 @@ pub(crate) async fn handle_message(
                 // Optional follow-up suggestions (#598): post tap-to-send
                 // buttons under the response. A tap injects the suggestion as a
                 // new turn via route_interaction_turn.
-                ProgressEvent::SuggestedFollowups(options) => {
+                ProgressEvent::SuggestedOptions(options) => {
                     let http = http.clone();
                     let state = group_state_cb.clone();
                     tokio::spawn(async move {
-                        super::suggest_followups::render_suggestions(
+                        super::suggest_options::render_suggestions(
                             &http, &state, session_id, options,
                         )
                         .await;
@@ -1030,10 +1022,6 @@ pub(crate) async fn handle_message(
     };
 
     let discord_chat_id = msg.channel_id.get().to_string();
-    let question_cb = super::follow_up_question::make_question_callback(
-        discord_state.clone(),
-        intermediate_handles.clone(),
-    );
     let result = agent
         .send_message_with_tools_and_display(
             session_id,
@@ -1043,7 +1031,6 @@ pub(crate) async fn handle_message(
             Some(cancel_token),
             Some(approval_cb),
             Some(progress_cb),
-            Some(question_cb),
             "discord",
             Some(&discord_chat_id),
         )

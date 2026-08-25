@@ -51,6 +51,35 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Refuse to administer the host's rustup
+        # dtolnay/rust-toolchain manages rustup on whatever machine it runs
+        # on, and defaults CARGO_HOME to ~/.cargo when it is unset. On a
+        # self-hosted runner that is somebody's workstation, so CI installs
+        # toolchains into their installation: it removed the rustup binary
+        # itself once, leaving every shim in ~/.cargo/bin dangling and no
+        # working cargo for the machine owner (#1162).
+        #
+        # The runner sets CARGO_HOME and RUSTUP_HOME to its own directories.
+        # This fails the job if that ever stops being true, rather than
+        # letting the damage be discovered at the owner's next build.
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          for var in CARGO_HOME RUSTUP_HOME; do
+            value="${!var}"
+            if [ -z "$value" ]; then
+              echo "::error::$var is unset, so rustup would manage the host's own installation. Set it in the runner service environment."
+              exit 1
+            fi
+            case "$value" in
+              "$HOME/.cargo"|"$HOME/.rustup")
+                echo "::error::$var points at the host's own installation ($value). CI must not administer it."
+                exit 1
+                ;;
+            esac
+            echo "$var=$value"
+          done
+
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
         with:
@@ -112,6 +141,35 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Refuse to administer the host's rustup
+        # dtolnay/rust-toolchain manages rustup on whatever machine it runs
+        # on, and defaults CARGO_HOME to ~/.cargo when it is unset. On a
+        # self-hosted runner that is somebody's workstation, so CI installs
+        # toolchains into their installation: it removed the rustup binary
+        # itself once, leaving every shim in ~/.cargo/bin dangling and no
+        # working cargo for the machine owner (#1162).
+        #
+        # The runner sets CARGO_HOME and RUSTUP_HOME to its own directories.
+        # This fails the job if that ever stops being true, rather than
+        # letting the damage be discovered at the owner's next build.
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          for var in CARGO_HOME RUSTUP_HOME; do
+            value="${!var}"
+            if [ -z "$value" ]; then
+              echo "::error::$var is unset, so rustup would manage the host's own installation. Set it in the runner service environment."
+              exit 1
+            fi
+            case "$value" in
+              "$HOME/.cargo"|"$HOME/.rustup")
+                echo "::error::$var points at the host's own installation ($value). CI must not administer it."
+                exit 1
+                ;;
+            esac
+            echo "$var=$value"
+          done
+
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
         with:
@@ -151,6 +209,35 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Refuse to administer the host's rustup
+        # dtolnay/rust-toolchain manages rustup on whatever machine it runs
+        # on, and defaults CARGO_HOME to ~/.cargo when it is unset. On a
+        # self-hosted runner that is somebody's workstation, so CI installs
+        # toolchains into their installation: it removed the rustup binary
+        # itself once, leaving every shim in ~/.cargo/bin dangling and no
+        # working cargo for the machine owner (#1162).
+        #
+        # The runner sets CARGO_HOME and RUSTUP_HOME to its own directories.
+        # This fails the job if that ever stops being true, rather than
+        # letting the damage be discovered at the owner's next build.
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          for var in CARGO_HOME RUSTUP_HOME; do
+            value="${!var}"
+            if [ -z "$value" ]; then
+              echo "::error::$var is unset, so rustup would manage the host's own installation. Set it in the runner service environment."
+              exit 1
+            fi
+            case "$value" in
+              "$HOME/.cargo"|"$HOME/.rustup")
+                echo "::error::$var points at the host's own installation ($value). CI must not administer it."
+                exit 1
+                ;;
+            esac
+            echo "$var=$value"
+          done
+
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
         with:
@@ -185,6 +272,35 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+
+      - name: Refuse to administer the host's rustup
+        # dtolnay/rust-toolchain manages rustup on whatever machine it runs
+        # on, and defaults CARGO_HOME to ~/.cargo when it is unset. On a
+        # self-hosted runner that is somebody's workstation, so CI installs
+        # toolchains into their installation: it removed the rustup binary
+        # itself once, leaving every shim in ~/.cargo/bin dangling and no
+        # working cargo for the machine owner (#1162).
+        #
+        # The runner sets CARGO_HOME and RUSTUP_HOME to its own directories.
+        # This fails the job if that ever stops being true, rather than
+        # letting the damage be discovered at the owner's next build.
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          for var in CARGO_HOME RUSTUP_HOME; do
+            value="${!var}"
+            if [ -z "$value" ]; then
+              echo "::error::$var is unset, so rustup would manage the host's own installation. Set it in the runner service environment."
+              exit 1
+            fi
+            case "$value" in
+              "$HOME/.cargo"|"$HOME/.rustup")
+                echo "::error::$var points at the host's own installation ($value). CI must not administer it."
+                exit 1
+                ;;
+            esac
+            echo "$var=$value"
+          done
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
@@ -243,6 +359,35 @@ jobs:
         with:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Refuse to administer the host's rustup
+        # dtolnay/rust-toolchain manages rustup on whatever machine it runs
+        # on, and defaults CARGO_HOME to ~/.cargo when it is unset. On a
+        # self-hosted runner that is somebody's workstation, so CI installs
+        # toolchains into their installation: it removed the rustup binary
+        # itself once, leaving every shim in ~/.cargo/bin dangling and no
+        # working cargo for the machine owner (#1162).
+        #
+        # The runner sets CARGO_HOME and RUSTUP_HOME to its own directories.
+        # This fails the job if that ever stops being true, rather than
+        # letting the damage be discovered at the owner's next build.
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          for var in CARGO_HOME RUSTUP_HOME; do
+            value="${!var}"
+            if [ -z "$value" ]; then
+              echo "::error::$var is unset, so rustup would manage the host's own installation. Set it in the runner service environment."
+              exit 1
+            fi
+            case "$value" in
+              "$HOME/.cargo"|"$HOME/.rustup")
+                echo "::error::$var points at the host's own installation ($value). CI must not administer it."
+                exit 1
+                ;;
+            esac
+            echo "$var=$value"
+          done
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master

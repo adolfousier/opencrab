@@ -107,8 +107,10 @@ impl Tool for SpawnAgentTool {
 
     fn description(&self) -> &str {
         "Spawn a child agent to handle a sub-task autonomously. The child gets its own session \
-         and runs in the background. Returns an agent_id you can use with wait_agent, send_input, \
-         close_agent, or resume_agent. Use this to delegate independent work items. \
+         and runs in the background, completing naturally when its task is done (its result is \
+         delivered to you automatically). Returns an agent_id you can use with wait_agent, \
+         send_input (only while Running/AwaitingInput), close_agent, or resume_agent (to \
+         continue a completed agent). Use this to delegate independent work items. \
          \n\nProvider and model resolution (highest priority first): \
          (1) the optional `provider` / `model` parameters on THIS call, \
          (2) the user's config.toml `[agent]` keys `subagent_provider` / `subagent_model`, \
@@ -131,10 +133,9 @@ impl Tool for SpawnAgentTool {
                     "type": "string",
                     "description": "Short human-readable label for this sub-agent (e.g., 'refactor-auth', 'test-runner')"
                 },
-                "agent_type": {
-                    "type": "string",
-                    "description": "Agent specialization: 'general' (full tools), 'explore' (read-only), 'plan' (read+bash), 'code' (full write), 'research' (web+read). Default: general",
-                    "enum": ["general", "explore", "architect", "plan", "code", "research"]
+                "read_only": {
+                    "type": "boolean",
+                    "description": "Spawn this child with a read-restricted tool registry (#1173): file reads, glob/grep/ls and web research only — no writes, no bash, no spawning. Use for exploration, code review, and research children. Omit or false for a full-capability worker (still minus recursive/dangerous tools)."
                 },
                 "provider": {
                     "type": "string",
@@ -174,12 +175,43 @@ impl Tool for SpawnAgentTool {
             .unwrap_or("sub-agent")
             .to_string();
 
-        let agent_type = super::AgentType::parse(
-            input
-                .get("agent_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("general"),
-        );
+        // Resolve the child's capability grant (#1173). Explicit `read_only`
+        // wins; a deprecated typed `agent_type` maps to its historical
+        // effective grant (loudly); anything else defaults to full access.
+        // A non-boolean `read_only` is a hard error, not a silent default —
+        // the caller asked for a specific capability and must not get a
+        // different one because of a type mistake.
+        let explicit_read_only = match input.get("read_only") {
+            Some(v) => Some(v.as_bool().ok_or_else(|| {
+                ToolError::InvalidInput(
+                    "'read_only' must be a boolean (true = restricted registry, false = full)"
+                        .into(),
+                )
+            })?),
+            None => None,
+        };
+        let deprecated_raw = input
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let (read_only, deprecation_note) = match (explicit_read_only, deprecated_raw) {
+            (Some(ro), _) => (ro, None),
+            (None, Some(raw)) => {
+                let grant =
+                    super::map_deprecated_agent_type(&raw).map_err(ToolError::InvalidInput)?;
+                tracing::warn!(
+                    "spawn_agent called with deprecated agent_type='{raw}'; \
+                     mapped to read_only={grant}. Pass read_only explicitly (#1173)."
+                );
+                (
+                    grant,
+                    Some(format!(
+                        "Deprecated agent_type '{raw}' resolved to read_only={grant}; pass read_only explicitly."
+                    )),
+                )
+            }
+            (None, None) => (false, None),
+        };
 
         // Optional plan-state override (#908 option A): plan-driven
         // execution hands the child the PARENT's session id so the worker's
@@ -215,6 +247,9 @@ impl Tool for SpawnAgentTool {
 
         let child_session_id = child_session.id;
         let agent_id = SubAgentManager::generate_id();
+        // Cut before the child is built so its working directory can point at
+        // the new tree from the first turn.
+        let worktree = super::worktree::create(&context.working_dir(), &agent_id);
 
         // Create cancel token and input channel for the child
         let cancel_token = CancellationToken::new();
@@ -294,8 +329,21 @@ impl Tool for SpawnAgentTool {
                     })?
             };
 
-            // Build filtered tool registry based on agent type
-            let child_registry = agent_type.build_registry(&self.parent_registry);
+            // Build the child's tool registry (#1173): parent's tools minus
+            // recursive/dangerous ones, then restricted to read-only when the
+            // parent granted only read access. The #649 Editing-parent
+            // restriction below applies on top of either grant.
+            let child_registry = super::build_child_registry(&self.parent_registry);
+            // Explicit read_only grant from the spawn call (#1173): strip
+            // mutating tools before any other consideration.
+            if read_only {
+                crate::brain::tools::plan_gate::restrict_registry_to_read_only(&child_registry);
+                tracing::info!(
+                    "Sub-agent spawned with read_only=true: \
+                     child registry restricted to read-only (#1173)"
+                );
+            }
+
             // #649: a child spawned while the PARENT session is in Plan-mode
             // Editing must be read-only. The child runs under a fresh session
             // that resolves to NoPlan, so the per-call plan gate never fires
@@ -317,19 +365,40 @@ impl Tool for SpawnAgentTool {
                 );
             }
 
+            // A private checkout for this child (#1151). A fan-out spawns
+            // several at once against one tree, so they collide by
+            // construction rather than by coincidence. `None` is a normal
+            // outcome — outside a repository, or if git refuses — and means
+            // the child works where it always did.
+            let child_dir = worktree
+                .as_ref()
+                .map(|w| w.path.clone())
+                .unwrap_or_else(|| context.working_dir());
+
             let agent =
                 crate::brain::agent::AgentService::new(provider, service_context.clone(), &config)
                     .await
                     .with_tool_registry(Arc::new(child_registry))
                     .with_auto_approve_tools(true) // children auto-approve (parent already approved spawn)
-                    .with_working_directory(context.working_dir())
+                    .with_working_directory(child_dir)
                     .with_plan_session_override(plan_session_override);
 
             Arc::new(agent)
         };
 
-        // Prepend agent type system prompt to the user's task
-        let full_prompt = format!("{}\n\n{}", agent_type.system_prompt(), prompt);
+        // Typed preambles are gone (#1173, Proposal B): a restricted child
+        // gets one factual capability line derived from its actual grant —
+        // no role-play text that could drift from what the registry truly
+        // allows. Full-access children receive just the task.
+        let full_prompt = if read_only {
+            format!(
+                "[Capability note: you are a READ-ONLY sub-agent. Your tool set \
+                 contains file reading/search and web research only — no writes, \
+                 no bash, no spawning. Report findings; do not attempt changes.]\n\n{prompt}"
+            )
+        } else {
+            prompt.clone()
+        };
 
         // Create the status file in Pending state before spawning. new()
         // writes the file; we don't need the returned handle, but we do
@@ -346,6 +415,7 @@ impl Tool for SpawnAgentTool {
         let cancel_clone = cancel_token.clone();
         let manager = self.manager.clone();
         let agent_id_clone = agent_id.clone();
+        let worktree_for_cleanup = worktree.clone();
         let prompt_clone = full_prompt;
         let label_clone = label.clone();
         let mut input_rx = input_rx;
@@ -408,12 +478,28 @@ impl Tool for SpawnAgentTool {
                             .unwrap_or_else(|e| tracing::warn!("status write failed: {e}"));
 
                         manager.update_output(&agent_id_clone, response.content.clone());
-                        // Flip to AwaitingInput so wait_agent can observe
-                        // round-boundary progress instead of blocking on
-                        // task-join semantics (the task never terminates
-                        // at a round — only on input/cancel — so the old
-                        // `handle.await` in wait.rs always hit its
-                        // timeout_secs and the LLM gave up the turn).
+                        // Natural completion (#1184): the internal tool loop
+                        // only returns with a pending tool call when the round
+                        // is genuinely gated (approval prompt or iteration
+                        // cap). Any other stop reason means the model finished
+                        // its answer — completing here delivers the result to
+                        // the parent instead of parking the agent as
+                        // phantom-"Running" forever. Interactive follow-ups
+                        // remain available via `resume_agent`, which accepts
+                        // Completed agents.
+                        if response.stop_reason
+                            != Some(crate::brain::provider::types::StopReason::ToolUse)
+                        {
+                            tracing::info!(
+                                "Sub-agent {} round {} complete naturally, delivering result",
+                                agent_id_clone,
+                                iteration
+                            );
+                            break response.content;
+                        }
+                        // Genuinely gated (pending approval / cap): park so
+                        // wait_agent can observe round-boundary progress and
+                        // the parent can nudge with input.
                         manager.mark_awaiting_input(&agent_id_clone);
                         tracing::info!(
                             "Sub-agent {} round {} complete, waiting for input",
@@ -475,6 +561,22 @@ impl Tool for SpawnAgentTool {
                     agent_id_clone
                 );
             }
+            // Return the tree, unless the child left work in it. A tree with
+            // a commit or an uncommitted edit survives: discarding a child's
+            // work silently would be worse than the collisions the isolation
+            // exists to prevent. Settle this BEFORE reporting, so a kept tree
+            // is named in the result the parent reads rather than only in the
+            // log, where nobody would find it.
+            let final_output = match &worktree_for_cleanup {
+                Some(wt) => {
+                    let removed = wt.cleanup();
+                    match wt.parent_notice(removed) {
+                        Some(note) => format!("{final_output}{note}"),
+                        None => final_output,
+                    }
+                }
+                None => final_output,
+            };
             if manager.mark_completed(&agent_id_clone, final_output.clone()) {
                 push_result(
                     parent_session_id,
@@ -490,6 +592,7 @@ impl Tool for SpawnAgentTool {
             id: agent_id.clone(),
             label: label.clone(),
             session_id: child_session_id,
+            read_only,
             state: SubAgentState::Running,
             cancel_token,
             join_handle: Some(handle),
@@ -500,8 +603,20 @@ impl Tool for SpawnAgentTool {
         });
 
         Ok(ToolResult::success(format!(
-            "Spawned sub-agent '{}' with id: {}\nSession: {}\nPrompt: {}",
-            label, agent_id, child_session_id, prompt
+            "Spawned sub-agent '{}' with id: {}\nSession: {}\nAccess: {}\nPrompt: {}{}",
+            label,
+            agent_id,
+            child_session_id,
+            if read_only {
+                "read-only (#1173): reads/search/research only"
+            } else {
+                "full (minus recursive/dangerous tools)"
+            },
+            prompt,
+            deprecation_note
+                .as_deref()
+                .map(|n| format!("\nNote: {n}"))
+                .unwrap_or_default()
         )))
     }
 }

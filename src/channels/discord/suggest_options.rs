@@ -1,7 +1,7 @@
-//! Discord-side rendering for the OPTIONAL `suggest_followups` tool (#598).
+//! Discord-side rendering for the OPTIONAL `suggest_options` tool (#598).
 //!
-//! Non-blocking counterpart to `follow_up_question`: the agent surfaces
-//! `ProgressEvent::SuggestedFollowups`, and we post one Secondary button per
+//! Non-blocking option surface: the agent surfaces
+//! `ProgressEvent::SuggestedOptions`, and we post one Secondary button per
 //! suggestion under the finished response. Tapping a button injects that
 //! suggestion as the user's next message (a fresh turn) via
 //! `interactions::route_interaction_turn`. Typing your own message always
@@ -36,17 +36,19 @@ pub(crate) async fn render_suggestions(
         return;
     }
 
-    let channel_id = match state.session_channel(session_id).await {
-        Some(id) => id,
-        None => match state.owner_channel_id().await {
-            Some(id) => id,
-            None => return,
-        },
+    // Session→owner fallback via shared helper (#764 R5, silent twin).
+    let Some(channel_id) = crate::channels::question_common::resolve_channel_or_silent(
+        state.session_channel(session_id),
+        state.owner_channel_id(),
+    )
+    .await
+    else {
+        return;
     };
 
     let followup_id = Uuid::new_v4().to_string();
 
-    // Up to 5 buttons per ActionRow; suggest_followups caps at 4, so one row.
+    // Up to 5 buttons per ActionRow; suggest_options caps at 4, so one row.
     let rows: Vec<CreateActionRow> = options
         .iter()
         .enumerate()
@@ -77,6 +79,6 @@ pub(crate) async fn render_suggestions(
         )
         .await
     {
-        tracing::warn!("Discord suggest_followups: send failed: {e}");
+        tracing::warn!("Discord suggest_options: send failed: {e}");
     }
 }

@@ -2601,7 +2601,6 @@ impl App {
                     Some(token),
                     None,
                     None,
-                    None,
                     "tui",
                     None,
                 )
@@ -2859,8 +2858,16 @@ impl App {
         // the in-memory override here makes the footer show it immediately
         // instead of waiting for a restart. Only touch it when it actually
         // changed so we don't churn the override on every message.
+        // Only a turn that stayed on the session's provider may do this. The
+        // persisted pair already obeys that rule (#705); this override did not,
+        // so a turn that fell elsewhere reported that provider's model and
+        // silently replaced the user's pick, leaving `/models` looking ignored.
         if let Some(ref session) = self.current_session
-            && self.agent_service.provider_model_for_session(session.id) != response.model
+            && crate::brain::agent::service::should_refresh_session_model(
+                response.started_on_session_provider,
+                &self.agent_service.provider_model_for_session(session.id),
+                &response.model,
+            )
         {
             self.agent_service
                 .set_session_model(session.id, response.model.clone());

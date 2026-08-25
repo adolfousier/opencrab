@@ -221,12 +221,7 @@ async fn post_init_gates_mutators_to_md_only() {
         );
 
         // Read-only tools flow through.
-        for (name, hints) in [
-            ("read_file", &ro()),
-            ("grep", &ro()),
-            ("plan", &ro()),
-            ("follow_up_question", &ro()),
-        ] {
+        for (name, hints) in [("read_file", &ro()), ("grep", &ro()), ("plan", &ro())] {
             assert!(
                 check_plan_gate(sid, name, hints, &json!({}))
                     .await
@@ -452,7 +447,7 @@ fn read_only_filter_strips_mutators_keeps_reads() {
         caps: vec![ToolCapability::Network],
     }));
     registry.register(Arc::new(CapTool {
-        name: "follow_up_question",
+        name: "suggest_options",
         caps: vec![],
     }));
     // Mutators (destructive trio) must be stripped by the read_only hint.
@@ -478,8 +473,8 @@ fn read_only_filter_strips_mutators_keeps_reads() {
         "network read must survive"
     );
     assert!(
-        registry.has_tool("follow_up_question"),
-        "the question tool must survive"
+        registry.has_tool("suggest_options"),
+        "the suggestion tool must survive"
     );
     assert!(!registry.has_tool("edit_file"), "writes must be stripped");
     assert!(!registry.has_tool("bash"), "bash must be stripped");

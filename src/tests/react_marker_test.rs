@@ -325,3 +325,83 @@ fn lenient_extractor_fires_a_code_span_marker() {
     let (_t, none) = extract_react_marker_lenient("see `<<react:emoji>>` in the docs");
     assert_eq!(none, None);
 }
+
+// ── orphan-fence recovery (#1182, observed live 2026-08-24) ──────────────
+//
+// The model wrapped its reaction turn in an orphan code fence with a stray
+// leading angle bracket. The triple backtick flips `in_code` an odd number of
+// times, so the strict extractor used to skip the directive and the raw text
+// `<```html <react:✅>> ...` leaked into the Telegram group verbatim.
+
+#[test]
+fn react_recovered_from_orphan_fence_single_bracket() {
+    // EXACT shape posted to the group at ~18:00 local on 2026-08-24.
+    let raw = "<```html\n<react:✅>> Done — all receipts verified in the last run:\n\nbody stays put\n```>";
+    let (text, emoji) = extract_react_marker(raw);
+    assert_eq!(emoji.as_deref(), Some("✅"));
+    assert!(!text.contains("```"), "fence lines must go: {text:?}");
+    assert!(!text.contains("<react:"), "marker must go: {text:?}");
+    assert!(text.contains("body stays put"));
+}
+
+#[test]
+fn react_recovered_from_orphan_fence_double_bracket() {
+    // Same incident, earlier turn (~17:53 local): canonical <<react:>> inside
+    // the same orphan fence.
+    let raw = "<```html\n<<react:💯>>\n\nChecked before arguing, and empirically right.\n```>";
+    let (text, emoji) = extract_react_marker(raw);
+    assert_eq!(emoji.as_deref(), Some("💯"));
+    assert!(!text.contains("```"));
+    assert!(text.contains("empirically right"));
+}
+
+#[test]
+fn react_recovered_from_bare_orphan_fence() {
+    let raw = "<```\n<<react:🔥>>\nplain body";
+    let (text, emoji) = extract_react_marker(raw);
+    assert_eq!(emoji.as_deref(), Some("🔥"));
+    assert!(!text.contains("```"));
+    assert!(text.contains("plain body"));
+}
+
+#[test]
+fn react_recovered_when_marker_shares_the_fence_line() {
+    let raw = "<```html <<react:👀>> visible text";
+    let (text, emoji) = extract_react_marker(raw);
+    assert_eq!(emoji.as_deref(), Some("👀"));
+    assert!(!text.contains("```html"));
+    assert!(text.contains("visible text"));
+}
+
+#[test]
+fn react_recovery_strips_paired_trailing_fence_only() {
+    // A trailing fence line is dropped WITH recovery; a message that never had
+    // a leading orphan fence keeps its content untouched.
+    let clean = "<<react:👍>> normal turn\n```";
+    let (text, emoji) = extract_react_marker(clean);
+    assert_eq!(emoji.as_deref(), Some("👍"));
+    assert!(text.contains("normal turn"), "{text:?}");
+}
+
+#[test]
+fn react_no_recovery_for_prose_then_fenced_example() {
+    // Docs discussing the feature: prose first, THEN a fenced example. The
+    // strict guard must keep holding there — no bogus reaction fires.
+    let docs = "Use fences like this:\n```html\n<<react:✅>>\n```\nto react.";
+    let (text, emoji) = extract_react_marker(docs);
+    assert_eq!(emoji, None);
+    assert!(
+        text.contains("<<react:✅>>"),
+        "example stays as text: {text:?}"
+    );
+}
+
+#[test]
+fn react_no_recovery_for_word_payload_in_orphan_fence() {
+    // Fence-shaped junk but a WORD payload: still prose, nothing fires,
+    // original text comes back untouched.
+    let raw = "<```html\n<react:hello>> not an emoji";
+    let (text, emoji) = extract_react_marker(raw);
+    assert_eq!(emoji, None);
+    assert_eq!(text, raw);
+}

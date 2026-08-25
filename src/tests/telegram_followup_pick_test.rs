@@ -12,7 +12,7 @@
 //!
 //! Fixtures are synthetic and carry no user identifiers.
 
-use crate::channels::telegram::suggest_followups::{echo_fallback, picked_block};
+use crate::channels::telegram::suggest_options::{echo_fallback, picked_block};
 
 const CHOICE: &str = "Update the SKILL.md with the new callback routing";
 

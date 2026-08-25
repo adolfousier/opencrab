@@ -160,6 +160,115 @@ pub fn validate_path_safety(
     Ok(path)
 }
 
+/// Best-effort human name for a non-regular file type. Errors name the
+/// kind so a model that probed a device file gets "character device" back
+/// and does not retry the same class with a different path (#1164).
+fn describe_file_type(md: &std::fs::Metadata) -> &'static str {
+    let ft = md.file_type();
+    if ft.is_dir() {
+        return "directory";
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if ft.is_char_device() {
+            return "character device";
+        }
+        if ft.is_block_device() {
+            return "block device";
+        }
+        if ft.is_fifo() {
+            return "FIFO (named pipe)";
+        }
+        if ft.is_socket() {
+            return "socket";
+        }
+    }
+    "special file"
+}
+
+/// Strip markdown/backtick/quote wrappers from a model-supplied path.
+///
+/// Models sometimes emit paths as `**/tmp/f.rs**` or `` `/tmp/f.rs` `` when
+/// echoing formatted text back. Returns the inner slice when both ends carry
+/// the same wrapper pair, otherwise the trimmed input unchanged.
+pub fn strip_path_wrappers(raw: &str) -> &str {
+    let t = raw.trim();
+    for (open, close) in [("**", "**"), ("`", "`"), ("\"", "\""), ("'", "'")] {
+        if t.len() >= open.len() + close.len()
+            && let Some(inner) = t.strip_prefix(open).and_then(|s| s.strip_suffix(close))
+            && !inner.is_empty()
+        {
+            return inner.trim();
+        }
+    }
+    t
+}
+
+/// Case-insensitive Levenshtein distance for fuzzy filename suggestions.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.to_lowercase().chars().collect();
+    let b: Vec<char> = b.to_lowercase().chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// Build a self-describing "file not found" error with fuzzy suggestions.
+///
+/// Scans up to 50 sibling entries of the parent directory and appends the
+/// closest name matches (max 3, within a similarity threshold), so the model
+/// can self-correct instead of retrying blind. A missing or unreadable
+/// parent keeps the plain error: nothing to suggest from.
+fn missing_file_hint(path: &std::path::Path) -> String {
+    let base = format!("File not found: {}", path.display());
+    let Some(parent) = path.parent() else {
+        return base;
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return base;
+    };
+    let target = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if target.is_empty() {
+        return base;
+    }
+    let mut candidates: Vec<String> = entries
+        .filter_map(std::result::Result::ok)
+        .take(50)
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    candidates.sort_by_key(|name| edit_distance(name, &target));
+    let suggestions: Vec<String> = candidates
+        .iter()
+        .filter(|name| edit_distance(name, &target) * 8 <= name.len().max(target.len()) * 5)
+        .take(3)
+        .cloned()
+        .collect();
+    if suggestions.is_empty() {
+        return base;
+    }
+    format!(
+        "{} — did you mean: {}?",
+        base,
+        suggestions
+            .iter()
+            .map(|s| format!("'{}'", s))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 /// Resolve a path, check it exists, and confirm it's a file.
 ///
 /// Returns a user-friendly error message suitable for ToolResult::error()
@@ -167,9 +276,29 @@ pub fn validate_file_path(
     requested_path: &str,
     working_directory: &std::path::Path,
 ) -> std::result::Result<std::path::PathBuf, String> {
+    // Models sometimes wrap paths in markdown formatting (`**path**`,
+    // backticks, quotes). If the unwrapped form resolves to a regular file,
+    // succeed with it directly instead of failing on decoration.
+    let stripped = strip_path_wrappers(requested_path);
+    if stripped != requested_path.trim()
+        && let Ok(p) = validate_path_safety(stripped, working_directory)
+        && p.is_file()
+    {
+        return Ok(p);
+    }
+
     let path = match validate_path_safety(requested_path, working_directory) {
         Ok(p) => p,
         Err(ToolError::InvalidInput(msg)) => {
+            // Absence miss (nested missing parents): safety rejects it as
+            // InvalidInput, but the model needs the self-describing
+            // not-found shape, not a validation wrapper (#1169). Only
+            // genuine absence converts, re-derived here rather than
+            // string-matched, so security rejections keep their message.
+            let resolved = resolve_tool_path(stripped, working_directory);
+            if !resolved.exists() && resolved.parent().is_some_and(|p| !p.exists()) {
+                return Err(missing_file_hint(&resolved));
+            }
             return Err(format!("Invalid path: {}", msg));
         }
         Err(e) => {
@@ -178,11 +307,19 @@ pub fn validate_file_path(
     };
 
     if !path.exists() {
-        return Err(format!("File not found: {}", path.display()));
+        return Err(missing_file_hint(&path));
     }
 
     if !path.is_file() {
-        return Err(format!("Path is not a file: {}", path.display()));
+        let kind = std::fs::metadata(&path)
+            .map(|md| describe_file_type(&md))
+            .unwrap_or("special file");
+        return Err(format!(
+            "Path is not a regular file: {} ({}) — file tools read regular \
+             files only; devices, pipes and directories are not readable",
+            path.display(),
+            kind
+        ));
     }
 
     Ok(path)

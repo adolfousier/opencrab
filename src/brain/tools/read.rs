@@ -185,6 +185,9 @@ impl Tool for ReadTool {
             // Only whole-file reads qualify: a partial read is not a basis
             // for replacing the file.
             super::file_versions::record(context.session_id, &path, &contents);
+            // Whole-file reads unlock later overwrites (#1168); windowed
+            // reads deliberately do not.
+            super::read_state::mark_fully_read(context.session_id, &path);
             if contents.len() > OUTPUT_BUDGET {
                 // Budget path (#986): emit lines until the 128 KB budget is
                 // exhausted, then stop with an announced truncation and the

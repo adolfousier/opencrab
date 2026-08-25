@@ -23,6 +23,7 @@ pub mod grep;
 pub mod hashline;
 pub mod ls;
 pub mod read;
+pub mod read_state;
 pub mod write;
 
 // Tool implementations - Phase 2: Advanced Features
@@ -42,6 +43,8 @@ pub mod a2a_send;
 pub mod analyze_image;
 pub mod analyze_video;
 pub mod mission_control_report;
+pub mod profile_list;
+pub mod tasks_list;
 
 // Tool implementations - Recursive Self-Improvement
 pub mod channel_search;
@@ -51,14 +54,15 @@ pub mod cron_manage;
 pub mod evolve;
 pub mod feedback_analyze;
 pub mod feedback_record;
-pub mod follow_up_question;
 pub mod generate_image;
 pub mod goal_manage;
 pub mod http;
 pub mod load_brain_file;
 pub mod memory_search;
+pub(crate) mod path_lock;
 pub mod plan_gate;
 pub mod plan_tool;
+pub(crate) mod project_runner;
 pub mod provider_vision;
 pub mod rebuild;
 pub mod rename_session;
@@ -69,7 +73,7 @@ pub mod self_improve_guards;
 pub mod session_search;
 pub mod slash_command;
 pub mod slash_onboard;
-pub mod suggest_followups;
+pub mod suggest_options;
 pub mod task;
 pub mod tool_search;
 pub mod write_opencrabs_file;

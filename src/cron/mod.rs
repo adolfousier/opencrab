@@ -7,6 +7,7 @@
 
 mod schedule_util;
 pub(crate) mod scheduler;
+pub mod send_scope;
 
 pub use schedule_util::{format_upcoming, next_run_utc, parse_timezone, upcoming_in_tz};
 pub use scheduler::{

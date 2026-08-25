@@ -78,9 +78,14 @@ impl Tool for SendInputTool {
             // Running also accepts (a mid-round message queues up).
             Some(SubAgentState::Running) | Some(SubAgentState::AwaitingInput) => {}
             Some(state) => {
+                let hint = if matches!(state, SubAgentState::Completed) {
+                    " It already completed its work — use resume_agent to continue it."
+                } else {
+                    ""
+                };
                 return Ok(ToolResult::error(format!(
-                    "Sub-agent {} is not running (state: {:?}). Cannot send input.",
-                    agent_id, state
+                    "Sub-agent {} is in state {:?} and cannot receive input.{}",
+                    agent_id, state, hint
                 )));
             }
         }

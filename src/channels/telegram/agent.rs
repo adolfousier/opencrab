@@ -253,11 +253,29 @@ impl TelegramAgent {
                         if let Some(data) = query.data.as_deref() {
                             tracing::info!("Telegram callback query received: data={}", data);
 
+                            // Stale keyboard from before the follow-up tools
+                            // were merged into suggest_options (#1178 M7): the
+                            // deleted question tool emitted `q:{id}:{idx}`
+                            // buttons. Ignore them explicitly and loudly — a
+                            // silent fall-through would route the tap into the
+                            // generic unknown-callback path (echoed to the
+                            // agent as user text), which reads as a bug.
+                            if data.starts_with("q:") {
+                                tracing::warn!("stale keyboard, ignored: {data}");
+                                crate::channels::telegram::keyboards::ack_callback(
+                                    &bot,
+                                    &query,
+                                    "This keyboard is outdated.",
+                                )
+                                .await;
+                                return ResponseResult::Ok(());
+                            }
+
                             // Optional follow-up suggestion tapped (#597): inject
                             // the chosen suggestion as the user's next message (a
                             // fresh turn). Non-blocking — the whole set is consumed.
                             if let Some(rest) = data.strip_prefix(
-                                crate::channels::telegram::suggest_followups::FOLLOWUP_PREFIX,
+                                crate::channels::telegram::suggest_options::FOLLOWUP_PREFIX,
                             ) {
                                 crate::channels::telegram::keyboards::ack_callback(&bot, &query, "followup").await;
                                 tracing::info!("Telegram followup tap: rest={rest}");
@@ -337,7 +355,7 @@ impl TelegramAgent {
                                         // already dead after one tap.
                                         let picked =
                                             crate::channels::telegram::handler::md_to_html(
-                                                &crate::channels::telegram::suggest_followups::
+                                                &crate::channels::telegram::suggest_options::
                                                     picked_block(&text, chooser.as_deref()),
                                             );
                                         let recorded = match prompt_msg_id {
@@ -362,7 +380,7 @@ impl TelegramAgent {
                                             // what was chosen.
                                             let echo =
                                                 crate::channels::telegram::handler::md_to_html(
-                                                    &crate::channels::telegram::suggest_followups::
+                                                    &crate::channels::telegram::suggest_options::
                                                         echo_fallback(&text, chooser.as_deref()),
                                                 );
                                             if let Err(e) =
@@ -456,6 +474,49 @@ impl TelegramAgent {
                             }
 
                             // Provider picker callback → show models for that provider
+                            // Page navigation on the model picker. Without this the
+                            // arrows drew but did nothing, which is the same dead-end the
+                            // picker itself was in before it paged at all.
+                            if data == "noop" {
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "page indicator").await;
+                                return ResponseResult::Ok(());
+                            }
+                            if let Some((page_num, provider_name, filter)) =
+                                crate::channels::telegram::picker_limits::parse_nav_callback(data)
+                            {
+                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "model page").await;
+                                let resp = crate::channels::commands::models_for_provider(&provider_name).await;
+                                if let Some(msg) = &query.message {
+                                    use teloxide::payloads::EditMessageTextSetters;
+                                    use teloxide::prelude::Requester;
+                                    use teloxide::types::InlineKeyboardMarkup;
+                                    use crate::channels::telegram::picker_limits as picker;
+                                    let page = picker::page_of(&resp.models, page_num, filter.as_deref());
+                                    let keyboard = InlineKeyboardMarkup::new(picker::page_keyboard(
+                                        &resp.provider_name,
+                                        &resp.current_model,
+                                        &page,
+                                    ));
+                                    let text = crate::channels::telegram::handler::md_to_html(
+                                        &picker::page_text(
+                                            &resp.provider_name,
+                                            &resp.current_model,
+                                            resp.models.len(),
+                                            &page,
+                                        ),
+                                    );
+                                    if let Err(e) = bot
+                                        .edit_message_text(msg.chat().id, msg.id(), &text)
+                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                        .reply_markup(keyboard)
+                                        .await
+                                    {
+                                        tracing::warn!("Telegram: model page update failed: {e}");
+                                    }
+                                }
+                                return ResponseResult::Ok(());
+                            }
+
                             if let Some(provider_name) = data.strip_prefix("provider:") {
                                 let resp = crate::channels::commands::models_for_provider(provider_name).await;
 
@@ -560,41 +621,30 @@ impl TelegramAgent {
                                     use teloxide::payloads::EditMessageTextSetters;
                                     use teloxide::prelude::Requester;
                                     use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
-                                    let rows: Vec<Vec<InlineKeyboardButton>> = resp
-                                        .models
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, m)| {
-                                            let display = if *m == resp.current_model {
-                                                format!("✓ {}", m)
-                                            } else {
-                                                m.clone()
-                                            };
-                                            // Pipe separator because BOTH provider_name and
-                                            // model can contain `:` — custom providers
-                                            // are `custom:<name>` (e.g. `custom:dialagram`)
-                                            // and OpenRouter models carry `:free`/`:thinking`
-                                            // suffixes. Splitting on `:` here put the
-                                            // provider's tail into the model name and the
-                                            // session got persisted with broken metadata
-                                            // (`provider=custom`, `model=dialagram:qwen-3.7-…`
-                                            // — seen 2026-05-18T23:39 sync_provider trace).
-                                            // Generator + parser MUST stay in lock-step.
-                                            // Telegram caps callback_data at 64 BYTES. Long model
-                                            // names (e.g. modelscope's
-                                            // "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" → 65 B)
-                                            // overflow, and Telegram then rejects the ENTIRE
-                                            // keyboard (BUTTON_DATA_INVALID) — the picker showed
-                                            // nothing and spun on "loading" forever. This helper
-                                            // falls back to an index form the parser resolves.
-                                            let data = crate::channels::commands::model_button_callback_data(
-                                                &resp.provider_name, m, i,
-                                            );
-                                            vec![InlineKeyboardButton::callback(display, data)]
-                                        })
-                                        .collect();
+                                    // OpenRouter carries several hundred models. Rendering
+                                    // one button each, with the same list enumerated in the
+                                    // text above it, pushed the message past Telegram's 4096
+                                    // characters: editMessageText answered MESSAGE_TOO_LONG,
+                                    // the failure was a log line, and the picker did nothing
+                                    // at all from the user's side. Page it instead of capping,
+                                    // so the rest of the catalogue stays reachable.
+                                    use crate::channels::telegram::picker_limits as picker;
+                                    let page = picker::page_of(&resp.models, 0, None);
+                                    let rows: Vec<Vec<InlineKeyboardButton>> =
+                                        picker::page_keyboard(
+                                            &resp.provider_name,
+                                            &resp.current_model,
+                                            &page,
+                                        );
                                     let keyboard = InlineKeyboardMarkup::new(rows);
-                                    let text = crate::channels::telegram::handler::md_to_html(&resp.text);
+                                    let text = crate::channels::telegram::handler::md_to_html(
+                                        &picker::page_text(
+                                            &resp.provider_name,
+                                            &resp.current_model,
+                                            resp.models.len(),
+                                            &page,
+                                        ),
+                                    );
                                     if let Err(e) = bot
                                         .edit_message_text(msg.chat().id, msg.id(), &text)
                                         .parse_mode(teloxide::types::ParseMode::Html)
@@ -602,6 +652,20 @@ impl TelegramAgent {
                                         .await
                                     {
                                         tracing::warn!("Telegram: callback UI update failed: {e}");
+                                        // Say something. This failing to a log line is why the
+                                        // picker looked like it was still loading forever.
+                                        let fallback = format!(
+                                            "Could not show the model list for {}: {e}\n\nSet one                                              directly with /models <name>.",
+                                            resp.provider_name
+                                        );
+                                        if let Err(e2) = bot
+                                            .edit_message_text(msg.chat().id, msg.id(), fallback)
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                "Telegram: could not report the picker failure either: {e2}"
+                                            );
+                                        }
                                     }
                                 }
                                 return ResponseResult::Ok(());
@@ -700,15 +764,30 @@ impl TelegramAgent {
                                     }
                                 };
                                 crate::channels::telegram::keyboards::ack_callback(&bot, &query, "approval").await;
+                                // #1149: offer Apply-to-all-sessions right where the user
+                                // just switched via buttons — the textual /models <p m>
+                                // path already does this (#468). Same central 64-byte guard;
+                                // a picker tap can never come from an `all`-scoped command,
+                                // so no extra scoping check applies here.
+                                let mut switch_markup = teloxide::types::InlineKeyboardMarkup::default();
+                                if switch_ok
+                                    && let Some(pname) = provider_name
+                                    && let Some(data) = crate::channels::commands::apply_all_callback_data(pname, model_name)
+                                {
+                                    switch_markup = teloxide::types::InlineKeyboardMarkup::new(vec![vec![
+                                        teloxide::types::InlineKeyboardButton::callback(
+                                            "Apply to all sessions",
+                                            data,
+                                        ),
+                                    ]]);
+                                }
                                 if let Some(msg) = &query.message {
                                     use teloxide::payloads::EditMessageTextSetters;
                                     use teloxide::prelude::Requester;
                                     if let Err(e) = bot
                                         .edit_message_text(msg.chat().id, msg.id(), &display_text)
                                         .parse_mode(teloxide::types::ParseMode::Html)
-                                        .reply_markup(
-                                            teloxide::types::InlineKeyboardMarkup::default(),
-                                        )
+                                        .reply_markup(switch_markup)
                                         .await
                                     {
                                         tracing::warn!("Telegram: callback UI update failed: {e}");
@@ -803,55 +882,7 @@ impl TelegramAgent {
                                 return ResponseResult::Ok(());
                             }
 
-                            // Follow-up question callback: `q:<id>:<idx>`.
-                            // Handled separately from the approve/deny chain
-                            // because it returns an option string, not a
-                            // boolean.
-                            if let Some(rest) = data.strip_prefix("q:") {
-                                let mut parts = rest.splitn(2, ':');
-                                let q_id = parts.next().unwrap_or("");
-                                let idx_str = parts.next().unwrap_or("");
-                                let idx: usize = idx_str.parse().unwrap_or(usize::MAX);
-                                let resolved = state
-                                    .resolve_pending_question(q_id, idx)
-                                    .await;
-                                tracing::info!(
-                                    "Telegram follow_up_question resolved: id={} idx={} answer={:?}",
-                                    q_id,
-                                    idx,
-                                    resolved
-                                );
-                                crate::channels::telegram::keyboards::ack_callback(&bot, &query, "resolution").await;
-                                if let Some(answer) = resolved
-                                    && let Some(msg) = &query.message
-                                {
-                                    let original_text = match msg {
-                                        teloxide::types::MaybeInaccessibleMessage::Regular(m) => {
-                                            m.text().unwrap_or("").to_string()
-                                        }
-                                        _ => String::new(),
-                                    };
-                                    let updated =
-                                        format!("{}\n\n✅ {}", original_text, answer);
-                                    use teloxide::payloads::EditMessageTextSetters;
-                                    use teloxide::prelude::Requester;
-                                    if let Err(e) = bot
-                                        .edit_message_text(msg.chat().id, msg.id(), &updated)
-                                        .reply_markup(
-                                            teloxide::types::InlineKeyboardMarkup::default(),
-                                        )
-                                        .await
-                                    {
-                                        tracing::error!(
-                                            "Telegram: failed to edit question message: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                                return ResponseResult::Ok(());
-                            }
-
-                            // Directory browser callbacks: cd:sel:{idx}, cd:up, cd:pg:{n}, cd:here, cd:noop
+// Directory browser callbacks: cd:sel:{idx}, cd:up, cd:pg:{n}, cd:here, cd:noop
                             if data.starts_with("cd:") {
                                 // Owner-only: the browser exposes the host
                                 // filesystem. Even though /cd is owner-gated, the
@@ -1648,11 +1679,33 @@ impl TelegramAgent {
                 }
             });
 
+            // #1155 lifecycle coverage: the bot's OWN membership status changed
+            // (kicked, left, promoted, restricted). Nothing to serve here — the
+            // value is (a) visibility in logs and (b) cache hygiene: a kicked
+            // bot forgets the solo-owner evaluation so a re-add re-evaluates
+            // fresh instead of trusting a stale decision.
+            let my_chat_member_handler = Update::filter_my_chat_member().endpoint({
+                let deps = deps.clone();
+                move |update: teloxide::types::ChatMemberUpdated| {
+                    let deps = deps.clone();
+                    async move {
+                        let chat_id = update.chat.id.0;
+                        let new_status = update.new_chat_member.status();
+                        tracing::info!(
+                            "Telegram: my membership in chat {chat_id} changed to {new_status:?}"
+                        );
+                        deps.telegram_state.clear_solo_evaluated(chat_id).await;
+                        ResponseResult::Ok(())
+                    }
+                }
+            });
+
             let tree = dptree::entry()
                 .branch(msg_handler)
                 .branch(edited_handler)
                 .branch(cb_handler)
-                .branch(reaction_handler);
+                .branch(reaction_handler)
+                .branch(my_chat_member_handler);
 
             // Retry loop: if the dispatcher exits (network hiccup, Telegram conflict
             // from another process using the same token, etc.), wait and reconnect.
@@ -1761,7 +1814,6 @@ fn spawn_handle_reaction(
                 bot,
                 reaction,
                 deps.agent,
-                deps.shared_session,
                 deps.telegram_state,
                 deps.config_rx,
                 deps.channel_msg_repo,
@@ -1814,9 +1866,11 @@ fn spawn_settle_watcher(
 ///
 /// Callbacks from inline buttons (e.g. `/models` picker) fire in the chat
 /// where the button was pressed. We look up the session that's registered for
-/// that chat — this is the session the message handler resolved. Only falls
-/// back to the shared TUI session when no chat→session mapping exists (e.g.
-/// first-ever interaction before any message was processed).
+/// that chat — this is the session the message handler resolved. When no
+/// mapping exists yet (a first-ever interaction, before any message was
+/// processed) the shared session is used ONLY if it belongs to this same
+/// chat; otherwise the callback resolves to nothing rather than acting on a
+/// session that has no relationship to where the button was pressed.
 async fn resolve_callback_session(
     query: &CallbackQuery,
     state: &super::TelegramState,
@@ -1834,8 +1888,16 @@ async fn resolve_callback_session(
             return Some(session_id);
         }
     }
-    // Fallback: shared TUI session (owner DMs before any message handler ran)
-    *shared_session.lock().await
+    // The shared session is only usable when it genuinely belongs to THIS
+    // chat. It is a process-global handle, so taken unconditionally it lets a
+    // press in one chat act on whatever session happens to be current — the
+    // same reach that put a group's reaction into an unrelated session
+    // (#1131). The case the fallback exists for is an owner DM arriving before
+    // any message handler registered the chat, and that case still resolves:
+    // the shared session's own chat is this one.
+    let candidate = (*shared_session.lock().await)?;
+    let chat_id = query.message.as_ref().map(|m| m.chat().id.0)?;
+    (state.session_chat(candidate).await == Some(chat_id)).then_some(candidate)
 }
 
 /// Register bot commands with Telegram so they appear in the `/` menu.
@@ -1847,7 +1909,12 @@ async fn resolve_callback_session(
 ///
 /// Telegram constraints: max 100 commands, names must be lowercase with
 /// underscores only (no hyphens), descriptions max 256 chars.
-pub(crate) async fn register_bot_commands(bot: &Bot) {
+/// Build the full owner command catalog (#1155): built-ins, `commands.toml`
+/// entries and skills, names sanitized to Telegram's rules, deduped, capped
+/// at 100. Extracted from `register_bot_commands` so the solo-owner
+/// auto-registration path (`menu_auto`) publishes the exact same menu
+/// without config entries.
+pub(crate) fn collect_command_catalog() -> Vec<teloxide::types::BotCommand> {
     use teloxide::types::BotCommand;
 
     let mut commands: Vec<BotCommand> = vec![
@@ -1935,6 +2002,13 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
     // Telegram limit: max 100 commands
     commands.truncate(100);
 
+    commands
+}
+
+/// Register the command menus for every configured audience (startup +
+/// ConfigWatcher refresh).
+pub(crate) async fn register_bot_commands(bot: &Bot) {
+    let commands = collect_command_catalog();
     register_scoped_menus(bot, commands).await;
 }
 

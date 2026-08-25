@@ -10,7 +10,7 @@
 //! on an explicit tap, which keeps the "never auto-apply" contract.
 //!
 //! Lives in its own module to keep the already-large `agent.rs` focused on
-//! the message-routing path (mirrors `follow_up_question.rs`).
+//! the message-routing path (mirrors the follow-up renderer's shape).
 
 use std::path::Path;
 use std::sync::Arc;

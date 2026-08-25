@@ -128,20 +128,28 @@ async fn process_task(
         "A2A: {}",
         &user_text[..user_text.floor_char_boundary(60.min(user_text.len()))]
     );
-    let session_id = match session_service.create_session(Some(title)).await {
-        Ok(session) => session.id,
-        Err(e) => {
-            tracing::error!("A2A: Failed to create session for task {}: {}", task_id, e);
-            update_task_failed(
-                &store,
-                &task_id,
-                &context_id,
-                &format!("Session creation failed: {}", e),
-                &pool,
-            )
-            .await;
-            return;
-        }
+    // Conversation continuity (#1159): tasks sharing a context_id continue
+    // the same chat session instead of forking a fresh one per task.
+    let session_id = match persistence::lookup_session_for_context(&pool, &context_id).await {
+        Some(existing) => existing,
+        None => match session_service.create_session(Some(title)).await {
+            Ok(session) => {
+                persistence::save_context_session(&pool, &context_id, session.id).await;
+                session.id
+            }
+            Err(e) => {
+                tracing::error!("A2A: Failed to create session for task {}: {}", task_id, e);
+                update_task_failed(
+                    &store,
+                    &task_id,
+                    &context_id,
+                    &format!("Session creation failed: {}", e),
+                    &pool,
+                )
+                .await;
+                return;
+            }
+        },
     };
 
     let cancel_token = CancellationToken::new();
@@ -174,9 +182,6 @@ async fn process_task(
             None,
             Some(cancel_token),
             Some(approval_cb),
-            None,
-            // A2A has no interactive user to render buttons to.
-            // follow_up_question surfaces an error if called.
             None,
             "a2a",
             None,

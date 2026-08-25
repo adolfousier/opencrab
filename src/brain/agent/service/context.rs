@@ -52,9 +52,16 @@ impl AgentService {
         match plan_files::plan_mode_state(session_id).await {
             PlanModeState::NoPlan => None,
             PlanModeState::PreInitEditing => Some(format_editing_reminder(None)),
-            PlanModeState::PostInitEditing => Some(format_editing_reminder(Some(
-                plan_files::plan_md_path(session_id).await,
-            ))),
+            PlanModeState::PostInitEditing => {
+                let md = plan_files::plan_md_path(session_id).await;
+                // Checklist plans have no design document (#1145): don't
+                // point the reminder at a file that does not exist.
+                Some(if md.exists() {
+                    format_editing_reminder(Some(md))
+                } else {
+                    format_checklist_editing_reminder().to_string()
+                })
+            }
             PlanModeState::Active => {
                 let plan = plan_files::load_plan(session_id).await?;
                 format_plan_reminder(&plan)
@@ -789,24 +796,34 @@ pub(crate) async fn plan_state_block(session_id: Uuid) -> Option<String> {
              - No pasting plan in chat"
                 .to_string(),
         ),
-        PlanModeState::PostInitEditing => Some(format!(
-            "[PLAN MODE — injected by the harness, not from the user]\n\
-             \n\
-             **State:** Editing design prose\n\
-             **File:** {}\n\
-             \n\
-             **Now:**\n\
-             1. Re-read .md\n\
-             2. Refine design\n\
-             \n\
-             **Next:** Wait for `/execute` approval.\n\
-             \n\
-             **Constraints:**\n\
-             - No `plan start`/`complete`\n\
-             - No project file edits\n\
-             - No pasting plan in chat",
-            md.display()
-        )),
+        PlanModeState::PostInitEditing => {
+            // PostInitEditing either has a design `.md` to refine (design track)
+            // or no `.md` at all — a checklist plan waiting on the user's
+            // Approve (#1145: checklist init no longer writes the scaffold).
+            // Don't point at a file that does not exist.
+            if md.exists() {
+                Some(format!(
+                    "[PLAN MODE — injected by the harness, not from the user]\n\
+                     \n\
+                     **State:** Editing design prose\n\
+                     **File:** {}\n\
+                     \n\
+                     **Now:**\n\
+                     1. Re-read .md\n\
+                     2. Refine design\n\
+                     \n\
+                     **Next:** Wait for `/execute` approval.\n\
+                     \n\
+                     **Constraints:**\n\
+                     - No `plan start`/`complete`\n\
+                     - No project file edits\n\
+                     - No pasting plan in chat",
+                    md.display()
+                ))
+            } else {
+                Some(format_checklist_editing_reminder().to_string())
+            }
+        }
         PlanModeState::Active => {
             let (title, done, total) = plan_files::load_plan(session_id)
                 .await
@@ -838,6 +855,26 @@ pub(crate) async fn plan_state_block(session_id: Uuid) -> Option<String> {
             ))
         }
     }
+}
+
+/// The Editing reminder for a CHECKLIST plan: the checklist is the
+/// deliverable and there is no design document to refine (#1145 — checklist
+/// init no longer writes the scaffold `.md`). Pure, like
+/// [`format_editing_reminder`].
+pub(crate) fn format_checklist_editing_reminder() -> &'static str {
+    "[PLAN MODE — injected by the harness, not from the user]\n\
+     \n\
+     **State:** Checklist plan in Editing (no design document)\n\
+     \n\
+     **Now:**\n\
+     1. The task list is already visible to the user in the plan card.\n\
+     2. Do NOT restate the tasks in chat.\n\
+     \n\
+     **Next:** Wait for the user to approve (Approve button or `/execute`).\n\
+     \n\
+     **Constraints:**\n\
+     - No `plan start`/`complete`\n\
+     - No project file edits"
 }
 
 /// Build the pinned Editing reminder: the session is in Plan mode, so the

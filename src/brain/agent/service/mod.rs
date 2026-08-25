@@ -9,6 +9,7 @@ mod builder;
 mod compaction;
 pub(crate) mod compaction_prompts;
 pub(crate) mod context;
+pub(crate) mod detached_status;
 #[allow(unused_imports)] // only used in test code
 pub(crate) use context::{format_editing_reminder, format_plan_reminder, plan_state_block};
 pub(crate) mod fallback_suggest;
@@ -16,6 +17,7 @@ pub(crate) mod feedback;
 mod gaslighting;
 pub(crate) mod helpers;
 mod messaging;
+mod model_refresh;
 pub(crate) mod nudge;
 pub(crate) mod parallel_tools;
 pub(crate) mod phantom;
@@ -32,6 +34,7 @@ mod types;
 pub use builder::{AgentService, BrainRebuild};
 pub use gaslighting::{is_gaslighting_preamble, strip_gaslighting_preamble};
 pub use helpers::{detect_text_repetition, provider_matches_session};
+pub use model_refresh::should_refresh_session_model;
 pub use phantom::{
     claims_unbacked_side_effects, count_intent_line_starts, count_unbacked_side_effect_claims,
     has_forward_intent_post_success, has_investigative_intent, has_phantom_tool_intent,
@@ -40,7 +43,6 @@ pub use phantom::{
 };
 pub use types::{
     AgentResponse, AgentStreamResponse, ApprovalCallback, ChannelSessionEvent,
-    FollowUpQuestionInfo, MessageEnqueueCallback, MessageQueueCallback, ProgressCallback,
-    ProgressEvent, QuestionCallback, QueuedUserMessage, SshPasswordCallback, SudoCallback,
-    ToolApprovalInfo,
+    MessageEnqueueCallback, MessageQueueCallback, ProgressCallback, ProgressEvent,
+    QueuedUserMessage, SshPasswordCallback, SudoCallback, ToolApprovalInfo,
 };

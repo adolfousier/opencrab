@@ -286,8 +286,8 @@ pub enum ContradictionResult {
 
 /// Get the epistemic store path.
 fn epistemic_store_path() -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
-    Some(home.join(".opencrabs/brain/epistemic/beliefs.toml"))
+    let home = crate::config::profile::resolve_profile_home();
+    Some(home.join("brain/epistemic/beliefs.toml"))
 }
 
 /// Global epistemic store (cached for session lifetime).

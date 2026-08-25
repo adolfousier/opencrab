@@ -4,12 +4,11 @@
 //! allowlisted users to the AgentService and replying with responses.
 
 mod agent;
-pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod interactions;
 pub(crate) mod reactions;
 pub(crate) mod resume;
-pub(crate) mod suggest_followups;
+pub(crate) mod suggest_options;
 pub(crate) mod tool_group;
 pub(crate) mod typing;
 
@@ -20,9 +19,6 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-
-/// One pending `follow_up_question` on Discord: oneshot half + options.
-type PendingDiscordQuestion = (oneshot::Sender<String>, Vec<String>);
 
 /// Shared Discord state for proactive messaging.
 ///
@@ -40,12 +36,6 @@ pub struct DiscordState {
     session_channels: Mutex<HashMap<Uuid, u64>>,
     /// Pending approval channels: approval_id → oneshot sender of (approved, always)
     pending_approvals: Mutex<HashMap<String, oneshot::Sender<(bool, bool)>>>,
-    /// Pending follow-up questions: question_id → (oneshot sender of
-    /// the chosen option string, list of options keyed by index).
-    /// Component custom_id only carries the option index to stay under
-    /// Discord's 100-byte limit; the option list is stashed here so
-    /// the click handler can translate `idx → option string`.
-    pending_questions: Mutex<HashMap<String, PendingDiscordQuestion>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Pending select menus: id -> (created, options) (#382). Lazy TTL:
@@ -163,7 +153,6 @@ impl DiscordState {
             guild_id: Mutex::new(None),
             session_channels: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
-            pending_questions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             pending_selects: Mutex::new(HashMap::new()),
             pending_forms: Mutex::new(HashMap::new()),
@@ -245,29 +234,6 @@ impl DiscordState {
         } else {
             false
         }
-    }
-
-    /// Register a pending `follow_up_question` by id. The component
-    /// click handler later resolves by option index.
-    pub async fn register_pending_question(
-        &self,
-        id: String,
-        tx: oneshot::Sender<String>,
-        options: Vec<String>,
-    ) {
-        self.pending_questions
-            .lock()
-            .await
-            .insert(id, (tx, options));
-    }
-
-    /// Resolve a pending question by option index. Returns the chosen
-    /// option string if the question + index are both valid.
-    pub async fn resolve_pending_question(&self, id: &str, idx: usize) -> Option<String> {
-        let (tx, options) = self.pending_questions.lock().await.remove(id)?;
-        let answer = options.get(idx)?.clone();
-        let _ = tx.send(answer.clone());
-        Some(answer)
     }
 
     /// Store a cancel token for a session (before starting agent call).

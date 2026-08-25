@@ -1394,7 +1394,6 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "config_manager",
     "slash_command",
     "rename_session",
-    "follow_up_question",
     "analyze_image",
     "analyze_video",
     "generate_image",
@@ -1407,6 +1406,7 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "brave_search",
     "channel_search",
     "a2a_send",
+    "profile_list",
     "mission_control_report",
     "feedback_record",
     "feedback_analyze",
@@ -2745,7 +2745,18 @@ impl OpenAIProvider {
                     })
                     .collect();
 
-                let content_val = make_content(&text_parts, &image_parts);
+                let mut content_val = make_content(&text_parts, &image_parts);
+                // A tool-call-only turn carries no text, and `make_content`
+                // returns None for that, which drops the field from the body
+                // entirely. DeepSeek's own harness replays an empty string
+                // rather than null on these turns, noting that some gateways
+                // reject null — and an absent field is a third state neither
+                // of them describes. Send what the vendor sends.
+                if content_val.is_none()
+                    && super::deepseek_reasoning::serves_deepseek(&self.base_url, &request.model)
+                {
+                    content_val = Some(serde_json::Value::String(String::new()));
+                }
                 // Real reasoning flows in via ContentBlock::Thinking blocks
                 // from tool_loop (live turns) and from_db_messages (resumed
                 // turns via the DB `thinking` column). `needs_reasoning_content`
@@ -2887,7 +2898,7 @@ impl OpenAIProvider {
         // OTHER custom-provider model, pass the configured value straight through
         // as the request's `reasoning_effort` field — otherwise it was silently
         // dropped and e.g. modelstudio/DashScope qwen never got `xhigh` (#691).
-        let (mut reasoning_effort, thinking) = match self.reasoning_setting.as_deref() {
+        let (mut reasoning_effort, mut thinking) = match self.reasoning_setting.as_deref() {
             None => (None, None),
             Some(s) if super::kimi_reasoning::is_kimi_model(&request.model) => {
                 super::kimi_reasoning::resolve_fields(&request.model, s)
@@ -2916,6 +2927,28 @@ impl OpenAIProvider {
             );
             reasoning_effort = knobs.reasoning_effort;
             enable_thinking = knobs.enable_thinking;
+        }
+
+        // DeepSeek's knobs, which are not DashScope's. It reads a top-level
+        // `thinking: {"type": ...}` plus a `low | high | max` effort, and
+        // ignores `enable_thinking` entirely. Until now a DeepSeek target fell
+        // through to the pass-through arm above, so a configured `xhigh` (a
+        // qwen rung DeepSeek has no equivalent for) rode to the wire while the
+        // toggle it actually reads went unset.
+        //
+        // Gated on the model id OR the endpoint, because DeepSeek is not a
+        // built-in provider here: it is only ever reached through a custom
+        // OpenAI-compatible entry, and gateways re-serve these models under a
+        // namespaced id (#1040). A local runtime is excluded, matching qwen.
+        if super::deepseek_reasoning::serves_deepseek(&self.base_url, &request.model) {
+            let knobs = super::deepseek_reasoning::resolve(
+                reasoning_effort.as_deref(),
+                self.enable_thinking_setting,
+            );
+            thinking = Some(serde_json::json!({
+                "type": if knobs.enabled { "enabled" } else { "disabled" }
+            }));
+            reasoning_effort = knobs.effort.map(str::to_string);
         }
 
         // Carry reasoning across turns instead of re-deriving it each turn
@@ -3516,11 +3549,17 @@ impl Provider for OpenAIProvider {
             .map(|tools| count_tokens(&serde_json::to_string(tools).unwrap_or_default()))
             .unwrap_or(0);
         let total_input_tokens = message_tokens + tool_schema_tokens;
-        let context_pct = (total_input_tokens as f32 / 200_000.0 * 100.0).round() as u32;
+        // #1147: budget against the provider's actual window (configured
+        // context_window, then model heuristics) instead of a hardcoded 200k,
+        // which misreported a configured-1M provider as "36% of 200k".
+        let context_window = self.context_window(&model).unwrap_or(200_000);
+        let context_pct =
+            (total_input_tokens as f32 / context_window as f32 * 100.0).round() as u32;
         tracing::debug!(
-            "OpenAI stream request: ~{} input tokens ({}% of 200k window) — {} messages, {} tool schemas",
+            "OpenAI stream request: ~{} input tokens ({}% of {}-token window) — {} messages, {} tool schemas",
             total_input_tokens,
             context_pct,
+            context_window,
             openai_request.messages.len(),
             tools_count
         );
@@ -4636,16 +4675,31 @@ impl Provider for OpenAIProvider {
         // own catalog). Without this override, every custom OpenAI-compatible
         // provider would advertise the OpenAI GPT list, causing helpers.rs:95
         // to either run a noisy no-op remap or mis-route to default_model.
-        if !self.configured_models.is_empty() {
-            return self.configured_models.clone();
+        let mut models = if !self.configured_models.is_empty() {
+            self.configured_models.clone()
+        } else {
+            vec![
+                "gpt-4-turbo-preview".to_string(),
+                "gpt-4".to_string(),
+                "gpt-4-32k".to_string(),
+                "gpt-3.5-turbo".to_string(),
+                "gpt-3.5-turbo-16k".to_string(),
+            ]
+        };
+        // The configured default is servable by construction even when the
+        // catalog omits it — OpenRouter hides stealth/* models from the public
+        // /models list (#1147). Without the union, every remap gate that
+        // consults supported_models() (helpers.rs stream_complete,
+        // fallback.rs, context.rs compaction, tool_loop.rs stale-pin guard
+        // and feedback attribution, cron/scheduler.rs job validation) treats
+        // the provider's own default as foreign and either "remaps" it to
+        // itself with a WARN per turn or skips a validly configured cron job.
+        let default = self.default_model();
+        if default != "MISSING_MODEL" && !models.iter().any(|m| m == default) {
+            models.push(default.to_string());
+            models.sort();
         }
-        vec![
-            "gpt-4-turbo-preview".to_string(),
-            "gpt-4".to_string(),
-            "gpt-4-32k".to_string(),
-            "gpt-3.5-turbo".to_string(),
-            "gpt-3.5-turbo-16k".to_string(),
-        ]
+        models
     }
 
     async fn fetch_models(&self) -> Vec<String> {
@@ -4688,6 +4742,12 @@ impl Provider for OpenAIProvider {
     fn context_window(&self, model: &str) -> Option<u32> {
         // User-configured value takes priority over model-name heuristics
         if let Some(cw) = self.configured_context_window {
+            return Some(cw);
+        }
+        // DeepSeek publishes a 1M window; without this an entry added with no
+        // `context_window` fell through to the generic fallback and budgeted
+        // against a fraction of the real capacity.
+        if let Some(cw) = super::deepseek_reasoning::default_context_window(model) {
             return Some(cw);
         }
         let m = model.to_lowercase();

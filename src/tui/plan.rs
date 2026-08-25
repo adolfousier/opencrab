@@ -230,6 +230,18 @@ pub struct PlanDocument {
     /// turn) so it survives restart.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pre_init_editing: bool,
+
+    /// Durable "waiting on user Approve" flag: set on `plan init` when the
+    /// plan is created in Editing (both tracks), cleared by
+    /// [`PlanDocument::approve`]. This is the approval-queue marker the
+    /// design `.md`'s existence was silently doubling as (#1145):
+    /// `plan_mode_state_of` derives `PostInitEditing` from this flag, and
+    /// the legacy-draft normalization must not Active-ify a plan that is
+    /// genuinely waiting on approval. Neither may key on the `.md` —
+    /// checklist plans do not have one. Survives restart like
+    /// [`PlanDocument::pre_init_editing`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending_approval: bool,
 }
 
 impl PlanDocument {
@@ -246,6 +258,7 @@ impl PlanDocument {
             updated_at: Utc::now(),
             approved_at: None,
             pre_init_editing: false,
+            pending_approval: false,
         }
     }
 
@@ -437,6 +450,7 @@ impl PlanDocument {
     /// user Approve's job on the design track).
     pub fn start_execution(&mut self) {
         self.status = PlanStatus::Active;
+        self.pending_approval = false;
         self.updated_at = Utc::now();
     }
 
@@ -652,6 +666,13 @@ pub struct PlanTask {
     /// loop iteration cap in the plan tool (mechanical, model cannot skip it).
     #[serde(default)]
     pub retry_count: u8,
+
+    /// Machine-written verification badge (#1133). Written by the Ralph gate
+    /// at `complete(action=success)`. The agent never types this field.
+    /// `None` means no machine ran (exempt type, verification disabled, skip
+    /// path, or legacy plan).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationVerdict>,
 }
 
 impl PlanTask {
@@ -669,6 +690,7 @@ impl PlanTask {
             status: TaskStatus::Pending,
             notes: None,
             retry_count: 0,
+            verification: None,
         }
     }
 
@@ -788,17 +810,46 @@ impl std::fmt::Display for TaskStatus {
     }
 }
 
-impl TaskStatus {
-    /// Get status icon for UI display
-    pub fn icon(&self) -> &str {
+/// Machine-written verification verdict (#1133). The agent never types this —
+/// the Ralph gate writes it at `complete(action=success)`. Rendered as a badge
+/// on completed rows: 🛡 Verified, 🟡 Uncertain, *(nothing)* NotRun.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VerificationVerdict {
+    /// Gate ran `task_type_commands`, all exit 0.
+    Verified,
+    /// Gate ran but could not confirm (failed command under downgrade, or
+    /// criteria unrunnable).
+    Uncertain,
+}
+
+impl VerificationVerdict {
+    /// Render-ready badge for this verdict.
+    pub fn badge(&self) -> &'static str {
         match self {
-            TaskStatus::Pending => "⏸️",
-            TaskStatus::InProgress => "▶️",
-            TaskStatus::Completed => "✅",
-            TaskStatus::Skipped => "⏭️",
-            TaskStatus::Failed => "❌",
-            TaskStatus::Blocked(_) => "🚫",
+            VerificationVerdict::Verified => "🛡",
+            VerificationVerdict::Uncertain => "🟡",
         }
+    }
+}
+
+/// Render-ready status mark for a task (#1136). Single shared helper so
+/// Telegram card and TUI widget produce identical marks for the same status.
+///
+/// Distinct marks per status (#1154):
+/// - Completed: ☑ (checkmark)
+/// - Skipped: ⏭ (skip forward)
+/// - InProgress: ▶ (play)
+/// - Pending: ☐ (empty checkbox — not started)
+/// - Failed: ❌ (cross mark)
+/// - Blocked: ⏸ (pause — deliberately stopped, reason attached)
+pub fn status_mark(status: &TaskStatus) -> char {
+    match status {
+        TaskStatus::Completed => '☑',
+        TaskStatus::Skipped => '⏭',
+        TaskStatus::InProgress => '▶',
+        TaskStatus::Pending => '☐',
+        TaskStatus::Failed => '❌',
+        TaskStatus::Blocked(_) => '⏸',
     }
 }
 
@@ -854,38 +905,38 @@ pub fn is_verifiable(criterion: &str) -> bool {
     has_command && has_expectation
 }
 
-/// A receipt is something a third party can re-check: a sha, an exit code,
-/// a test count, or a path. "Done" is not a receipt.
-pub fn has_receipt(notes: &str) -> bool {
-    let lower = notes.to_lowercase();
-    let sha = notes
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|w| w.len() >= 7 && w.len() <= 40 && w.chars().all(|c| c.is_ascii_hexdigit()));
-    let counted = lower.contains("passed") || lower.contains("exit 0") || lower.contains("failed");
-    let path = notes.contains('/') && notes.contains('.');
-    sha || counted || path
-}
-
 /// The single glyph a task has earned, or `None` when nothing is missing.
 ///
-/// Ordered by severity because only one renders: no criteria at all beats
-/// unrunnable criteria, which beats a completion with no receipt.
-///
-/// `Skipped`, `Failed` and `Blocked` never earn `❔`. Only `Completed`
-/// claims the work is done, so only `Completed` owes a receipt.
+/// Exempt types (documentation, research, other) never earn ⚠️/🔓 because they
+/// cannot reasonably name a runnable command (#1133). The ❔ arm was removed
+/// in #1133 — replaced by machine-written `task.verification` badges.
 pub fn quality_glyph(task: &PlanTask) -> Option<&'static str> {
+    // Exempt types: no criteria warning (#1133)
+    if !requires_checkable_criteria(&task.task_type) {
+        return None;
+    }
     if task.acceptance_criteria.is_empty() {
         return Some("⚠️");
     }
     if !task.acceptance_criteria.iter().any(|c| is_verifiable(c)) {
         return Some("🔓");
     }
-    if task.status == TaskStatus::Completed
-        && !task.notes.as_deref().map(has_receipt).unwrap_or(false)
-    {
-        return Some("❔");
-    }
     None
+}
+
+/// Whether a task type requires checkable criteria (#1133).
+/// Mirror of `plan_tool::requires_checkable_criteria` for the TUI module.
+fn requires_checkable_criteria(task_type: &TaskType) -> bool {
+    matches!(
+        task_type,
+        TaskType::Test
+            | TaskType::Build
+            | TaskType::Refactor
+            | TaskType::Edit
+            | TaskType::Delete
+            | TaskType::Create
+            | TaskType::Configuration
+    )
 }
 
 /// [`quality_glyph`] as a render-ready suffix: a leading space plus the

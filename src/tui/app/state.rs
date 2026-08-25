@@ -602,7 +602,7 @@ pub struct App {
     /// Byte offset in input_buffer where the `:` trigger starts
     pub emoji_colon_offset: usize,
 
-    /// Optional follow-up suggestions surfaced by the `suggest_followups` tool.
+    /// Optional follow-up suggestions surfaced by the `suggest_options` tool.
     /// One suggestion renders as ghost text in the input (Tab fills it); several
     /// render as a pick-list. Accepting fills the input as editable text (never
     /// submits). Cleared when the user types, submits, or a new turn starts.
@@ -2988,7 +2988,7 @@ impl App {
                     self.push_system_message(text);
                 }
             }
-            TuiEvent::SuggestedFollowups {
+            TuiEvent::SuggestedOptions {
                 session_id,
                 options,
             } => {

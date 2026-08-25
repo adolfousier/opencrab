@@ -368,6 +368,23 @@ async fn cmd_chat_inner(
         .await
         .context("Failed to run database migrations")?;
 
+    // #1114: optional startup self-repair (kill-switch: [doctor] auto_fix).
+    // Repairs stuck cron rows, stale pre-init plan markers, loose brain/log
+    // permissions; every action lands in the log as the audit trail.
+    if config.doctor.auto_fix {
+        let roots = crate::cli::commands::marker_roots(db.pool()).await;
+        match crate::cli::doctor_fix::run_all(db.pool(), &roots, &crate::config::opencrabs_home())
+            .await
+        {
+            Ok(reports) => {
+                for r in &reports {
+                    tracing::info!(action = r.action, detail = %r.detail, "startup auto-fix");
+                }
+            }
+            Err(e) => tracing::warn!("startup auto-fix failed: {e:#}"),
+        }
+    }
+
     // Auto-categorize uncategorized sessions using keyword heuristics
     if let Err(e) = crate::usage::categorizer::categorize_with_heuristic(db.pool()).await {
         tracing::warn!("Session auto-categorization failed: {}", e);
@@ -727,8 +744,8 @@ async fn cmd_chat_inner(
                     session_id,
                     text: format!("⏳ Retry {}/{} — {}", attempt, max, reason),
                 }),
-                ProgressEvent::SuggestedFollowups(options) => {
-                    progress_sender.send(TuiEvent::SuggestedFollowups {
+                ProgressEvent::SuggestedOptions(options) => {
+                    progress_sender.send(TuiEvent::SuggestedOptions {
                         session_id,
                         options,
                     })
@@ -1048,6 +1065,12 @@ async fn cmd_chat_inner(
     // Now that the registry is Arc'd, give it to the channel factory
     channel_factory.set_tool_registry(shared_tool_registry.clone());
 
+    // Sub-agent manager for every channel agent (#1170): the factory is the
+    // ONLY sub-agent wiring chat channels get. Without this, tasks_list reads
+    // an empty registry in Telegram/WhatsApp/Discord/Slack sessions while the
+    // TUI (wired at service build) and the cron daemon work fine.
+    channel_factory.set_subagent_manager(subagent_manager.clone());
+
     // Share session_updated_tx with the factory so channel agents (WhatsApp, Telegram, etc.)
     // trigger real-time TUI refresh when they complete a response.
     channel_factory.set_session_updated_tx(session_updated_tx.clone());
@@ -1278,7 +1301,6 @@ async fn cmd_chat_inner(
                                     prompt,
                                     None,
                                     Some(token),
-                                    None,
                                     None,
                                     None,
                                     &channel,

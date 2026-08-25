@@ -60,7 +60,57 @@ pub fn startup_warnings(config: &Config, raw_toml: Option<&str>) -> Vec<String> 
         }
     }
 
+    // 3. Fallback-chain entries naming a provider that does not exist. The
+    //    chain is resolved per attempt and an unresolvable name is skipped,
+    //    which is correct behaviour and stays that way — but the skip is
+    //    silent, so a typo reads as the next provider in the chain answering
+    //    instead. Observed live: `modelscope-qwen37max` for the configured
+    //    `modelscope-qwen37-max`, one missing hyphen, and the model the user
+    //    picked was quietly answered by the entry after it. `default_provider`
+    //    is already covered above; the chain was not.
+    if let Some(fb) = config.providers.fallback.as_ref() {
+        for (field, names) in [("providers", &fb.providers), ("vision", &fb.vision)] {
+            for name in names {
+                if crate::brain::provider::factory::provider_config_by_name(config, name).is_some()
+                {
+                    continue;
+                }
+                let hint = nearest_provider_name(config, name)
+                    .map(|near| format!(" — did you mean \"{near}\"?"))
+                    .unwrap_or_default();
+                warns.push(format!(
+                    "config: [providers.fallback] {field} lists \"{name}\", which matches no \
+                     configured provider — it will be skipped silently{hint}"
+                ));
+            }
+        }
+    }
+
     warns
+}
+
+/// The configured provider whose name differs from `name` only by separators.
+///
+/// Deliberately narrow. The typos this catches are punctuation slips in long
+/// namespaced ids (`modelscope-qwen37max` for `modelscope-qwen37-max`), where
+/// an exact match on the letters and digits is strong evidence and costs no
+/// judgement. A general edit distance would start guessing between providers
+/// that are genuinely different.
+fn nearest_provider_name<'a>(config: &'a Config, name: &str) -> Option<&'a str> {
+    let squash = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let target = squash(name);
+    config
+        .providers
+        .custom
+        .as_ref()?
+        .keys()
+        .find(|candidate| squash(candidate) == target)
+        .map(String::as_str)
 }
 
 fn expand_home(path: &str) -> String {

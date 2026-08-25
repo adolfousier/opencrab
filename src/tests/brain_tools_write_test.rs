@@ -101,7 +101,8 @@ async fn test_overwrite_existing_file() {
 
     let input = serde_json::json!({
         "path": "test.txt",
-        "content": "New content"
+        "content": "New content",
+        "overwrite_read_confirm": true
     });
 
     let result = tool.execute(input, &context).await.unwrap();

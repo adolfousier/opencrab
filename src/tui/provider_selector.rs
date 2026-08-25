@@ -524,11 +524,31 @@ impl ProviderSelectorState {
                     self.config_models = p.models.clone();
                     return;
                 }
-            } else if self.selected_provider >= CUSTOM_PROVIDER_IDX
-                && let Some((_name, p)) = config.providers.active_custom()
-                && !p.models.is_empty()
-            {
-                self.config_models = p.models.clone();
+            } else if self.selected_provider >= CUSTOM_PROVIDER_IDX {
+                // The provider being EDITED, resolved by name, not whichever
+                // custom provider happens to be active. Reading `active_custom`
+                // here handed a new provider someone else's catalogue: the
+                // persist step merges `config_models` into what it writes, so
+                // a freshly created provider was saved listing models it does
+                // not serve, and when its own `/v1/models` fetch had not landed
+                // yet that foreign list was all it got. The same eight names
+                // ended up on several unrelated providers this way.
+                //
+                // A provider with no entry yet contributes nothing. Falling
+                // through to the static catalogue below would be the same
+                // mistake in a different costume: inventing names for an
+                // endpoint nobody has queried.
+                let custom_idx = self.selected_provider.checked_sub(CUSTOM_INSTANCES_START);
+                let by_name = custom_idx
+                    .and_then(|i| self.custom_names.get(i))
+                    .or(Some(&self.custom_name))
+                    .filter(|name| !name.is_empty())
+                    .and_then(|name| config.providers.custom_by_name(name));
+                if let Some(p) = by_name
+                    && !p.models.is_empty()
+                {
+                    self.config_models = p.models.clone();
+                }
                 return;
             }
         }

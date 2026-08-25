@@ -73,7 +73,11 @@ pub fn build_agent_card(host: &str, port: u16, tool_registry: Option<&ToolRegist
     });
 
     AgentCard {
-        name: format!("OpenCrabs Bee (v{})", crate::VERSION),
+        name: format!(
+            "OpenCrabs '{}' (v{})",
+            crate::config::profile::current_profile_name(),
+            crate::VERSION
+        ),
         description: Some(
             "High-performance AI orchestration agent with A2A protocol support. \
              Part of the Bee Colony multi-agent system."

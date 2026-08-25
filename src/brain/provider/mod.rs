@@ -25,6 +25,7 @@ pub mod codex_oauth;
 pub mod command_code_cli;
 pub mod copilot;
 pub mod custom_openai_compatible;
+pub mod deepseek_reasoning;
 pub mod factory;
 pub mod fallback;
 pub mod gemini;

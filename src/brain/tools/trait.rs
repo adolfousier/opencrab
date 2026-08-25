@@ -40,16 +40,8 @@ pub struct ToolExecutionContext {
     /// Service context — tools use this to create SessionService for /usage stats.
     pub service_context: Option<crate::services::ServiceContext>,
 
-    /// Callback the `follow_up_question` tool uses to render its
-    /// question with native buttons (Telegram inline keyboard, Discord
-    /// components, Slack actions, TUI overlay, WhatsApp numbered text)
-    /// and block until the user picks an option. None on channels that
-    /// have no interactive surface (A2A) or sessions where the caller
-    /// did not wire one.
-    pub question_callback: Option<crate::brain::agent::QuestionCallback>,
-
     /// Non-blocking progress-event sink. Tools that surface fire-and-forget
-    /// UI signals (e.g. `suggest_followups`) emit a `ProgressEvent` through
+    /// UI signals (e.g. `suggest_options`) emit a `ProgressEvent` through
     /// this without awaiting the user. None on surfaces that wire no progress
     /// bridge. Distinct from `question_callback`, which blocks for an answer.
     pub progress_callback: Option<crate::brain::agent::ProgressCallback>,
@@ -106,7 +98,6 @@ impl ToolExecutionContext {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
-            question_callback: None,
             progress_callback: None,
             background_manager: None,
             plan_session_override: None,
@@ -295,6 +286,14 @@ pub trait Tool: Send + Sync {
 
     /// Get the tool's capabilities
     fn capabilities(&self) -> Vec<ToolCapability>;
+
+    /// Whether executing this tool should end the agent's turn after the
+    /// result is flushed (#1178 M1). Only `suggest_options` overrides this:
+    /// its options ARE the turn's ending - the user picks one and the next
+    /// turn resumes from that choice.
+    fn halts_turn(&self) -> bool {
+        false
+    }
 
     /// Get the tool's MCP-style behavioral risk hints.
     ///

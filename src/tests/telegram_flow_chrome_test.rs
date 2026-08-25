@@ -4,8 +4,8 @@
 //! in one outer expandable; only the processing log collapses.
 
 use crate::channels::telegram::flow::{
-    FlowHeader, FlowLine, render_flow_details_chrome, render_flow_details_chrome_pref,
-    render_flow_html_chrome, render_flow_html_chrome_pref,
+    FlowHeader, FlowLine, FlowOutcome, render_flow_details_chrome, render_flow_details_chrome_pref,
+    render_flow_html_chrome, render_flow_html_chrome_pref, settled_icon_verb,
 };
 use crate::channels::telegram::flow_chrome::{
     FlowSections, GoalSection, ProseSection, clock_glyph, split_plan_prose,
@@ -325,6 +325,104 @@ async fn plan_state_editing_copy_locked_to_decision_7() {
     let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
 }
 
+// ── plan prose: scaffold filtering (#580, #1145) ──
+
+#[test]
+fn empty_scaffold_lines_are_recognized() {
+    use crate::channels::telegram::flow_chrome::is_empty_scaffold_line;
+    // Filled content stays.
+    assert!(!is_empty_scaffold_line("- **Problem:** fix the flake"));
+    assert!(!is_empty_scaffold_line("1. Wire the handler"));
+    assert!(
+        !is_empty_scaffold_line("   - Done when: cargo test passes"),
+        "a filled Done when criterion is real content"
+    );
+    // Unfilled scaffold placeholders hide.
+    assert!(is_empty_scaffold_line("- **Problem:** "));
+    assert!(is_empty_scaffold_line("- **Target state:**"));
+    assert!(is_empty_scaffold_line("1. "));
+    assert!(
+        is_empty_scaffold_line("   - Done when: "),
+        "the empty Done when bullet is scaffold (#1145)"
+    );
+}
+
+#[tokio::test]
+async fn unfilled_design_scaffold_renders_no_prose() {
+    // #1145 regression: the pristine scaffold must not leak a hollow
+    // "Implementation steps" section onto the plan card.
+    use crate::channels::telegram::flow_chrome::load_plan_prose;
+    use crate::config::profile::{home_for_profile, with_profile_home_async};
+    use crate::utils::plan_files::{create_design_md, save_plan};
+    use uuid::Uuid;
+
+    let profile = format!("flow-chrome-test-{}", Uuid::new_v4());
+    with_profile_home_async(Some(&profile), async {
+        let sid = Uuid::new_v4();
+        let plan = crate::tui::plan::PlanDocument::new(sid, "T".to_string());
+        save_plan(&plan).await.unwrap();
+        create_design_md(sid, "T").await.unwrap();
+        assert_eq!(
+            load_plan_prose(sid).await,
+            None,
+            "pristine scaffold must render as no prose sections"
+        );
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
+}
+
+#[tokio::test]
+async fn partially_filled_design_scaffold_keeps_only_real_content() {
+    // Design track between init and approve: the model works through the
+    // template, so only filled lines may reach the card (#580, #1145).
+    use crate::channels::telegram::flow_chrome::load_plan_prose;
+    use crate::config::profile::{home_for_profile, with_profile_home_async};
+    use crate::utils::plan_files::{create_design_md, plan_md_path, save_plan};
+    use uuid::Uuid;
+
+    let profile = format!("flow-chrome-test-{}", Uuid::new_v4());
+    with_profile_home_async(Some(&profile), async {
+        let sid = Uuid::new_v4();
+        let plan = crate::tui::plan::PlanDocument::new(sid, "T".to_string());
+        save_plan(&plan).await.unwrap();
+        create_design_md(sid, "T").await.unwrap();
+        std::fs::write(
+            plan_md_path(sid).await,
+            "# T\n\n\
+             ## Context\n\
+             - **Problem:** the card lies.\n\
+             - **Target state:** \n\
+             - **Intent:** honest cards.\n\n\
+             ## Implementation steps\n\
+             1. Patch the filter\n\
+             2. \n   - Done when: cargo test passes\n",
+        )
+        .unwrap();
+        let secs = load_plan_prose(sid).await.expect("filled sections survive");
+        let ctx = secs
+            .iter()
+            .find(|s| s.heading.as_deref() == Some("Context"))
+            .unwrap();
+        assert!(
+            !ctx.body.contains("Target state"),
+            "empty label hides: {ctx:?}"
+        );
+        assert!(ctx.body.contains("the card lies"));
+        let steps = secs
+            .iter()
+            .find(|s| s.heading.as_deref() == Some("Implementation steps"))
+            .unwrap();
+        assert!(steps.body.contains("Patch the filter"));
+        assert!(
+            steps.body.contains("Done when: cargo test passes"),
+            "filled criterion stays: {steps:?}"
+        );
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
+}
+
 // ── header-only renders (empty flow_entries): plain merged footer ──
 
 #[test]
@@ -612,6 +710,36 @@ fn settled_footer_shows_bg_indicator_when_task_running() {
 }
 
 #[test]
+fn settled_header_waits_when_bg_tasks_running() {
+    // #1144: a settled turn that ends with detached work must read "Waiting
+    // for N background task(s)" in the header, not "✅ Finished", so the header
+    // and the "N tasks running" footer stop contradicting each other.
+    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::Finished);
+    assert_eq!(
+        (icon, verb.as_str()),
+        ("⏳", "Waiting for 2 background tasks")
+    );
+
+    let (icon, verb) = settled_icon_verb(Some(1), FlowOutcome::Finished);
+    assert_eq!(
+        (icon, verb.as_str()),
+        ("⏳", "Waiting for 1 background task")
+    );
+
+    // Nothing running (or no manager wired) → the plain finished header stands.
+    let (icon, verb) = settled_icon_verb(Some(0), FlowOutcome::Finished);
+    assert_eq!((icon, verb.as_str()), ("✅", "Finished"));
+    let (icon, verb) = settled_icon_verb(None, FlowOutcome::Finished);
+    assert_eq!((icon, verb.as_str()), ("✅", "Finished"));
+
+    // Non-finished outcomes are never overridden, even with work pending.
+    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::Failed);
+    assert_eq!((icon, verb.as_str()), ("❌", "Failed"));
+    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::TimedOut);
+    assert_eq!((icon, verb.as_str()), ("⏱", "Timed out"));
+}
+
+#[test]
 fn checklist_rows_render_as_separate_rich_paragraphs() {
     let out = render_flow_details_chrome(
         &[],
@@ -781,36 +909,47 @@ fn rich_edit_429_retries_rich_never_falls_back_to_html() {
     );
 }
 
-#[test]
-fn plan_card_renders_title_and_checklist_or_none() {
+#[tokio::test]
+async fn plan_card_renders_title_and_checklist_or_none() {
     // The persistent plan card (#580) renders the plan title + checklist, or
     // None when there is no plan content (the caller removes the card then).
     // The prose parameter (#621) folds the design prose into the card in
     // Editing state; these tests pass None since they cover title/checklist.
     use crate::channels::telegram::plan_card::render_plan_card_html;
 
-    assert_eq!(render_plan_card_html(None, None, None, None), None);
-    assert_eq!(render_plan_card_html(Some("   "), None, None, None), None);
+    assert_eq!(render_plan_card_html(None, None, None, None).await, None);
+    assert_eq!(
+        render_plan_card_html(Some("   "), None, None, None).await,
+        None
+    );
 
-    let title_only = render_plan_card_html(Some("Audit changes"), None, None, None).unwrap();
+    let title_only = render_plan_card_html(Some("Audit changes"), None, None, None)
+        .await
+        .unwrap();
     assert!(title_only.contains("📋") && title_only.contains("Audit changes"));
 
     let rows = vec!["☑ Task one".to_string(), "☐ Task two".to_string()];
-    let full = render_plan_card_html(Some("Audit changes"), Some(&rows), None, None).unwrap();
+    let full = render_plan_card_html(Some("Audit changes"), Some(&rows), None, None)
+        .await
+        .unwrap();
     assert!(full.contains("Audit changes"));
     assert!(full.contains("☑ Task one") && full.contains("☐ Task two"));
 
     // Checklist without a title still renders.
-    let no_title = render_plan_card_html(None, Some(&rows), None, None).unwrap();
+    let no_title = render_plan_card_html(None, Some(&rows), None, None)
+        .await
+        .unwrap();
     assert!(no_title.contains("☑ Task one"));
 
     // HTML in a title is escaped, not injected.
-    let escaped = render_plan_card_html(Some("a <b> & c"), None, None, None).unwrap();
+    let escaped = render_plan_card_html(Some("a <b> & c"), None, None, None)
+        .await
+        .unwrap();
     assert!(escaped.contains("&lt;b&gt;") && escaped.contains("&amp;"));
 }
 
-#[test]
-fn plan_card_renders_per_heading_prose() {
+#[tokio::test]
+async fn plan_card_renders_per_heading_prose() {
     // #621: the card folds the design prose as per-heading expandable
     // blockquotes with bold headings, the same format chrome_classic uses
     // (ADR 0005 Decision 3), in the locked order title → prose → checklist.
@@ -828,8 +967,9 @@ fn plan_card_renders_per_heading_prose() {
         },
     ];
 
-    let with_prose =
-        render_plan_card_html(Some("Design plan"), None, Some(&sections), None).unwrap();
+    let with_prose = render_plan_card_html(Some("Design plan"), None, Some(&sections), None)
+        .await
+        .unwrap();
     assert!(with_prose.contains("Design plan"));
     assert!(with_prose.contains("<blockquote expandable><b>Context</b>"));
     assert!(with_prose.contains("<blockquote expandable><b>Implementation steps</b>"));
@@ -838,8 +978,9 @@ fn plan_card_renders_per_heading_prose() {
     // Prose rides alongside the checklist in Active too (no state gate),
     // always before the rows.
     let rows = vec!["☑ Task one".to_string()];
-    let with_both =
-        render_plan_card_html(Some("Design plan"), Some(&rows), Some(&sections), None).unwrap();
+    let with_both = render_plan_card_html(Some("Design plan"), Some(&rows), Some(&sections), None)
+        .await
+        .unwrap();
     assert!(with_both.contains("Task one"));
     assert!(with_both.contains("<blockquote expandable><b>Context</b>"));
     let prose_pos = with_both.find("Context").unwrap();
@@ -847,8 +988,8 @@ fn plan_card_renders_per_heading_prose() {
     assert!(prose_pos < checklist_pos);
 }
 
-#[test]
-fn plan_card_renders_goal_after_checklist() {
+#[tokio::test]
+async fn plan_card_renders_goal_after_checklist() {
     use crate::channels::telegram::flow_chrome::GoalSection;
     use crate::channels::telegram::plan_card::render_plan_card_html;
 
@@ -860,8 +1001,9 @@ fn plan_card_renders_goal_after_checklist() {
         text: "Ship v0.3.68 without regressions".to_string(),
         completed: false,
     };
-    let html =
-        render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&active)).unwrap();
+    let html = render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&active))
+        .await
+        .unwrap();
     assert!(html.contains("<blockquote expandable><b>🎯 Goal:</b>"));
     assert!(html.contains("Ship v0.3.68 without regressions"));
     let checklist_pos = html.find("Task two").unwrap();
@@ -873,8 +1015,9 @@ fn plan_card_renders_goal_after_checklist() {
         text: "Ship v0.3.68 without regressions".to_string(),
         completed: true,
     };
-    let html_done =
-        render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&done)).unwrap();
+    let html_done = render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&done))
+        .await
+        .unwrap();
     assert!(html_done.contains("<blockquote expandable><b>✅ Goal:</b>"));
 
     // Goal text is HTML-escaped inside the expandable.
@@ -882,13 +1025,16 @@ fn plan_card_renders_goal_after_checklist() {
         text: "a <b> & c".to_string(),
         completed: false,
     };
-    let html_evil =
-        render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&evil)).unwrap();
+    let html_evil = render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&evil))
+        .await
+        .unwrap();
     assert!(html_evil.contains("a &lt;b&gt; &amp; c"));
     assert!(!html_evil.contains("a <b> & c"));
 
     // No goal: nothing renders, same as before.
-    let no_goal = render_plan_card_html(Some("Design plan"), Some(&rows), None, None).unwrap();
+    let no_goal = render_plan_card_html(Some("Design plan"), Some(&rows), None, None)
+        .await
+        .unwrap();
     assert!(!no_goal.contains("Goal:"));
 }
 

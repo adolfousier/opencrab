@@ -252,3 +252,60 @@ async fn test_execute_with_auto_approve() {
         .unwrap();
     assert!(result.success);
 }
+
+/// Tool that halts the turn on successful execution (suggest_options policy).
+struct HaltTool {
+    name: String,
+}
+
+#[async_trait]
+impl Tool for HaltTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        "A tool whose success ends the agent turn"
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    fn capabilities(&self) -> Vec<ToolCapability> {
+        vec![ToolCapability::ReadFiles]
+    }
+
+    async fn execute(&self, _input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
+        Ok(ToolResult::success("halted".to_string()))
+    }
+
+    fn halts_turn(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn halts_turn_true_for_halt_capable_tool() {
+    let registry = ToolRegistry::new();
+    registry.register(Arc::new(HaltTool {
+        name: "halter".to_string(),
+    }));
+    assert!(registry.halts_turn("halter"));
+}
+
+#[test]
+fn halts_turn_false_for_normal_tool() {
+    let registry = ToolRegistry::new();
+    registry.register(Arc::new(MockTool {
+        name: "plain".to_string(),
+        requires_approval: false,
+    }));
+    assert!(!registry.halts_turn("plain"));
+}
+
+#[test]
+fn halts_turn_false_for_unknown_tool() {
+    let registry = ToolRegistry::new();
+    assert!(!registry.halts_turn("does_not_exist"));
+}

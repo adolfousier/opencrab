@@ -40,7 +40,7 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
         Block::Heading { level, content } => {
             // No heading tags in Telegram HTML: bold, and italicize deeper
             // headings (level >= 3) so the hierarchy stays visible.
-            let inner = render_inlines(content);
+            let inner = render_inlines(content, wrap_p);
             let styled = if *level >= 3 {
                 format!("<b><i>{inner}</i></b>")
             } else {
@@ -55,7 +55,7 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
             }
         }
         Block::Paragraph(content) => {
-            let inner = render_inlines(content);
+            let inner = render_inlines(content, wrap_p);
             if wrap_p {
                 format!("<p>{inner}</p>")
             } else {
@@ -92,7 +92,7 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
             blocks,
             open: _,
         } => {
-            let summary_html = render_inlines(summary);
+            let summary_html = render_inlines(summary, wrap_p);
             let body = render_html_inner(blocks, wrap_p);
             format!(
                 "<b>▸ {summary_html}</b>\n{}",
@@ -120,7 +120,7 @@ fn render_list(list: &List, depth: usize, wrap_p: bool) -> String {
             None if list.ordered => format!("{}.", idx + 1),
             None => "•".to_string(),
         };
-        let line = format!("{pad}{bullet} {}", render_inlines(&item.content));
+        let line = format!("{pad}{bullet} {}", render_inlines(&item.content, wrap_p));
         lines.push(if wrap_p {
             format!("<p>{line}</p>")
         } else {
@@ -212,18 +212,21 @@ fn render_grid(table: &Table, header: &[String], rows: &[Vec<String>], width: &[
 /// because the columns are self-labelling (e.g. "Total commits: 52"). Wraps
 /// naturally on any width; inline formatting is preserved (not inside `<pre>`).
 fn render_key_value(table: &Table) -> String {
+    // Cells come from single table lines and never contain a soft break, so
+    // the wrap_p dialect flag is irrelevant here (false = no-op).
+    let render = |inl: &[Inline]| render_inlines(inl, false);
     table
         .rows
         .iter()
         .map(|row| match row.get(1) {
             Some(val) => format!(
                 "<b>{}</b>: {}",
-                row.first().map(|c| render_inlines(c)).unwrap_or_default(),
-                render_inlines(val)
+                row.first().map(|c| render(c)).unwrap_or_default(),
+                render(val)
             ),
             None => format!(
                 "<b>{}</b>",
-                row.first().map(|c| render_inlines(c)).unwrap_or_default()
+                row.first().map(|c| render(c)).unwrap_or_default()
             ),
         })
         .collect::<Vec<_>>()
@@ -234,17 +237,19 @@ fn render_key_value(table: &Table) -> String {
 /// the bold title, the rest become "Header: value" lines. Inline formatting is
 /// preserved.
 fn render_cards(table: &Table) -> String {
+    // Cells never contain soft breaks (single source lines): false is a no-op.
+    let render = |inl: &[Inline]| render_inlines(inl, false);
     table
         .rows
         .iter()
         .map(|row| {
             let mut card = vec![format!(
                 "<b>{}</b>",
-                row.first().map(|c| render_inlines(c)).unwrap_or_default()
+                row.first().map(|c| render(c)).unwrap_or_default()
             )];
             for (i, cell) in row.iter().enumerate().skip(1) {
                 let label = table.header.get(i).map(|h| plain(h)).unwrap_or_default();
-                card.push(format!("{label}: {}", render_inlines(cell)));
+                card.push(format!("{label}: {}", render(cell)));
             }
             card.join("\n")
         })
@@ -268,20 +273,33 @@ fn pad_cell(s: &str, width: usize, align: Align) -> String {
     }
 }
 
-fn render_inlines(inlines: &[Inline]) -> String {
+fn render_inlines(inlines: &[Inline], wrap_p: bool) -> String {
     let mut s = String::new();
     for i in inlines {
-        render_inline(i, &mut s);
+        render_inline(i, &mut s, wrap_p);
     }
     s
 }
 
-fn render_inline(inline: &Inline, s: &mut String) {
+fn render_inline(inline: &Inline, s: &mut String, wrap_p: bool) {
     match inline {
-        Inline::Text(t) => s.push_str(&escape(t)),
-        Inline::Bold(c) => wrap(s, "<b>", c, "</b>"),
-        Inline::Italic(c) => wrap(s, "<i>", c, "</i>"),
-        Inline::Strike(c) => wrap(s, "<s>", c, "</s>"),
+        // Soft line breaks inside a paragraph (#1142): the classic HTML
+        // dialect renders a literal `\n` as a line break, so it passes
+        // through; the rich dialect collapses a bare newline to whitespace,
+        // so it becomes an explicit `<br>`. Code/math spans keep `\n` as-is
+        // in both dialects (a newline inside inline code is data, not a
+        // break).
+        Inline::Text(t) => {
+            let esc = escape(t);
+            if wrap_p {
+                s.push_str(&esc.replace('\n', "<br>"));
+            } else {
+                s.push_str(&esc);
+            }
+        }
+        Inline::Bold(c) => wrap(s, "<b>", c, "</b>", wrap_p),
+        Inline::Italic(c) => wrap(s, "<i>", c, "</i>", wrap_p),
+        Inline::Strike(c) => wrap(s, "<s>", c, "</s>", wrap_p),
         Inline::Code(t) | Inline::Math(t) => {
             s.push_str("<code>");
             s.push_str(&escape(t));
@@ -290,17 +308,17 @@ fn render_inline(inline: &Inline, s: &mut String) {
         Inline::Link { content, url } => {
             s.push_str(&format!("<a href=\"{}\">", escape(url)));
             for c in content {
-                render_inline(c, s);
+                render_inline(c, s, wrap_p);
             }
             s.push_str("</a>");
         }
     }
 }
 
-fn wrap(s: &mut String, open: &str, content: &[Inline], close: &str) {
+fn wrap(s: &mut String, open: &str, content: &[Inline], close: &str, wrap_p: bool) {
     s.push_str(open);
     for c in content {
-        render_inline(c, s);
+        render_inline(c, s, wrap_p);
     }
     s.push_str(close);
 }

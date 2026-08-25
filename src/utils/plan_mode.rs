@@ -326,7 +326,14 @@ pub fn format_active_checklist(plan: &crate::tui::plan::PlanDocument) -> String 
     let lines = plan
         .tasks
         .iter()
-        .map(|t| format!("{} {}. {}", t.status.icon(), t.order, t.title))
+        .map(|t| {
+            format!(
+                "{} {}. {}",
+                crate::tui::plan::status_mark(&t.status),
+                t.order,
+                t.title
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     format!(

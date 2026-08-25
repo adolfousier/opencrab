@@ -1,0 +1,138 @@
+//! Tasks List Tool (#1160)
+//!
+//! One agent-facing roster of BOTH background systems: spawned sub-agents
+//! (previously visible only through wait_agent's error path) and detached
+//! bash commands (previously invisible to the model entirely). Both managers
+//! already ride in `ToolExecutionContext`, so this tool only reads.
+
+use super::error::Result;
+use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult};
+use async_trait::async_trait;
+use serde_json::Value;
+
+/// Tool listing in-flight sub-agents and detached commands.
+#[derive(Default)]
+pub struct TasksListTool;
+
+impl TasksListTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+/// One sub-agent roster row, render-ready.
+pub(crate) struct SubagentRow {
+    pub id: String,
+    pub label: String,
+    pub state: String,
+    /// Path of the agent's JSON status file (`subagent/status.rs` pattern),
+    /// so the model can read live progress directly.
+    pub status_file: Option<String>,
+}
+
+/// One detached-command roster row.
+pub(crate) struct DetachedRow {
+    pub label: String,
+    pub elapsed_secs: u64,
+}
+
+/// Pure renderer so tests pin output shape without live managers.
+///
+/// Empty everything renders the explicit "No background tasks." line — the
+/// model must never have to infer emptiness from absent sections.
+pub(crate) fn render_tasks(subagents: &[SubagentRow], detached: &[DetachedRow]) -> String {
+    if subagents.is_empty() && detached.is_empty() {
+        return "No background tasks.".to_string();
+    }
+    let mut out = String::from("Background tasks:");
+    if !subagents.is_empty() {
+        out.push_str(&format!("\n\nSub-agents ({}):", subagents.len()));
+        for a in subagents {
+            out.push_str(&format!("\n- {} [{}] {}", a.id, a.label, a.state));
+            if let Some(sf) = &a.status_file {
+                out.push_str(&format!("\n  status file: {sf}"));
+            }
+        }
+    }
+    if !detached.is_empty() {
+        out.push_str(&format!("\n\nDetached commands ({}):", detached.len()));
+        for d in detached {
+            out.push_str(&format!("\n- {} (elapsed {}s)", d.label, d.elapsed_secs));
+        }
+    }
+    out
+}
+
+fn state_label(state: &super::subagent::manager::SubAgentState) -> &'static str {
+    use super::subagent::manager::SubAgentState as S;
+    match state {
+        S::Running => "running",
+        S::AwaitingInput => "awaiting input",
+        S::Completed => "completed",
+        S::Failed(_) => "failed",
+        S::Cancelled => "cancelled",
+    }
+}
+
+#[async_trait]
+impl Tool for TasksListTool {
+    fn name(&self) -> &str {
+        "tasks_list"
+    }
+
+    fn description(&self) -> &str {
+        "List in-flight background work: spawned sub-agents (id, label, \
+         state, status-file path) and detached shell commands (label, \
+         elapsed). Read-only. Use it to check what is running instead of \
+         re-spawning or busy-waiting; results are pushed to you on \
+         completion either way."
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        })
+    }
+
+    fn capabilities(&self) -> Vec<ToolCapability> {
+        vec![ToolCapability::ReadFiles]
+    }
+
+    fn hints(&self) -> ToolHints {
+        ToolHints {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+    }
+
+    async fn execute(&self, _input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
+        let mut subagents = Vec::new();
+        if let Some(mgr) = context.subagent_manager.as_ref() {
+            for (id, label, state) in mgr.list() {
+                let sf = super::subagent::status::status_dir().join(format!("{id}.json"));
+                subagents.push(SubagentRow {
+                    id,
+                    label,
+                    state: state_label(&state).to_string(),
+                    status_file: Some(sf.display().to_string()),
+                });
+            }
+        }
+
+        let mut detached = Vec::new();
+        if let Some(bm) = context.background_manager.as_ref() {
+            for t in bm.running_tasks(context.session_id) {
+                detached.push(DetachedRow {
+                    label: t.label,
+                    elapsed_secs: t.started.elapsed().as_secs(),
+                });
+            }
+        }
+
+        Ok(ToolResult::success(render_tasks(&subagents, &detached)))
+    }
+}

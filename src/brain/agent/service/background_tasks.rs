@@ -43,6 +43,8 @@ pub struct BackgroundTaskManager {
     running: Mutex<HashMap<Uuid, Vec<RunningTask>>>,
 }
 
+use super::detached_status::{self, DetachedFinish};
+
 impl BackgroundTaskManager {
     pub fn new(enqueue: MessageEnqueueCallback) -> Self {
         Self {
@@ -106,6 +108,11 @@ impl BackgroundTaskManager {
         self.mark_started(session_id, &label);
         let this = std::sync::Arc::clone(&self);
         let task_id = Uuid::new_v4();
+        // Gap 2 (#1160): mid-run visibility. The status file exists from
+        // spawn with label/command/session, so tasks_list consumers can see
+        // what a detached command IS before it finishes. Best-effort: never
+        // fatal to the command itself.
+        detached_status::write_started(task_id, session_id, &label, &command);
         tokio::spawn(async move {
             // Log the START as well as the finish. Only completions were
             // logged, so a task that never finished left no trace of having
@@ -146,6 +153,21 @@ impl BackgroundTaskManager {
                 result.success,
                 result.code,
                 started.elapsed().as_secs_f32()
+            );
+            // Gap 2 (#1160): rewrite the status file with exit info, so any
+            // reader between process-exit and session-resume sees the
+            // terminal state instead of a forever-running spawn record.
+            detached_status::write_finished(
+                task_id,
+                session_id,
+                &label,
+                &command,
+                DetachedFinish {
+                    success: result.success,
+                    code: result.code,
+                    elapsed_secs: started.elapsed().as_secs_f32(),
+                    output_bytes: result.output.len(),
+                },
             );
             let msg = completion_message(&label, &command, &result);
             if let Some(repo) = task_repo()

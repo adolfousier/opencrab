@@ -28,6 +28,7 @@ fn task(order: usize, status: TaskStatus) -> PlanTask {
         status,
         notes: None,
         retry_count: 0,
+        verification: None,
     }
 }
 

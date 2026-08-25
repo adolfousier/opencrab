@@ -87,7 +87,7 @@ pub(crate) fn resolve_model_target(
 pub(crate) fn normalize_command(raw_command: &str, raw_args: &str) -> (String, String) {
     let trimmed = raw_command.trim();
     let raw_args = raw_args.trim();
-    match trimmed.split_once(char::is_whitespace) {
+    let (mut command, merged) = match trimmed.split_once(char::is_whitespace) {
         Some((head, tail)) => {
             let tail = tail.trim();
             let merged = match (tail.is_empty(), raw_args.is_empty()) {
@@ -98,7 +98,15 @@ pub(crate) fn normalize_command(raw_command: &str, raw_args: &str) -> (String, S
             (head.to_string(), merged)
         }
         None => (trimmed.to_string(), raw_args.to_string()),
+    };
+    // Models repeatedly drop the leading `/` ("status", "models list"). The
+    // valid-command set is closed, so a nonempty missing-slash input maps
+    // unambiguously to one command — prepend instead of rejecting (#1167).
+    if !command.is_empty() && !command.starts_with('/') {
+        tracing::info!("slash_command: prepended '/' to '{}'", command);
+        command.insert(0, '/');
     }
+    (command, merged)
 }
 
 pub struct SlashCommandTool;

@@ -465,7 +465,7 @@ prompt change will actually help:
    is noise, not a pattern.
 2. **Real defect, or recoverable/environmental?** Stale-hash 'file may have changed' retries \
    (hashline_edit), 'not connected' (channel send tools), and cancelled/timed-out prompts \
-   (follow_up_question) are EXPECTED outcomes, not defects. They are already kept out of the \
+   (user-declined prompts) are EXPECTED outcomes, not defects. They are already kept out of the \
    success-rate denominator — never treat them as failures or write rules about them.
 3. **Misuse, or broken?** If the failures are the agent calling the tool wrong (bad params, \
    unknown action), the fix is concise USAGE guidance — never avoiding the tool.

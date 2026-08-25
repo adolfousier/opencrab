@@ -45,10 +45,26 @@ fn get_str<'a>(input: &'a Value, key: &str) -> std::result::Result<&'a str, Tool
     }
 }
 
+/// Extract an i64 from a JSON value, coercing numeric strings (#646).
+/// Schemas declare "integer" but models often quote the value
+/// (`"chat_id": "123456"`), and the old `as_i64()` silently dropped it —
+/// `get_id` errored on required params and `chat_or_err` misrouted to the
+/// session fallback.
+pub(crate) fn value_as_i64(v: &Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+}
+
+/// Same string coercion for f64 params — latitude/longitude (#646).
+pub(crate) fn value_as_f64(v: &Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+}
+
 /// Parse a required integer param as i64.
 #[allow(clippy::result_large_err)]
 fn get_id(input: &Value, key: &str) -> std::result::Result<i64, ToolResult> {
-    match input.get(key).and_then(|v| v.as_i64()) {
+    match input.get(key).and_then(value_as_i64) {
         Some(id) => Ok(id),
         None => Err(ToolResult::error(format!(
             "Missing required parameter '{key}' (must be an integer)."
@@ -103,7 +119,7 @@ pub(crate) async fn resolve_input_file(
 ///      though the last message came from #dev").
 ///   2. Session origin topic via `session_topic(session_id)` — the
 ///      forum topic this interaction started in, the same in-memory
-///      map `follow_up_question` routes through (#450). Makes replies
+///      map the interactive-question tool routed through (#450). Makes replies
 ///      land back in the originating topic with no explicit routing.
 ///   3. Auto-lookup via `latest_thread_id_for_chat(chat_id)` — the
 ///      fallback that closed #130, picking up the most recently
@@ -118,7 +134,7 @@ pub(crate) async fn resolve_thread_id(
     session_id: Uuid,
     state: &TelegramState,
 ) -> Option<teloxide::types::ThreadId> {
-    if let Some(tid) = input.get("thread_id").and_then(|v| v.as_i64())
+    if let Some(tid) = input.get("thread_id").and_then(value_as_i64)
         && let Ok(tid_i32) = i32::try_from(tid)
     {
         return Some(teloxide::types::ThreadId(teloxide::types::MessageId(
@@ -126,7 +142,7 @@ pub(crate) async fn resolve_thread_id(
         )));
     }
     // Session origin topic — the forum topic this interaction started in, the
-    // same in-memory map follow_up_question routes through (#450). This is why
+    // same in-memory map the interactive-question tool routed through (#450). This is why
     // a reply sent from a topic lands back in that topic without the agent
     // passing thread_id. Cold/cron sessions have no entry, so this is skipped.
     if let Some(tid) = state.session_topic(session_id).await {
@@ -215,24 +231,47 @@ pub(crate) async fn resolve_chat_target(
 /// empty `channel_messages` lookup, and because rich/cron messages arrive with
 /// no readable text in the reply, the agent can only honestly say it cannot see
 /// it. `sent` is `(message_id, content)` pairs (one per chunk for plain sends).
+/// Refuse a destination a scheduled job was never given.
+///
+/// A cron turn has no channel origin, so the proactive send path takes its
+/// destination from the tool input — and a job's turn can pick that input up
+/// from anywhere it reads, including a recalled memory. On 2026-08-21 a memory
+/// note from two weeks earlier carried a chat id and thread id under the
+/// heading "CONTINUE THIS TASK", and a job posted its report into that group:
+/// one it was never configured for, whose members had asked for nothing.
+///
+/// A chat id found in memory or in earlier context is not permission to post
+/// there. Outside a cron turn this is transparent.
 #[allow(clippy::result_large_err)]
-// pre-existing signature; clippy 1.98 tightened this lint after this code shipped
+fn guard_cron_target(chat_id: i64) -> std::result::Result<i64, ToolResult> {
+    if crate::cron::send_scope::may_send_to(chat_id) {
+        return Ok(chat_id);
+    }
+    let reason = crate::cron::send_scope::refusal(chat_id);
+    tracing::warn!("telegram_send: {reason}");
+    Err(ToolResult::error(reason))
+}
+
+#[allow(clippy::result_large_err)]
 async fn chat_or_err(
     input: &Value,
     state: &TelegramState,
     session_id: Uuid,
 ) -> std::result::Result<i64, ToolResult> {
-    if let Some(id) = input.get("chat_id").and_then(|v| v.as_i64()) {
-        return Ok(id);
+    if let Some(id) = input.get("chat_id").and_then(value_as_i64) {
+        return guard_cron_target(id);
     }
     // Session origin chat — where this interaction started, same map
-    // follow_up_question uses (#450). Falls through to owner_chat_id for
-    // cold/cron sessions that never bound a chat.
+    // the interactive-question tool used (#450).
     if let Some(id) = state.session_chat(session_id).await {
-        return Ok(id);
+        return guard_cron_target(id);
     }
+    // The owner's chat, for a session that never bound one. A cron job is
+    // exactly such a session, so this used to hand every targetless job a
+    // destination it was never given — the owner's DM. Guarded like the rest:
+    // with no deliver_to the job sends nowhere and reports in its own session.
     match state.owner_chat_id().await {
-        Some(id) => Ok(id),
+        Some(id) => guard_cron_target(id),
         None => Err(ToolResult::error(
             "No owner chat ID known yet and no 'chat_id' parameter provided. \
              The owner needs to send at least one message to the bot first, \
@@ -848,7 +887,7 @@ impl TelegramSendTool {
             )));
         }
         let file = pget!(resolve_input_file(&reference, "photo_url").await);
-        let reply_to = input.get("message_id").and_then(|v| v.as_i64());
+        let reply_to = input.get("message_id").and_then(value_as_i64);
         match send_retrying_rate_limit("telegram_send send_photo", || {
             let mut req = crate::channels::telegram::send::photo_in_thread(
                 bot,
@@ -933,7 +972,7 @@ impl TelegramSendTool {
             )));
         }
         let file = pget!(resolve_input_file(&reference, "document_url").await);
-        let reply_to = input.get("message_id").and_then(|v| v.as_i64());
+        let reply_to = input.get("message_id").and_then(value_as_i64);
         match send_retrying_rate_limit("telegram_send send_document", || {
             let mut req = crate::channels::telegram::send::document_in_thread(
                 bot,
@@ -995,7 +1034,7 @@ impl TelegramSendTool {
     ) -> Result<ToolResult> {
         let NewTarget { chat_id, thread_id } =
             pget!(resolve_new_target(input, context.session_id, &self.telegram_state).await);
-        let lat = match input.get("latitude").and_then(|v| v.as_f64()) {
+        let lat = match input.get("latitude").and_then(value_as_f64) {
             Some(v) => v,
             None => {
                 return Ok(ToolResult::error(
@@ -1003,7 +1042,7 @@ impl TelegramSendTool {
                 ));
             }
         };
-        let lng = match input.get("longitude").and_then(|v| v.as_f64()) {
+        let lng = match input.get("longitude").and_then(value_as_f64) {
             Some(v) => v,
             None => {
                 return Ok(ToolResult::error(

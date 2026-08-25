@@ -17,6 +17,7 @@ fn manager_with_agent(id: &str) -> SubAgentManager {
         id: id.to_string(),
         label: "worker".to_string(),
         session_id: Uuid::new_v4(),
+        read_only: false,
         state: SubAgentState::Running,
         cancel_token: CancellationToken::new(),
         join_handle: None,

@@ -127,10 +127,12 @@ async fn checklist_approve_transitions_without_md_validation() {
             ));
         }
         plan.status = PlanStatus::Editing;
+        // No `.md` at all: since #1145 checklist init no longer writes the
+        // placeholder scaffold — the approval-queue marker is the durable
+        // `pending_approval` flag, and approve must still succeed on the
+        // checklist, the tasks being the deliverable (#573).
+        plan.pending_approval = true;
         save_plan(&plan).await.unwrap();
-        // Empty scaffold .md (Problem/Target/Intent blank, no numbered step):
-        // the exact template that used to fail validate_for_approve.
-        create_design_md(sid, "Audit").await.unwrap();
 
         assert_eq!(plan_mode_state(sid).await, PlanModeState::PostInitEditing);
 

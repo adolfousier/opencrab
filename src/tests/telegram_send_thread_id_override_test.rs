@@ -65,11 +65,22 @@ async fn no_explicit_thread_id_falls_back_to_lookup() {
 }
 
 #[tokio::test]
-async fn non_integer_thread_id_falls_back_to_lookup() {
-    // Defensive: the agent could emit "thread_id": "17" (string) or
-    // an object/array. Don't accept those as overrides — fall back
-    // to auto-lookup so a malformed override doesn't poison routing.
+async fn numeric_string_thread_id_is_coerced() {
+    // #646: models frequently emit numeric args as JSON strings.
+    // A parseable string override is coerced (trim + parse) rather
+    // than silently discarded — rejecting it forced lookup fallbacks
+    // for perfectly valid overrides.
     let input = json!({ "thread_id": "17" });
+    let result = resolve_thread_id(&input, 12345, Uuid::nil(), &empty_state()).await;
+    assert_eq!(result, Some(ThreadId(MessageId(17))));
+}
+
+#[tokio::test]
+async fn truly_non_integer_thread_id_falls_back_to_lookup() {
+    // Defensive: genuinely malformed values ("abc", objects, arrays)
+    // still fall back to auto-lookup so a malformed override can't
+    // poison routing. Only cleanly-parseable numerics coerce (#646).
+    let input = json!({ "thread_id": "abc" });
     let result = resolve_thread_id(&input, 12345, Uuid::nil(), &empty_state()).await;
     // Auto-lookup returns None in test (no global pool).
     assert_eq!(result, None);
@@ -88,7 +99,7 @@ async fn explicit_thread_id_zero_is_returned() {
 #[tokio::test]
 async fn session_origin_topic_is_used_when_no_explicit_thread_id() {
     // #450: with no explicit thread_id, the resolver inherits the forum topic
-    // this session started in (the same session_topic map follow_up_question
+    // this session started in (the same session_topic map the interactive-question tool
     // uses), so a reply routes back to the originating topic automatically.
     let state = empty_state();
     let session_id = Uuid::from_u128(0xABCD);

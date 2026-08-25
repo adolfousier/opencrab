@@ -2,7 +2,7 @@
 //!
 //! Allows executing shell commands in the system.
 
-use super::error::{Result, ToolError};
+use super::error::{Result, ToolError, expand_tilde};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use crate::utils::long_command::Detach;
 use async_trait::async_trait;
@@ -367,7 +367,13 @@ impl Tool for BashTool {
 
         // Determine working directory
         let working_dir = if let Some(ref dir) = input.working_dir {
-            std::path::PathBuf::from(dir)
+            // Expand a leading `~` before the exists-check: PathBuf::from("~")
+            // is a relative path named `~` that never exists (#1165).
+            let expanded = expand_tilde(dir);
+            if dir.starts_with('~') {
+                tracing::info!("bash working_dir expanded: {dir} -> {}", expanded.display());
+            }
+            expanded
         } else {
             context.working_dir()
         };

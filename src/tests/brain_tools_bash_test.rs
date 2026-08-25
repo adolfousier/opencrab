@@ -214,3 +214,90 @@ fn validate_input_blocks_dangerous_commands() {
         err
     );
 }
+
+// ── #1165: `~` expansion in working_dir before the exists-check ──────
+
+#[tokio::test]
+async fn test_working_dir_tilde_expands_to_home() {
+    let tool = BashTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4()).with_auto_approve(true);
+
+    let result = tool
+        .execute(
+            serde_json::json!({ "command": "pwd", "working_dir": "~" }),
+            &context,
+        )
+        .await
+        .unwrap();
+    assert!(result.success, "output: {:?}", result.output);
+    let home = dirs::home_dir().unwrap();
+    assert!(
+        result.output.contains(home.to_str().unwrap()),
+        "pwd should be $HOME, got: {}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn test_working_dir_tilde_subpath_expands() {
+    let home = dirs::home_dir().unwrap();
+    let sub = home.join(format!(".opencrabs_test_1165_{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&sub).unwrap();
+
+    let tool = BashTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4()).with_auto_approve(true);
+
+    let tilde_path = format!(
+        "~/.opencrabs_test_1165_{}",
+        sub.file_name()
+            .unwrap()
+            .to_string_lossy()
+            .trim_start_matches(".opencrabs_test_1165_")
+    );
+    let result = tool
+        .execute(
+            serde_json::json!({ "command": "pwd", "working_dir": tilde_path }),
+            &context,
+        )
+        .await
+        .unwrap();
+    assert!(
+        result.success,
+        "output: {:?} error: {:?}",
+        result.output, result.error
+    );
+    assert!(
+        result.output.contains(sub.to_str().unwrap()),
+        "pwd should be the expanded subpath, got: {}",
+        result.output
+    );
+
+    let _ = std::fs::remove_dir_all(&sub);
+}
+
+#[tokio::test]
+async fn test_working_dir_nonexistent_still_errors() {
+    let tool = BashTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4()).with_auto_approve(true);
+
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "command": "pwd",
+                "working_dir": "~/nonexistent_1165_definitely_missing"
+            }),
+            &context,
+        )
+        .await
+        .unwrap();
+    assert!(!result.success);
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("does not exist"),
+        "error should keep the current message: {:?}",
+        result.error
+    );
+}

@@ -1,8 +1,17 @@
-//! Agent type definitions for typed sub-agent spawning.
+//! Sub-agent tool-registry construction.
 //!
-//! Each agent type defines a role with a specific system prompt and tool filter,
-//! enabling specialized sub-agents (explore, plan, code, research) instead of
-//! generic "do everything" agents.
+//! Typed agent roles (`AgentType`) were removed (#1173): a child is now
+//! either read-restricted or not, decided solely by the parent's explicit
+//! `read_only` grant at spawn time. The old per-type allow-lists and canned
+//! system-prompt preambles are gone — restricted children get their tool set
+//! from [`restrict_registry_to_read_only`](crate::brain::tools::plan_gate::restrict_registry_to_read_only)
+//! (#649) and one factual capability line instead of role-play text.
+//!
+//! Deprecated `agent_type` values from the typed API still resolve through
+//! [`map_deprecated_agent_type`], which maps each known value to its
+//! historical *effective* grant (Explore/Research were read-only; Plan carried
+//! bash, so it was write-capable). Unknown values fail closed rather than
+//! silently escalating to full write access.
 
 use crate::brain::tools::ToolRegistry;
 
@@ -20,119 +29,46 @@ const ALWAYS_EXCLUDED: &[&str] = &[
     "evolve",
 ];
 
-/// Built-in agent type identifiers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentType {
-    /// General-purpose agent — inherits parent's full tool set (minus recursive/dangerous).
-    General,
-    /// Fast codebase exploration — read-only tools, no writes.
-    Explore,
-    /// Architecture planning — read + analysis tools, no mutations.
-    Plan,
-    /// Code implementation — full write access, focused on making changes.
-    Code,
-    /// Research — web search + read, no file modifications.
-    Research,
+/// Build a child registry from the parent's, minus recursive/dangerous tools.
+///
+/// This is the FULL-access child baseline. When the parent granted only read
+/// access, the caller additionally applies plan_gate's
+/// `restrict_registry_to_read_only` on the returned registry.
+pub fn build_child_registry(parent: &ToolRegistry) -> ToolRegistry {
+    let child = ToolRegistry::new();
+
+    for name in parent.list_tools() {
+        if ALWAYS_EXCLUDED.contains(&name.as_str()) {
+            continue;
+        }
+
+        if let Some(tool) = parent.get(&name) {
+            child.register(tool);
+        }
+    }
+
+    child
 }
 
-impl AgentType {
-    /// Parse an agent type from a string. Returns General for unknown types.
-    pub fn parse(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "explore" | "search" | "find" => Self::Explore,
-            "plan" | "architect" | "design" => Self::Plan,
-            "code" | "implement" | "write" => Self::Code,
-            "research" | "web" | "lookup" => Self::Research,
-            _ => Self::General,
-        }
-    }
-
-    /// Human-readable name for this agent type.
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::General => "general",
-            Self::Explore => "explore",
-            Self::Plan => "plan",
-            Self::Code => "code",
-            Self::Research => "research",
-        }
-    }
-
-    /// System prompt prefix injected before the user's task prompt.
-    pub fn system_prompt(&self) -> &'static str {
-        match self {
-            Self::General => {
-                "You are a general-purpose sub-agent. Complete the task using all available tools."
-            }
-            Self::Explore => {
-                "You are a codebase exploration agent. Your job is to find files, search code, \
-                 and answer questions about the codebase structure. Do NOT modify any files. \
-                 Use glob, grep, read, and ls to navigate efficiently. Be thorough but fast."
-            }
-            Self::Plan => {
-                "You are an architecture planning agent. Analyze the codebase and produce a \
-                 structured implementation plan. Read files to understand the current state, \
-                 then output a clear step-by-step plan with file paths and specific changes. \
-                 Do NOT make any code changes yourself."
-            }
-            Self::Code => {
-                "You are a code implementation agent. Make the requested changes using write, \
-                 edit, and bash tools. Be precise, follow existing code patterns, and run \
-                 clippy/tests after changes."
-            }
-            Self::Research => {
-                "You are a research agent. Search the web and read documentation to answer \
-                 questions. Summarize findings concisely. Do NOT modify any local files."
-            }
-        }
-    }
-
-    /// Tools this agent type is allowed to use (empty = all from parent minus ALWAYS_EXCLUDED).
-    fn allowed_tools(&self) -> Option<&'static [&'static str]> {
-        match self {
-            Self::General | Self::Code => None, // all parent tools minus exclusions
-            Self::Explore => Some(&["read_file", "glob", "grep", "ls"]),
-            Self::Plan => Some(&["read_file", "glob", "grep", "ls", "bash"]),
-            Self::Research => Some(&[
-                "read_file",
-                "glob",
-                "grep",
-                "ls",
-                "web_search",
-                "exa_search",
-                "brave_search",
-                "http_request",
-            ]),
-        }
-    }
-
-    /// Build a filtered tool registry by copying tools from the parent registry.
-    ///
-    /// - General/Code: gets everything the parent has minus recursive/dangerous tools
-    /// - Explore/Plan/Research: gets only the tools in their allowed list
-    pub fn build_registry(&self, parent: &ToolRegistry) -> ToolRegistry {
-        let child = ToolRegistry::new();
-
-        let allowed = self.allowed_tools();
-
-        for name in parent.list_tools() {
-            // Always exclude recursive/dangerous tools
-            if ALWAYS_EXCLUDED.contains(&name.as_str()) {
-                continue;
-            }
-
-            // If this type has an allow-list, check it
-            if let Some(allow) = allowed
-                && !allow.contains(&name.as_str())
-            {
-                continue;
-            }
-
-            if let Some(tool) = parent.get(&name) {
-                child.register(tool);
-            }
-        }
-
-        child
+/// Resolve a deprecated `agent_type` string to its historical effective grant.
+///
+/// Returns `Ok(read_only)` where `read_only` reflects what the old typed role
+/// actually allowed, or `Err(explanation)` for unrecognized values — failing
+/// closed so a typo'd type can never silently become a full-write child.
+///
+/// Every call site MUST surface the deprecation loudly (warn log + schema-era
+/// note in the spawn result); this function intentionally does not log, so
+/// tests can assert on call-site behavior.
+pub fn map_deprecated_agent_type(raw: &str) -> Result<bool, String> {
+    match raw.trim().to_lowercase().as_str() {
+        // Historically read-only roles (explore aliases included).
+        "explore" | "search" | "find" | "research" | "web" | "lookup" => Ok(true),
+        // Historically write-capable roles — note `plan` carried bash, so it
+        // was NOT read-only despite its analysis-only description.
+        "general" | "plan" | "architect" | "design" | "code" | "implement" | "write" => Ok(false),
+        other => Err(format!(
+            "Unknown agent_type '{other}'. Typed agent roles were removed \
+             (#1173); pass read_only=true/false explicitly instead."
+        )),
     }
 }
