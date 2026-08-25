@@ -307,6 +307,10 @@ impl Tool for TeamCreateTool {
             let manager = self.subagent_manager.clone();
             let agent_id_clone = agent_id.clone();
             let model_clone = model_override.clone();
+            // Delivery identity (#1197): team members must wake the parent
+            // on completion, same contract as spawned agents.
+            let parent_of_member = context.session_id;
+            let member_label = label.clone();
 
             let handle = tokio::spawn(async move {
                 tracing::info!("Team agent {} starting", agent_id_clone);
@@ -374,7 +378,13 @@ impl Tool for TeamCreateTool {
                     }
                 };
 
-                manager.mark_completed(&agent_id_clone, final_output);
+                manager.mark_completed(&agent_id_clone, final_output.clone());
+                crate::brain::tools::subagent::spawn::push_result(
+                    parent_of_member,
+                    &member_label,
+                    &agent_id_clone,
+                    Ok(&final_output),
+                );
             });
 
             // Register in subagent manager

@@ -362,6 +362,26 @@ impl SubAgentManager {
             .map(|a| a.session_id)
     }
 
+    /// Get the label for a sub-agent (needed for result delivery on paths
+    /// other than spawn — #1197).
+    pub fn get_label(&self, id: &str) -> Option<String> {
+        self.agents
+            .read()
+            .expect("subagent manager lock poisoned")
+            .get(id)
+            .map(|a| a.label.clone())
+    }
+
+    /// Get the parent session for a sub-agent (needed for result delivery
+    /// on resume/team completion — #1197).
+    pub fn get_parent_session_id(&self, id: &str) -> Option<Uuid> {
+        self.agents
+            .read()
+            .expect("subagent manager lock poisoned")
+            .get(id)
+            .map(|a| a.parent_session_id)
+    }
+
     /// Remove a terminated agent from tracking.
     pub fn remove(&self, id: &str) -> Option<SubAgent> {
         self.agents

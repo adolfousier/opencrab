@@ -227,6 +227,10 @@ impl Tool for ResumeAgentTool {
         let manager = self.manager.clone();
         let agent_id_clone = agent_id_str.clone();
         let prompt_clone = prompt.clone();
+        // Delivery identity (#1197): on natural completion the parent must
+        // be woken even though nobody registered a waiter for this resume.
+        let parent_of_child = self.manager.get_parent_session_id(agent_id);
+        let child_label = self.manager.get_label(agent_id);
         let model_override = subagent_model;
         let mut input_rx = input_rx;
 
@@ -303,7 +307,15 @@ impl Tool for ResumeAgentTool {
                 }
             };
 
-            manager.mark_completed(&agent_id_clone, final_output);
+            manager.mark_completed(&agent_id_clone, final_output.clone());
+            if let (Some(parent), Some(label)) = (parent_of_child, child_label) {
+                crate::brain::tools::subagent::spawn::push_result(
+                    parent,
+                    &label,
+                    &agent_id_clone,
+                    Ok(&final_output),
+                );
+            }
         });
 
         self.manager.set_join_handle(&agent_id_str, handle);

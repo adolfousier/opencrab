@@ -69,7 +69,7 @@ fn truncate_output(output: &str) -> String {
 }
 
 /// Deliver a finished sub-agent's outcome to the session that spawned it.
-fn push_result(
+pub(crate) fn push_result(
     parent_session_id: uuid::Uuid,
     label: &str,
     agent_id: &str,
