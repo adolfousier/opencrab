@@ -2069,6 +2069,11 @@ silent_compaction = false        # false (default) keeps the agent's post-compac
                                  # to a silent-continuation prompt so a compaction passes without comment
 plan_isolated_execution = true   # default: each started plan task runs in a fresh child session seeded only
                                  # with the task brief and the parent's plan file. false shares the parent session
+plan_auto_start = false          # default false: completing a plan task NEVER spawns the next one - complete is a pure
+                                 # state transition and reports the next eligible task as a hint; you call start explicitly.
+                                 # true restores fire-and-forget cascades (worker spawned mid-turn on every complete).
+                                 # Future work: cascades may return as a settle-deferred opt-in (spawn between turns,
+                                 # never mid-turn) - never as a default.
 subagent_session_ttl_days = 7    # days a spawned sub-agent's session is kept before pruning. Nothing revisits
                                  # them, so they accumulate with their messages, tool rows and plan files. 0 keeps forever
 
