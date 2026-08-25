@@ -15,14 +15,14 @@ use uuid::Uuid;
 
 fn agent(id: &str, label: &str, state: SubAgentState) -> SubAgent {
     SubAgent {
-state,
-input_tx: None,
-..SubAgent::new(
-        id.to_string(),
-        label.to_string(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-    )
+        state,
+        input_tx: None,
+        ..SubAgent::new(
+            id.to_string(),
+            label.to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
     }
 }
 

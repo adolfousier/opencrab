@@ -3,7 +3,7 @@
 //! Sub-agent progress is streamed to `~/.opencrabs/tmp/subagents/<agent_id>.json`
 //! so the main orchestrator can track status without session_search.
 
-use super::manager::{SubAgent, SubAgentManager, SubAgentState};
+use super::manager::{SubAgent, SubAgentManager};
 use super::status::AgentStatus;
 use crate::brain::tools::error::{Result, ToolError};
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
@@ -27,18 +27,29 @@ pub(crate) fn completion_message(
     outcome: std::result::Result<&str, &str>,
 ) -> crate::brain::agent::QueuedUserMessage {
     let (context_text, display_text) = match outcome {
-        Ok(output) => (
-            format!(
-                "[System: the sub-agent you spawned has finished.\n\
-                 Agent: {label} (id {agent_id})\n\
-                 Status: completed\n\
-                 Output:\n{}\n\n\
-                 Report the result to the user and continue anything that was waiting on it. \
-                 Do not re-spawn the agent — this IS its result.]",
-                truncate_output(output)
-            ),
-            format!("🤖 sub-agent finished: {label}"),
-        ),
+        Ok(output) => {
+            let full_report_hint = if output.chars().count() > PUSHED_OUTPUT_LIMIT {
+                format!(
+                    "Preview truncated - the FULL untruncated report is available via the \
+                     wait_agent tool with agent id {agent_id}.\n"
+                )
+            } else {
+                String::new()
+            };
+            (
+                format!(
+                    "[System: the sub-agent you spawned has finished.\n\
+                     Agent: {label} (id {agent_id})\n\
+                     Status: completed\n\
+                     Output:\n{}\n\n\
+                     {full_report_hint}\
+                     Report the result to the user and continue anything that was waiting on it. \
+                     Do not re-spawn the agent — this IS its result.]",
+                    truncate_output(output)
+                ),
+                format!("🤖 sub-agent finished: {label}"),
+            )
+        }
         Err(error) => (
             format!(
                 "[System: the sub-agent you spawned has failed.\n\

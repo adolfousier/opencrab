@@ -2,7 +2,7 @@
 
 use super::manager::TeamManager;
 use crate::brain::tools::error::{Result, ToolError};
-use crate::brain::tools::subagent::manager::{SubAgent, SubAgentManager, SubAgentState};
+use crate::brain::tools::subagent::manager::{SubAgent, SubAgentManager};
 use crate::brain::tools::subagent::map_deprecated_agent_type;
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;

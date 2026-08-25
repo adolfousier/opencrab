@@ -14,13 +14,13 @@ use uuid::Uuid;
 fn manager_with_agent(id: &str) -> SubAgentManager {
     let manager = SubAgentManager::new();
     manager.insert(SubAgent {
-input_tx: None,
-..SubAgent::new(
-        id.to_string(),
-        "worker".to_string(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-    )
+        input_tx: None,
+        ..SubAgent::new(
+            id.to_string(),
+            "worker".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
     });
     manager
 }

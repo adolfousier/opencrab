@@ -4,8 +4,8 @@
 //! unrestricted child allowed, unregistered session allowed) and the
 //! plan-worker spawn JSON carrying `allow_nested: false` by default.
 
+use crate::brain::tools::subagent::SubAgent;
 use crate::brain::tools::subagent::SubAgentManager;
-use crate::brain::tools::subagent::{SubAgent, SubAgentState};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -13,14 +13,14 @@ use uuid::Uuid;
 fn make_agent(session_id: Uuid, allow_nested: bool) -> SubAgent {
     let (tx, _rx) = mpsc::unbounded_channel::<String>();
     SubAgent {
-allow_nested,
-input_tx: Some(tx),
-..SubAgent::new(
-        format!("agent-{}", Uuid::new_v4().simple()),
-        "test".to_string(),
-        session_id,
-        Uuid::new_v4(),
-    )
+        allow_nested,
+        input_tx: Some(tx),
+        ..SubAgent::new(
+            format!("agent-{}", Uuid::new_v4().simple()),
+            "test".to_string(),
+            session_id,
+            Uuid::new_v4(),
+        )
     }
 }
 

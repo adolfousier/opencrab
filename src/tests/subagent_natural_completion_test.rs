@@ -83,13 +83,15 @@ fn parking_is_now_the_exception_not_the_default() {
 fn resumed_and_team_created_agents_deliver_results_to_parent() {
     let resume_src = include_str!("../brain/tools/subagent/resume.rs");
     let team_src = include_str!("../brain/tools/subagent/team/create.rs");
+    // (#1198 DRY): resume and team deliver through the shared manager helper
     assert!(
-        resume_src.contains("push_result("),
-        "resume.rs must push its result to the parent session (#1197)"
+        resume_src.contains("complete_and_deliver(") && team_src.contains("complete_and_deliver("),
+        "resume and team paths must deliver through complete_and_deliver (#1197/#1198)"
     );
+    let spawn_src = include_str!("../brain/tools/subagent/spawn.rs");
     assert!(
-        team_src.contains("push_result("),
-        "team member completion must push its result to the parent session (#1197)"
+        spawn_src.contains("push_result("),
+        "spawn path must push its result to the parent session (#1197)"
     );
     let manager_src = include_str!("../brain/tools/subagent/manager.rs");
     assert!(

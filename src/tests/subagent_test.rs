@@ -17,13 +17,13 @@ mod manager {
     fn make_agent(id: &str, label: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            id.to_string(),
-            label.to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                id.to_string(),
+                label.to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         }
     }
 
@@ -356,13 +356,13 @@ input_tx: Some(tx),
         let mgr = SubAgentManager::new();
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            "a1".to_string(),
-            "test".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                "a1".to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         mgr.insert(agent);
 
@@ -412,13 +412,13 @@ mod send_input_tool {
     fn make_running_agent(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            id.to_string(),
-            "test".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         (agent, rx)
     }
@@ -514,13 +514,13 @@ input_tx: Some(tx),
         let mgr = Arc::new(SubAgentManager::new());
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            "a1".to_string(),
-            "test".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                "a1".to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         mgr.insert(agent);
 
@@ -573,13 +573,13 @@ mod close_agent_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            id.to_string(),
-            "test".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         }
     }
 
@@ -701,13 +701,13 @@ mod wait_agent_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            id.to_string(),
-            "test".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         }
     }
 
@@ -868,13 +868,13 @@ mod lifecycle {
     fn make_agent(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            id.to_string(),
-            "lifecycle-test".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                id.to_string(),
+                "lifecycle-test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         (agent, rx)
     }
@@ -1141,14 +1141,14 @@ mod agent_type {
         use uuid::Uuid;
         let mgr = SubAgentManager::new();
         mgr.insert(SubAgent {
-read_only: true,
-input_tx: None,
-..SubAgent::new(
-            "ro1".to_string(),
-            "ro".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            read_only: true,
+            input_tx: None,
+            ..SubAgent::new(
+                "ro1".to_string(),
+                "ro".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         });
         assert_eq!(mgr.get_read_only("ro1"), Some(true));
         assert_eq!(mgr.get_read_only("missing"), None);
@@ -1309,13 +1309,13 @@ mod team_delete_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            id.to_string(),
-            "test".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         }
     }
 
@@ -1437,13 +1437,13 @@ mod team_broadcast_tool {
     fn make_agent_with_channel(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-input_tx: Some(tx),
-..SubAgent::new(
-            id.to_string(),
-            "test".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+            input_tx: Some(tx),
+            ..SubAgent::new(
+                id.to_string(),
+                "test".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
         };
         (agent, rx)
     }
