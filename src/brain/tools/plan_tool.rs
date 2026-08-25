@@ -2751,11 +2751,17 @@ async fn spawn_plan_worker(
         .clone()
         .ok_or_else(|| ToolError::Execution("no parent tool registry wired".to_string()))?;
     let spawn_tool = crate::brain::tools::subagent::SpawnAgentTool::new(manager, registry);
+    // Worker purity (#1195): plan workers are spawned unable to nest further
+    // sub-agents or background tasks. Opt-out: [agent] plan_worker_allow_nested.
+    let worker_nesting = crate::config::Config::load()
+        .map(|c| c.agent.plan_worker_allow_nested)
+        .unwrap_or(false);
     let input = serde_json::json!({
         "prompt": brief,
         "label": format!("plan-task-{order}"),
         "agent_type": "general",
         "plan_session": plan_sid.to_string(),
+        "allow_nested": worker_nesting,
     });
     let res = spawn_tool.execute(input, context).await?;
     if !res.success {

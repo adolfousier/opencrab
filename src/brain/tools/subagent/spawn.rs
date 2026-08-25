@@ -133,6 +133,10 @@ impl Tool for SpawnAgentTool {
                     "type": "string",
                     "description": "Short human-readable label for this sub-agent (e.g., 'refactor-auth', 'test-runner')"
                 },
+                "allow_nested": {
+                    "type": "boolean",
+                    "description": "Whether THIS CHILD may spawn further sub-agents or background tasks (#1195). Default true. Set false for pure workers: any spawn_agent/team_create call it makes is refused, and its long bash commands run attached instead of detached. Plan workers are always spawned with false."
+                },
                 "read_only": {
                     "type": "boolean",
                     "description": "Spawn this child with a read-restricted tool registry (#1173): file reads, glob/grep/ls and web research only — no writes, no bash, no spawning. Use for exploration, code review, and research children. Omit or false for a full-capability worker (still minus recursive/dangerous tools)."
@@ -163,6 +167,17 @@ impl Tool for SpawnAgentTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
+        // Nesting enforcement (#1195): children spawned with allow_nested=false
+        // are pure workers. Root / unmanaged sessions pass freely.
+        if let Some(ref mgr) = context.subagent_manager
+            && !mgr.nesting_allowed_for_session(context.session_id)
+        {
+            return Ok(ToolResult::error(
+                "refused: this agent was spawned without nesting permissions \
+                 (allow_nested=false) and may not spawn further sub-agents"
+                    .to_string(),
+            ));
+        }
         let prompt = input
             .get("prompt")
             .and_then(|v| v.as_str())
@@ -178,6 +193,21 @@ impl Tool for SpawnAgentTool {
         // Resolve the child's capability grant (#1173). Explicit `read_only`
         // wins; a deprecated typed `agent_type` maps to its historical
         // effective grant (loudly); anything else defaults to full access.
+        // Nesting grant (#1195): absent = true (backward compatible). A
+        // non-boolean is a hard error, mirroring read_only above.
+        let allow_nested = match input.get("allow_nested") {
+            None | Some(serde_json::Value::Bool(_)) => input
+                .get("allow_nested")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            Some(_) => {
+                return Ok(ToolResult::error(
+                    "'allow_nested' must be a boolean (true = child may nest spawns/detach, false = pure worker)"
+                        .to_string(),
+                ));
+            }
+        };
+
         // A non-boolean `read_only` is a hard error, not a silent default —
         // the caller asked for a specific capability and must not get a
         // different one because of a type mistake.
@@ -609,6 +639,7 @@ impl Tool for SpawnAgentTool {
             session_id: child_session_id,
             parent_session_id: context.session_id,
             read_only,
+            allow_nested,
             state: SubAgentState::Running,
             cancel_token,
             join_handle: Some(handle),

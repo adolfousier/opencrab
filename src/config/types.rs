@@ -1024,6 +1024,13 @@ pub struct AgentConfig {
     #[serde(default = "default_plan_auto_start")]
     pub plan_auto_start: bool,
 
+    /// Whether isolated plan-task workers may themselves spawn sub-agents or
+    /// background tasks (#1195). Default false: a plan worker executes one
+    /// item solo - nested spawns orphan grandchildren and race the parent's
+    /// disk verdict.
+    #[serde(default)]
+    pub plan_worker_allow_nested: bool,
+
     /// Auto-install new releases on startup without prompting (default: true).
     /// When false, the user is shown an update prompt dialog instead.
     #[serde(default = "default_auto_update")]
@@ -1238,6 +1245,7 @@ impl Default for AgentConfig {
             execute_model: None,
             plan_isolated_execution: true,
             plan_auto_start: default_plan_auto_start(),
+            plan_worker_allow_nested: false,
             auto_update: default_auto_update(),
             subagent_session_ttl_days: default_subagent_session_ttl_days(),
             self_improvement_provider: None,

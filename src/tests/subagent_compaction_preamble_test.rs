@@ -20,6 +20,7 @@ fn agent(id: &str, label: &str, state: SubAgentState) -> SubAgent {
         session_id: Uuid::new_v4(),
         parent_session_id: Uuid::new_v4(),
         read_only: false,
+        allow_nested: true,
         state,
         cancel_token: CancellationToken::new(),
         join_handle: None,

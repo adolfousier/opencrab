@@ -576,6 +576,7 @@ pub mod mission_control_skill_inbox_test;
 pub mod model_fetch_test;
 #[cfg(feature = "telegram")]
 pub mod models_picker_dedup_test;
+pub mod nesting_gate_test;
 pub mod parallel_tools_test;
 #[cfg(feature = "telegram")]
 pub mod path_lock_test;

@@ -71,6 +71,10 @@ impl Tool for TeamCreateTool {
                                 "type": "string",
                                 "description": "Short label for this agent"
                             },
+                            "allow_nested": {
+                                "type": "boolean",
+                                "description": "Whether THIS MEMBER may spawn further sub-agents or background tasks (#1195). Default true. false = pure worker."
+                            },
                             "read_only": {
                                 "type": "boolean",
                                 "description": "Spawn this member with a read-restricted tool registry (#1173): reads/search/research only. Omit or false for full capability."
@@ -101,6 +105,16 @@ impl Tool for TeamCreateTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
+        // Nesting enforcement (#1195), mirroring spawn_agent.
+        if let Some(ref mgr) = context.subagent_manager
+            && !mgr.nesting_allowed_for_session(context.session_id)
+        {
+            return Ok(ToolResult::error(
+                "refused: this agent was spawned without nesting permissions \
+                 (allow_nested=false) and may not create teams"
+                    .to_string(),
+            ));
+        }
         let team_name = input
             .get("team_name")
             .and_then(|v| v.as_str())
@@ -165,6 +179,17 @@ impl Tool for TeamCreateTool {
                 .get("agent_type")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
+            // Nesting grant (#1195): absent = true; non-boolean = hard error.
+            let member_allow_nested = match agent_def.get("allow_nested") {
+                None => true,
+                Some(serde_json::Value::Bool(b)) => *b,
+                Some(_) => {
+                    return Ok(ToolResult::error(format!(
+                        "Team member '{label}': 'allow_nested' must be a boolean"
+                    )));
+                }
+            };
+
             let (read_only, member_grant_note) = match (member_read_only, deprecated_raw) {
                 (Some(ro), _) => (ro, None),
                 (None, Some(raw)) => {
@@ -359,6 +384,7 @@ impl Tool for TeamCreateTool {
                 session_id: child_session_id,
                 parent_session_id: context.session_id,
                 read_only,
+                allow_nested: member_allow_nested,
                 state: SubAgentState::Running,
                 cancel_token,
                 join_handle: Some(handle),

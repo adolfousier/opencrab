@@ -53,6 +53,14 @@ pub struct SubAgent {
     /// manager's `get_read_only` instead of reaching through the lock.
     pub read_only: bool,
 
+    /// Whether this child may spawn further sub-agents or background tasks
+    /// (#1195). Frozen for the agent's lifetime like [`SubAgent::read_only`]:
+    /// enforcement live-queries the manager by the caller's session id, so
+    /// resumes inherit the restriction without rebuilding anything. Plan
+    /// workers are spawned with this false (worker purity); root sessions
+    /// are never registered here and are always unrestricted.
+    pub allow_nested: bool,
+
     /// Current state
     pub state: SubAgentState,
 
@@ -128,6 +136,20 @@ impl SubAgentManager {
             .expect("subagent manager lock poisoned")
             .get(id)
             .map(|a| a.read_only)
+    }
+
+    /// May the agent operating on `session_id` spawn further sub-agents or
+    /// background tasks? (#1195) Unregistered sessions (roots, main chats)
+    /// are always unrestricted; registered children answer from their frozen
+    /// `allow_nested` grant.
+    pub fn nesting_allowed_for_session(&self, session_id: Uuid) -> bool {
+        self.agents
+            .read()
+            .expect("subagent manager lock poisoned")
+            .values()
+            .find(|a| a.session_id == session_id)
+            .map(|a| a.allow_nested)
+            .unwrap_or(true)
     }
 
     /// Get the agent's output if completed.

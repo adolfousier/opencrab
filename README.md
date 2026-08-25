@@ -2074,6 +2074,8 @@ plan_auto_start = false          # default false: completing a plan task NEVER s
                                  # true restores fire-and-forget cascades (worker spawned mid-turn on every complete).
                                  # Future work: cascades may return as a settle-deferred opt-in (spawn between turns,
                                  # never mid-turn) - never as a default.
+plan_worker_allow_nested = false # default false: isolated plan workers are pure - they cannot spawn further sub-agents
+                                 # or background tasks (their long bash runs attached). true lets them nest.
 subagent_session_ttl_days = 7    # days a spawned sub-agent's session is kept before pruning. Nothing revisits
                                  # them, so they accumulate with their messages, tool rows and plan files. 0 keeps forever
 

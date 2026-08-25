@@ -431,8 +431,16 @@ impl Tool for BashTool {
         // toward the 600s cap (#722). Only when a surface wired the background
         // manager; sudo needs the inline password flow, so it's excluded.
         // Anything else falls through and runs inline exactly as before.
+        // #1195: pure workers (allow_nested=false) lose detachment too -
+        // their long commands run inline so nothing outlives their verdict.
+        let nesting_ok = context
+            .subagent_manager
+            .as_ref()
+            .map(|m| m.nesting_allowed_for_session(context.session_id))
+            .unwrap_or(true);
         if let Some(ref mgr) = context.background_manager
             && !input.command.trim_start().starts_with("sudo ")
+            && nesting_ok
         {
             match crate::utils::long_command::classify(&input.command) {
                 Detach::Yes { marker } => {

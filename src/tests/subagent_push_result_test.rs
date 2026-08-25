@@ -19,6 +19,7 @@ fn manager_with_agent(id: &str) -> SubAgentManager {
         session_id: Uuid::new_v4(),
         parent_session_id: Uuid::new_v4(),
         read_only: false,
+        allow_nested: true,
         state: SubAgentState::Running,
         cancel_token: CancellationToken::new(),
         join_handle: None,
