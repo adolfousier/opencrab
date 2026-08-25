@@ -419,7 +419,7 @@ impl Tool for SpawnAgentTool {
             let agent =
                 crate::brain::agent::AgentService::new(provider, service_context.clone(), &config)
                     .await
-                    .with_tool_registry(Arc::new(child_registry))
+                    .with_tool_registry(child_registry)
                     .with_auto_approve_tools(true) // children auto-approve (parent already approved spawn)
                     .with_working_directory(child_dir)
                     .with_plan_session_override(plan_session_override);
