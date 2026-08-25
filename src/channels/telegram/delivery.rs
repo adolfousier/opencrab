@@ -746,6 +746,7 @@ pub(crate) async fn deliver_final_response(
                                             );
                                         }
                                     }
+                                }
                             }
                             Err(e) => {
                                 tracing::warn!(
