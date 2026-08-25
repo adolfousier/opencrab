@@ -10,6 +10,7 @@
 pub mod agent_type;
 mod close;
 pub mod manager;
+mod notify;
 pub mod reconcile;
 mod resume;
 mod send_input;
@@ -22,6 +23,7 @@ pub(crate) mod worktree;
 pub use agent_type::{build_child_registry, map_deprecated_agent_type};
 pub use close::CloseAgentTool;
 pub use manager::{SubAgent, SubAgentManager, SubAgentState};
+pub use notify::SessionNotifyTool;
 pub use resume::ResumeAgentTool;
 pub use send_input::SendInputTool;
 pub use spawn::SpawnAgentTool;
