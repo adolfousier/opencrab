@@ -19,7 +19,7 @@ use crate::brain::tools::tool_search::ToolSearchTool;
 use std::sync::Arc;
 
 /// Tools that sub-agents must NEVER have access to (prevents recursion / dangerous ops).
-const ALWAYS_EXCLUDED: &[&str] = &[
+pub(crate) const ALWAYS_EXCLUDED: &[&str] = &[
     "spawn_agent",
     "resume_agent",
     "wait_agent",

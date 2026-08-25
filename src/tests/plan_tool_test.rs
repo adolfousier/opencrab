@@ -1552,4 +1552,146 @@ fn start_schema_teaches_subagent_spawn_not_isolation_jargon() {
     let schema = PlanTool.input_schema().to_string();
     assert!(schema.contains("DEDICATED SUBAGENT SESSION"));
     assert!(!schema.contains("freshly spawned isolated worker session"));
+/// When a task carries a `TaskScope`, the worker brief must render it as
+/// an explicit "MAY write / MUST NOT write" contract — not free text. This
+/// is the structural fix for the contract-review.json leak (the parent
+/// had no way to tell the worker "do not touch content/").
+#[test]
+fn worker_brief_renders_task_scope_as_contract() {
+    use crate::tui::plan::{TaskScope, TaskType};
+
+    let mut task = PlanTask::new(
+        1,
+        "Write landing template + CSS + build script".to_string(),
+        "Create _template.html, recipe.css, build.sh".to_string(),
+        TaskType::Edit,
+    );
+    task.scope = Some(TaskScope {
+        do_write: vec![
+            "landing/recipes/_template.html".into(),
+            "landing/recipes/recipe.css".into(),
+            "landing/recipes/build.sh".into(),
+        ],
+        do_not_write: vec![
+            "landing/recipes/content/".into(),
+            "landing/index.html".into(),
+            "landing/sitemap.xml".into(),
+        ],
+        do_call: None,
+        do_not_call: Some(vec!["telegram_send".into()]),
+    });
+
+    let brief = build_worker_brief(1, &task, std::path::Path::new("/tmp/work"), "");
+
+    // The contract header must be present.
+    assert!(
+        brief.contains("Scope contract (HARD"),
+        "scope contract header missing:\n{brief}"
+    );
+    // The MAY list is rendered.
+    assert!(
+        brief.contains("✅ MAY write:"),
+        "MAY list missing"
+    );
+    assert!(
+        brief.contains("landing/recipes/_template.html"),
+        "expected path in MAY list missing"
+    );
+    // The MUST NOT list is rendered.
+    assert!(
+        brief.contains("🚫 MUST NOT write:"),
+        "MUST NOT list missing"
+    );
+    assert!(
+        brief.contains("landing/recipes/content/"),
+        "sibling content/ not in MUST NOT list"
+    );
+    // The harness caveat is shown (no post-hoc enforcement in v1).
+    assert!(
+        brief.contains("does NOT enforce this contract post-hoc in v1"),
+        "enforcement caveat missing"
+    );
+    // The tool restriction is rendered.
+    assert!(
+        brief.contains("🚫 MUST NOT call tools:"),
+        "MUST NOT call tools section missing"
+    );
+    assert!(
+        brief.contains("telegram_send"),
+        "telegram_send not in MUST NOT call list"
+    );
+}
+
+/// A malformed scope (overlap, absolute path, escape, ALWAYS_EXCLUDED tool)
+/// must be rejected by `validate_task_scope`. The contract is fail-closed.
+#[test]
+fn validate_task_scope_rejects_malformed() {
+    use crate::tui::plan::TaskScope;
+    use std::path::Path;
+
+    let wd = Path::new("/tmp/work");
+
+    // 1. Overlap rejected.
+    let overlap = TaskScope {
+        do_write: vec!["landing/recipes/content/foo.json".into()],
+        do_not_write: vec!["landing/recipes/content/foo.json".into()],
+        do_call: None,
+        do_not_call: None,
+    };
+    assert!(
+        validate_task_scope(&overlap, wd).is_err(),
+        "overlap must be rejected"
+    );
+
+    // 2. Absolute path rejected.
+    let absolute = TaskScope {
+        do_write: vec!["/etc/passwd".into()],
+        do_not_write: vec![],
+        do_call: None,
+        do_not_call: None,
+    };
+    let err = validate_task_scope(&absolute, wd)
+        .expect_err("absolute path must be rejected");
+    assert!(
+        err.contains("absolute"),
+        "error should mention absolute path: {err}"
+    );
+
+    // 3. Escape via '..' rejected.
+    let escape = TaskScope {
+        do_write: vec!["../outside".into()],
+        do_not_write: vec![],
+        do_call: None,
+        do_not_call: None,
+    };
+    assert!(
+        validate_task_scope(&escape, wd).is_err(),
+        "escape must be rejected"
+    );
+
+    // 4. ALWAYS_EXCLUDED tool rejected in do_call.
+    let bad_tool = TaskScope {
+        do_write: vec!["landing/recipes/build.sh".into()],
+        do_not_write: vec![],
+        do_call: Some(vec!["spawn_agent".into()]),
+        do_not_call: None,
+    };
+    let err = validate_task_scope(&bad_tool, wd)
+        .expect_err("spawn_agent must be rejected");
+    assert!(
+        err.contains("ALWAYS_EXCLUDED"),
+        "error should mention ALWAYS_EXCLUDED: {err}"
+    );
+
+    // 5. Happy path: disjoint lists, relative paths, allowed tools.
+    let ok = TaskScope {
+        do_write: vec!["landing/recipes/build.sh".into()],
+        do_not_write: vec!["landing/recipes/content/".into()],
+        do_call: Some(vec!["read_file".into(), "write_file".into()]),
+        do_not_call: None,
+    };
+    assert!(
+        validate_task_scope(&ok, wd).is_ok(),
+        "disjoint scope with allowed tools must validate"
+    );
 }
