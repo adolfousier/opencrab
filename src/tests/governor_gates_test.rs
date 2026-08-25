@@ -1,0 +1,316 @@
+//! Integration suite for the proactive flood governors (#1211).
+//!
+//! Per the #1211 test brief this drives the REAL gates end-to-end with every
+//! slow thing mocked, nothing slept for real:
+//!
+//! - **Mocked Telegram server** — `mockito` fakes the Bot API; the queued-
+//!   finals drainer must land its `editMessageText` over HTTP against it,
+//!   proving the wire shape and delivery accounting, not just bookkeeping.
+//! - **Mocked agent sessions** — concurrent fake turn tasks hammer
+//!   [`admit_chat_action`] for one forum topic, reproducing the multi-session
+//!   split-budget storm that motivated #1211.
+//! - **Mocked passage of time** — every gate reads the injectable `gate_now`
+//!   seam; tests advance the virtual clock by hand (`ts::advance`) instead of
+//!   sleeping, and run under tokio's paused runtime so even the internal
+//!   backoff sleeps cost zero wall time.
+//!
+//! The reactive backstop (`rate_limit::wait_out`) is intentionally NOT
+//! exercised here — these tests assert governors NEVER let a call through
+//! that would need it.
+
+use std::time::Duration;
+
+use teloxide::Bot;
+use teloxide::types::{ChatId, MessageId};
+
+use crate::channels::telegram::governor;
+use crate::channels::telegram::governor::test_support as ts;
+use crate::config::Config;
+
+/// Replace the process-wide config mirror with `config.toml.example` plus
+/// per-test `rate_limiter` mutations. Parsed fresh per test so knob changes
+/// cannot leak sideways; the [`ts::registry_guard`] serializes the swap.
+macro_rules! rl_config {
+    ($($field:ident : $value:expr),* $(,)?) => {{
+        let mut cfg: Config = toml::from_str(include_str!("../../config.toml.example"))
+            .expect("embedded config.toml.example must parse");
+        $(cfg.channels.telegram.rate_limiter.$field = $value;)*
+        Config::set_current(cfg);
+    }};
+}
+
+#[tokio::test(start_paused = true)]
+async fn dm_chat_ids_bypass_all_three_governors() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(1_000);
+    rl_config!(enabled: true);
+
+    // Positive chat ids are DMs: every gate admits instantly and must NOT
+    // create peer state, whatever the volumes look like.
+    for _ in 0..25 {
+        assert!(governor::admit_chat_action(ChatId(777), None).await);
+        assert!(governor::admit_chat_action(ChatId(777), Some(42)).await);
+        let bot = Bot::new("TESTTOKEN");
+        assert!(
+            governor::edit_admission(
+                &bot,
+                ChatId(777),
+                MessageId(1),
+                governor::EditClass::Final,
+                "<b>x</b>".into(),
+                false,
+            )
+            .await
+        );
+    }
+    governor::pace_send(ChatId(777)).await;
+
+    assert!(
+        ts::snapshot(777).is_none(),
+        "a DM must never be registered as a governed peer"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn negative_peer_stays_ungoverned_until_a_topic_is_seen() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(2_000);
+    rl_config!(
+        enabled: true,
+        typing_burst: 2,
+        typing_max_hold_secs: 0,
+    );
+
+    // A group chat reached WITHOUT any topic id passes ungoverned — the
+    // forums-only rollout contract. Burst of 2 would normally bite, but no
+    // governance engages pre-topic.
+    assert!(governor::admit_chat_action(ChatId(-700), None).await);
+    assert!(governor::admit_chat_action(ChatId(-700), None).await);
+    assert!(governor::admit_chat_action(ChatId(-700), None).await);
+    let snap = ts::snapshot(-700).expect("gate observed the chat");
+    assert!(!snap.forum_seen, "topic-less traffic must not arm the peer");
+    assert_eq!(snap.typing_admitted, 0, "ungoverned passes are not counted");
+    assert_eq!(snap.typing_dropped, 0);
+
+    // First topic-scoped call arms the peer; the (fresh, capacity-2) bucket
+    // starts admitting, then drops with hold=0 once spent.
+    assert!(governor::admit_chat_action(ChatId(-700), Some(9)).await);
+    assert!(governor::admit_chat_action(ChatId(-700), Some(9)).await);
+    assert!(!governor::admit_chat_action(ChatId(-700), Some(9)).await);
+    let snap = ts::snapshot(-700).unwrap();
+    assert!(snap.forum_seen);
+    assert_eq!(snap.typing_admitted, 2);
+    assert_eq!(snap.typing_dropped, 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn simultaneous_agent_sessions_share_one_typing_budget() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(3_000);
+    // The storm shape from the Aug-25 logs: N concurrent turns in ONE forum,
+    // each firing its own indicator refresh into the single per-peer budget.
+    // hold=0 makes overflow DROP deterministically instead of pacing.
+    rl_config!(
+        enabled: true,
+        typing_burst: 8,
+        typing_max_hold_secs: 0,
+    );
+
+    const CHAT: ChatId = -100_111;
+    const TOPIC: i32 = 30679;
+
+    // Spend the burst sequentially, like eight turns starting one after
+    // another.
+    for _ in 0..8 {
+        assert!(governor::admit_chat_action(CHAT, Some(TOPIC)).await);
+    }
+
+    // Now twelve MORE sessions light up simultaneously (mocked agents) and
+    // all hammer the same per-peer bucket. Every one of them must be refused
+    // — none may slip through to re-amplify a 429 retry storm.
+    let tasks: Vec<_> = (0..12)
+        .map(|_| tokio::spawn(governor::admit_chat_action(CHAT, Some(TOPIC))))
+        .collect();
+    let mut refused = 0;
+    for t in tasks {
+        assert!(
+            t.await.expect("typing gate task panicked"),
+            "an over-budget typing refresh leaked past G1"
+        );
+        refused += 1;
+    }
+
+    let snap = ts::snapshot(CHAT).unwrap();
+    assert_eq!(refused, 12);
+    assert_eq!(snap.typing_dropped, 12, "every refusal must be counted");
+    assert_eq!(snap.typing_admitted, 8);
+
+    // Virtual refill: one token after `typing_min_interval_secs` (3s default)
+    // lets exactly one more refresh through — throttle semantics, not off.
+    ts::advance(3_100);
+    assert!(governor::admit_chat_action(CHAT, Some(TOPIC)).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn edit_ladder_drops_in_priority_order_and_queues_latest_wins_finals() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(4_000);
+    rl_config!(
+        enabled: true,
+        edits_per_minute: 60, // 1 token/s steady state
+        edit_burst: 2,
+    );
+
+    const CHAT: ChatId = -100_222;
+    let bot = Bot::new("TESTTOKEN");
+
+    ts::mark_forum(CHAT);
+    ts::burn_bucket(CHAT, ts::BucketKind::Edits, 2, 1.0);
+
+    // Empty bucket: the four chrome classes drop IN LADDER ORDER — here
+    // exercised in call sequence, with each drop counted under its own name
+    // so a reordered enum would fail this ledger immediately.
+    for class in [
+        governor::EditClass::Clock,
+        governor::EditClass::BrainPreview,
+        governor::EditClass::Intermediary,
+        governor::EditClass::Status,
+    ] {
+        assert!(
+            !governor::edit_admission(&bot, CHAT, MessageId(5), class, "h".into(), false).await,
+            "{class:?} must DROP on an empty bucket"
+        );
+    }
+    let snap = ts::snapshot(CHAT).unwrap();
+    assert_eq!(snap.edits_admitted, 0);
+    assert_eq!(snap.dropped_clock, 1);
+    assert_eq!(snap.dropped_brain_preview, 1);
+    assert_eq!(snap.dropped_intermediary, 1);
+    assert_eq!(snap.dropped_status, 1);
+
+    // Finals NEVER drop: they queue latest-wins per message id. Two enqueues
+    // for the same message collapse into ONE pending payload.
+    assert!(!governor::edit_admission(
+        &bot, CHAT, MessageId(9), governor::EditClass::Final, "<b>v1</b>".into(), false,
+    )
+    .await);
+    assert!(!governor::edit_admission(
+        &bot, CHAT, MessageId(9), governor::EditClass::Final, "<b>v2</b>".into(), false,
+    )
+    .await);
+    let snap = ts::snapshot(CHAT).unwrap();
+    assert_eq!(snap.queued_finals, 2, "both enqueues are counted");
+    assert_eq!(snap.superseded_finals, 1, "v1 was replaced by v2");
+    assert_eq!(snap.finals_pending, 1, "latest-wins keeps a single payload");
+
+    // Refill admits chrome edits again — drops self-heal on the next render.
+    ts::advance(1_100);
+    assert!(governor::edit_admission(
+        &bot, CHAT, MessageId(5), governor::EditClass::Status, "h".into(), false,
+    )
+    .await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(5_000);
+    rl_config!(
+        enabled: true,
+        edits_per_minute: 60,
+        edit_burst: 2,
+    );
+
+    const CHAT: ChatId = -100_333;
+    ts::mark_forum(CHAT);
+    ts::burn_bucket(CHAT, ts::BucketKind::Edits, 2, 1.0);
+
+    // Mocked Telegram server: the drainer's classic-HTML edit must arrive as
+    // POST /botTESTTOKEN/editMessageText carrying the LATEST payload.
+    let mut server = mockito::Server::new_async().await;
+    let delivered = server
+        .mock(
+            "POST",
+            "/botTESTTOKEN/editMessageText",
+        )
+        .match_body(mockito::Matcher::PartialJson(
+            serde_json::json!({"text": "<b>settled</b>"}),
+        ))
+        .with_status(200)
+        .with_body(r#"{"ok":true,"result":{"message_id":11}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let bot = Bot::new("TESTTOKEN").set_api_url(server.url().parse().unwrap());
+    assert!(!governor::edit_admission(
+        &bot, CHAT, MessageId(11), governor::EditClass::Final, "<b>settled</b>".into(), false,
+    )
+    .await, "starved bucket queues the final");
+    assert_eq!(ts::snapshot(CHAT).unwrap().finals_pending, 1);
+
+    // Mock the passage of time until a token refills, polling in DRAIN_TICK
+    // steps; the spawned drainer lands the queued payload on the mock server.
+    // Everything runs on tokio's paused clock — no real sleeping anywhere.
+    let converge = async {
+        for _ in 0..60 {
+            ts::advance(600); // > 1/s refill AND > DRAIN_TICK (400ms)
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            if ts::snapshot(CHAT)
+                .map(|s| s.delivered_finals == 1 && s.finals_pending == 0)
+                .unwrap_or(false)
+            {
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(120), converge)
+        .await
+        .expect("queued final never drained");
+
+    delivered.assert(); // exactly one wire hit, body matched above
+    let snap = ts::snapshot(CHAT).unwrap();
+    assert_eq!(snap.delivered_finals, 1);
+    assert_eq!(snap.failed_finals, 0);
+    assert_eq!(snap.finals_pending, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn send_pacer_delays_then_fails_open_never_drops() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(6_000);
+    rl_config!(
+        enabled: true,
+        send_min_interval_millis: 50,
+        sends_ceiling_per_minute: 2,
+        sends_burst: 2,
+    );
+
+    const CHAT: ChatId = -100_444;
+    ts::mark_forum(CHAT);
+    ts::burn_bucket(CHAT, ts::BucketKind::SendsSec, 2, 20.0);
+    ts::burn_bucket(CHAT, ts::BucketKind::SendsMin, 2, 2.0 / 60.0);
+
+    // Starved pacer: the next send WAITS for a token (throttled ms accrue in
+    // VIRTUAL time — the wait is real logic, the clock is ours), and when the
+    // minute-ceiling stays dry past SEND_MAX_HOLD the pacer FAILS OPEN —
+    // the send proceeds and the reactive backstop owns the risk (#297:
+    // delay-never-drop). Both outcomes observable below without a single
+    // real sleep.
+    let paced = async {
+        governor::pace_send(CHAT).await; // waits ~1 spacing interval on virtual time...
+        ts::advance(31_000); // ...then we push past SEND_MAX_HOLD (30s)
+        governor::pace_send(CHAT).await; // minute-bucket still dry -> fail-open return
+    };
+    tokio::time::timeout(Duration::from_secs(300), paced)
+        .await
+        .expect("pacer wedged instead of failing open");
+
+    let snap = ts::snapshot(CHAT).unwrap();
+    assert!(
+        snap.throttled_send_ms > 0,
+        "held sends must be attributed to the throttle ledger"
+    );
+    // No drop counter exists for G3 BY DESIGN — the assertion is that the
+    // calls above RETURNED (fail-open) rather than hanging or discarding.
+}

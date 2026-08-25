@@ -240,6 +240,11 @@ pub(crate) async fn send_html_or_plain(
     html: &str,
     origin: &str,
 ) -> std::result::Result<MessageId, teloxide::RequestError> {
+    // G3 send pacing (#1211): the universal outbox ladder funnels cron
+    // deliveries, tool sends and chunked replies through here, so the
+    // ~1/s + 18/min per-forum pacer applies at this one seam. DMs pass
+    // through untouched; pacing delays, never drops (#297).
+    super::governor::pace_send(chat_id).await;
     // Correlation telemetry (#1085 P1a, review F8): this is the chokepoint
     // carrying chunked final replies, command acks and error notices.
     // `origin` is threaded by the caller (turn | tool | cron | system) so

@@ -554,6 +554,34 @@ allowed_users = [123456789]             # Who the bot replies to (numeric user I
                                         # Telegram channel step). Set to false if your audience uses
                                         # Telegram Web or older clients (no HTML fallback).
 
+# Proactive flood governors (#1211): per-forum token buckets applied BEFORE the
+# Bot API answers 429, layered beside the reactive Retry-after backoff. Three
+# independent governors keyed by forum chat id:
+#   G1 typing  — ~1 sendChatAction / 3 s per forum (burst 8); concurrent
+#                sessions in one topic coalesce into that single refresh;
+#                refreshes held past typing_max_hold_secs are dropped.
+#   G2 edits   — ~30 editMessageText / min per forum; when the bucket is empty a
+#                priority drop ladder sheds clock → brain preview → intermediary
+#                flow updates → status line (each self-heals on the next full
+#                render). Finals never drop: settle renders and plan-card
+#                refreshes queue latest-wins per message until budget refills.
+#   G3 sends   — full messages paced ~1/s per chat under an 18/min group
+#                ceiling (burst 5); pacing delays, it never drops (#297).
+# Enforcement is FORUMS-ONLY: a chat becomes governed once any call is seen
+# carrying a topic id; DMs are untouched. Telemetry lands in one periodic INFO
+# line per active forum ("Telegram rate-limiter chat=…").
+# [channels.telegram.rate_limiter]
+# enabled = true                        # Master switch. Default: true.
+# typing_min_interval_secs = 3          # G1 spacing per forum peer.
+# typing_burst = 8                      # G1 burst capacity.
+# typing_max_hold_secs = 30             # G1 longest hold before dropping.
+# edits_per_minute = 30                 # G2 steady-state edit budget.
+# edit_burst = 10                       # G2 burst capacity.
+# send_min_interval_millis = 1000       # G3 spacing between sends (~1/s).
+# sends_ceiling_per_minute = 18         # G3 group ceiling (official ~20/min).
+# sends_burst = 5                       # G3 burst capacity.
+# summary_log_secs = 300                # Telemetry summary line spacing.
+
 # Per-group access control (per-chat ACL). Tiers:
 #   - allowed_users (above) = admins: may DM the bot and act in any chat.
 #   - bot_owner             = owner: always allowed everywhere.
