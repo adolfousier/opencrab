@@ -7,10 +7,9 @@
 //! logs where the model passed truncated UUIDs, role labels like
 //! "clippy", and stale ids.
 
-use crate::brain::tools::subagent::{SubAgent, SubAgentManager, SubAgentState, WaitAgentTool};
+use crate::brain::tools::subagent::{SubAgent, SubAgentManager, WaitAgentTool};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 fn mk_agent(id: &str, label: &str) -> SubAgent {

@@ -10,7 +10,6 @@
 //! pin what belongs in it — and, just as importantly, what must not.
 
 use crate::brain::tools::subagent::manager::{SubAgent, SubAgentManager, SubAgentState};
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 fn agent(id: &str, label: &str, state: SubAgentState) -> SubAgent {

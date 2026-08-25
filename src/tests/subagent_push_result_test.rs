@@ -6,9 +6,8 @@
 //! parent already blocked on `wait_agent` receives the output as that tool's
 //! result, so pushing as well would deliver it twice.
 
-use crate::brain::tools::subagent::manager::{SubAgent, SubAgentManager, SubAgentState};
+use crate::brain::tools::subagent::manager::{SubAgent, SubAgentManager};
 use crate::brain::tools::subagent::spawn::completion_message;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 fn manager_with_agent(id: &str) -> SubAgentManager {
