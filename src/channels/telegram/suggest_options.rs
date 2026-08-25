@@ -18,6 +18,10 @@ use super::TelegramState;
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 
+/// Label-length budget above which Telegram folds suggestions into the body
+/// (#1178 D3/D4). Single source of truth for `should_fold` and its tests.
+pub(crate) const FOLD_THRESHOLD: usize = 30;
+
 /// What the suggestion block becomes once one of its options is tapped.
 ///
 /// Replaces the prompt and its keyboard in place. The Bot API has no
@@ -53,13 +57,13 @@ pub(crate) fn echo_fallback(text: &str, chooser: Option<&str>) -> String {
 /// Post the follow-up suggestion buttons under the response and stash the option
 /// list on state so the tap handler can resolve `idx -> text`. No-op on empty.
 /// Fold-in is a FALLBACK (#1178 D3): full-text buttons primary, but if ANY
-/// option exceeds 30 chars the texts fold into the message body as a
-/// numbered list and the buttons collapse to one row of numbers (D4) —
-/// a column of long labels is unreadable and a row of them overflows.
-/// The stash always holds the ORIGINAL options either way, so taps
-/// resolve verbatim text, never bare digits.
+/// option exceeds `FOLD_THRESHOLD` chars the texts fold into the message
+/// body as a numbered list and the buttons collapse to one row of numbers
+/// (D4) — a column of long labels is unreadable and a row of them
+/// overflows. The stash always holds the ORIGINAL options either way, so
+/// taps resolve verbatim text, never bare digits.
 fn should_fold(options: &[String]) -> bool {
-    options.iter().any(|o| o.chars().count() > 30)
+    options.iter().any(|o| o.chars().count() > FOLD_THRESHOLD)
 }
 
 /// The message body: bare header in full-text mode; header plus the numbered
@@ -164,11 +168,10 @@ mod fold_tests {
     }
 
     #[test]
-    fn folds_when_any_option_exceeds_30_chars() {
+    fn folds_when_any_option_exceeds_threshold_chars() {
         let short = "Ship it".to_string();
-        let long =
-            "this is a very long option that definitely exceeds thirty characters".to_string();
-        assert!(long.chars().count() > 30);
+        let long = "x".repeat(FOLD_THRESHOLD + 1);
+        assert!(long.chars().count() > FOLD_THRESHOLD);
         let opts = vec![short.clone(), long.clone()];
         assert!(should_fold(&opts));
         let body = build_body(true, &opts);
@@ -178,9 +181,9 @@ mod fold_tests {
     }
 
     #[test]
-    fn boundary_exactly_30_does_not_fold() {
-        // 30 chars exactly: threshold is EXCLUSIVE (>30 folds).
-        let exact = "x".repeat(30);
+    fn boundary_exactly_threshold_does_not_fold() {
+        // Exactly at threshold: the comparison is EXCLUSIVE (> threshold folds).
+        let exact = "x".repeat(FOLD_THRESHOLD);
         let opts = vec![exact];
         assert!(!should_fold(&opts));
     }
