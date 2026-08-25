@@ -32,6 +32,75 @@ pub const ROUTE_GRACE: Duration = Duration::from_secs(30);
 /// Reports whose session had no route when they were produced.
 static PARKED: Mutex<Vec<(Uuid, QueuedUserMessage)>> = Mutex::new(Vec::new());
 
+/// Sessions known to belong to a channel that has not claimed them yet.
+///
+/// Startup crash-recovery revives a session straight into a turn, bypassing
+/// the ingress handlers where `claim_for_channel` lives, so the route map
+/// says nothing about it while it runs. The fallbacks then treat it as
+/// local: on a daemon that is a void, and under the TUI it is worse than a
+/// void, because the answer is delivered to the wrong surface and looks
+/// fine. Recovery knows which channel the session came from, so it records
+/// that here and the fallbacks park instead of guessing (#1206).
+static AWAITING_CHANNEL: Mutex<Option<std::collections::HashSet<Uuid>>> = Mutex::new(None);
+
+/// Record that `session_id` belongs to a channel which has not claimed it.
+///
+/// Idempotent. Cleared by [`claim_session`] once the owning channel binds a
+/// route, so this never outlives the gap it describes.
+pub fn expect_channel_route(session_id: Uuid) {
+    match AWAITING_CHANNEL.lock() {
+        Ok(mut guard) => {
+            guard
+                .get_or_insert_with(std::collections::HashSet::new)
+                .insert(session_id);
+        }
+        Err(e) => {
+            // Without the mark this session's completions fall back to the
+            // local surface, which is the mis-delivery this prevents.
+            tracing::error!(
+                target: "background_task",
+                "Could not mark session {session_id} as channel-owned: {e}"
+            );
+        }
+    }
+}
+
+/// Does `session_id` belong to a channel that has not claimed it yet?
+///
+/// While true, a completion for it must be parked rather than handed to
+/// whichever surface happens to be executing.
+pub fn awaits_channel_route(session_id: Uuid) -> bool {
+    match AWAITING_CHANNEL.lock() {
+        Ok(guard) => guard.as_ref().is_some_and(|s| s.contains(&session_id)),
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not read the channel-owned mark for session {session_id}: {e}"
+            );
+            false
+        }
+    }
+}
+
+/// Forget the channel-owned mark for `session_id`.
+fn clear_channel_expectation(session_id: Uuid) {
+    match AWAITING_CHANNEL.lock() {
+        Ok(mut guard) => {
+            if let Some(set) = guard.as_mut() {
+                set.remove(&session_id);
+            }
+        }
+        Err(e) => {
+            // Only costs a redundant park on a session that now has a real
+            // route, which the route itself takes precedence over.
+            tracing::warn!(
+                target: "background_task",
+                "Could not clear the channel-owned mark for session {session_id}: {e}"
+            );
+        }
+    }
+}
+
 /// Deliver `msg` to whoever owns `session_id`, parking it if nobody does yet.
 ///
 /// Returns whether it went out immediately. A parked report is not lost: it
@@ -61,6 +130,8 @@ pub fn deliver_or_park(session_id: Uuid, msg: QueuedUserMessage) -> bool {
 /// Called when a surface registers a route, so a channel that connects after
 /// startup still receives what its session missed. Returns how many went out.
 pub fn claim_session(session_id: Uuid, route: &MessageEnqueueCallback) -> usize {
+    // The gap this mark describes is over: a real route now owns the session.
+    clear_channel_expectation(session_id);
     let mine = match PARKED.lock() {
         Ok(mut parked) => {
             let mut mine = Vec::new();
@@ -138,11 +209,62 @@ pub fn parked_count() -> usize {
     PARKED.lock().map(|p| p.len()).unwrap_or(0)
 }
 
+/// The destination for a process that has no local surface of its own (#1206).
+///
+/// A headless daemon's only surfaces are its channels. It still builds the
+/// TUI's enqueue callback and hands it out as the fallback for a session no
+/// channel has claimed, so a completion for such a session was pushed into a
+/// `TuiEvent` channel that nothing in a daemon ever drains, and the send
+/// error was discarded. Nothing resumed, nothing logged.
+///
+/// Sessions revived by startup crash-recovery are exactly that case: they run
+/// a turn without ever passing through an ingress handler, and
+/// `claim_for_channel` is only reached from one, so they stay unclaimed until
+/// their channel sees the next inbound message.
+///
+/// Parking keeps them until a channel claims the session, at which point
+/// [`claim_session`] flushes them to the surface that actually owns it. This
+/// is a fallback destination, never a route: a session a channel HAS claimed
+/// still takes the fast path and never reaches here.
+pub fn parking_route() -> MessageEnqueueCallback {
+    std::sync::Arc::new(|session_id, msg: QueuedUserMessage| {
+        // Worth one line each time: a parked message is not lost, but it is
+        // also not delivered yet, and that difference is invisible otherwise.
+        tracing::warn!(
+            target: "background_task",
+            "No surface claims session {session_id} and this process has no local one; \
+             parking until its channel claims it: {}",
+            msg.display_text
+        );
+        deliver_or_park(session_id, msg);
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn clear_parked_for_test() {
     if let Ok(mut parked) = PARKED.lock() {
         parked.clear();
     }
+    if let Ok(mut awaiting) = AWAITING_CHANNEL.lock() {
+        if let Some(set) = awaiting.as_mut() {
+            set.clear();
+        }
+    }
+}
+
+/// Serialize tests that touch the process-global parked queue or the
+/// channel-owned set, and start each from a clean slate.
+///
+/// The lock lives beside the state it guards rather than in one suite,
+/// because more than one suite exercises that state: a second suite with its
+/// own lock does not serialize against the first, and the two interleave
+/// their parks. Found exactly that way (#1206).
+#[cfg(test)]
+pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_parked_for_test();
+    guard
 }
 
 /// Account for background tasks that were running when a previous process
@@ -227,8 +349,12 @@ fn interrupted_message(row: &crate::db::BackgroundTaskRow) -> QueuedUserMessage 
 /// old process was announced as if it had just died.
 ///
 /// `local` is the surface doing the booting, used only as the last-resort
-/// destination once the grace period expires.
-pub async fn recover(local: MessageEnqueueCallback) -> usize {
+/// destination once the grace period expires. `None` when the process has no
+/// local surface at all (a headless daemon, whose only surfaces are its
+/// channels): there is nothing to flush TO, so parked reports keep waiting
+/// for a channel to claim their session instead of being handed to a
+/// destination that would discard them (#1206).
+pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
     // Sub-agents first: they die with the process but their status files do
     // not, so every file still mid-flight is an agent that no longer exists.
     let orphans = crate::brain::tools::subagent::reconcile::reconcile_orphaned_agents();
@@ -264,7 +390,14 @@ pub async fn recover(local: MessageEnqueueCallback) -> usize {
             parked_count()
         );
     }
-    schedule_flush(local);
+    match local {
+        Some(local) => schedule_flush(local),
+        None => tracing::info!(
+            target: "background_task",
+            "No local surface to flush to; parked reports wait for a channel to claim their \
+             session"
+        ),
+    }
     reported
 }
 
