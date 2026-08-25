@@ -34,6 +34,9 @@ impl Tool for SessionSearchTool {
          Use 'list' to show all sessions with titles, dates, and message counts. \
          Use 'search' to find messages across sessions by substring query. \
          Use 'tail' to read the last N messages of one session (cheap on huge histories). \
+         Use 'query' for machine-readable session discovery: JSON rows with full session ids, \
+         titles, last-active timestamps and message counts - e.g. to find another session's id \
+         to target with session_notify. \
          'session' can be a number (1 = most recent), a title keyword, or 'all' (default; \
          ignored by 'tail', which falls back to the newest session)."
     }
@@ -55,9 +58,26 @@ impl Tool for SessionSearchTool {
                     "type": "string",
                     "description": "Session to search: number (1=most recent), title keyword, or 'all' (default)"
                 },
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "archived", "all"],
+                    "description": "Session state filter for 'query' (default: active)"
+                },
+                "title_contains": {
+                    "type": "string",
+                    "description": "Case-insensitive title substring filter for 'query'"
+                },
+                "updated_since": {
+                    "type": "string",
+                    "description": "'query' only: sessions last active after this point. RFC3339 timestamp or Nd/Nh shorthand (e.g. 7d, 24h)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "'query' only: max rows returned (default: 50, max: 500)"
+                },
                 "n": {
                     "type": "integer",
-                    "description": "Max results to return (default: 10)",
+                    "description": "Max results for 'search'/'tail' (default: 10)",
                     "default": 10
                 }
             },
@@ -142,14 +162,16 @@ impl SessionSearchTool {
             return Ok(ToolResult::success("No sessions found.".to_string()));
         }
 
-        let mut output = String::new();
+        let mut output =
+            String::from("Sessions, newest first ([short-id] identifies each row):\n");
         for (i, session) in sessions.iter().enumerate() {
             let count = message_repo.count_by_session(session.id).await.unwrap_or(0);
             let title = session.title.as_deref().unwrap_or("Untitled");
-            let date = session.updated_at.format("%Y-%m-%d").to_string();
+            let date = session.updated_at.format("%Y-%m-%d %H:%M").to_string();
             output.push_str(&format!(
-                "{}. \"{}\" — {}, {} messages\n",
+                "{}. [{}] \"{}\" — last active {}, {} messages\n",
                 i + 1,
+                &session.id.to_string()[..8],
                 title,
                 date,
                 count
@@ -157,6 +179,66 @@ impl SessionSearchTool {
         }
 
         Ok(ToolResult::success(output))
+    }
+
+    /// Machine-readable session discovery.
+    ///
+    /// Returns JSON rows `{id, title, last_active, messages}` with FULL UUIDs
+    /// so other tools (`session_notify`) can be targeted without parsing the
+    /// human-oriented `list` output. Rows are ordered by last activity,
+    /// newest first (repo-level ORDER BY).
+    async fn query_sessions(
+        &self,
+        status: &str,
+        title_contains: Option<&str>,
+        updated_since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: usize,
+    ) -> Result<ToolResult> {
+        use crate::db::repository::{MessageRepository, SessionListOptions, SessionRepository};
+
+        let session_repo = SessionRepository::new(self.pool.clone());
+        let message_repo = MessageRepository::new(self.pool.clone());
+
+        // Repo sorts by updated_at DESC already; archived/all need the wider
+        // SQL net, then a Rust-side filter narrows to archived-only rows.
+        let include_archived = status != "active";
+        let sessions = session_repo
+            .list(SessionListOptions {
+                include_archived,
+                limit: None,
+                offset: 0,
+                query: title_contains.map(str::to_string),
+                include_subagents: false,
+            })
+            .await
+            .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
+
+        let mut selected: Vec<_> = sessions
+            .into_iter()
+            .filter(|s| status != "archived" || s.archived_at.is_some())
+            .filter(|s| updated_since.map_or(true, |since| s.updated_at > since))
+            .collect();
+
+        if selected.is_empty() {
+            return Ok(ToolResult::success("[]".to_string()));
+        }
+        selected.truncate(limit);
+
+        let mut rows = Vec::with_capacity(selected.len());
+        for s in &selected {
+            let count = message_repo.count_by_session(s.id).await.unwrap_or(0);
+            rows.push(serde_json::json!({
+                "id": s.id.to_string(),
+                "title": s.title.as_deref().unwrap_or("Untitled"),
+                "last_active": s
+                    .updated_at
+                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "messages": count,
+            }));
+        }
+
+        let json = serde_json::to_string_pretty(&rows).unwrap_or_else(|_| "[]".to_string());
+        Ok(ToolResult::success(json))
     }
 
     async fn search_sessions(
@@ -402,4 +484,64 @@ fn extract_snippet(body: &str, query: &str, max_len: usize) -> String {
     // Collapse runs of whitespace so multi-line content stays readable in the
     // single-line snippet output.
     snippet.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Parse an `updated_since` spec: RFC3339 timestamp, or `Nd`/`Nh` shorthand
+/// meaning N days/hours back from now.
+fn parse_updated_since(
+    spec: &str,
+) -> std::result::Result<chrono::DateTime<chrono::Utc>, String> {
+    let spec = spec.trim();
+    let invalid = || {
+        format!(
+            "Invalid updated_since '{}': use RFC3339 (2026-08-25T00:00:00Z) or Nd/Nh shorthand (7d, 24h)",
+            spec
+        )
+    };
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(spec) {
+        return Ok(dt.with_timezone(&chrono::Utc));
+    }
+    if spec.len() < 2 {
+        return Err(invalid());
+    }
+    let (num, unit) = spec.split_at(spec.len() - 1);
+    let Ok(n) = num.parse::<i64>() else {
+        return Err(invalid());
+    };
+    let duration = match (unit, n) {
+        ("h", n) if n > 0 => chrono::Duration::hours(n),
+        ("d", n) if n > 0 => chrono::Duration::days(n),
+        _ => return Err(invalid()),
+    };
+    Ok(chrono::Utc::now() - duration)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_rfc3339() {
+        let dt = parse_updated_since("2026-08-25T00:00:00Z").expect("valid rfc3339");
+        assert_eq!(dt.to_rfc3339(), "2026-08-25T00:00:00+00:00");
+    }
+
+    #[test]
+    fn parses_shorthand() {
+        let before = chrono::Utc::now();
+        let dt = parse_updated_since("24h").expect("24h valid");
+        assert!(dt > before - chrono::Duration::hours(25));
+        assert!(dt <= chrono::Utc::now());
+
+        let dt = parse_updated_since("7d").expect("7d valid");
+        assert!(dt < before - chrono::Duration::days(6));
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert!(parse_updated_since("yesterday").is_err());
+        assert!(parse_updated_since("").is_err());
+        assert!(parse_updated_since("12x").is_err());
+        assert!(parse_updated_since("-5d").is_err());
+    }
 }
