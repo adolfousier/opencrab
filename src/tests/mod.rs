@@ -431,6 +431,7 @@ pub mod orphan_think_close_tag_test;
 pub mod owner_resolve_test;
 pub mod phantom_allowlist_test;
 pub mod phantom_bare_completion_test;
+pub mod phantom_clause_boundary_test;
 pub mod phantom_cleanup_intent_test;
 pub mod phantom_db_persistence_test;
 pub mod phantom_deferment_test;
