@@ -614,7 +614,23 @@ fn announcement_matches_anywhere(re: &Regex, lead: &str) -> bool {
             starts.push(idx);
             after_ender = false;
         }
-        if matches!(ch, '.' | '!' | '?' | '\n' | '…') {
+        // Sentence enders, plus the clause introducers that carry an
+        // announcement just as often (#1192). "That's ten issues — fetching
+        // all specs fresh…:" placed both gerunds after an em dash, so neither
+        // was ever offered to the ^-anchored regex and a zero-tool turn
+        // shipped as a finished answer. The comma-window fallback below was
+        // the earlier acknowledgement that a lead clause can precede the
+        // announcement; it only ever covered ", " inside 48 bytes.
+        //
+        // Purely additive: every start the old scan produced is still
+        // produced, so nothing that matched before stops matching. The
+        // widening is bounded by the regex's own marker requirement — a
+        // suffix still has to reach " now", an ellipsis, or a colon at its
+        // very end, which ordinary prose after a colon does not.
+        if matches!(
+            ch,
+            '.' | '!' | '?' | '\n' | '…' | '—' | '–' | ':' | ';'
+        ) {
             after_ender = true;
         }
     }
