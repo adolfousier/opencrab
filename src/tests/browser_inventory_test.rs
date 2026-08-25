@@ -168,21 +168,30 @@ fn inventory_attaches_collapse_count_for_header() {
     // shared serializer can surface it without a second DOM pass.
     let js = build_inventory_js(50);
     assert!(js.contains("visible.collapsed = collapsed"));
+    assert!(js.contains("visible.occluded = occluded"));
     assert!(js.contains("typeof nodes.collapsed === 'number'"));
+    assert!(js.contains("typeof nodes.occluded === 'number'"));
+    // Occlusion v1 (#1187): center hit-test with viewport clamping,
+    // descendant tolerance, and dropped candidates earning no index.
+    assert!(js.contains("document.elementFromPoint(cx, cy)"));
+    assert!(js.contains("Math.min(Math.max(rect.left + rect.width / 2, 0), vw - 1)"));
+    assert!(js.contains("hit !== el && !el.contains(hit)"));
+    assert!(js.contains("occluded++; continue;"));
     assert!(js.contains("items: out"));
 }
 
 #[test]
 fn inventory_header_mentions_collapsed_count_only_when_nonzero() {
     // Zero collapses: header identical to the pre-#1191 wording.
-    let plain = inventory_header(12, 0);
+    let plain = inventory_header(12, 0, 0);
     assert!(plain.starts_with("12 visible interactive elements on this page"));
     assert!(!plain.contains("collapsed"), "no collapse note at zero");
+    assert!(!plain.contains("occluded"), "no occlusion note at zero");
 
     // Non-zero: count appears in the header, singular and plural forms.
-    let multi = inventory_header(9, 3);
+    let multi = inventory_header(9, 3, 0);
     assert!(multi.contains("(3 nested duplicates collapsed)"), "{multi}");
-    let single = inventory_header(5, 1);
+    let single = inventory_header(5, 1, 0);
     assert!(
         single.contains("(1 nested duplicate collapsed)"),
         "{single}"
@@ -191,4 +200,24 @@ fn inventory_header_mentions_collapsed_count_only_when_nonzero() {
     // Selector handoff instruction survives in all variants.
     assert!(plain.contains("[data-opencrabs-match=\"N\"]"));
     assert!(multi.contains("[data-opencrabs-match=\"N\"]"));
+}
+
+#[test]
+fn inventory_header_mentions_occluded_count_only_when_nonzero() {
+    // Occlusion alone.
+    let occluded_only = inventory_header(7, 0, 2);
+    assert!(
+        occluded_only.contains(", 2 hidden (occluded)"),
+        "{occluded_only}"
+    );
+    assert!(!occluded_only.contains("collapsed"));
+
+    // Both counters: collapse note then occlusion note, comma-joined.
+    let both = inventory_header(6, 1, 4);
+    assert!(both.contains("(1 nested duplicate collapsed)"), "{both}");
+    assert!(both.contains(", 4 hidden (occluded)"), "{both}");
+
+    // Singular occluded wording is the same as plural (count carries it).
+    let one = inventory_header(3, 0, 1);
+    assert!(one.contains(", 1 hidden (occluded)"), "{one}");
 }

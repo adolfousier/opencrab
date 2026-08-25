@@ -32,6 +32,8 @@ pub(crate) use find::build_find_js;
 // (src/tests/browser_inventory_test.rs).
 #[cfg(test)]
 pub(crate) use find::build_inventory_js;
+#[cfg(test)]
+pub(crate) use find::inventory_header;
 pub use manager::{BrowserManager, CloseOutcome};
 pub use navigate::BrowserNavigateTool;
 pub use screenshot::BrowserScreenshotTool;

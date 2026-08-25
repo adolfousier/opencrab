@@ -135,9 +135,11 @@ impl Tool for BrowserFindTool {
             }
         };
 
-        // Inventory mode wraps its result as {items, collapsed}; search
-        // mode carries the same shape with collapsed = 0 (#1191).
+        // Inventory mode wraps its result as {items, collapsed, occluded};
+        // search mode carries the same shape with both counters at 0
+        // (#1191, #1187).
         let collapsed = usize::try_from(raw["collapsed"].as_u64().unwrap_or(0)).unwrap_or(0);
+        let occluded = usize::try_from(raw["occluded"].as_u64().unwrap_or(0)).unwrap_or(0);
         let matches = raw["items"].as_array().cloned().unwrap_or_default();
         if matches.is_empty() {
             return Ok(ToolResult::success(match pattern {
@@ -154,7 +156,10 @@ impl Tool for BrowserFindTool {
                 if count == 1 { "" } else { "es" },
             ),
             None => {
-                let body = format!("{}\n\n{formatted}", inventory_header(count, collapsed),);
+                let body = format!(
+                    "{}\n\n{formatted}",
+                    inventory_header(count, collapsed, occluded),
+                );
                 // If we hit the cap there may be more elements we did not
                 // show. Tell the model explicitly so it does not assume the
                 // list is exhaustive (mirrors the read_file truncation note).
@@ -208,6 +213,7 @@ fn wrap_with_index(nodes_expr: &str) -> String {
             return {{
                 items: out,
                 collapsed: typeof nodes.collapsed === 'number' ? nodes.collapsed : 0,
+                occluded: typeof nodes.occluded === 'number' ? nodes.occluded : 0,
             }};
         }})()
         "#
@@ -295,6 +301,7 @@ textarea, summary, [role="button"], [role="link"], [role="checkbox"], \
             const visible = [];
             const acceptedRects = [];
             let collapsed = 0;
+            let occluded = 0;
             for (const el of all) {{
                 if (visible.length >= {limit}) break;
                 const rect = el.getBoundingClientRect();
@@ -325,21 +332,45 @@ textarea, summary, [role="button"], [role="link"], [role="checkbox"], \
                             && rect.bottom <= r.bottom + 1);
                         if (dup) {{ collapsed++; continue; }}
                     }}
+                    // Occlusion v1 (#1187): hit-test the rect center —
+                    // when something opaque covers the candidate, the
+                    // element returned is neither the candidate nor one
+                    // of its descendants. pointer-events:none overlays
+                    // pass through elementFromPoint by construction, so
+                    // underlying content stays indexed. Centers clamped
+                    // into the viewport; fully off-screen candidates
+                    // (clamped center still outside) skip the test
+                    // rather than being dropped on a technicality.
+                    const vw = document.documentElement.clientWidth;
+                    const vh = document.documentElement.clientHeight;
+                    const cx = Math.min(Math.max(rect.left + rect.width / 2, 0), vw - 1);
+                    const cy = Math.min(Math.max(rect.top + rect.height / 2, 0), vh - 1);
+                    const inViewport = rect.right >= 0 && rect.bottom >= 0
+                        && rect.left <= vw && rect.top <= vh;
+                    if (inViewport) {{
+                        const hit = document.elementFromPoint(cx, cy);
+                        if (hit && hit !== el && !el.contains(hit)) {{
+                            occluded++; continue;
+                        }}
+                    }}
                     visible.push(el);
                     acceptedRects.push(rect);
                 }}
             }}
             visible.collapsed = collapsed;
+            visible.occluded = occluded;
             return visible;
         }})()"#
     );
     wrap_with_index(&nodes_expr)
 }
 
-/// Inventory header line (#1191): count, optional collapse note when
-/// nested duplicates were folded, and the selector handoff instruction.
-/// Pure so tests can pin the wording without a live page.
-pub(crate) fn inventory_header(count: usize, collapsed: usize) -> String {
+/// Inventory header line (#1191, #1187): count, optional collapse note
+/// when nested duplicates were folded, optional occlusion note when
+/// candidates were hidden under opaque overlays, and the selector
+/// handoff instruction. Pure so tests can pin the wording without a
+/// live page.
+pub(crate) fn inventory_header(count: usize, collapsed: usize, occluded: usize) -> String {
     let mut s = format!(
         "{count} visible interactive element{} on this page",
         if count == 1 { "" } else { "s" },
@@ -349,6 +380,9 @@ pub(crate) fn inventory_header(count: usize, collapsed: usize) -> String {
             " ({collapsed} nested duplicate{} collapsed)",
             if collapsed == 1 { "" } else { "s" },
         ));
+    }
+    if occluded > 0 {
+        s.push_str(&format!(", {occluded} hidden (occluded)",));
     }
     s.push_str(
         " (indexed — pass the `[data-opencrabs-match=\"N\"]` \
