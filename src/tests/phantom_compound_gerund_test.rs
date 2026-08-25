@@ -29,9 +29,8 @@ fn test_second_gerund_carries_the_announcement() {
 
 #[test]
 fn test_reported_turn_is_phantom_end_to_end() {
-    let turn = format!(
-        "{REPORTED_LEAD}\n\n```bash\ncd ~/srv/rs/opencrabs && gh issue view 1176\n```"
-    );
+    let turn =
+        format!("{REPORTED_LEAD}\n\n```bash\ncd ~/srv/rs/opencrabs && gh issue view 1176\n```");
     assert!(
         has_phantom_tool_intent_no_tools(&turn),
         "#1193: the reported zero-tool turn still reads as a real answer"
@@ -44,12 +43,30 @@ fn test_compound_announcement_in_every_language() {
     // other phantom tell is. Never via detect_language, which misreads
     // accented Latin.
     for (lang, lead) in [
-        ("en", "Ten issues — fetching the specs, then executing them now."),
-        ("es", "Diez temas — buscando los datos, luego ejecutando todo ahora."),
-        ("pt", "Dez itens — buscando os dados, depois executando tudo agora."),
-        ("fr", "Dix points — je récupère les specs, puis j'exécute maintenant."),
-        ("id", "Sepuluh isu — mengambil spesifikasi, lalu menjalankan sekarang."),
-        ("ru", "Десять задач — сейчас проверяю специи, затем запускаю сейчас."),
+        (
+            "en",
+            "Ten issues — fetching the specs, then executing them now.",
+        ),
+        (
+            "es",
+            "Diez temas — buscando los datos, luego ejecutando todo ahora.",
+        ),
+        (
+            "pt",
+            "Dez itens — buscando os dados, depois executando tudo agora.",
+        ),
+        (
+            "fr",
+            "Dix points — je récupère les specs, puis j'exécute maintenant.",
+        ),
+        (
+            "id",
+            "Sepuluh isu — mengambil spesifikasi, lalu menjalankan sekarang.",
+        ),
+        (
+            "ru",
+            "Десять задач — сейчас проверяю специи, затем запускаю сейчас.",
+        ),
     ] {
         assert!(
             matches_work_announcement(lead),
