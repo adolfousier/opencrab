@@ -13,19 +13,14 @@ use uuid::Uuid;
 fn make_agent(session_id: Uuid, allow_nested: bool) -> SubAgent {
     let (tx, _rx) = mpsc::unbounded_channel::<String>();
     SubAgent {
-        id: format!("agent-{}", Uuid::new_v4().simple()),
-        label: "test".to_string(),
+allow_nested,
+input_tx: Some(tx),
+..SubAgent::new(
+        format!("agent-{}", Uuid::new_v4().simple()),
+        "test".to_string(),
         session_id,
-        parent_session_id: Uuid::new_v4(),
-        read_only: false,
-        allow_nested,
-        state: SubAgentState::Running,
-        cancel_token: CancellationToken::new(),
-        join_handle: None,
-        input_tx: Some(tx),
-        output: None,
-        spawned_at: chrono::Utc::now(),
-        waiters: 0,
+        Uuid::new_v4(),
+    )
     }
 }
 

@@ -17,19 +17,13 @@ mod manager {
     fn make_agent(id: &str, label: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-            id: id.to_string(),
-            label: label.to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            id.to_string(),
+            label.to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         }
     }
 
@@ -362,19 +356,13 @@ mod manager {
         let mgr = SubAgentManager::new();
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: "a1".to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            "a1".to_string(),
+            "test".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         };
         mgr.insert(agent);
 
@@ -424,19 +412,13 @@ mod send_input_tool {
     fn make_running_agent(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            id.to_string(),
+            "test".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         };
         (agent, rx)
     }
@@ -532,19 +514,13 @@ mod send_input_tool {
         let mgr = Arc::new(SubAgentManager::new());
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: "a1".to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            "a1".to_string(),
+            "test".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         };
         mgr.insert(agent);
 
@@ -597,19 +573,13 @@ mod close_agent_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            id.to_string(),
+            "test".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         }
     }
 
@@ -731,19 +701,13 @@ mod wait_agent_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            id.to_string(),
+            "test".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         }
     }
 
@@ -904,19 +868,13 @@ mod lifecycle {
     fn make_agent(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: id.to_string(),
-            label: "lifecycle-test".to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            id.to_string(),
+            "lifecycle-test".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         };
         (agent, rx)
     }
@@ -1183,19 +1141,14 @@ mod agent_type {
         use uuid::Uuid;
         let mgr = SubAgentManager::new();
         mgr.insert(SubAgent {
-            id: "ro1".into(),
-            label: "ro".into(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: true,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: None,
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+read_only: true,
+input_tx: None,
+..SubAgent::new(
+            "ro1".into(),
+            "ro".into(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         });
         assert_eq!(mgr.get_read_only("ro1"), Some(true));
         assert_eq!(mgr.get_read_only("missing"), None);
@@ -1356,19 +1309,13 @@ mod team_delete_tool {
     fn make_running_agent(id: &str) -> SubAgent {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            id.to_string(),
+            "test".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         }
     }
 
@@ -1490,19 +1437,13 @@ mod team_broadcast_tool {
     fn make_agent_with_channel(id: &str) -> (SubAgent, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let agent = SubAgent {
-            id: id.to_string(),
-            label: "test".to_string(),
-            session_id: Uuid::new_v4(),
-            parent_session_id: Uuid::new_v4(),
-            read_only: false,
-            allow_nested: true,
-            state: SubAgentState::Running,
-            cancel_token: CancellationToken::new(),
-            join_handle: None,
-            input_tx: Some(tx),
-            output: None,
-            spawned_at: chrono::Utc::now(),
-            waiters: 0,
+input_tx: Some(tx),
+..SubAgent::new(
+            id.to_string(),
+            "test".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
         };
         (agent, rx)
     }

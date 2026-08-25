@@ -15,19 +15,14 @@ use uuid::Uuid;
 
 fn agent(id: &str, label: &str, state: SubAgentState) -> SubAgent {
     SubAgent {
-        id: id.to_string(),
-        label: label.to_string(),
-        session_id: Uuid::new_v4(),
-        parent_session_id: Uuid::new_v4(),
-        read_only: false,
-        allow_nested: true,
-        state,
-        cancel_token: CancellationToken::new(),
-        join_handle: None,
-        input_tx: None,
-        output: None,
-        spawned_at: chrono::Utc::now(),
-        waiters: 0,
+state,
+input_tx: None,
+..SubAgent::new(
+        id.to_string(),
+        label.to_string(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    )
     }
 }
 
