@@ -88,10 +88,12 @@ fn channel_budgets_stay_sane_and_fold_aware() {
     use crate::channels::question_common::{
         DISCORD_LABEL_BUDGET, FOLD_THRESHOLD, SLACK_LABEL_BUDGET, TELEGRAM_LABEL_BUDGET,
     };
-    assert!(FOLD_THRESHOLD > 0);
-    assert!(
-        TELEGRAM_LABEL_BUDGET > FOLD_THRESHOLD,
-        "fold must fire before any single label gets truncated"
-    );
-    assert!(DISCORD_LABEL_BUDGET > 0 && SLACK_LABEL_BUDGET > 0);
+    const {
+        assert!(FOLD_THRESHOLD > 0);
+        assert!(
+            TELEGRAM_LABEL_BUDGET > FOLD_THRESHOLD,
+            "fold must fire before any single label gets truncated"
+        );
+        assert!(DISCORD_LABEL_BUDGET > 0 && SLACK_LABEL_BUDGET > 0);
+    }
 }

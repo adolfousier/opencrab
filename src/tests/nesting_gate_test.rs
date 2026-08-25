@@ -7,7 +7,6 @@
 use crate::brain::tools::subagent::SubAgent;
 use crate::brain::tools::subagent::SubAgentManager;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 fn make_agent(session_id: Uuid, allow_nested: bool) -> SubAgent {

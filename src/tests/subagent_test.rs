@@ -381,13 +381,12 @@ mod manager {
 
 mod send_input_tool {
     use crate::brain::tools::subagent::SendInputTool;
-    use crate::brain::tools::subagent::{SubAgent, SubAgentManager, SubAgentState};
+    use crate::brain::tools::subagent::{SubAgent, SubAgentManager};
     use crate::brain::tools::{Tool, ToolExecutionContext};
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     fn test_context() -> ToolExecutionContext {
@@ -548,7 +547,6 @@ mod close_agent_tool {
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     fn test_context() -> ToolExecutionContext {
@@ -670,13 +668,12 @@ mod close_agent_tool {
 
 mod wait_agent_tool {
     use crate::brain::tools::subagent::WaitAgentTool;
-    use crate::brain::tools::subagent::{SubAgent, SubAgentManager, SubAgentState};
+    use crate::brain::tools::subagent::{SubAgent, SubAgentManager};
     use crate::brain::tools::{Tool, ToolExecutionContext};
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     fn test_context() -> ToolExecutionContext {
@@ -996,7 +993,6 @@ mod lifecycle {
 // ─── Child Registry & Grant Tests (#1173) ─────────────────────────────────
 
 mod agent_type {
-    use crate::brain::tools::subagent::SubAgentState;
     use crate::brain::tools::subagent::map_deprecated_agent_type;
 
     /// Build a mock parent registry with common tools for filtering tests.
@@ -1137,7 +1133,6 @@ mod agent_type {
     #[test]
     fn read_only_grant_frozen_in_manager() {
         use crate::brain::tools::subagent::{SubAgent, SubAgentManager};
-        use tokio_util::sync::CancellationToken;
         use uuid::Uuid;
         let mgr = SubAgentManager::new();
         mgr.insert(SubAgent {
@@ -1276,15 +1271,12 @@ mod team_manager {
 // ─── TeamDeleteTool Tests ───────────────────────────────────────────────────
 
 mod team_delete_tool {
-    use crate::brain::tools::subagent::{
-        SubAgent, SubAgentManager, SubAgentState, TeamDeleteTool, TeamManager,
-    };
+    use crate::brain::tools::subagent::{SubAgent, SubAgentManager, TeamDeleteTool, TeamManager};
     use crate::brain::tools::{Tool, ToolExecutionContext};
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     fn test_context() -> ToolExecutionContext {
@@ -1405,14 +1397,13 @@ mod team_delete_tool {
 
 mod team_broadcast_tool {
     use crate::brain::tools::subagent::{
-        SubAgent, SubAgentManager, SubAgentState, TeamBroadcastTool, TeamManager,
+        SubAgent, SubAgentManager, TeamBroadcastTool, TeamManager,
     };
     use crate::brain::tools::{Tool, ToolExecutionContext};
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     fn test_context() -> ToolExecutionContext {

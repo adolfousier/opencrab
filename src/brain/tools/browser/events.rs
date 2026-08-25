@@ -81,11 +81,6 @@ impl EventLog {
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap().len()
     }
-
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// Reduce a raw CDP event to a display summary, keeping only the
