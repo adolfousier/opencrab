@@ -386,7 +386,9 @@ impl TelegramAgent {
                                                             .then(|| (h.html.clone(), h.rich))
                                                     });
                                                 let empty_kb = teloxide::types::
-                                                    InlineKeyboardMarkup::new(Vec::new());
+                                                    InlineKeyboardMarkup::new(
+                                                        Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
+                                                    );
                                                 let outcome: Result<(), String> = match host_info {
                                                     Some((full, true)) => {
                                                         super::rich::api::edit_rich_html(
