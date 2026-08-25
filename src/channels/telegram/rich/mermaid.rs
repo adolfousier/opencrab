@@ -55,30 +55,75 @@ pub(crate) fn base64url(input: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(input.as_bytes())
 }
 
-/// Whether `text` contains an opening ``` fence tagged `mermaid`.
-/// A fast line-scan used to gate the richer (async) render path.
-pub(crate) fn has_mermaid_fence(text: &str) -> bool {
-    let mut in_fence = false;
-    for line in text.lines() {
-        let t = line.trim();
-        if let Some(rest) = t.strip_prefix("```") {
-            if in_fence {
-                in_fence = false; // a closing fence
-            } else {
-                if rest.trim().eq_ignore_ascii_case("mermaid") {
-                    return true;
-                }
-                in_fence = true;
-            }
+/// Whether a fence body (the text between opening and closing ``` lines)
+/// starts like a mermaid diagram. Used to classify *untagged* fences, whose
+/// info string is empty: models frequently emit diagrams as ```graph TD ...
+/// without the `mermaid` tag. The first non-blank, non-comment (`%%`) line
+/// must start with a known diagram opener; `graph` additionally requires a
+/// direction word (`TD`/`TB`/`BT`/`LR`/`RL`) so DOT-style `graph G {` and
+/// similar foreign notations are not misclassified.
+pub(crate) fn looks_like_mermaid_source(source: &str) -> bool {
+    for raw in source.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
         }
+        let mut words = line.split_whitespace();
+        let head = words.next().unwrap_or("").to_ascii_lowercase();
+        return match head.as_str() {
+            "graph" => words.next().is_some_and(|d| {
+                matches!(
+                    d.to_ascii_lowercase().as_str(),
+                    "td" | "tb" | "bt" | "lr" | "rl"
+                )
+            }),
+            "flowchart" | "sequencediagram" | "classdiagram" | "classdiagram-v2"
+            | "statediagram" | "statediagram-v2" | "erdiagram" | "journey" | "gantt"
+            | "pie" | "quadrantchart" | "requirementdiagram" | "gitgraph" | "mindmap"
+            | "timeline" | "zenuml" | "sankey-beta" | "xychart-beta" | "block-beta"
+            | "packet-beta" | "architecture-beta" => true,
+            _ => false,
+        };
     }
     false
 }
 
-/// Locate every ```mermaid fence in `text`, returning byte ranges and the
+/// Whether `text` contains a fence that should render as a mermaid diagram:
+/// either tagged ```mermaid, or untagged with mermaid-shaped content
+/// ([`looks_like_mermaid_source`]). A fast line-scan used to gate the richer
+/// (async) render path.
+pub(crate) fn has_mermaid_fence(text: &str) -> bool {
+    let mut in_fence = false;
+    let mut tagged_mermaid = false;
+    let mut body_start = 0usize;
+    let mut pos = 0usize;
+    for line in text.split_inclusive('\n') {
+        let line_end = pos + line.len();
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("```") {
+            if in_fence {
+                let body = text[body_start..pos].trim_end_matches('\n');
+                if tagged_mermaid || (rest.is_empty() && looks_like_mermaid_source(body)) {
+                    return true;
+                }
+                in_fence = false;
+            } else {
+                in_fence = true;
+                tagged_mermaid = rest.trim().eq_ignore_ascii_case("mermaid");
+                body_start = line_end;
+            }
+        }
+        pos = line_end;
+    }
+    false
+}
+
+/// Locate every mermaid fence in `text`, returning byte ranges and the
 /// diagram source between the fences. Consistent with [`has_mermaid_fence`]:
-/// a fence is an opening ``` whose info string trims to `mermaid`
-/// (case-insensitive), closed by the next bare ``` line.
+/// a fence qualifies when its info string trims to `mermaid`
+/// (case-insensitive), or is empty and the body starts like a diagram
+/// ([`looks_like_mermaid_source`]); either way it is closed by the next
+/// bare ``` line.
 pub(crate) fn find_mermaid_fences(text: &str) -> Vec<MermaidFence> {
     let mut fences = Vec::new();
     let mut in_fence = false;
@@ -92,11 +137,12 @@ pub(crate) fn find_mermaid_fences(text: &str) -> Vec<MermaidFence> {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("```") {
             if in_fence {
-                if is_mermaid {
+                let source = &text[source_start..pos];
+                if is_mermaid || (rest.is_empty() && looks_like_mermaid_source(source)) {
                     fences.push(MermaidFence {
                         start: block_start,
                         end: line_end,
-                        source: text[source_start..pos].to_string(),
+                        source: source.to_string(),
                     });
                 }
                 in_fence = false;
@@ -256,10 +302,10 @@ pub(crate) fn resolve_blocks(blocks: Vec<Block>) -> BoxFuture<'static, Vec<Block
 fn resolve_block(block: Block) -> BoxFuture<'static, Block> {
     async move {
         match block {
-            Block::Code {
-                lang: Some(lang),
-                text,
-            } if is_mermaid_lang(&lang) => {
+            Block::Code { lang, text }
+                if lang.as_deref().is_some_and(is_mermaid_lang)
+                    || (lang.is_none() && looks_like_mermaid_source(&text)) =>
+            {
                 let result = prevalidate(&text).await;
                 Block::Mermaid {
                     source: text,

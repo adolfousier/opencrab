@@ -13,8 +13,8 @@ use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
 use crate::channels::telegram::rich::mermaid::{
     MediaEntry, base64url, error_note, failure_html, find_mermaid_fences, has_mermaid_fence,
-    image_html, is_image_response, markdown_failure_block, replacement_for, resolve_blocks,
-    resolve_markdown_media,
+    image_html, is_image_response, looks_like_mermaid_source, markdown_failure_block,
+    replacement_for, resolve_blocks, resolve_markdown_media,
 };
 
 // ---------------------------------------------------------------------------
@@ -335,4 +335,66 @@ async fn resolve_markdown_media_passes_through_without_fences() {
     let (resolved, media) = resolve_markdown_media(text).await;
     assert_eq!(resolved, text, "no-fence text must be byte-identical");
     assert!(media.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// untagged fences (bare ```) classified by content
+// ---------------------------------------------------------------------------
+
+#[test]
+fn has_mermaid_fence_detects_untagged_mermaid_bodies() {
+    assert!(has_mermaid_fence("```\ngraph TD\nA-->B\n```"));
+    assert!(has_mermaid_fence("```\nflowchart LR\nA-->B\n```"));
+    assert!(has_mermaid_fence("```\nsequenceDiagram\nA->>B: hi\n```"));
+    // Blank and %%-comment lines are skipped before classification.
+    assert!(has_mermaid_fence("```\n\n%%{init: {}}%%\ngitGraph\n```"));
+}
+
+#[test]
+fn has_mermaid_fence_rejects_untagged_non_mermaid_bodies() {
+    // Plain code.
+    assert!(!has_mermaid_fence("```\nSELECT * FROM t;\n```"));
+    // DOT notation: digraph, or graph without a mermaid direction word.
+    assert!(!has_mermaid_fence("```\ndigraph G { a -> b }\n```"));
+    assert!(!has_mermaid_fence("```\ngraph G {\n  a -- b\n}\n```"));
+    assert!(!has_mermaid_fence("```\ngraph\n```"));
+}
+
+#[test]
+fn find_mermaid_fences_locates_untagged_fences_with_ranges() {
+    let text = "before\n```\ngraph TD\nA-->B\n```\nafter";
+    let fences = find_mermaid_fences(text);
+    assert_eq!(fences.len(), 1);
+    let f = &fences[0];
+    // start points at the opening fence line, end just past the closing one.
+    assert_eq!(&text[f.start..f.end], "```\ngraph TD\nA-->B\n```\n");
+    assert_eq!(f.source, "graph TD\nA-->B\n");
+}
+
+#[test]
+fn find_mermaid_fences_mixes_tagged_and_untagged_in_order() {
+    let text = "```mermaid\nA\n```\nmid\n```\nflowchart TD\nB\n```";
+    let fences = find_mermaid_fences(text);
+    assert_eq!(fences.len(), 2);
+    assert_eq!(fences[0].source, "A\n");
+    assert_eq!(fences[1].source, "flowchart TD\nB\n");
+    assert!(fences[0].start < fences[1].start);
+}
+
+#[test]
+fn find_mermaid_fences_ignores_untagged_non_mermaid_and_unclosed() {
+    assert!(find_mermaid_fences("```\nprint('hi')\n```").is_empty());
+    // Unclosed untagged fence: nothing captured, same as tagged.
+    assert!(find_mermaid_fences("```\ngraph TD\n").is_empty());
+}
+
+#[test]
+fn looks_like_mermaid_source_matches_known_openers() {
+    assert!(looks_like_mermaid_source("graph BT\na-->b"));
+    assert!(looks_like_mermaid_source("flowchart LR\na-->b"));
+    assert!(looks_like_mermaid_source("stateDiagram-v2\n[*] --> s1"));
+    assert!(looks_like_mermaid_source("erDiagram\nUSER ||--o{ POST : has"));
+    assert!(looks_like_mermaid_source("%% comment\nclassDiagram\nclass A"));
+    assert!(!looks_like_mermaid_source("let x = 1;"));
+    assert!(!looks_like_mermaid_source(""));
 }

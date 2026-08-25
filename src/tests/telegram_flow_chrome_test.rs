@@ -1208,3 +1208,29 @@ fn deliverable_rich_report_detects_collapsed_tables() {
         "Checking the a|b split now, will report once the run finishes and the numbers settle."
     ));
 }
+
+#[test]
+fn deliverable_rich_report_surfaces_mermaid_diagrams() {
+    // #1202 follow-up: a diagram emitted before a tool call is report-shaped
+    // content too. Folding buries it behind a tap-to-expand tap AND leaves
+    // raw fence text there — no fold-side renderer resolves mermaid. Any
+    // closed mermaid fence therefore surfaces, regardless of total length.
+    use crate::channels::telegram::intermediates::is_deliverable_rich_report;
+
+    let tagged = "Dependency graph of today's fix:\n\n\
+        ```mermaid\ngraph TD\n    A[Push] --> B[Issue]\n```\n";
+    assert!(is_deliverable_rich_report(tagged));
+
+    // Untagged fence whose body classifies as mermaid (#1202) counts too.
+    let untagged =
+        "Same graph without the qualifier:\n\n```\ngraph TD\n    A[Push] --> B[Issue]\n```\n";
+    assert!(is_deliverable_rich_report(untagged));
+
+    // An untagged NON-mermaid code block keeps folding.
+    let sql = "Migration used:\n\n```\nSELECT id FROM users WHERE active = 1;\n```\n";
+    assert!(!is_deliverable_rich_report(sql));
+
+    // Unclosed fence stays folded (matches final-delivery semantics).
+    let unclosed = "Draft diagram:\n\n```mermaid\ngraph TD\n    A --> B\n";
+    assert!(!is_deliverable_rich_report(unclosed));
+}
