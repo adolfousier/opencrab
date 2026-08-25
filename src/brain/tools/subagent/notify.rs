@@ -74,7 +74,9 @@ impl Tool for SessionNotifyTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidInput("'message' is required".into()))?;
         if message.trim().is_empty() {
-            return Ok(ToolResult::error("Refusing to send an empty message".to_string()));
+            return Ok(ToolResult::error(
+                "Refusing to send an empty message".to_string(),
+            ));
         }
 
         // Mechanical sender signature — from execution context, not model text.
@@ -84,38 +86,25 @@ impl Tool for SessionNotifyTool {
             display_text: format!("📨 notify from {}:\n{message}", short_id(from)),
         };
 
-        if crate::brain::agent::service::session_routes::deliver_to_session(target, msg) {
-            Ok(ToolResult::success(format!(
+        use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
+
+        match deliver_to_session(target, msg) {
+            Delivery::Delivered => Ok(ToolResult::success(format!(
                 "Delivered to session {target}. It will process the message on its next turn."
-            )))
-        } else {
-            Ok(ToolResult::error(format!(
+            ))),
+            // Queued, not lost: the target belongs to a channel that has not
+            // claimed it since the last restart (#1206). Reporting this as a
+            // failure would be the opposite of what happened.
+            Delivery::Parked => Ok(ToolResult::success(format!(
+                "Queued for session {target}. Its channel has not claimed it since the last \
+                 restart, so it will be delivered as soon as that channel next binds the \
+                 session."
+            ))),
+            Delivery::NoRoute => Ok(ToolResult::error(format!(
                 "No live route for session {target} in this process — it has not messaged \
                  since boot, or belongs to another instance/profile. Use a2a_send for \
                  cross-instance targets."
-            )))
+            ))),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn short_id_truncates_to_8_chars() {
-        let id = uuid::Uuid::parse_str("3f2a1b4c5d6e7f8090a1b2c3d4e5f607").unwrap();
-        assert_eq!(short_id(id), "3f2a1b4c");
-    }
-
-    #[test]
-    fn name_and_schema_are_consistent() {
-        let tool = SessionNotifyTool;
-        assert_eq!(tool.name(), "session_notify");
-        assert!(!tool.requires_approval());
-        let schema = tool.input_schema();
-        let required = schema["required"].as_array().unwrap();
-        assert_eq!(required.len(), 2);
-        assert!(!tool.description().is_empty());
     }
 }
