@@ -66,7 +66,19 @@ pub fn resolve_route(
     session_id: Uuid,
     executing: &MessageEnqueueCallback,
 ) -> MessageEnqueueCallback {
-    session_route(session_id).unwrap_or_else(|| executing.clone())
+    if let Some(route) = session_route(session_id) {
+        return route;
+    }
+    // A session recovery revived from a channel is NOT local, however it
+    // looks from here: it simply has not been claimed yet, because recovery
+    // bypasses the ingress handlers where claiming happens. Falling back to
+    // the executing surface delivered its completion into a daemon's unread
+    // TuiEvent channel, and under the TUI into the wrong window entirely
+    // (#1206). Park it for the channel that owns it instead.
+    if super::restart_recovery::awaits_channel_route(session_id) {
+        return super::restart_recovery::parking_route();
+    }
+    executing.clone()
 }
 
 /// The surface this process booted on, used when no channel claims a session.
@@ -99,6 +111,13 @@ pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> bool {
     if let Some(route) = session_route(session_id) {
         route(session_id, msg);
         return true;
+    }
+    // Same reasoning as `resolve_route`: an unclaimed session that recovery
+    // knows came from a channel must wait for that channel, not be handed to
+    // whatever this process booted on (#1206).
+    if super::restart_recovery::awaits_channel_route(session_id) {
+        super::restart_recovery::parking_route()(session_id, msg);
+        return false;
     }
     let local = match LOCAL_ROUTE.lock() {
         Ok(guard) => guard.clone(),
