@@ -47,8 +47,8 @@ impl Tool for SessionSearchTool {
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["list", "search", "tail"],
-                    "description": "'list' to show sessions, 'search' to find messages, 'tail' to read the last N messages of a session"
+                    "enum": ["list", "search", "tail", "query"],
+                    "description": "'list' to show sessions, 'search' to find messages, 'tail' to read the last N messages of a session, 'query' for machine-readable session discovery"
                 },
                 "query": {
                     "type": "string",
@@ -132,8 +132,38 @@ impl Tool for SessionSearchTool {
                 self.search_sessions(&query, session_filter.as_deref(), n)
                     .await
             }
+            "query" => {
+                let status = input
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("active");
+                if !matches!(status, "active" | "archived" | "all") {
+                    return Ok(ToolResult::error(
+                        "Invalid status. Use 'active', 'archived', or 'all'.".to_string(),
+                    ));
+                }
+                let title_contains = input
+                    .get("title_contains")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
+                let updated_since = match input.get("updated_since").and_then(|v| v.as_str()) {
+                    Some(raw) => match parse_updated_since(raw) {
+                        Ok(dt) => Some(dt),
+                        Err(e) => return Ok(ToolResult::error(e)),
+                    },
+                    None => None,
+                };
+                // Default 50, clamped to 500 so one call can't flood context.
+                let limit = input
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(50)
+                    .clamp(1, 500) as usize;
+                self.query_sessions(status, title_contains, updated_since, limit)
+                    .await
+            }
             _ => Ok(ToolResult::error(format!(
-                "Unknown operation '{}'. Use 'list', 'search', or 'tail'.",
+                "Unknown operation '{}'. Use 'list', 'search', 'tail', or 'query'.",
                 operation
             ))),
         }
