@@ -135,6 +135,7 @@ pub const EXTENDED_TOOL_INVENTORY: &[(&str, &[&str])] = &[
             "send_input",
             "close_agent",
             "resume_agent",
+            "session_notify",
             "team_create",
             "team_delete",
             "team_broadcast",
@@ -277,6 +278,7 @@ pub fn tool_category(name: &str) -> &'static str {
             || n.starts_with("send_input")
             || n.starts_with("close_agent")
             || n.starts_with("resume_agent")
+            || n.starts_with("session_notify")
             || n.starts_with("team_") =>
         {
             "agents"
