@@ -90,6 +90,37 @@ pub struct SubAgent {
     pub waiters: usize,
 }
 
+impl SubAgent {
+    /// Canonical construction: identity plus fresh running state (#1197
+    /// review DRY). Per-spawn variation (`read_only`, `allow_nested`,
+    /// handles, tokens) is overridden at the call site via struct-update
+    /// syntax, so adding a field means touching this one place instead of
+    /// once per construction site - the failure mode that turned every
+    /// flag addition into a repo-wide fixture sweep.
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        session_id: Uuid,
+        parent_session_id: Uuid,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            session_id,
+            parent_session_id,
+            read_only: false,
+            allow_nested: true,
+            state: SubAgentState::Running,
+            cancel_token: CancellationToken::new(),
+            join_handle: None,
+            input_tx: None,
+            output: None,
+            spawned_at: chrono::Utc::now(),
+            waiters: 0,
+        }
+    }
+}
+
 /// Manages all sub-agents for a parent agent instance.
 pub struct SubAgentManager {
     agents: RwLock<HashMap<String, SubAgent>>,

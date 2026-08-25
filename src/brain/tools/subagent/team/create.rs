@@ -388,19 +388,17 @@ impl Tool for TeamCreateTool {
 
             // Register in subagent manager
             self.subagent_manager.insert(SubAgent {
-                id: agent_id.clone(),
-                label: label.clone(),
-                session_id: child_session_id,
-                parent_session_id: context.session_id,
                 read_only,
                 allow_nested: member_allow_nested,
-                state: SubAgentState::Running,
                 cancel_token,
                 join_handle: Some(handle),
                 input_tx: Some(input_tx),
-                output: None,
-                spawned_at: chrono::Utc::now(),
-                waiters: 0,
+                ..SubAgent::new(
+                    agent_id.clone(),
+                    label.clone(),
+                    child_session_id,
+                    context.session_id,
+                )
             });
 
             spawned_ids.push(agent_id.clone());
