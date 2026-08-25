@@ -13,8 +13,8 @@
 
 use crate::brain::ToolResult;
 use crate::brain::tools::plan_tool::{
-    MAX_DESCRIPTION_LENGTH, MAX_PLAN_FILE_SIZE, MAX_TITLE_LENGTH, PlanTool, default_complexity,
-    validate_plan_file_path, validate_string,
+    MAX_DESCRIPTION_LENGTH, MAX_PLAN_FILE_SIZE, MAX_TITLE_LENGTH, PlanTool, build_worker_brief,
+    default_complexity, validate_plan_file_path, validate_string, validate_task_scope,
 };
 use crate::brain::tools::{Tool, ToolExecutionContext};
 use crate::config::profile::{home_for_profile, with_profile_home_async};
