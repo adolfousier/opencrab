@@ -1144,8 +1144,8 @@ mod agent_type {
 read_only: true,
 input_tx: None,
 ..SubAgent::new(
-            "ro1".into(),
-            "ro".into(),
+            "ro1".to_string(),
+            "ro".to_string(),
             Uuid::new_v4(),
             Uuid::new_v4(),
         )
