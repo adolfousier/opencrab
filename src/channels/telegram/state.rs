@@ -24,6 +24,30 @@ pub(crate) struct MergedHost {
     /// HTML last rendered in that bubble (final response text, plus the
     /// folded option list when present).
     pub html: String,
+    /// Host lives on the native rich API: tap-record edits must ride
+    /// `super::rich::api::edit_rich_html`, not teloxide's edit_message_text.
+    pub rich: bool,
+}
+
+/// Merge candidate captured by deliver_final_response (#tg-suggest-merge):
+/// the bubble the final response landed in, whatever surface sent it.
+#[derive(Clone)]
+pub(crate) struct MergeBubble {
+    pub message_id: MessageId,
+    pub body: BubbleBody,
+}
+
+/// How a captured [`MergeBubble`] was sent — decides which edit call merges
+/// the suggestion controls onto it.
+#[derive(Clone)]
+pub(crate) enum BubbleBody {
+    /// Classic parse-mode HTML exactly as delivered.
+    Html(String),
+    /// Native rich message sent from this markdown (tables render
+    /// server-side). Merging re-renders via `rich::markdown_to_html`, so
+    /// capture SKIPS table-bearing answers — rich HTML input flattens
+    /// tables (#679) — and those keep the standalone fallback.
+    Markdown(String),
 }
 
 /// One session's pending follow-up suggestion set: the options themselves

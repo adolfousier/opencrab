@@ -441,6 +441,19 @@ pub(crate) async fn deliver_final_response(
                             rich_md.len(),
                             intermediate_ids.len()
                         );
+                        // Merge candidate (#tg-suggest-merge): table-free rich
+                        // bubbles can carry the suggestion controls too.
+                        if !super::rich::contains_table(&pre_dedup_text) {
+                            final_bubble =
+                                Some(super::state::MergeBubble {
+                                    message_id: teloxide::types::MessageId(
+                                        rich_msg_id,
+                                    ),
+                                    body: super::state::BubbleBody::Markdown(
+                                        pre_dedup_text.clone(),
+                                    ),
+                                });
+                        }
                         // Store bot reply in channel_messages even though
                         // text_only is empty (dedup stripped it). The rich
                         // fallback already sent pre_dedup_text, so the next
@@ -623,6 +636,22 @@ pub(crate) async fn deliver_final_response(
                                     rich_md.len()
                                 );
                                 sent_reply_id = Some(id);
+                                // Merge candidate (#tg-suggest-merge): the
+                                // controls can ride this bubble too — but only
+                                // when it carries no table: merging re-sends as
+                                // rich HTML input, which flattens tables (#679);
+                                // those answers keep the standalone fallback.
+                                if !super::rich::contains_table(&rich_md) {
+                                    final_bubble =
+                                        Some(super::state::MergeBubble {
+                                            message_id: teloxide::types::MessageId(
+                                                id,
+                                            ),
+                                            body: super::state::BubbleBody::Markdown(
+                                                rich_md.clone(),
+                                            ),
+                                        });
+                                }
                                 true
                             }
                             Err(e) => {
@@ -671,7 +700,10 @@ pub(crate) async fn deliver_final_response(
                                 // Merge candidate (#tg-suggest-merge): the
                                 // answer bubble suggest_options can ride on.
                                 final_bubble =
-                                    Some((mid, chunks[0].clone()));
+                                    Some(super::state::MergeBubble {
+                                    message_id: mid,
+                                    body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                });
                             }
                             Err(teloxide::RequestError::RetryAfter(secs)) => {
                                 super::rate_limit::wait_out("edit", secs.duration(), "").await;
@@ -682,7 +714,10 @@ pub(crate) async fn deliver_final_response(
                                 {
                                     Ok(_) => {
                                         sent_reply_id = Some(mid.0);
-                                        final_bubble = Some((mid, chunks[0].clone()));
+                                        final_bubble = Some(super::state::MergeBubble {
+                                    message_id: mid,
+                                    body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                });
                                     }
                                     Err(e) => {
                                         tracing::warn!(
@@ -700,7 +735,10 @@ pub(crate) async fn deliver_final_response(
                                         .await
                                         {
                                             sent_reply_id = Some(sent.0);
-                                            final_bubble = Some((sent, chunks[0].clone()));
+                                            final_bubble = Some(super::state::MergeBubble {
+                                        message_id: sent,
+                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                    });
                                         } else {
                                             tracing::error!(
                                                 "Telegram: delete+send fallback failed in chat {chat_id}, \
@@ -719,7 +757,10 @@ pub(crate) async fn deliver_final_response(
                                         .await
                                 {
                                     sent_reply_id = Some(sent.0);
-                                    final_bubble = Some((sent, chunks[0].clone()));
+                                    final_bubble = Some(super::state::MergeBubble {
+                                        message_id: sent,
+                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                    });
                                 }
                             }
                         }
@@ -734,7 +775,10 @@ pub(crate) async fn deliver_final_response(
                                 send_html_or_plain(bot, chat_id, thread_id, chunk, "turn").await
                             {
                                 sent_reply_id = Some(sent.0);
-                                final_bubble = Some((sent, chunk.clone()));
+                                final_bubble = Some(super::state::MergeBubble {
+                                        message_id: sent,
+                                        body: super::state::BubbleBody::Html(chunk.clone()),
+                                    });
                             }
                         }
                     }

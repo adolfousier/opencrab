@@ -372,39 +372,72 @@ impl TelegramAgent {
                                                 // keep its HTML and append the pick record
                                                 // instead — and strip the now-dead buttons
                                                 // with an empty markup.
-                                                let preserved =
+                                                // Merged keyboard (#tg-suggest-merge): the
+                                                // buttons live ON the answer bubble, so a
+                                                // whole-text replace would ERASE the answer.
+                                                // When this bubble is the recorded host,
+                                                // keep its HTML and append the pick record
+                                                // instead — and strip the now-dead controls.
+                                                // Rich hosts ride edit_rich_html; classic
+                                                // hosts ride teloxide's edit_message_text.
+                                                let host_info =
                                                     merged_host.as_ref().and_then(|h| {
                                                         (h.message_id == mid)
-                                                            .then(|| {
-                                                                format!("{}\n\n{}", h.html, picked)
-                                                            })
+                                                            .then(|| (h.html.clone(), h.rich))
                                                     });
-                                                let edit_req = match preserved {
-                                                    Some(full) => bot_clone
-                                                        .edit_message_text(chat_id, mid, &full)
-                                                        .parse_mode(
-                                                            teloxide::types::ParseMode::Html,
+                                                let empty_kb = teloxide::types::
+                                                    InlineKeyboardMarkup::new(Vec::new());
+                                                let outcome: Result<(), String> = match host_info {
+                                                    Some((full, true)) => {
+                                                        super::rich::api::edit_rich_html(
+                                                            bot_clone.api_url().as_str(),
+                                                            bot_clone.token(),
+                                                            chat_id.0,
+                                                            mid.0,
+                                                            &format!("{full}\n\n{picked}"),
+                                                            Some(&serde_json::json!(empty_kb)),
+                                                            "turn",
+                                                            "-",
                                                         )
-                                                        .reply_markup(
-                                                            teloxide::types::InlineKeyboardMarkup::
-                                                                new(Vec::new()),
-                                                        ),
-                                                    None => bot_clone
-                                                        .edit_message_text(chat_id, mid, &picked)
-                                                        .parse_mode(
-                                                            teloxide::types::ParseMode::Html,
-                                                        ),
+                                                        .await
+                                                        .map(|_| ())
+                                                        .map_err(|e| e.to_string())
+                                                    }
+                                                    host_info => {
+                                                        let req = match host_info {
+                                                            Some((full, false)) => bot_clone
+                                                                .edit_message_text(
+                                                                    chat_id, mid, &full,
+                                                                )
+                                                                .parse_mode(
+                                                                    teloxide::types::ParseMode::
+                                                                        Html,
+                                                                )
+                                                                .reply_markup(empty_kb),
+                                                            None => bot_clone
+                                                                .edit_message_text(
+                                                                    chat_id, mid, &picked,
+                                                                )
+                                                                .parse_mode(
+                                                                    teloxide::types::ParseMode::
+                                                                        Html,
+                                                                ),
+                                                        };
+                                                        req.await
+                                                            .map(|_| ())
+                                                            .map_err(|e| e.to_string())
+                                                    }
                                                 };
-                                                edit_req
-                                                    .await
-                                                    .map_err(|e| {
-                                                        tracing::warn!(
-                                                            "Telegram followup tap: could not edit the \
-                                                             suggestion block ({e}) — falling back to \
-                                                             a quoted echo"
-                                                        );
-                                                    })
-                                                    .is_ok()
+                                                if let Err(e) = outcome {
+                                                    tracing::warn!(
+                                                        "Telegram followup tap: could not edit the \
+                                                         suggestion block ({e}) — falling back to \
+                                                         a quoted echo"
+                                                    );
+                                                    false
+                                                } else {
+                                                    true
+                                                }
                                             }
                                             None => false,
                                         };

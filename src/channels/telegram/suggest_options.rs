@@ -114,6 +114,44 @@ fn folded_list_html(options: &[String]) -> String {
         .join("\n")
 }
 
+/// The suggestion controls as native rich-button rows (Bot API 10.3
+/// `<tg-button-row>`), laid out per the measured ladder. Primary style
+/// throughout — picked over app-default after Alexey compared both live.
+/// Callback payloads stay `followup:<session>:<idx>`, so taps route through
+/// the existing callback dispatcher unchanged regardless of surface.
+fn suggestion_rows_rich_html(options: &[String], session_id: Uuid) -> String {
+    let btn = |i: usize, label: &str| {
+        format!(
+            "<tg-button type=\"callback_data\" data=\"{FOLLOWUP_PREFIX}{session_id}:{i}\" \
+             style=\"primary\">{}</tg-button>",
+            super::markdown::escape_html(label)
+        )
+    };
+    match pick_layout(options) {
+        SuggestLayout::SharedRow => format!(
+            "<tg-button-row>{}</tg-button-row>",
+            options
+                .iter()
+                .enumerate()
+                .map(|(i, opt)| btn(i, opt))
+                .collect::<String>()
+        ),
+        SuggestLayout::Column => options
+            .iter()
+            .enumerate()
+            .map(|(i, opt)| format!("<tg-button-row>{}</tg-button-row>", btn(i, opt)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        SuggestLayout::NumberedProse => (0..options.len())
+            .map(|i| btn(i, &(i + 1).to_string()))
+            .collect::<Vec<_>>()
+            .chunks(MAX_NUMBERS_PER_ROW)
+            .map(|c| format!("<tg-button-row>{}</tg-button-row>", c.concat()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
 pub(crate) async fn render_suggestions(
     bot: &teloxide::Bot,
     state: &Arc<TelegramState>,
@@ -122,10 +160,11 @@ pub(crate) async fn render_suggestions(
     thread_id: Option<ThreadId>,
     options: Vec<String>,
     // Merge candidate captured by deliver_final_response: the bubble the final
-    // response landed in (id + exact HTML). Some = attach the keyboard to THAT
-    // bubble — one message instead of two, no "Suggested next" header. None or
-    // failed edit = standalone fallback below.
-    merge_host: Option<(teloxide::types::MessageId, String)>,
+    // response landed in, whatever surface sent it (classic HTML, or table-free
+    // rich markdown). Some = attach the controls to THAT bubble — one message
+    // instead of two, no "Suggested next" header. None or failed edit =
+    // standalone fallback below.
+    merge_host: Option<super::state::MergeBubble>,
 ) {
     use teloxide::prelude::Requester;
 
@@ -174,23 +213,56 @@ pub(crate) async fn render_suggestions(
 
     let keyboard = InlineKeyboardMarkup::new(rows);
 
-    // Primary path: MERGE onto the answer bubble (#tg-suggest-merge). In fold
-    // mode the rich numbered list is appended under the answer text; in full
-    // mode the buttons carry everything and no text is added at all.
+    // Primary path: MERGE onto the answer bubble (#tg-suggest-merge). Prose
+    // mode appends the numbered list under the answer text; button modes add
+    // nothing on the classic surface (the buttons carry everything). Rich
+    // bubbles additionally get native <tg-button-row> controls INSIDE the
+    // message body.
     let mut placed = false;
-    if let Some((mid, ref html)) = merge_host {
-        let mut new_html = html.clone();
+    if let Some(host) = merge_host {
+        let mid = host.message_id;
+        // Base body + surface: classic bubbles keep their exact delivered
+        // HTML; rich bubbles re-render from the captured markdown. Table-
+        // bearing answers never reach this arm as Markdown — capture skips
+        // them because rich HTML input flattens tables (#679).
+        let (mut new_html, rich) = match host.body {
+            super::state::BubbleBody::Html(html) => (html, false),
+            super::state::BubbleBody::Markdown(md) => {
+                (super::rich::markdown_to_html(&md), true)
+            }
+        };
         if layout == SuggestLayout::NumberedProse {
             new_html.push_str("\n");
             new_html.push_str(folded_list_html(&options).trim_start());
         }
-        match bot
-            .edit_message_text(chat_id, mid, &new_html)
-            .parse_mode(ParseMode::Html)
-            .reply_markup(keyboard.clone())
+        if rich {
+            new_html.push('\n');
+            new_html.push_str(&suggestion_rows_rich_html(&options, session_id));
+        }
+        let outcome: Result<(), String> = if rich {
+            super::rich::api::edit_rich_html(
+                bot.api_url().as_str(),
+                bot.token(),
+                chat_id.0,
+                mid.0,
+                &new_html,
+                None,
+                "turn",
+                "-",
+            )
             .await
-        {
-            Ok(_) => {
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        } else {
+            bot.edit_message_text(chat_id, mid, &new_html)
+                .parse_mode(ParseMode::Html)
+                .reply_markup(keyboard.clone())
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        };
+        match outcome {
+            Ok(()) => {
                 placed = true;
                 state
                     .set_pending_followups(
@@ -199,6 +271,7 @@ pub(crate) async fn render_suggestions(
                         Some(super::state::MergedHost {
                             message_id: mid,
                             html: new_html,
+                            rich,
                         }),
                     )
                     .await;
