@@ -627,10 +627,7 @@ fn announcement_matches_anywhere(re: &Regex, lead: &str) -> bool {
         // widening is bounded by the regex's own marker requirement — a
         // suffix still has to reach " now", an ellipsis, or a colon at its
         // very end, which ordinary prose after a colon does not.
-        if matches!(
-            ch,
-            '.' | '!' | '?' | '\n' | '…' | '—' | '–' | ':' | ';'
-        ) {
+        if matches!(ch, '.' | '!' | '?' | '\n' | '…' | '—' | '–' | ':' | ';') {
             after_ender = true;
         }
     }
@@ -1103,6 +1100,80 @@ fn frames_as_executed_any(lower: &str) -> bool {
     })
 }
 
+/// Programs a fabricated command claim is most likely to name.
+///
+/// Module-scoped so the structural fenced-block tell (#1194) checks the
+/// same allowlist as the inline-backtick check, instead of drifting a
+/// second copy. A gap here is a gap in both.
+pub(crate) const KNOWN_PROGRAMS: &[&str] = &[
+    // Version control and issue tracking.
+    "gh",
+    "git",
+    // Build and package managers.
+    "cargo",
+    "npm",
+    "pnpm",
+    "yarn",
+    "make",
+    "pip",
+    "pip3",
+    "brew",
+    "rustc",
+    "rustup",
+    "go",
+    "node",
+    "python",
+    "python3",
+    // Text and file inspection.
+    "grep",
+    "rg",
+    "ls",
+    "cat",
+    "wc",
+    "sed",
+    "awk",
+    "diff",
+    "find",
+    "head",
+    "tail",
+    "sort",
+    "uniq",
+    "jq",
+    // Filesystem and process facts — the timestamp/size/uptime claims.
+    "stat",
+    "date",
+    "du",
+    "df",
+    "ps",
+    "lsof",
+    "uname",
+    "whoami",
+    "which",
+    "uptime",
+    // Hashing and crypto.
+    "shasum",
+    "sha256sum",
+    "md5sum",
+    "openssl",
+    // Network.
+    "curl",
+    "wget",
+    "dig",
+    "ping",
+    "ssh",
+    "scp",
+    "rsync",
+    // Services and infrastructure.
+    "systemctl",
+    "journalctl",
+    "docker",
+    "kubectl",
+    "terraform",
+    // Databases.
+    "psql",
+    "sqlite3",
+];
+
 /// Backticked spans that look like a shell command: a bare program name
 /// followed by at least one argument. Prose in backticks (`mod.rs`, a symbol,
 /// a file path) has no space and is skipped.
@@ -1121,74 +1192,6 @@ fn frames_as_executed_any(lower: &str) -> bool {
 /// sentence framed as executed would read as a command claim and flag an
 /// honest recap, and a false self-heal costs a whole turn.
 fn backticked_commands(text: &str) -> Vec<String> {
-    const PROGRAMS: &[&str] = &[
-        // Version control and issue tracking.
-        "gh",
-        "git",
-        // Build and package managers.
-        "cargo",
-        "npm",
-        "pnpm",
-        "yarn",
-        "make",
-        "pip",
-        "pip3",
-        "brew",
-        "rustc",
-        "rustup",
-        "go",
-        "node",
-        "python",
-        "python3",
-        // Text and file inspection.
-        "grep",
-        "rg",
-        "ls",
-        "cat",
-        "wc",
-        "sed",
-        "awk",
-        "diff",
-        "find",
-        "head",
-        "tail",
-        "sort",
-        "uniq",
-        "jq",
-        // Filesystem and process facts — the timestamp/size/uptime claims.
-        "stat",
-        "date",
-        "du",
-        "df",
-        "ps",
-        "lsof",
-        "uname",
-        "whoami",
-        "which",
-        "uptime",
-        // Hashing and crypto.
-        "shasum",
-        "sha256sum",
-        "md5sum",
-        "openssl",
-        // Network.
-        "curl",
-        "wget",
-        "dig",
-        "ping",
-        "ssh",
-        "scp",
-        "rsync",
-        // Services and infrastructure.
-        "systemctl",
-        "journalctl",
-        "docker",
-        "kubectl",
-        "terraform",
-        // Databases.
-        "psql",
-        "sqlite3",
-    ];
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(open) = rest.find('`') {
@@ -1199,7 +1202,7 @@ fn backticked_commands(text: &str) -> Vec<String> {
         let mut words = span.split_whitespace();
         if let Some(prog) = words.next()
             && words.next().is_some()
-            && PROGRAMS.contains(&prog)
+            && KNOWN_PROGRAMS.contains(&prog)
         {
             out.push(span.to_string());
         }
