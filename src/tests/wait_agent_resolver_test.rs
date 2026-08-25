@@ -19,6 +19,7 @@ fn mk_agent(id: &str, label: &str) -> SubAgent {
         id: id.to_string(),
         label: label.to_string(),
         session_id: Uuid::new_v4(),
+        parent_session_id: Uuid::new_v4(),
         read_only: false,
         state: SubAgentState::Running,
         cancel_token: CancellationToken::new(),

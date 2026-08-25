@@ -329,7 +329,15 @@ impl Tool for TeamCreateTool {
                             };
 
                             match next {
-                                Some(text) => current_prompt = text,
+                                Some(text) => {
+                                    // Flip back to Running so the in-memory
+                                    // state matches the round now in flight —
+                                    // without this a wait_agent during the new
+                                    // round reads the parked state and returns
+                                    // the PREVIOUS round's stale output (#1183).
+                                    manager.mark_running_again(&agent_id_clone);
+                                    current_prompt = text;
+                                }
                                 None => break response.content,
                             }
                         }
@@ -349,6 +357,7 @@ impl Tool for TeamCreateTool {
                 id: agent_id.clone(),
                 label: label.clone(),
                 session_id: child_session_id,
+                parent_session_id: context.session_id,
                 read_only,
                 state: SubAgentState::Running,
                 cancel_token,

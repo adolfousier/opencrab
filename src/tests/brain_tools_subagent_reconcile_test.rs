@@ -48,6 +48,25 @@ fn a_pending_agent_becomes_interrupted() {
 }
 
 #[test]
+fn a_parked_agent_becomes_interrupted() {
+    // #1183: a file parked `AwaitingInput` is non-terminal, so a restart must
+    // interrupt it like any other live agent — before the parked state
+    // existed such a file read `Running` and was swept by the same rule, and
+    // the new variant must not slip through it.
+    isolate("parked");
+    let mut s = AgentStatus::new("agent-4", "audit", "sess-d", "do things").unwrap();
+    s.mark_running().unwrap();
+    s.mark_awaiting_input().unwrap();
+
+    let orphans = reconcile_orphaned_agents();
+
+    assert_eq!(orphans.len(), 1);
+    assert_eq!(orphans[0].state, AgentState::Interrupted);
+    let reread = AgentStatus::read("agent-4").expect("status file still present");
+    assert_eq!(reread.state, AgentState::Interrupted);
+}
+
+#[test]
 fn interrupted_carries_a_reason_and_a_completion_stamp() {
     // The reason distinguishes a restart from a genuine failure, and the
     // stamp lets the file age out on the same schedule as any other

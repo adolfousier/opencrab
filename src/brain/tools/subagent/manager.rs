@@ -38,6 +38,14 @@ pub struct SubAgent {
     /// Session ID the child operates on
     pub session_id: Uuid,
 
+    /// Session that spawned this child (#1183). The manager is process-global
+    /// (one instance wired into every channel agent), so without this field a
+    /// per-session surface — the Telegram settle card — cannot tell which
+    /// children belong to the chat that just settled. Drives
+    /// [`SubAgentManager::alive_counts_for`]. Not the child's session: that
+    /// one is fresh per agent and nothing is listening on it.
+    pub parent_session_id: Uuid,
+
     /// Whether this child was spawned with a read-restricted tool registry.
     ///
     /// Frozen for the agent's lifetime (#1173): resume must rebuild the same
@@ -293,6 +301,26 @@ impl SubAgentManager {
             .values()
             .map(|a| (a.id.clone(), a.label.clone(), a.state.clone()))
             .collect()
+    }
+
+    /// Alive-agent counts for one parent session (#1183): `(working,
+    /// awaiting)` — children mid-round (`Running`) vs parked at a round
+    /// boundary with output ready to collect (`AwaitingInput`). Terminal
+    /// agents never count, and neither do children spawned by OTHER sessions:
+    /// the settle card is per-chat while the manager is process-global, so an
+    /// unfiltered count would report another chat's fan-out as this chat's
+    /// pending work.
+    pub fn alive_counts_for(&self, parent_session_id: Uuid) -> (usize, usize) {
+        self.agents
+            .read()
+            .expect("subagent manager lock poisoned")
+            .values()
+            .filter(|a| a.parent_session_id == parent_session_id)
+            .fold((0, 0), |(working, awaiting), a| match a.state {
+                SubAgentState::Running => (working + 1, awaiting),
+                SubAgentState::AwaitingInput => (working, awaiting + 1),
+                _ => (working, awaiting),
+            })
     }
 
     /// Check if an agent exists.

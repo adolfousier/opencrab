@@ -499,8 +499,17 @@ impl Tool for SpawnAgentTool {
                         }
                         // Genuinely gated (pending approval / cap): park so
                         // wait_agent can observe round-boundary progress and
-                        // the parent can nudge with input.
+                        // the parent can nudge with input. The status file
+                        // parks too (#1183): a parked agent reading
+                        // `state: "Running"` with `completed_at: null` misled
+                        // every consumer into waiting on finished work.
                         manager.mark_awaiting_input(&agent_id_clone);
+                        if let Err(e) = status.mark_awaiting_input() {
+                            tracing::warn!(
+                                "Failed to write awaiting-input status for {}: {e}",
+                                agent_id_clone
+                            );
+                        }
                         tracing::info!(
                             "Sub-agent {} round {} complete, waiting for input",
                             agent_id_clone,
@@ -519,6 +528,12 @@ impl Tool for SpawnAgentTool {
                         match next {
                             Some(text) => {
                                 manager.mark_running_again(&agent_id_clone);
+                                if let Err(e) = status.mark_running() {
+                                    tracing::warn!(
+                                        "Failed to write running status for {}: {e}",
+                                        agent_id_clone
+                                    );
+                                }
                                 tracing::info!(
                                     "Sub-agent {} received follow-up input",
                                     agent_id_clone
@@ -592,6 +607,7 @@ impl Tool for SpawnAgentTool {
             id: agent_id.clone(),
             label: label.clone(),
             session_id: child_session_id,
+            parent_session_id: context.session_id,
             read_only,
             state: SubAgentState::Running,
             cancel_token,

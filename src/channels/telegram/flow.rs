@@ -140,6 +140,13 @@ pub(crate) struct StreamingState {
     /// instead of "✅ Finished". Parallel to [`Self::bg_indicator`] (the footer
     /// label) but carries the numeric count the header needs.
     pub(crate) bg_count: Option<usize>,
+    /// Alive sub-agent counts at settle time (#1183), from the session-scoped
+    /// read of the (process-global) sub-agent manager: `working` vs `awaiting`
+    /// collection. Zero while the turn is live; stamped once at settle next to
+    /// [`Self::bg_count`] so the waiting header covers BOTH background
+    /// registries — sub-agents live outside `BackgroundTaskManager`, which the
+    /// pre-#1183 header read exclusively.
+    pub(crate) subagent_counts: SubagentCounts,
     /// Intermediate texts already sent — used to dedup final response
     pub(crate) sent_intermediates: Vec<String>,
     /// Message IDs of every intermediate chunk delivered to Telegram, so a
@@ -703,26 +710,76 @@ impl FlowOutcome {
     }
 }
 
+/// Alive sub-agent counts captured at settle (#1183): `working` counts
+/// children mid-round (`Running`), `awaiting` counts children parked at a
+/// round boundary whose output is ready to collect (`AwaitingInput`). The
+/// settle card distinguishes the two because they need different things from
+/// the user: working agents just need time, parked ones need a
+/// `wait_agent`/`send_input`/`close_agent` decision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SubagentCounts {
+    pub(crate) working: usize,
+    pub(crate) awaiting: usize,
+}
+
+impl SubagentCounts {
+    /// Total alive agents, working or parked.
+    pub(crate) fn total(self) -> usize {
+        self.working + self.awaiting
+    }
+
+    /// True when no alive agents belong to this session's settle.
+    pub(crate) fn is_empty(self) -> bool {
+        self.total() == 0
+    }
+}
+
+/// The sub-agent share of the waiting verb (#1183): "N working agents",
+/// "N agents awaiting collection", or the split form when both exist. Pure so
+/// the header grammar is pinnable without live managers.
+pub(crate) fn subagent_waiting_phrase(agents: SubagentCounts) -> String {
+    let n = agents.total();
+    let noun = if n == 1 { "agent" } else { "agents" };
+    match (agents.working, agents.awaiting) {
+        (working, 0) => format!("{working} working {noun}"),
+        (0, awaiting) => format!("{awaiting} {noun} awaiting collection"),
+        (working, awaiting) => {
+            format!("{n} {noun} ({working} working, {awaiting} awaiting collection)")
+        }
+    }
+}
+
 /// Settled header icon+verb, overridden to a waiting state when the turn
-/// finished with background tasks still running (#1144). A settled card that
-/// ends with detached work otherwise reads "✅ Finished" up top and "N tasks
-/// running" in the footer — the exact split this fixes. The icon is a static
-/// ref; the verb is an owned [`String`] because it carries the task count, so
-/// callers pass `verb.as_str()` into [`FlowHeader::Settled`].
+/// finished with background work still alive (#1144, #1183). A settled card
+/// that ends with detached shell tasks reads "✅ Finished" up top and "N tasks
+/// running" in the footer — the exact split #1144 fixed — and #1183 extended
+/// the same override to sub-agents, which live in a separate registry the
+/// background-task count never read: a turn ending with two agents mid-work
+/// still said "Finished". The verb folds both registries, e.g. "Waiting for
+/// 1 background task + 2 working agents". The icon is a static ref; the verb
+/// is an owned [`String`] because it carries the counts, so callers pass
+/// `verb.as_str()` into [`FlowHeader::Settled`].
 pub(crate) fn settled_icon_verb(
     bg_count: Option<usize>,
+    agents: SubagentCounts,
     outcome: FlowOutcome,
 ) -> (&'static str, String) {
-    if outcome == FlowOutcome::Finished
-        && let Some(n) = bg_count
-        && n > 0
-    {
-        let verb = if n == 1 {
-            "Waiting for 1 background task".to_string()
-        } else {
-            format!("Waiting for {n} background tasks")
-        };
-        return ("⏳", verb);
+    if outcome == FlowOutcome::Finished {
+        let bg = bg_count.unwrap_or(0);
+        if bg > 0 || !agents.is_empty() {
+            let mut parts: Vec<String> = Vec::new();
+            if bg > 0 {
+                parts.push(if bg == 1 {
+                    "1 background task".to_string()
+                } else {
+                    format!("{bg} background tasks")
+                });
+            }
+            if !agents.is_empty() {
+                parts.push(subagent_waiting_phrase(agents));
+            }
+            return ("⏳", format!("Waiting for {}", parts.join(" + ")));
+        }
     }
     let (icon, verb) = outcome.icon_verb();
     (icon, verb.to_string())
@@ -870,7 +927,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
     let elapsed = s.turn_started_at.elapsed().as_secs();
     match s.flow_outcome {
         Some(outcome) => {
-            let (icon, verb) = settled_icon_verb(s.bg_count, outcome);
+            let (icon, verb) = settled_icon_verb(s.bg_count, s.subagent_counts, outcome);
             let duration = humanize_duration(elapsed);
             render_flow_html_chrome_pref(
                 &flow_lines(s),
@@ -905,7 +962,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
     let elapsed = s.turn_started_at.elapsed().as_secs();
     match s.flow_outcome {
         Some(outcome) => {
-            let (icon, verb) = settled_icon_verb(s.bg_count, outcome);
+            let (icon, verb) = settled_icon_verb(s.bg_count, s.subagent_counts, outcome);
             let duration = humanize_duration(elapsed);
             render_flow_details_chrome_pref(
                 &flow_lines(s),

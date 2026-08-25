@@ -20,6 +20,7 @@ mod manager {
             id: id.to_string(),
             label: label.to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -65,6 +66,44 @@ mod manager {
     fn get_state_missing_returns_none() {
         let mgr = SubAgentManager::new();
         assert_eq!(mgr.get_state("nonexistent"), None);
+    }
+
+    #[test]
+    fn alive_counts_for_splits_working_and_awaiting_per_parent() {
+        // #1183: the settle card counts only THIS session's children, split
+        // working vs parked-awaiting-collection. The manager is process-global
+        // (one instance wired into every channel agent), so an unfiltered
+        // count would report another chat's fan-out as this chat's pending
+        // work. Terminal agents never count.
+        let mgr = SubAgentManager::new();
+        let parent = Uuid::new_v4();
+        let other_chat = Uuid::new_v4();
+
+        let mut working = make_agent("w1", "working");
+        working.parent_session_id = parent;
+        let mut parked = make_agent("p1", "parked");
+        parked.parent_session_id = parent;
+        let mut done = make_agent("d1", "done");
+        done.parent_session_id = parent;
+        let mut foreign = make_agent("f1", "other-chat");
+        foreign.parent_session_id = other_chat;
+
+        mgr.insert(working);
+        mgr.insert(parked);
+        mgr.insert(done);
+        mgr.insert(foreign);
+
+        mgr.mark_awaiting_input("p1");
+        mgr.mark_completed("d1", "finished".to_string());
+
+        assert_eq!(mgr.alive_counts_for(parent), (1, 1));
+        assert_eq!(mgr.alive_counts_for(other_chat), (1, 0));
+        assert_eq!(mgr.alive_counts_for(Uuid::new_v4()), (0, 0));
+
+        // Follow-up input flips the parked agent back to working: the split
+        // must track the state machine, not a static snapshot.
+        mgr.mark_running_again("p1");
+        assert_eq!(mgr.alive_counts_for(parent), (2, 0));
     }
 
     #[test]
@@ -325,6 +364,7 @@ mod manager {
             id: "a1".to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -385,6 +425,7 @@ mod send_input_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -491,6 +532,7 @@ mod send_input_tool {
             id: "a1".to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -554,6 +596,7 @@ mod close_agent_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -686,6 +729,7 @@ mod wait_agent_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -857,6 +901,7 @@ mod lifecycle {
             id: id.to_string(),
             label: "lifecycle-test".to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -1134,6 +1179,7 @@ mod agent_type {
             id: "ro1".into(),
             label: "ro".into(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: true,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -1305,6 +1351,7 @@ mod team_delete_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
@@ -1437,6 +1484,7 @@ mod team_broadcast_tool {
             id: id.to_string(),
             label: "test".to_string(),
             session_id: Uuid::new_v4(),
+            parent_session_id: Uuid::new_v4(),
             read_only: false,
             state: SubAgentState::Running,
             cancel_token: CancellationToken::new(),
