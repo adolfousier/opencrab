@@ -50,14 +50,43 @@ pub(crate) fn echo_fallback(text: &str, chooser: Option<&str>) -> String {
     }
 }
 
-/// Fold-in is a FALLBACK (#1178 D3): full-text buttons primary, but if ANY
-/// option exceeds 30 chars the texts fold into the host message body as a
-/// rich numbered list and the buttons collapse to one row of numbers (D4) —
-/// a column of long labels is unreadable and a row of them overflows.
-/// The stash always holds the ORIGINAL options either way, so taps
-/// resolve verbatim text, never bare digits.
-fn should_fold(options: &[String]) -> bool {
-    options.iter().any(|o| o.chars().count() > 30)
+/// Button-width calibration, measured 2026-08-25 on Alexey's client
+/// (`sendRichMessage` probes, messages 29975 + 29991): a single full-width
+/// button fits <=50 chars on one line and wraps by 54; shared rows only
+/// survive MICRO labels (Yes/No pairs fit; 11+8=19 chars total wraps).
+pub(crate) const MAX_BUTTON_CHARS: usize = 50;
+/// Longest label allowed to share one row with its siblings (measured:
+/// 3-7 char words sit side by side without wrapping).
+const SHARED_ROW_MAX_CHARS: usize = 8;
+/// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
+/// than 4 per row, so every target stays big enough for a finger.
+const MAX_NUMBERS_PER_ROW: usize = 4;
+
+/// Which shape the suggestion controls take for a given option list.
+/// Tiers are measured, not guessed — see [`MAX_BUTTON_CHARS`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SuggestLayout {
+    /// Every label short AND few options: all buttons share ONE row.
+    SharedRow,
+    /// Every label fits a full-width button: one button per row.
+    Column,
+    /// Some label too long even full-width: texts fold into the message
+    /// body as a numbered list, buttons collapse to bare numbers packed
+    /// [`MAX_NUMBERS_PER_ROW`] per row.
+    NumberedProse,
+}
+
+fn pick_layout(options: &[String]) -> SuggestLayout {
+    let width = |o: &String| o.chars().count();
+    if options.len() <= MAX_NUMBERS_PER_ROW
+        && options.iter().all(|o| width(o) <= SHARED_ROW_MAX_CHARS)
+    {
+        SuggestLayout::SharedRow
+    } else if options.iter().all(|o| width(o) <= MAX_BUTTON_CHARS) {
+        SuggestLayout::Column
+    } else {
+        SuggestLayout::NumberedProse
+    }
 }
 
 /// The folded option list as rich HTML. REUSES the canonical inline
@@ -104,44 +133,43 @@ pub(crate) async fn render_suggestions(
         return;
     }
 
-    let fold = should_fold(&options);
-
-    // Full-text mode: one button per suggestion in a single column so long
-    // labels stay readable. Folded mode: one row of numeric buttons (D4).
-    // The absolute index is encoded in the callback data; the option text
-    // itself can exceed Telegram's 64-byte callback-data limit, so we never
-    // put it there.
-    let rows: Vec<Vec<InlineKeyboardButton>> = if fold {
-        vec![
-            options
-                .iter()
-                .enumerate()
-                .map(|(i, _)| {
-                    InlineKeyboardButton::callback(
-                        (i + 1).to_string(),
-                        format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
-                    )
-                })
-                .collect(),
-        ]
-    } else {
-        options
+    // Layout tiers are measured, not guessed (see MAX_BUTTON_CHARS): short
+    // labels share one row, medium labels get a full-width row each, and
+    // anything longer folds into the body as a numbered list with compact
+    // number buttons (<=4 per row). The absolute index is encoded in the
+    // callback data; the option text itself can exceed Telegram's 64-byte
+    // callback-data limit, so we never put it there.
+    let layout = pick_layout(&options);
+    let text_btn = |i: usize, opt: &str| {
+        InlineKeyboardButton::callback(
+            opt.to_string(),
+            format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
+        )
+    };
+    let num_btn = |i: usize| {
+        InlineKeyboardButton::callback(
+            (i + 1).to_string(),
+            format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
+        )
+    };
+    let rows: Vec<Vec<InlineKeyboardButton>> = match layout {
+        SuggestLayout::SharedRow => vec![options
             .iter()
             .enumerate()
-            .map(|(i, opt)| {
-                let label = if opt.chars().count() > 60 {
-                    let mut s: String = opt.chars().take(57).collect();
-                    s.push_str("...");
-                    s
-                } else {
-                    opt.clone()
-                };
-                vec![InlineKeyboardButton::callback(
-                    label,
-                    format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
-                )]
-            })
-            .collect()
+            .map(|(i, opt)| text_btn(i, opt))
+            .collect()],
+        SuggestLayout::Column => options
+            .iter()
+            .enumerate()
+            .map(|(i, opt)| vec![text_btn(i, opt)])
+            .collect(),
+        SuggestLayout::NumberedProse => {
+            let all: Vec<InlineKeyboardButton> =
+                (0..options.len()).map(num_btn).collect();
+            all.chunks(MAX_NUMBERS_PER_ROW)
+                .map(|c| c.to_vec())
+                .collect()
+        }
     };
 
     let keyboard = InlineKeyboardMarkup::new(rows);
@@ -152,7 +180,7 @@ pub(crate) async fn render_suggestions(
     let mut placed = false;
     if let Some((mid, ref html)) = merge_host {
         let mut new_html = html.clone();
-        if fold {
+        if layout == SuggestLayout::NumberedProse {
             new_html.push_str("\n");
             new_html.push_str(folded_list_html(&options).trim_start());
         }
@@ -185,10 +213,10 @@ pub(crate) async fn render_suggestions(
 
     // Fallback (no merge candidate, or the edit lost a race / grew too old):
     // standalone block. The header sentence is still gone per #tg-suggest-merge
-    // — folded mode shows just the rich list, full mode needs SOME text for the
-    // Bot API to accept the message, so it degrades to the bare 💡 marker.
+    // — prose mode shows just the numbered list, button modes need SOME text
+    // for the Bot API to accept the message, so they degrade to the bare 💡.
     if !placed {
-        let body = if fold {
+        let body = if layout == SuggestLayout::NumberedProse {
             folded_list_html(&options).trim_start().to_string()
         } else {
             String::from("\u{1f4a1}")
@@ -211,13 +239,45 @@ pub(crate) async fn render_suggestions(
 }
 
 #[cfg(test)]
-mod fold_tests {
+mod layout_tests {
     use super::*;
 
     #[test]
-    fn no_fold_when_all_options_short() {
-        let opts = vec!["Ship it".to_string(), "Hold".to_string()];
-        assert!(!should_fold(&opts));
+    fn short_few_options_share_one_row() {
+        let opts = vec!["Yes".to_string(), "No".to_string(), "Skip".to_string()];
+        assert_eq!(pick_layout(&opts), SuggestLayout::SharedRow);
+    }
+
+    #[test]
+    fn five_short_options_do_not_share_a_row() {
+        // >4 tap targets in one row = buttons too small for a finger
+        // (Alexey, 2026-08-25). They drop to the Column tier instead.
+        let opts: Vec<String> = ["alpha", "beta", "gamma", "delta", "eps"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(opts.iter().all(|o| o.chars().count() <= SHARED_ROW_MAX_CHARS));
+        assert_eq!(pick_layout(&opts), SuggestLayout::Column);
+    }
+
+    #[test]
+    fn nine_char_label_kills_shared_row() {
+        let opts = vec!["Yes".to_string(), "x".repeat(9)];
+        assert_eq!(pick_layout(&opts), SuggestLayout::Column);
+    }
+
+    #[test]
+    fn boundary_exactly_50_stays_column() {
+        // Measured: 50ch fits one line (probe P2), so 50 stays a button.
+        let opts = vec!["x".repeat(50)];
+        assert_eq!(pick_layout(&opts), SuggestLayout::Column);
+    }
+
+    #[test]
+    fn over_50_folds_to_numbered_prose() {
+        // Measured: 54ch wraps (probe P3); cap is exclusive at 50.
+        let opts = vec!["Ship it".to_string(), "x".repeat(51)];
+        assert_eq!(pick_layout(&opts), SuggestLayout::NumberedProse);
     }
 
     #[test]
@@ -230,26 +290,5 @@ mod fold_tests {
         // (& → &amp; proves the shared pipeline escaped, not a private one).
         assert!(body.contains("1. Ship it"));
         assert!(body.contains("2. Review &amp; merge"));
-    }
-
-    #[test]
-    fn folds_when_any_option_exceeds_30_chars() {
-        let short = "Ship it".to_string();
-        let long =
-            "this is a very long option that definitely exceeds thirty characters".to_string();
-        assert!(long.chars().count() > 30);
-        let opts = vec![short.clone(), long.clone()];
-        assert!(should_fold(&opts));
-        let body = folded_list_html(&opts);
-        assert!(body.contains("1. Ship it"));
-        assert!(body.contains(&format!("2. {long}")));
-    }
-
-    #[test]
-    fn boundary_exactly_30_does_not_fold() {
-        // 30 chars exactly: threshold is EXCLUSIVE (>30 folds).
-        let exact = "x".repeat(30);
-        let opts = vec![exact];
-        assert!(!should_fold(&opts));
     }
 }
