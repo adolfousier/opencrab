@@ -44,3 +44,54 @@ fn distinct_options_pass() {
         vec!["x", "y"]
     );
 }
+
+// ── #1176 G1/G3: per-channel budgets + the single char-based truncator ──────
+
+#[test]
+fn truncate_label_passthrough_under_budget() {
+    let out = crate::channels::question_common::truncate_label("short", 10);
+    assert_eq!(out, "short");
+}
+
+#[test]
+fn truncate_label_exact_budget_is_passthrough() {
+    let s = "exact!";
+    let out = crate::channels::question_common::truncate_label(s, s.chars().count());
+    assert_eq!(out, s);
+}
+
+#[test]
+fn truncate_label_cuts_on_char_boundaries_with_ellipsis() {
+    // multibyte probe: budget 5 -> cut 2 CHARS + "..." — never splits a glyph
+    // (the byte-based truncate_str this replaces would have panicked here).
+    let out = crate::channels::question_common::truncate_label("héllo🎉world", 5);
+    assert!(out.starts_with("hé"));
+    assert!(out.ends_with("..."));
+    assert!(out.chars().count() <= 5);
+}
+
+#[test]
+fn telegram_budget_reproduces_the_historic_fold_shape() {
+    // over-budget label -> (budget-3) chars + "...", exactly the old
+    // take(57)+"..." contract at budget 60.
+    let long = "x".repeat(100);
+    let out = crate::channels::question_common::truncate_label(
+        &long,
+        crate::channels::question_common::TELEGRAM_LABEL_BUDGET,
+    );
+    assert_eq!(out.chars().count(), 60);
+    assert!(out.ends_with("..."));
+}
+
+#[test]
+fn channel_budgets_stay_sane_and_fold_aware() {
+    use crate::channels::question_common::{
+        DISCORD_LABEL_BUDGET, FOLD_THRESHOLD, SLACK_LABEL_BUDGET, TELEGRAM_LABEL_BUDGET,
+    };
+    assert!(FOLD_THRESHOLD > 0);
+    assert!(
+        TELEGRAM_LABEL_BUDGET > FOLD_THRESHOLD,
+        "fold must fire before any single label gets truncated"
+    );
+    assert!(DISCORD_LABEL_BUDGET > 0 && SLACK_LABEL_BUDGET > 0);
+}

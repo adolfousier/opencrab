@@ -20,7 +20,7 @@ pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 
 /// Label-length budget above which Telegram folds suggestions into the body
 /// (#1178 D3/D4). Single source of truth for `should_fold` and its tests.
-pub(crate) const FOLD_THRESHOLD: usize = 30;
+pub(crate) use crate::channels::question_common::FOLD_THRESHOLD;
 
 /// What the suggestion block becomes once one of its options is tapped.
 ///
@@ -125,13 +125,10 @@ pub(crate) async fn render_suggestions(
             .iter()
             .enumerate()
             .map(|(i, opt)| {
-                let label = if opt.chars().count() > 60 {
-                    let mut s: String = opt.chars().take(57).collect();
-                    s.push_str("...");
-                    s
-                } else {
-                    opt.clone()
-                };
+                let label = crate::channels::question_common::truncate_label(
+                    opt,
+                    crate::channels::question_common::TELEGRAM_LABEL_BUDGET,
+                );
                 vec![InlineKeyboardButton::callback(
                     label,
                     format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),

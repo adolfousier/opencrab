@@ -1,6 +1,6 @@
-//! Shared mechanics for the suggestion tools
-//! (#764 R1/R2/R3/R5). The two tools stay semantically different
-//! (blocking vs non-blocking); only their duplicated *mechanics* live here.
+//! Shared mechanics for the merged suggestion tool (#764 R-items,
+//! #1178 merge) plus the per-channel label budgets every renderer
+//! shares (#1176 G1/G3).
 
 use std::collections::HashSet;
 
@@ -54,4 +54,27 @@ pub(crate) async fn resolve_channel_or_silent<T>(
         Some(id) => Some(id),
         None => owner_lookup.await,
     }
+}
+
+/// Per-channel option-label budgets (#1176 G1): the widest label a renderer
+/// prints before folding to an ellipsized form. Values are CHARACTERS, not
+/// bytes; all truncation goes through [`truncate_label`].
+pub(crate) const TELEGRAM_LABEL_BUDGET: usize = 60;
+pub(crate) const DISCORD_LABEL_BUDGET: usize = 80;
+pub(crate) const SLACK_LABEL_BUDGET: usize = 75;
+
+/// Telegram folds the whole keyboard into a numbered list once any option
+/// exceeds this many characters (#1178 D3).
+pub(crate) const FOLD_THRESHOLD: usize = 30;
+
+/// The single char-based truncation helper (#1176 G3): passthrough under the
+/// budget, otherwise cut to leave room for a literal `...` tail. Replaces the
+/// byte-based `truncate_str` at every suggestion-label site.
+pub(crate) fn truncate_label(s: &str, budget: usize) -> String {
+    if s.chars().count() <= budget {
+        return s.to_string();
+    }
+    let mut out = crate::utils::truncate_chars(s, budget.saturating_sub(3)).to_string();
+    out.push_str("...");
+    out
 }

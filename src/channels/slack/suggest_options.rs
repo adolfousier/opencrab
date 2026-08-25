@@ -53,7 +53,11 @@ pub(crate) async fn render_suggestions(
             SlackActionBlockElement::Button(SlackBlockButtonElement::new(
                 SlackActionId::new(format!("{FOLLOWUP_PREFIX}{session_id}:{idx}")),
                 SlackBlockPlainTextOnly::from(SlackBlockPlainText::new(
-                    crate::utils::truncate_str(opt, 75).to_string(),
+                    crate::channels::question_common::truncate_label(
+                        opt,
+                        crate::channels::question_common::SLACK_LABEL_BUDGET,
+                    )
+                    .to_string(),
                 )),
             ))
         })
