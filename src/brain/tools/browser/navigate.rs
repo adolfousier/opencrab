@@ -169,7 +169,10 @@ impl Tool for BrowserNavigateTool {
             }
         };
 
-        let mut result = ToolResult::success(format!("Navigated to: {final_url}\nTitle: {title}"));
+        let mut result = ToolResult::success(super::events::append_line(
+            format!("Navigated to: {final_url}\nTitle: {title}"),
+            self.manager.drain_recent_events(),
+        ));
 
         // Auto-screenshot: give the model vision of the page after navigation
         self.manager

@@ -64,7 +64,7 @@ impl Tool for BrowserClickTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
-        let selector = match input["selector"].as_str() {
+        let selector_input = match input["selector"].as_str() {
             Some(s) if !s.is_empty() => s,
             _ => return Ok(ToolResult::error("'selector' is required".into())),
         };
@@ -77,6 +77,10 @@ impl Tool for BrowserClickTool {
             Ok(p) => p,
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
+
+
+        let (page, selector): (chromiumoxide::Page, String) =
+            (page, selector_input.to_string());
 
         // `text=...` and `xpath=...` selectors are Playwright-style and not
         // valid CSS — translate them to a JS evaluator that finds the first
@@ -119,7 +123,10 @@ impl Tool for BrowserClickTool {
                             self.manager
                                 .reset_identical_screenshot_count(context.session_id)
                                 .await;
-                            let mut tr = ToolResult::success(format!("Clicked: {selector}"));
+                            let mut tr = ToolResult::success(super::events::append_line(
+                                format!("Clicked: {selector}"),
+                                self.manager.drain_recent_events(),
+                            ));
                             self.manager
                                 .attach_screenshot(context.session_id, &mut tr)
                                 .await;
@@ -172,7 +179,10 @@ impl Tool for BrowserClickTool {
                             self.manager
                                 .reset_identical_screenshot_count(context.session_id)
                                 .await;
-                            let mut tr = ToolResult::success(format!("Clicked: {selector}"));
+                            let mut tr = ToolResult::success(super::events::append_line(
+                                format!("Clicked: {selector}"),
+                                self.manager.drain_recent_events(),
+                            ));
                             self.manager
                                 .attach_screenshot(context.session_id, &mut tr)
                                 .await;
@@ -196,7 +206,7 @@ impl Tool for BrowserClickTool {
             }
         }
 
-        let element = match page.find_element(selector).await {
+        let element = match page.find_element(&selector).await {
             Ok(el) => el,
             Err(e) => {
                 // Surface the recovery path inline so the agent doesn't

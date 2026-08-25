@@ -5,6 +5,7 @@ mod click;
 mod close;
 mod content;
 mod eval;
+pub(crate) mod events;
 mod find;
 pub(crate) mod manager;
 mod navigate;

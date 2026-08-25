@@ -104,6 +104,9 @@ impl Tool for BrowserContentTool {
             }
         };
 
-        Ok(ToolResult::success(content))
+        Ok(ToolResult::success(super::events::append_line(
+            content,
+            self.manager.drain_recent_events(),
+        )))
     }
 }

@@ -32,6 +32,10 @@ pub enum CloseOutcome {
 pub struct BrowserManager {
     inner: Arc<Mutex<ManagerInner>>,
     config: Arc<ConfigBrowserConfig>,
+    /// CDP event ring (#1189). Held directly (its own std Mutex, no
+    /// async lock) so sync drains from tool result paths never touch
+    /// the tokio-guarded inner state.
+    pub(crate) events: super::events::EventLog,
 }
 
 struct ManagerInner {
@@ -136,6 +140,7 @@ impl BrowserManager {
                 consecutive_identical_screenshots: HashMap::new(),
             })),
             config: Arc::new(config),
+            events: super::events::EventLog::default(),
         }
     }
 
@@ -418,6 +423,11 @@ impl BrowserManager {
         // state; the new-document registration fixes this.
         Self::install_stealth_on_new_document(&page).await;
 
+        // CDP event listeners (#1189): js dialogs, downloads, popups,
+        // crashes, detachments feed the shared ring; every browser tool
+        // result drains it as a `recent_events:` line.
+        super::events::attach_page_listeners(&page, self.events.clone());
+
         inner.pages.insert(session_name, page.clone());
         Ok(page)
     }
@@ -628,6 +638,15 @@ impl BrowserManager {
     }
 
     /// Get the current consecutive-identical screenshot count for a session.
+    /// Drain pending CDP events (#1189) formatted as the
+    /// `recent_events: [...]` line, `None` when nothing fired since the
+    /// last drain. Browser tools append this to their result text so
+    /// spontaneous page activity (dialogs, downloads, crashes) surfaces
+    /// exactly once, in the next result after it happened.
+    pub fn drain_recent_events(&self) -> Option<String> {
+        self.events.take_formatted()
+    }
+
     pub async fn identical_screenshot_count(&self, session_id: uuid::Uuid) -> u32 {
         self.inner
             .lock()
@@ -1280,3 +1299,4 @@ pub(crate) fn detect_browser() -> Option<BrowserInfo> {
     tracing::warn!("No Chromium-based browser found on system");
     None
 }
+

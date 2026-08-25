@@ -142,37 +142,45 @@ impl Tool for BrowserFindTool {
         let occluded = usize::try_from(raw["occluded"].as_u64().unwrap_or(0)).unwrap_or(0);
         let matches = raw["items"].as_array().cloned().unwrap_or_default();
         if matches.is_empty() {
-            return Ok(ToolResult::success(match pattern {
-                Some(p) => format!("No elements matched {mode}:{p}"),
-                None => "No visible interactive elements found on this page.".to_string(),
-            }));
+            return Ok(ToolResult::success(super::events::append_line(
+                match pattern {
+                    Some(p) => format!("No elements matched {mode}:{p}"),
+                    None => "No visible interactive elements found on this page.".to_string(),
+                },
+                self.manager.drain_recent_events(),
+            )));
         }
 
         let formatted = format_matches(&matches);
         let count = matches.len();
-        Ok(ToolResult::success(match pattern {
-            Some(p) => format!(
-                "Found {count} match{} for {mode}:{p}\n\n{formatted}",
-                if count == 1 { "" } else { "es" },
-            ),
-            None => {
-                let body = format!(
-                    "{}\n\n{formatted}",
-                    inventory_header(count, collapsed, occluded),
-                );
-                // If we hit the cap there may be more elements we did not
-                // show. Tell the model explicitly so it does not assume the
-                // list is exhaustive (mirrors the read_file truncation note).
-                if count >= limit {
-                    format!(
-                        "{body}\n\n(Inventory capped at {limit} visible elements. \
-                         Narrow with a `pattern`/`mode` to see beyond this list.)"
-                    )
-                } else {
-                    body
+
+
+        Ok(ToolResult::success(super::events::append_line(
+            match pattern {
+                Some(p) => format!(
+                    "Found {count} match{} for {mode}:{p}\n\n{formatted}",
+                    if count == 1 { "" } else { "es" },
+                ),
+                None => {
+                    let body = format!(
+                        "{}\n\n{formatted}",
+                        inventory_header(count, collapsed, occluded),
+                    );
+                    // If we hit the cap there may be more elements we did not
+                    // show. Tell the model explicitly so it does not assume the
+                    // list is exhaustive (mirrors the read_file truncation note).
+                    if count >= limit {
+                        format!(
+                            "{body}\n\n(Inventory capped at {limit} visible elements. \
+                             Narrow with a `pattern`/`mode` to see beyond this list.)"
+                        )
+                    } else {
+                        body
+                    }
                 }
-            }
-        }))
+            },
+            self.manager.drain_recent_events(),
+        )))
     }
 }
 

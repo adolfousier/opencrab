@@ -72,7 +72,7 @@ impl Tool for BrowserTypeTool {
             Some(t) if !t.is_empty() => t,
             _ => return Ok(ToolResult::error("'text' is required".into())),
         };
-        let selector = input["selector"].as_str();
+        let selector_input = input["selector"].as_str();
 
         let page = match self
             .manager
@@ -82,6 +82,11 @@ impl Tool for BrowserTypeTool {
             Ok(p) => p,
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
+
+        let (page, selector): (chromiumoxide::Page, Option<String>) =
+            (page, selector_input.map(|s| s.to_string()));
+
+        let selector = selector.as_deref();
 
         // JSON-encode both values so any quotes/backslashes/newlines in the
         // text or selector are injected into the script safely.
@@ -141,7 +146,10 @@ impl Tool for BrowserTypeTool {
                 self.manager
                     .reset_identical_screenshot_count(context.session_id)
                     .await;
-                let mut result = ToolResult::success(format!("Typed into {target}"));
+                let mut result = ToolResult::success(super::events::append_line(
+                    format!("Typed into {target}"),
+                    self.manager.drain_recent_events(),
+                ));
                 // Auto-screenshot: give the model vision after typing.
                 self.manager
                     .attach_screenshot(context.session_id, &mut result)
