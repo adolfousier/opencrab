@@ -63,6 +63,7 @@ Desktop.ini
 
 # Claude Code / AI Development Files
 .claude/
+.codegraph/
 
 # Workspace personal files (use docs/reference/templates/ for generic versions)
 src/workspace/
