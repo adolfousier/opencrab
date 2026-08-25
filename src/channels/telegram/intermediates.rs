@@ -59,7 +59,9 @@ pub(crate) fn build_last_intermediate_with_footer(
 }
 
 /// Send a structured intermediate segment as a native rich message, returning
-/// its id for tracking. Returns `None` when the text carries no rich structure
+/// its id for tracking. Mermaid-aware (#1044/#1202): fences resolve to a media
+/// array; with no fence this is byte-identical to `send_rich_markdown_id`.
+/// Returns `None` when the text carries no rich structure
 /// or the rich API rejects it — the caller then falls back to the HTML path.
 pub(crate) async fn try_send_intermediate_rich(
     bot: &Bot,
@@ -70,7 +72,10 @@ pub(crate) async fn try_send_intermediate_rich(
     if !super::rich::should_send_native_rich(text) {
         return None;
     }
-    match super::rich::api::send_rich_markdown_id(
+    // Mermaid-aware sender (#1044/#1202): resolves fences into the rich
+    // markdown media array; byte-identical to send_rich_markdown_id when no
+    // fence is present, so non-diagram reports are unaffected.
+    match super::rich::send_rich_with_mermaid_id(
         bot.api_url().as_str(),
         bot.token(),
         chat_id.0,
@@ -102,6 +107,14 @@ pub(crate) fn is_deliverable_rich_report(text: &str) -> bool {
     // folded log as raw pipes. Reflow first — the same recovery the final-
     // response and HTML-render paths already apply. Idempotent.
     let reflowed = super::rich::reflow_collapsed_tables(text);
+    // A mermaid fence (tagged or content-classified, #1202) is report-shaped
+    // on its own: folding buries the diagram behind a tap-to-expand tap AND
+    // leaves raw fence text in the log, because neither the fold renderer nor
+    // the pre-fix rich path resolved fences. Surfaced intermediates go
+    // through deliver_intermediate_message, which now resolves them.
+    if super::rich::mermaid::has_mermaid_fence(&reflowed) {
+        return true;
+    }
     super::rich::contains_table(&reflowed) && text.trim().chars().count() >= 200
 }
 
@@ -137,7 +150,11 @@ pub(crate) async fn deliver_intermediate_message(
         s.intermediate_msg_ids.push(id);
         return true;
     }
-    let html = markdown_to_telegram_html(text);
+    // Resolve fences here too (#1142 parity): when the rich path rejected the
+    // message, the HTML fallback must still render the diagram instead of
+    // shipping raw fence text. Identical to markdown_to_telegram_html when
+    // the feature is off or no fence is present.
+    let html = super::rich::markdown_to_html_mermaid(text).await;
     if html.is_empty() {
         return false;
     }
