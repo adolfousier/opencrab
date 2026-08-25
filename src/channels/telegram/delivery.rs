@@ -99,6 +99,10 @@ pub(crate) async fn deliver_final_response(
 ) -> ResponseResult<bool> {
     match result {
         Ok(response) => {
+            // Merge candidate captured below: whichever bubble carried the final
+            // response (classic HTML edit/send, or table-free rich message).
+            // render_suggestions attaches its keyboard to THIS bubble when Some.
+            let mut final_bubble: Option<super::state::MergeBubble> = None;
             // Extract <<IMG:path>> markers — send each as a Telegram photo.
             let (text_only, img_paths) = crate::utils::extract_img_markers(&response.content);
             // Strip LLM-hallucinated artifacts (<!-- tools-v2 -->, XML tool blocks)
