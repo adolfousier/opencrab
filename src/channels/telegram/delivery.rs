@@ -76,6 +76,24 @@ pub(crate) fn bg_indicator_for(
     }
 }
 
+/// Alive sub-agent counts for the settled header (#1183): how many of THIS
+/// session's children are still working vs parked awaiting collection. The
+/// sub-agent registry is separate from `BackgroundTaskManager`, so the #1144
+/// header gate never saw it — a turn ending with agents mid-work still read
+/// "✅ Finished". Empty when no manager is wired or every child already
+/// terminated; the header then falls back to the background-task-only (or
+/// plain Finished) form.
+pub(crate) fn subagent_counts_for(
+    agent: &AgentService,
+    session_id: Uuid,
+) -> super::flow::SubagentCounts {
+    let Some(mgr) = agent.subagent_manager() else {
+        return super::flow::SubagentCounts::default();
+    };
+    let (working, awaiting) = mgr.alive_counts_for(session_id);
+    super::flow::SubagentCounts { working, awaiting }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn deliver_final_response(
     bot: &Bot,

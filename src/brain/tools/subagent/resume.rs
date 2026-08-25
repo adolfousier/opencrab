@@ -282,6 +282,10 @@ impl Tool for ResumeAgentTool {
 
                         match next {
                             Some(text) => {
+                                // Flip back to Running so the in-memory state
+                                // matches the round now in flight — same as
+                                // spawn.rs / team-create.rs (#1183).
+                                manager.mark_running_again(&agent_id_clone);
                                 tracing::info!(
                                     "Sub-agent {} received follow-up input",
                                     agent_id_clone

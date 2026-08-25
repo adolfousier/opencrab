@@ -4,8 +4,9 @@
 //! in one outer expandable; only the processing log collapses.
 
 use crate::channels::telegram::flow::{
-    FlowHeader, FlowLine, FlowOutcome, render_flow_details_chrome, render_flow_details_chrome_pref,
-    render_flow_html_chrome, render_flow_html_chrome_pref, settled_icon_verb,
+    FlowHeader, FlowLine, FlowOutcome, SubagentCounts, render_flow_details_chrome,
+    render_flow_details_chrome_pref, render_flow_html_chrome, render_flow_html_chrome_pref,
+    settled_icon_verb, subagent_waiting_phrase,
 };
 use crate::channels::telegram::flow_chrome::{
     FlowSections, GoalSection, ProseSection, clock_glyph, split_plan_prose,
@@ -714,29 +715,134 @@ fn settled_header_waits_when_bg_tasks_running() {
     // #1144: a settled turn that ends with detached work must read "Waiting
     // for N background task(s)" in the header, not "✅ Finished", so the header
     // and the "N tasks running" footer stop contradicting each other.
-    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::Finished);
+    let (icon, verb) = settled_icon_verb(Some(2), SubagentCounts::default(), FlowOutcome::Finished);
     assert_eq!(
         (icon, verb.as_str()),
         ("⏳", "Waiting for 2 background tasks")
     );
 
-    let (icon, verb) = settled_icon_verb(Some(1), FlowOutcome::Finished);
+    let (icon, verb) = settled_icon_verb(Some(1), SubagentCounts::default(), FlowOutcome::Finished);
     assert_eq!(
         (icon, verb.as_str()),
         ("⏳", "Waiting for 1 background task")
     );
 
     // Nothing running (or no manager wired) → the plain finished header stands.
-    let (icon, verb) = settled_icon_verb(Some(0), FlowOutcome::Finished);
+    let (icon, verb) = settled_icon_verb(Some(0), SubagentCounts::default(), FlowOutcome::Finished);
     assert_eq!((icon, verb.as_str()), ("✅", "Finished"));
-    let (icon, verb) = settled_icon_verb(None, FlowOutcome::Finished);
+    let (icon, verb) = settled_icon_verb(None, SubagentCounts::default(), FlowOutcome::Finished);
     assert_eq!((icon, verb.as_str()), ("✅", "Finished"));
 
     // Non-finished outcomes are never overridden, even with work pending.
-    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::Failed);
+    let (icon, verb) = settled_icon_verb(
+        Some(2),
+        SubagentCounts {
+            working: 3,
+            awaiting: 1,
+        },
+        FlowOutcome::Failed,
+    );
     assert_eq!((icon, verb.as_str()), ("❌", "Failed"));
-    let (icon, verb) = settled_icon_verb(Some(2), FlowOutcome::TimedOut);
+    let (icon, verb) = settled_icon_verb(
+        Some(2),
+        SubagentCounts {
+            working: 3,
+            awaiting: 1,
+        },
+        FlowOutcome::TimedOut,
+    );
     assert_eq!((icon, verb.as_str()), ("⏱", "Timed out"));
+}
+
+#[test]
+fn settled_header_waits_when_subagents_alive() {
+    // #1183: sub-agents live in a registry the background-task count never
+    // read, so a turn ending with agents mid-work still said "✅ Finished".
+    // The waiting override now covers them, split working vs awaiting
+    // collection — the two need different things from the user (time vs a
+    // wait_agent/send_input/close_agent decision).
+    let working_only = SubagentCounts {
+        working: 2,
+        awaiting: 0,
+    };
+    let (icon, verb) = settled_icon_verb(None, working_only, FlowOutcome::Finished);
+    assert_eq!(
+        (icon, verb.as_str()),
+        ("⏳", "Waiting for 2 working agents")
+    );
+
+    let awaiting_only = SubagentCounts {
+        working: 0,
+        awaiting: 1,
+    };
+    let (icon, verb) = settled_icon_verb(Some(0), awaiting_only, FlowOutcome::Finished);
+    assert_eq!(
+        (icon, verb.as_str()),
+        ("⏳", "Waiting for 1 agent awaiting collection")
+    );
+
+    let mixed = SubagentCounts {
+        working: 2,
+        awaiting: 1,
+    };
+    let (icon, verb) = settled_icon_verb(None, mixed, FlowOutcome::Finished);
+    assert_eq!(
+        (icon, verb.as_str()),
+        (
+            "⏳",
+            "Waiting for 3 agents (2 working, 1 awaiting collection)"
+        )
+    );
+}
+
+#[test]
+fn settled_header_folds_agents_alongside_background_tasks() {
+    // #1183's headline shape: both background registries in ONE waiting verb,
+    // "1 background task + 2 working agents", so the card never hides one
+    // kind of pending work behind the other.
+    let agents = SubagentCounts {
+        working: 2,
+        awaiting: 1,
+    };
+    let (icon, verb) = settled_icon_verb(Some(1), agents, FlowOutcome::Finished);
+    assert_eq!(
+        (icon, verb.as_str()),
+        (
+            "⏳",
+            "Waiting for 1 background task + 3 agents (2 working, 1 awaiting collection)"
+        )
+    );
+
+    // Terminated agents never reach the header: zero counts read Finished.
+    let (icon, verb) = settled_icon_verb(Some(0), SubagentCounts::default(), FlowOutcome::Finished);
+    assert_eq!((icon, verb.as_str()), ("✅", "Finished"));
+}
+
+#[test]
+fn subagent_waiting_phrase_grammar_is_pinned() {
+    // The phrase is user-visible header grammar; pin all three forms so a
+    // refactor cannot silently change the wording the docs teach.
+    assert_eq!(
+        subagent_waiting_phrase(SubagentCounts {
+            working: 1,
+            awaiting: 0
+        }),
+        "1 working agent"
+    );
+    assert_eq!(
+        subagent_waiting_phrase(SubagentCounts {
+            working: 0,
+            awaiting: 2
+        }),
+        "2 agents awaiting collection"
+    );
+    assert_eq!(
+        subagent_waiting_phrase(SubagentCounts {
+            working: 4,
+            awaiting: 2
+        }),
+        "6 agents (4 working, 2 awaiting collection)"
+    );
 }
 
 #[test]

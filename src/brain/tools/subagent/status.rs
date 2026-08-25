@@ -61,6 +61,12 @@ pub fn status_path(agent_id: &str) -> PathBuf {
 pub enum AgentState {
     Pending,
     Running,
+    /// Parked at a round boundary awaiting follow-up input (#1183): the
+    /// round's work is done and its output is collectable, but the agent has
+    /// not terminated. Written so a parked file stops reading `Running`,
+    /// which misled every consumer into waiting on work that was already
+    /// finished. Not terminal — [`Self::is_terminal`] is false.
+    AwaitingInput,
     Completed,
     Failed,
     /// The process that owned this agent died before it reached a terminal
@@ -141,6 +147,18 @@ impl AgentStatus {
     /// Transition to `Running`.
     pub fn mark_running(&mut self) -> std::io::Result<()> {
         self.state = AgentState::Running;
+        self.write()
+    }
+
+    /// Park at a round boundary awaiting follow-up input (#1183). Mirrors
+    /// `SubAgentManager::mark_awaiting_input`: before this the file kept
+    /// reading `Running` with `completed_at: null` while the agent sat idle,
+    /// so audits kept waiting on work that was already finished
+    /// (`state: "Running"` on a parked agent, #1183). `completed_at` stays
+    /// `None` — this is not a terminal state, and flipping back via
+    /// [`Self::mark_running`] when input arrives is a normal transition.
+    pub fn mark_awaiting_input(&mut self) -> std::io::Result<()> {
+        self.state = AgentState::AwaitingInput;
         self.write()
     }
 

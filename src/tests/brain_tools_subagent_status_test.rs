@@ -43,6 +43,30 @@ fn status_transitions_to_running() {
 }
 
 #[test]
+fn status_parks_as_awaiting_input_and_flips_back() {
+    // #1183: a parked agent used to keep reading `state: "Running"` with
+    // `completed_at: null`, misleading every consumer into waiting on work
+    // that was already finished. The parked state is distinct, not terminal,
+    // and round-trips through the file so external readers see it too.
+    isolate("awaiting_input");
+    let mut s = AgentStatus::new("test-7", "test", "sess-1", "do things").unwrap();
+    s.mark_running().unwrap();
+    s.mark_awaiting_input().unwrap();
+    assert_eq!(s.state, AgentState::AwaitingInput);
+    assert!(!s.state.is_terminal(), "parked is not a terminal state");
+    assert!(s.completed_at.is_none(), "parked stamps no completion time");
+
+    let reread = AgentStatus::read("test-7").expect("should read back");
+    assert_eq!(reread.state, AgentState::AwaitingInput);
+
+    // Follow-up input flips the file back to working.
+    s.mark_running().unwrap();
+    assert_eq!(s.state, AgentState::Running);
+    let reread = AgentStatus::read("test-7").expect("should read back");
+    assert_eq!(reread.state, AgentState::Running);
+}
+
+#[test]
 fn status_progress_snapshot() {
     isolate("progress");
     let mut s = AgentStatus::new("test-3", "test", "sess-1", "do things").unwrap();
