@@ -47,3 +47,5 @@ pub(crate) use agent::{sanitize_command_name, truncate_description};
 
 pub(crate) mod state;
 pub use state::*;
+#[cfg(feature = "telegram-userbot")]
+pub(crate) mod userbot;

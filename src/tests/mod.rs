@@ -350,6 +350,8 @@ pub mod telegram_table_render_test;
 pub mod telegram_topic_routing_test;
 pub mod telegram_userbot_config_test;
 pub mod tool_search_child_registry_test;
+#[cfg(feature = "telegram-userbot")]
+pub mod telegram_userbot_session_test;
 pub mod tools_md_regression_test;
 pub mod write_opencrabs_file_inline_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows
