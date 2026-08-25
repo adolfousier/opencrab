@@ -248,6 +248,9 @@ pub(crate) fn register_runtime_tools(tool_registry: &Arc<ToolRegistry>, config: 
         tool_registry.register(Arc::new(
             crate::brain::tools::browser::BrowserFindTool::new(browser_manager.clone()),
         ));
+        tool_registry.register(Arc::new(crate::brain::tools::browser::BrowserActTool::new(
+            browser_manager.clone(),
+        )));
         // web_scrape escalates JS-only pages to a headless render, so it takes a
         // clone of the browser manager here (kept out of CORE_TOOLS, surfaced via
         // tool_search). Registered before BrowserCloseTool consumes the manager.
@@ -258,7 +261,7 @@ pub(crate) fn register_runtime_tools(tool_registry: &Arc<ToolRegistry>, config: 
         tool_registry.register(Arc::new(
             crate::brain::tools::browser::BrowserCloseTool::new(browser_manager),
         ));
-        tracing::info!("Browser automation tools registered (9 tools)");
+        tracing::info!("Browser automation tools registered (10 tools)");
     }
     #[cfg(not(feature = "browser"))]
     {

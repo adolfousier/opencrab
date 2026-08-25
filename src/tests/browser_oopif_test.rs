@@ -3,7 +3,9 @@
 //! one port embedding a child on another; find must surface the child's
 //! button under a namespaced index, click must route through it).
 
-use crate::brain::tools::browser::manager::{collect_cross_origin, origin_of, split_frame_selector};
+use crate::brain::tools::browser::manager::{
+    collect_cross_origin, origin_of, split_frame_selector,
+};
 use chromiumoxide::cdp::browser_protocol::page::{Frame, FrameTree};
 
 fn frame(url: &str, children: Vec<FrameTree>) -> FrameTree {
@@ -12,7 +14,11 @@ fn frame(url: &str, children: Vec<FrameTree>) -> FrameTree {
             url: url.to_string(),
             ..Default::default()
         },
-        child_frames: if children.is_empty() { None } else { Some(children) },
+        child_frames: if children.is_empty() {
+            None
+        } else {
+            Some(children)
+        },
     }
 }
 
@@ -39,8 +45,14 @@ fn frame_selector_split_cases() {
 
 #[test]
 fn origin_extraction() {
-    assert_eq!(origin_of("https://a.example.com:8000/x"), "https://a.example.com:8000");
-    assert_eq!(origin_of("https://b.example.com/page?q=1"), "https://b.example.com");
+    assert_eq!(
+        origin_of("https://a.example.com:8000/x"),
+        "https://a.example.com:8000"
+    );
+    assert_eq!(
+        origin_of("https://b.example.com/page?q=1"),
+        "https://b.example.com"
+    );
 }
 
 #[test]
@@ -50,13 +62,20 @@ fn cross_origin_walk_labels_and_skips_same_origin() {
     let tree = frame(
         "https://a.test:8000/",
         vec![
-            frame("https://a.test:8000/same", vec![frame("https://b.test:8001/child", vec![])]),
+            frame(
+                "https://a.test:8000/same",
+                vec![frame("https://b.test:8001/child", vec![])],
+            ),
             frame("https://c.test:8002/direct", vec![]),
         ],
     );
     let mut out = Vec::new();
     collect_cross_origin(&tree, "https://a.test:8000", &mut out);
-    assert_eq!(out.len(), 2, "same-origin child skipped, both cross frames kept");
+    assert_eq!(
+        out.len(),
+        2,
+        "same-origin child skipped, both cross frames kept"
+    );
     assert_eq!(out[0].0, "f1");
     assert_eq!(out[0].1, "https://b.test:8001/child");
     assert_eq!(out[1].0, "f2");

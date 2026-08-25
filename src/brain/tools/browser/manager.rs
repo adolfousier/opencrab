@@ -659,7 +659,10 @@ impl BrowserManager {
     /// Same-origin iframes are skipped — their DOM is reachable from the
     /// main frame's execution context, so the existing find/click JS
     /// already covers them.
-    pub async fn oopif_pages(&self, session_id: uuid::Uuid) -> anyhow::Result<Vec<(String, String, Page)>> {
+    pub async fn oopif_pages(
+        &self,
+        session_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<(String, String, Page)>> {
         use chromiumoxide::cdp::browser_protocol::page::GetFrameTreeParams;
 
         let page = self.get_or_create_session_page(session_id).await?;

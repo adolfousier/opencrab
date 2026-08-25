@@ -84,7 +84,9 @@ fn worker_target_creation_is_ignored_page_target_surfaces() {
         target_info: bp::target::TargetInfo::builder()
             .target_id("00000000000000000000000000000001".to_string())
             .r#type("worker")
-            .title("sw").attached(true).can_access_opener(false)
+            .title("sw")
+            .attached(true)
+            .can_access_opener(false)
             .url("https://example.com/sw.js")
             .build()
             .expect("builder"),
@@ -95,7 +97,9 @@ fn worker_target_creation_is_ignored_page_target_surfaces() {
         target_info: bp::target::TargetInfo::builder()
             .target_id("00000000000000000000000000000001".to_string())
             .r#type("page")
-            .title("popup").attached(true).can_access_opener(false)
+            .title("popup")
+            .attached(true)
+            .can_access_opener(false)
             .url("https://example.com/popup")
             .build()
             .expect("builder"),

@@ -1,6 +1,6 @@
 //! browser_type — Type text into an element or the focused element.
 
-use super::manager::{split_frame_selector, BrowserManager};
+use super::manager::{BrowserManager, split_frame_selector};
 use crate::brain::tools::error::Result;
 use crate::brain::tools::r#trait::{
     Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult,
@@ -88,13 +88,17 @@ impl Tool for BrowserTypeTool {
         let (page, selector): (chromiumoxide::Page, Option<String>) =
             if let Some(sel) = selector_input {
                 if let Some((label, rest)) = split_frame_selector(sel) {
-                    match self.manager.oopif_page_by_label(context.session_id, &label).await {
+                    match self
+                        .manager
+                        .oopif_page_by_label(context.session_id, &label)
+                        .await
+                    {
                         Ok(Some(p)) => (p, Some(rest)),
                         Ok(None) => {
                             return Ok(ToolResult::error(format!(
                                 "Frame '{label}' not found. The frame may have navigated away — \
                                  re-run `browser_find` to get a fresh inventory."
-                            )))
+                            )));
                         }
                         Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
                     }

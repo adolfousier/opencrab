@@ -167,9 +167,7 @@ impl Tool for BrowserFindTool {
                     let fraw = match fpage.evaluate(enumerate_js.as_str()).await {
                         Ok(r) => r.value().cloned().unwrap_or(Value::Null),
                         Err(e) => {
-                            frame_sections.push(format!(
-                                "[{label} {url}] inventory failed: {e}"
-                            ));
+                            frame_sections.push(format!("[{label} {url}] inventory failed: {e}"));
                             continue;
                         }
                     };

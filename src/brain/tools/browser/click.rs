@@ -1,6 +1,6 @@
 //! browser_click — Click an element by CSS selector.
 
-use super::manager::{split_frame_selector, BrowserManager};
+use super::manager::{BrowserManager, split_frame_selector};
 use crate::brain::tools::error::Result;
 use crate::brain::tools::r#trait::{
     Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult,
@@ -85,13 +85,17 @@ impl Tool for BrowserClickTool {
         // keep working on the main page exactly as before.
         let (page, selector): (chromiumoxide::Page, String) =
             if let Some((label, rest)) = split_frame_selector(selector_input) {
-                match self.manager.oopif_page_by_label(context.session_id, &label).await {
+                match self
+                    .manager
+                    .oopif_page_by_label(context.session_id, &label)
+                    .await
+                {
                     Ok(Some(p)) => (p, rest),
                     Ok(None) => {
                         return Ok(ToolResult::error(format!(
                             "Frame '{label}' not found. The frame may have navigated away — \
                              re-run `browser_find` to get a fresh inventory."
-                        )))
+                        )));
                     }
                     Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
                 }
