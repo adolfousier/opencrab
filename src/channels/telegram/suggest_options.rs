@@ -57,10 +57,10 @@ pub(crate) fn echo_fallback(text: &str, chooser: Option<&str>) -> String {
 pub(crate) const MAX_BUTTON_CHARS: usize = 50;
 /// Longest label allowed to share one row with its siblings (measured:
 /// 3-7 char words sit side by side without wrapping).
-const SHARED_ROW_MAX_CHARS: usize = 8;
+pub(crate) const SHARED_ROW_MAX_CHARS: usize = 8;
 /// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
 /// than 4 per row, so every target stays big enough for a finger.
-const MAX_NUMBERS_PER_ROW: usize = 4;
+pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
 
 /// Which shape the suggestion controls take for a given option list.
 /// Tiers are measured, not guessed — see [`MAX_BUTTON_CHARS`].
@@ -76,7 +76,7 @@ pub(crate) enum SuggestLayout {
     NumberedProse,
 }
 
-fn pick_layout(options: &[String]) -> SuggestLayout {
+pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     let width = |o: &String| o.chars().count();
     if options.len() <= MAX_NUMBERS_PER_ROW
         && options.iter().all(|o| width(o) <= SHARED_ROW_MAX_CHARS)
@@ -99,7 +99,7 @@ fn pick_layout(options: &[String]) -> SuggestLayout {
 /// No "Suggested next" header — the list rides directly under the answer
 /// text in the same bubble (#tg-suggest-merge), so the label would only
 /// duplicate what the buttons already say.
-fn folded_list_html(options: &[String]) -> String {
+pub(crate) fn folded_list_html(options: &[String]) -> String {
     options
         .iter()
         .enumerate()
@@ -119,7 +119,7 @@ fn folded_list_html(options: &[String]) -> String {
 /// throughout — picked over app-default after Alexey compared both live.
 /// Callback payloads stay `followup:<session>:<idx>`, so taps route through
 /// the existing callback dispatcher unchanged regardless of surface.
-fn suggestion_rows_rich_html(options: &[String], session_id: Uuid) -> String {
+pub(crate) fn suggestion_rows_rich_html(options: &[String], session_id: Uuid) -> String {
     let btn = |i: usize, label: &str| {
         format!(
             "<tg-button type=\"callback_data\" data=\"{FOLLOWUP_PREFIX}{session_id}:{i}\" \
@@ -307,63 +307,5 @@ pub(crate) async fn render_suggestions(
             // swallow an unrelated future tap.
             state.clear_pending_followups(session_id).await;
         }
-    }
-}
-
-#[cfg(test)]
-mod layout_tests {
-    use super::*;
-
-    #[test]
-    fn short_few_options_share_one_row() {
-        let opts = vec!["Yes".to_string(), "No".to_string(), "Skip".to_string()];
-        assert_eq!(pick_layout(&opts), SuggestLayout::SharedRow);
-    }
-
-    #[test]
-    fn five_short_options_do_not_share_a_row() {
-        // >4 tap targets in one row = buttons too small for a finger
-        // (Alexey, 2026-08-25). They drop to the Column tier instead.
-        let opts: Vec<String> = ["alpha", "beta", "gamma", "delta", "eps"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(
-            opts.iter()
-                .all(|o| o.chars().count() <= SHARED_ROW_MAX_CHARS)
-        );
-        assert_eq!(pick_layout(&opts), SuggestLayout::Column);
-    }
-
-    #[test]
-    fn nine_char_label_kills_shared_row() {
-        let opts = vec!["Yes".to_string(), "x".repeat(9)];
-        assert_eq!(pick_layout(&opts), SuggestLayout::Column);
-    }
-
-    #[test]
-    fn boundary_exactly_50_stays_column() {
-        // Measured: 50ch fits one line (probe P2), so 50 stays a button.
-        let opts = vec!["x".repeat(50)];
-        assert_eq!(pick_layout(&opts), SuggestLayout::Column);
-    }
-
-    #[test]
-    fn over_50_folds_to_numbered_prose() {
-        // Measured: 54ch wraps (probe P3); cap is exclusive at 50.
-        let opts = vec!["Ship it".to_string(), "x".repeat(51)];
-        assert_eq!(pick_layout(&opts), SuggestLayout::NumberedProse);
-    }
-
-    #[test]
-    fn folded_list_is_rich_html_without_header() {
-        let opts = vec!["Ship it".to_string(), "Review & merge".to_string()];
-        let body = folded_list_html(&opts);
-        // Header is gone (#tg-suggest-merge) — the list rides under the answer.
-        assert!(!body.contains("Suggested next"));
-        // Canonical renderer output: numbered lines, HTML-escaped text
-        // (& → &amp; proves the shared pipeline escaped, not a private one).
-        assert!(body.contains("1. Ship it"));
-        assert!(body.contains("2. Review &amp; merge"));
     }
 }
