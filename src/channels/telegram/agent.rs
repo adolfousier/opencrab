@@ -482,7 +482,7 @@ impl TelegramAgent {
                                                 }
                                             };
                                         if let Err(e) =
-                                            crate::channels::telegram::resume::resume_session(
+                                            crate::channels::telegram::resume::resume_session_inner(
                                                 bot_clone,
                                                 chat_id,
                                                 thread_id,
@@ -1528,7 +1528,7 @@ impl TelegramAgent {
                                             // runner; a button tap triggers it exactly like a
                                             // resumed turn (no inbound message to react to).
                                             if let Err(e) =
-                                                crate::channels::telegram::resume::resume_session(
+                                                crate::channels::telegram::resume::resume_session_inner(
                                                     bot2,
                                                     chat_id,
                                                     thread_id,
@@ -1645,7 +1645,7 @@ impl TelegramAgent {
                                                     }
                                                 };
                                             if let Err(e) =
-                                                crate::channels::telegram::resume::resume_session(
+                                                crate::channels::telegram::resume::resume_session_inner(
                                                     bot_cb,
                                                     cb_chat,
                                                     cb_thread,

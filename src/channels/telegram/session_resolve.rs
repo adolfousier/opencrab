@@ -74,6 +74,35 @@ pub fn topic_session_id(is_topic_message: bool, thread_id: Option<i32>) -> Optio
     if is_topic_message { thread_id } else { None }
 }
 
+/// Canonical Telegram thread id of a forum group's built-in General topic.
+/// General messages carry NO explicit `message_thread_id` and are not flagged
+/// `is_topic_message`, which historically made them indistinguishable from
+/// DMs / non-forum groups (#1220).
+pub const GENERAL_TOPIC_ID: i32 = 1;
+
+/// #1220: normalize a raw topic resolution for KNOWN forum chats.
+///
+/// `raw` is the output of [`topic_session_id`]; `known_forum` is the
+/// evidence-based verdict that this chat has hosted at least one
+/// thread-scoped message (see `TelegramState::note_thread_evidence`).
+///
+/// In a known forum, a message with no explicit topic IS the General topic,
+/// not "no topic" — so it gets its own session bucket keyed on
+/// `Some(GENERAL_TOPIC_ID)` instead of collapsing into the base
+/// `[chat:<id>]` session. This makes bg-task / subagent pushes (#1200)
+/// route back to General instead of falling to the chat-wide-latest
+/// lookup and landing in whatever topic spoke last.
+///
+/// Cold start: until the chat's first thread-scoped message is observed
+/// (in-memory cache), `known_forum` is false and behaviour is unchanged.
+pub fn normalize_topic(raw: Option<i32>, known_forum: bool) -> Option<i32> {
+    raw.or(if known_forum {
+        Some(GENERAL_TOPIC_ID)
+    } else {
+        None
+    })
+}
+
 /// True when a session exceeded the configured idle window (same rule as handler suffix path).
 pub fn session_idle_expired(
     updated_at: chrono::DateTime<chrono::Utc>,

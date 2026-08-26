@@ -186,7 +186,23 @@ pub(crate) fn build_enqueue_callback(
                 return;
             };
 
-            if let Err(e) = resume_session(
+            // The topic that OWNS the session, not whichever one spoke last
+            // (#1200). Sessions are per-topic since #215, and
+            // `register_session_chat` records the topic, but this path asked
+            // the chat instead: in a forum, any traffic in another topic while
+            // a detached command ran sent the result there. Both background
+            // completions and sub-agent results share this callback, so they
+            // were both misrouted.
+            //
+            // The chat-wide lookup stays as the fallback. It is still right
+            // for a DM or a non-forum group (where `session_topic` is None
+            // anyway), and it is all we have for a session whose in-memory
+            // topic binding has not been re-registered since a restart.
+            let thread_id = match state.session_topic(session_id).await {
+                Some(topic) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(topic))),
+                None => super::send::latest_thread_id_for_chat(chat_id).await,
+            };
+            if let Err(e) = resume_session_inner(
                 bot,
                 teloxide::types::ChatId(chat_id),
                 thread_id,
@@ -203,9 +219,59 @@ pub(crate) fn build_enqueue_callback(
     })
 }
 
-/// Resume an interrupted session with full streaming (typing, tool messages, edit loop).
+/// Public entry for resuming a session with the full streaming pipeline:
+/// claims the session's turn slot (#1222), then drives `resume_session_inner`.
+///
+/// Callers that ALREADY hold the turn guard — the bg-resume enqueue callback
+/// (resume.rs #845/#1213), the end-of-turn stranded flush (handler.rs #1213)
+/// and the agent approval flows (agent.rs) — must call `resume_session_inner`
+/// directly so the slot is not double-claimed.
+///
 /// Called from ui.rs on startup when pending Telegram requests are detected.
 pub(crate) async fn resume_session(
+    bot: Bot,
+    chat_id: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    session_id: Uuid,
+    prompt: String,
+    agent: Arc<AgentService>,
+    telegram_state: Arc<TelegramState>,
+) -> anyhow::Result<()> {
+    // Claim the session's turn slot for the whole replay (#1222). A recovery
+    // replay drives the SAME edit loop as an ingress turn but used to run
+    // without holding TelegramState's active_turns flag, so any inbound
+    // message arriving mid-replay read the session as idle and forked a
+    // second concurrent tool loop on top of it — two interleaved streaming
+    // blocks progressing in one topic. Holding the RAII guard for the whole
+    // resumed turn makes ingress queue follow-ups (#501/#845) exactly as it
+    // does for normal turns; resume-born loops already drain those queues.
+    // If the slot is somehow taken, skipping is safe: the pending item was
+    // already cleared from the repo and something else owns the turn.
+    let _turn_guard = match telegram_state.try_begin_turn(session_id) {
+        Some(guard) => guard,
+        None => {
+            tracing::warn!(
+                "Telegram: resume_session {session_id} skipped — a turn is already active for this session"
+            );
+            return Ok(());
+        }
+    };
+    resume_session_inner(
+        bot,
+        chat_id,
+        thread_id,
+        session_id,
+        prompt,
+        agent,
+        telegram_state,
+    )
+    .await
+}
+
+/// Unguarded core of `resume_session`. The turn-slot contract lives in the
+/// caller: either hold an `ActiveTurnGuard` across the await, or go through
+/// the public wrapper.
+pub(crate) async fn resume_session_inner(
     bot: Bot,
     chat_id: ChatId,
     thread_id: Option<teloxide::types::ThreadId>,
