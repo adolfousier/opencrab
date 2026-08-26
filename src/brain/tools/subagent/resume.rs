@@ -216,7 +216,7 @@ impl Tool for ResumeAgentTool {
             Arc::new(
                 crate::brain::agent::AgentService::new(provider, service_context, &config)
                     .await
-                    .with_tool_registry(Arc::new(child_registry))
+                    .with_tool_registry(child_registry)
                     .with_auto_approve_tools(true)
                     .with_working_directory(context.working_dir()),
             )

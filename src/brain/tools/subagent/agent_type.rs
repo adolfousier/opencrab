@@ -13,7 +13,10 @@
 //! bash, so it was write-capable). Unknown values fail closed rather than
 //! silently escalating to full write access.
 
-use crate::brain::tools::ToolRegistry;
+use crate::brain::tools::catalog;
+use crate::brain::tools::registry::ToolRegistry;
+use crate::brain::tools::tool_search::ToolSearchTool;
+use std::sync::Arc;
 
 /// Tools that sub-agents must NEVER have access to (prevents recursion / dangerous ops).
 const ALWAYS_EXCLUDED: &[&str] = &[
@@ -34,11 +37,31 @@ const ALWAYS_EXCLUDED: &[&str] = &[
 /// This is the FULL-access child baseline. When the parent granted only read
 /// access, the caller additionally applies plan_gate's
 /// `restrict_registry_to_read_only` on the returned registry.
-pub fn build_child_registry(parent: &ToolRegistry) -> ToolRegistry {
-    let child = ToolRegistry::new();
+///
+/// Returns an [`Arc`] because callers hand the registry to `AgentService`
+/// wrapped anyway — and because [`ToolSearchTool`] must be RE-BOUND to this
+/// child Arc (#1210): the parent's search-tool instance captured the parent's
+/// registry at construction. Copying that instance here made a child's
+/// `tool_search` activate schemas in the PARENT's registry under the child's
+/// session id, while the child's request builder read active tools from its
+/// OWN registry — so a discovered tool's schema never rode on the child's
+/// next request, and well-behaved models looped re-searching forever instead
+/// of emitting calls for undeclared tools (observed live on two models across
+/// two providers; see upstream #1210). Re-binding per level also keeps the
+/// fix correct for nested spawns: each generation's search tool points at
+/// its own registry.
+pub fn build_child_registry(parent: &ToolRegistry) -> Arc<ToolRegistry> {
+    let child = Arc::new(ToolRegistry::new());
 
     for name in parent.list_tools() {
         if ALWAYS_EXCLUDED.contains(&name.as_str()) {
+            continue;
+        }
+
+        if name == catalog::TOOL_SEARCH_NAME {
+            // Fresh instance bound to THIS registry, so the child's searches
+            // land where the child's requests read (#1210).
+            child.register(Arc::new(ToolSearchTool::new(child.clone())));
             continue;
         }
 
