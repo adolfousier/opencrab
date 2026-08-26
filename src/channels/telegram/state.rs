@@ -19,6 +19,26 @@ type PhotoBufferKey = (i64, i64, String);
 type DirBrowserKey = (i64, Option<i32>);
 type DirBrowserState = (String, Option<String>);
 
+/// Where a mid-turn queued message came from (#1213).
+///
+/// The queue's designed consumer is the live tool loop, which drains it
+/// between rounds and does not care about origin. The end-of-turn flush does:
+/// it runs when the loop has already exited, and the two kinds need different
+/// destinations from there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueuedOrigin {
+    /// An emoji reaction. A single toolless round is the right size for it.
+    Reaction,
+    /// A background command or sub-agent result. Needs a real tool loop.
+    DetachedWork,
+}
+
+/// A queued message with the origin that decides how it is flushed.
+pub(crate) struct QueuedItem {
+    pub(crate) origin: QueuedOrigin,
+    pub(crate) msg: crate::brain::agent::QueuedUserMessage,
+}
+
 /// Shared Telegram state for proactive messaging.
 ///
 /// Set when the bot connects (agent stores Bot) and when the owner
@@ -147,9 +167,7 @@ pub struct TelegramState {
     /// injected into that turn's tool loop between rounds. Keyed by session_id,
     /// drained FIFO (#302 Stage 2). `std::sync::Mutex` (not tokio) so the drain
     /// callback and the RAII active-turn guard can touch it without awaiting.
-    pending_reactions: std::sync::Mutex<
-        HashMap<Uuid, std::collections::VecDeque<crate::brain::agent::QueuedUserMessage>>,
-    >,
+    pending_reactions: std::sync::Mutex<HashMap<Uuid, std::collections::VecDeque<QueuedItem>>>,
     /// Sessions with an agent turn currently in flight, so `handle_reaction` can
     /// tell mid-turn (enqueue for injection) from idle (fire a standalone turn).
     /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
@@ -802,8 +820,45 @@ impl TelegramState {
         session_id: Uuid,
         msg: crate::brain::agent::QueuedUserMessage,
     ) {
-        if let Ok(mut map) = self.pending_reactions.lock() {
-            map.entry(session_id).or_default().push_back(msg);
+        self.enqueue_item(session_id, QueuedOrigin::Reaction, msg);
+    }
+
+    /// Enqueue the result of DETACHED work — a background command or a
+    /// sub-agent — for injection into the running loop.
+    ///
+    /// Same queue, different origin, because the two need different treatment
+    /// if the loop ends before draining them (#1213). A reaction is an
+    /// acknowledgement and a single toolless round answers it fine. A
+    /// detached result is evidence the agent is expected to ACT on, and
+    /// answering it without a tool registry produces a turn that announces
+    /// follow-up work it is structurally unable to perform.
+    pub(crate) fn enqueue_detached_result(
+        &self,
+        session_id: Uuid,
+        msg: crate::brain::agent::QueuedUserMessage,
+    ) {
+        self.enqueue_item(session_id, QueuedOrigin::DetachedWork, msg);
+    }
+
+    fn enqueue_item(
+        &self,
+        session_id: Uuid,
+        origin: QueuedOrigin,
+        msg: crate::brain::agent::QueuedUserMessage,
+    ) {
+        match self.pending_reactions.lock() {
+            Ok(mut map) => map
+                .entry(session_id)
+                .or_default()
+                .push_back(QueuedItem { origin, msg }),
+            Err(e) => {
+                // The message is gone at this point, and for detached work
+                // that means a result nobody will ever see.
+                tracing::error!(
+                    "Telegram: could not queue a {origin:?} message for session {session_id}, \
+                     it is dropped: {e}"
+                );
+            }
         }
     }
 
@@ -815,11 +870,28 @@ impl TelegramState {
     ) -> Option<crate::brain::agent::QueuedUserMessage> {
         let mut map = self.pending_reactions.lock().ok()?;
         let queue = map.get_mut(&session_id)?;
-        let msg = queue.pop_front();
+        let item = queue.pop_front();
         if queue.is_empty() {
             map.remove(&session_id);
         }
-        msg
+        item.map(|i| i.msg)
+    }
+
+    /// Take everything still queued for `session_id`, WITH origins.
+    ///
+    /// Used by the end-of-turn flush, which is the one consumer that has to
+    /// tell the two apart: by then the loop has exited, so whatever is left
+    /// needs a destination chosen by what it is (#1213).
+    pub(crate) fn drain_queued_items(&self, session_id: Uuid) -> Vec<QueuedItem> {
+        match self.pending_reactions.lock() {
+            Ok(mut map) => map.remove(&session_id).map(Vec::from).unwrap_or_default(),
+            Err(e) => {
+                tracing::error!(
+                    "Telegram: could not drain queued messages for session {session_id}: {e}"
+                );
+                Vec::new()
+            }
+        }
     }
 
     /// A [`MessageQueueCallback`](crate::brain::agent::MessageQueueCallback) that
