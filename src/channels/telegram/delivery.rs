@@ -466,15 +466,10 @@ pub(crate) async fn deliver_final_response(
                         // Merge candidate (#tg-suggest-merge): table-free rich
                         // bubbles can carry the suggestion controls too.
                         if !super::rich::contains_table(&pre_dedup_text) {
-                            final_bubble =
-                                Some(super::state::MergeBubble {
-                                    message_id: teloxide::types::MessageId(
-                                        rich_msg_id,
-                                    ),
-                                    body: super::state::BubbleBody::Markdown(
-                                        pre_dedup_text.clone(),
-                                    ),
-                                });
+                            final_bubble = Some(super::state::MergeBubble {
+                                message_id: teloxide::types::MessageId(rich_msg_id),
+                                body: super::state::BubbleBody::Markdown(pre_dedup_text.clone()),
+                            });
                         }
                         // Store bot reply in channel_messages even though
                         // text_only is empty (dedup stripped it). The rich
@@ -664,15 +659,10 @@ pub(crate) async fn deliver_final_response(
                                 // rich HTML input, which flattens tables (#679);
                                 // those answers keep the standalone fallback.
                                 if !super::rich::contains_table(&rich_md) {
-                                    final_bubble =
-                                        Some(super::state::MergeBubble {
-                                            message_id: teloxide::types::MessageId(
-                                                id,
-                                            ),
-                                            body: super::state::BubbleBody::Markdown(
-                                                rich_md.clone(),
-                                            ),
-                                        });
+                                    final_bubble = Some(super::state::MergeBubble {
+                                        message_id: teloxide::types::MessageId(id),
+                                        body: super::state::BubbleBody::Markdown(rich_md.clone()),
+                                    });
                                 }
                                 true
                             }
@@ -721,8 +711,7 @@ pub(crate) async fn deliver_final_response(
                                 sent_reply_id = Some(mid.0);
                                 // Merge candidate (#tg-suggest-merge): the
                                 // answer bubble suggest_options can ride on.
-                                final_bubble =
-                                    Some(super::state::MergeBubble {
+                                final_bubble = Some(super::state::MergeBubble {
                                     message_id: mid,
                                     body: super::state::BubbleBody::Html(chunks[0].clone()),
                                 });
@@ -737,16 +726,21 @@ pub(crate) async fn deliver_final_response(
                                     Ok(_) => {
                                         sent_reply_id = Some(mid.0);
                                         final_bubble = Some(super::state::MergeBubble {
-                                    message_id: mid,
-                                    body: super::state::BubbleBody::Html(chunks[0].clone()),
-                                });
+                                            message_id: mid,
+                                            body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                        });
                                     }
                                     Err(e) => {
                                         tracing::warn!(
                                             "Telegram: edit retry failed ({e}), falling back to delete+send"
                                         );
-                                        best_effort_delete(bot, chat_id, mid, "edit-retry fallback")
-                                            .await;
+                                        best_effort_delete(
+                                            bot,
+                                            chat_id,
+                                            mid,
+                                            "edit-retry fallback",
+                                        )
+                                        .await;
                                         // Never silent (#1019): this is the LAST fallback.
                                         // The edit already failed and was logged; if the
                                         // resend fails too the message is gone entirely,
@@ -758,9 +752,11 @@ pub(crate) async fn deliver_final_response(
                                         {
                                             sent_reply_id = Some(sent.0);
                                             final_bubble = Some(super::state::MergeBubble {
-                                        message_id: sent,
-                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
-                                    });
+                                                message_id: sent,
+                                                body: super::state::BubbleBody::Html(
+                                                    chunks[0].clone(),
+                                                ),
+                                            });
                                         } else {
                                             tracing::error!(
                                                 "Telegram: delete+send fallback failed in chat {chat_id}, \
@@ -799,9 +795,9 @@ pub(crate) async fn deliver_final_response(
                             {
                                 sent_reply_id = Some(sent.0);
                                 final_bubble = Some(super::state::MergeBubble {
-                                        message_id: sent,
-                                        body: super::state::BubbleBody::Html(chunk.clone()),
-                                    });
+                                    message_id: sent,
+                                    body: super::state::BubbleBody::Html(chunk.clone()),
+                                });
                             }
                         }
                     }
