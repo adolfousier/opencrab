@@ -790,5 +790,5 @@ async fn sender_label(
 /// Short session id: first 8 hex chars of the uuid (matches `session_search`
 /// list's short-id prefix display).
 fn short_session_id(uuid: Uuid) -> String {
-    uuid.to_simple().to_string()[..8].to_owned()
+    uuid.simple().to_string()[..8].to_owned()
 }
