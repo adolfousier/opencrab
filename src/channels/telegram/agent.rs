@@ -297,6 +297,23 @@ impl TelegramAgent {
                                                  session {sid} idx {idx} (stash empty — consumed \
                                                  or never set)"
                                             );
+                                            // Stale shell (#1226): the picker behind this
+                                            // keyboard was consumed or lost to a deploy.
+                                            // Strip the dead keyboard so the bubble stops
+                                            // silently eating taps.
+                                            if let Some(msg) = query
+                                                .message
+                                                .as_ref()
+                                                .and_then(|m| m.regular_message())
+                                                && let Err(e) = bot
+                                                    .edit_message_reply_markup(msg.chat.id, msg.id)
+                                                    .await
+                                            {
+                                                tracing::warn!(
+                                                    "Telegram followup tap: stale keyboard strip \
+                                                     failed: {e}"
+                                                );
+                                            }
                                         }
                                         // (session, chosen text, merged host). The host is
                                         // Some when the keyboard was merged onto the answer
