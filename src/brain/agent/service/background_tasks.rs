@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use uuid::Uuid;
 
-use super::types::{MessageEnqueueCallback, QueuedUserMessage};
+use super::types::{MessageEnqueueCallback, PushOrigin, QueuedUserMessage};
 
 /// Result of a finished background command.
 #[derive(Debug, Clone)]
@@ -298,5 +298,8 @@ pub(crate) fn completion_message(
         "🔧 background task {}: {label}",
         if result.success { "finished" } else { "failed" }
     );
-    QueuedUserMessage::system(context, display)
+    let mut msg = QueuedUserMessage::system(context, display);
+    // #1221: marks this delivery for the Telegram collapsible echo bubble.
+    msg.origin = PushOrigin::BackgroundTask;
+    msg
 }

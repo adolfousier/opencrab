@@ -47,6 +47,42 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: agent gone; dropping resume");
                 return;
             };
+            // The topic that OWNS the session, not whichever one spoke last
+            // (#1200). Sessions are per-topic since #215, and
+            // `register_session_chat` records the topic, but this path asked
+            // the chat instead: in a forum, any traffic in another topic while
+            // a detached command ran sent the result there. Both background
+            // completions and sub-agent results share this callback, so they
+            // were both misrouted.
+            //
+            // The chat-wide lookup stays as the fallback. It is still right
+            // for a DM or a non-forum group (where `session_topic` is None
+            // anyway), and it is all we have for a session whose in-memory
+            // topic binding has not been re-registered since a restart.
+            let thread_id = match state.session_topic(session_id).await {
+                Some(topic) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(topic))),
+                None => super::send::latest_thread_id_for_chat(chat_id).await,
+            };
+
+            // #1221: announce WHAT arrived before anything else happens — an
+            // expandable blockquote echoing the completion output (rich format
+            // preserved), so the user sees why the session woke up even when
+            // the resumed answer restates it. Fires on BOTH delivery paths:
+            // before the guard branch below means idle-wakes AND results that
+            // get queued into an in-flight turn are announced alike. Scoped to
+            // background-task completions only; sub-agent pushes stay silent.
+            if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask {
+                let html = render_bg_echo_html(&msg.context_text);
+                if let Err(e) = bot
+                    .send_message(chat_id, html)
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .message_thread_id(thread_id)
+                    .await
+                {
+                    tracing::warn!("[bg-resume] #1221 echo bubble failed to send: {e}");
+                }
+            }
+
             // One streaming turn per session (#845). Several detached commands
             // finishing together used to spawn a resume turn each, all on this
             // session and all in this chat, so every one opened and edited its
@@ -74,22 +110,6 @@ pub(crate) fn build_enqueue_callback(
                 return;
             };
 
-            // The topic that OWNS the session, not whichever one spoke last
-            // (#1200). Sessions are per-topic since #215, and
-            // `register_session_chat` records the topic, but this path asked
-            // the chat instead: in a forum, any traffic in another topic while
-            // a detached command ran sent the result there. Both background
-            // completions and sub-agent results share this callback, so they
-            // were both misrouted.
-            //
-            // The chat-wide lookup stays as the fallback. It is still right
-            // for a DM or a non-forum group (where `session_topic` is None
-            // anyway), and it is all we have for a session whose in-memory
-            // topic binding has not been re-registered since a restart.
-            let thread_id = match state.session_topic(session_id).await {
-                Some(topic) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(topic))),
-                None => super::send::latest_thread_id_for_chat(chat_id).await,
-            };
             if let Err(e) = resume_session_inner(
                 bot,
                 teloxide::types::ChatId(chat_id),
@@ -560,4 +580,32 @@ pub(crate) async fn resume_session_inner(
     }
 
     Ok(())
+}
+
+/// Cap for the #1221 echo body: classic `sendMessage` caps a message at 4096
+/// chars; header, tags and Telegram's own margin eat the rest of the budget.
+const BG_ECHO_BODY_CAP_CHARS: usize = 3200;
+
+/// Build the HTML for the #1221 background-task echo bubble: an expandable
+/// blockquote whose body keeps the completion text's rich formatting (fences,
+/// bold) through the markdown→HTML converter. Raw text is truncated BEFORE
+/// conversion so the tags stay well-formed — cutting rendered HTML can split
+/// a tag and make Telegram strip the formatting entirely (plan_card lesson).
+///
+/// The synthetic `[System: ...]` framing is stripped so prompt scaffolding
+/// never renders to the user; any other shape passes through untouched.
+pub(crate) fn render_bg_echo_html(context_text: &str) -> String {
+    let trimmed = context_text.trim();
+    let inner = trimmed
+        .strip_prefix("[System:")
+        .and_then(|s| s.strip_suffix(']'))
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    let truncated = inner.chars().count() > BG_ECHO_BODY_CAP_CHARS;
+    let body = crate::utils::string::truncate_chars(inner, BG_ECHO_BODY_CAP_CHARS);
+    format!(
+        "<blockquote expandable><b>⚙️ background task result{}</b>\n{}</blockquote>",
+        if truncated { " (truncated)" } else { "" },
+        super::rich::markdown_to_html(body),
+    )
 }

@@ -65,6 +65,7 @@ pub(crate) fn completion_message(
     crate::brain::agent::QueuedUserMessage {
         context_text,
         display_text,
+        origin: crate::brain::agent::PushOrigin::SubAgent,
     }
 }
 
