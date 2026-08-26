@@ -324,6 +324,8 @@ pub mod services_message_test;
 pub mod services_project_test;
 pub mod services_session_test;
 pub mod session_search_tail_test;
+#[cfg(feature = "telegram")]
+pub mod session_search_query_test;
 pub mod shell_scan_test;
 #[cfg(feature = "telegram")]
 pub mod start_gate_allowed_user_test;

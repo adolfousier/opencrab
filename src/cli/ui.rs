@@ -846,6 +846,18 @@ async fn cmd_chat_inner(
         crate::brain::tools::telegram_send::TelegramSendTool::new(telegram_state.clone()),
     ));
 
+    // Re-register session_search carrying live channel state so discovery
+    // rows report turn activity (running/idle, #1203). Registry insert
+    // replaces the stateless core instance by name; the daemon path keeps
+    // that stateless one.
+    #[cfg(feature = "telegram")]
+    tool_registry.register(Arc::new(
+        crate::brain::tools::session_search::SessionSearchTool::with_telegram(
+            db.pool().clone(),
+            telegram_state.clone(),
+        ),
+    ));
+
     // Register cowork tool — launch a Telegram cowork workspace from anywhere
     // (TUI included); generates the deep link + QR and registers the session.
     #[cfg(feature = "telegram")]
