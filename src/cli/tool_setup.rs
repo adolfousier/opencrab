@@ -113,7 +113,7 @@ pub(crate) fn register_core_agent_tools(
     // (lazy-tools mode). Holds the registry Arc so it can search all tools;
     // harmless when lazy_tools is off (just one more always-available tool).
     tool_registry.register(Arc::new(
-        crate::brain::tools::tool_search::ToolSearchTool::new(tool_registry.clone()),
+        crate::brain::tools::tool_search::ToolSearchTool::new(tool_registry),
     ));
     // Tools whose availability depends on config / keys (EXA, Brave, image
     // generation, vision/video). Shared with the config watcher so a key added
