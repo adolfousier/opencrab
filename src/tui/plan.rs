@@ -673,6 +673,40 @@ pub struct PlanTask {
     /// path, or legacy plan).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification: Option<VerificationVerdict>,
+
+    /// Optional structured scope contract. When set, `build_worker_brief`
+    /// renders an explicit "MAY/MUST NOT" contract the worker must honour.
+    /// The harness validates the scope at brief-build time (fail-closed on
+    /// malformed) and does NOT enforce it post-hoc in v1. See
+    /// `validate_task_scope` in `brain::tools::plan_tool`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<TaskScope>,
+}
+
+/// Structured scope contract for an isolated plan worker (opt-in).
+///
+/// Paths are relative to the worker's `working_dir`. The harness renders
+/// this as an explicit contract in the worker brief. The worker is trusted
+/// to honour it; post-hoc enforcement is a separate work item.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskScope {
+    /// Paths the task is expected to write/create.
+    #[serde(default)]
+    pub do_write: Vec<String>,
+
+    /// Paths the task must NOT touch (typically sibling tasks' territory).
+    #[serde(default)]
+    pub do_not_write: Vec<String>,
+
+    /// Tools the task should restrict itself to. `None` means inherit the
+    /// parent's full tool set (minus `ALWAYS_EXCLUDED`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub do_call: Option<Vec<String>>,
+
+    /// Tools explicitly forbidden. Naming an `ALWAYS_EXCLUDED` tool here is
+    /// redundant but not wrong; the validator does not reject it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub do_not_call: Option<Vec<String>>,
 }
 
 impl PlanTask {
@@ -691,6 +725,7 @@ impl PlanTask {
             notes: None,
             retry_count: 0,
             verification: None,
+            scope: None,
         }
     }
 

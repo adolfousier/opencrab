@@ -4,7 +4,10 @@
 
 use super::error::{Result, ToolError};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
-use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskDep, TaskStatus, TaskType};
+use crate::brain::tools::subagent::agent_type::ALWAYS_EXCLUDED;
+use crate::tui::plan::{
+    PlanDocument, PlanStatus, PlanTask, TaskDep, TaskScope, TaskStatus, TaskType,
+};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -2632,6 +2635,60 @@ pub(crate) fn resolve_task_execution(
     Isolated
 }
 
+/// Validate a `TaskScope`. Fails closed: a malformed scope surfaces an
+/// error string instead of silently producing a weak contract. Rejects:
+/// - `do_write` and `do_not_write` overlap on any path
+/// - any path is absolute or contains `..` (escapes `working_dir`)
+/// - `do_call` names a tool in `ALWAYS_EXCLUDED` (parent intent conflicts
+///   with the harness's never-allow list)
+///
+/// `working_dir` is currently unused in v1 validation but is reserved for
+/// future per-host checks (e.g. paths under `/etc` even if relative-looking
+/// via symlinks). Pass it through so the signature does not need to change.
+pub(crate) fn validate_task_scope(scope: &TaskScope, working_dir: &Path) -> Result<()> {
+    use std::collections::HashSet;
+    let _ = working_dir; // reserved for future per-host checks
+
+    let do_write: HashSet<&str> = scope.do_write.iter().map(String::as_str).collect();
+    let do_not_write: HashSet<&str> = scope.do_not_write.iter().map(String::as_str).collect();
+
+    let overlap: Vec<&&str> = do_write.intersection(&do_not_write).collect();
+    if !overlap.is_empty() {
+        return Err(ToolError::InvalidInput(format!(
+            "TaskScope overlap (paths in both do_write and do_not_write): {:?}",
+            overlap
+        )));
+    }
+
+    for path in do_write.iter().chain(do_not_write.iter()) {
+        let p = std::path::Path::new(path);
+        if p.is_absolute() {
+            return Err(ToolError::InvalidInput(format!(
+                "TaskScope path must be relative to working_dir ({} is absolute)",
+                path
+            )));
+        }
+        if path.split(['/', '\\']).any(|seg| seg == "..") {
+            return Err(ToolError::InvalidInput(format!(
+                "TaskScope path must not contain '..' ({} escapes working_dir)",
+                path
+            )));
+        }
+    }
+
+    for tool in scope.do_call.iter().flatten() {
+        if ALWAYS_EXCLUDED.contains(&tool.as_str()) {
+            return Err(ToolError::InvalidInput(format!(
+                "TaskScope.do_call cannot contain ALWAYS_EXCLUDED tool '{}' \
+                 (harness always strips it; listing it here is a contradiction)",
+                tool
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Task brief handed to an isolated plan worker. The child session is
 /// FRESH: this brief plus the parent's plan file is everything it gets —
 /// no parent conversation, never. Keep it self-contained.
@@ -2658,6 +2715,57 @@ pub(crate) fn build_worker_brief(
         }
     }
     brief.push_str(&format!("\nWorking directory: {}\n", working_dir.display()));
+
+    // Optional structured scope contract — when present, render an
+    // explicit MAY/MUST NOT table. The brief becomes a hard contract the
+    // worker must honour; the harness does not enforce post-hoc in v1.
+    if let Some(scope) = &task.scope {
+        match validate_task_scope(scope, working_dir) {
+            Ok(()) => {
+                brief.push_str("\nScope contract (HARD — paths are relative to working_dir):\n");
+                if !scope.do_write.is_empty() {
+                    brief.push_str("  ✅ MAY write:\n");
+                    for p in &scope.do_write {
+                        brief.push_str(&format!("    - {p}\n"));
+                    }
+                }
+                if !scope.do_not_write.is_empty() {
+                    brief.push_str("  🚫 MUST NOT write:\n");
+                    for p in &scope.do_not_write {
+                        brief.push_str(&format!("    - {p}\n"));
+                    }
+                }
+                if let Some(do_call) = &scope.do_call {
+                    if !do_call.is_empty() {
+                        brief.push_str("  ✅ MAY call tools:\n");
+                        for t in do_call {
+                            brief.push_str(&format!("    - {t}\n"));
+                        }
+                    }
+                }
+                if let Some(do_not_call) = &scope.do_not_call {
+                    if !do_not_call.is_empty() {
+                        brief.push_str("  🚫 MUST NOT call tools:\n");
+                        for t in do_not_call {
+                            brief.push_str(&format!("    - {t}\n"));
+                        }
+                    }
+                }
+                brief.push_str(
+                    "\nThe harness does NOT enforce this contract post-hoc in v1; \
+                     treat it as a hard rule. Writes outside the MAY list will be \
+                     reviewed by the parent and may cause this task to fail.\n",
+                );
+            }
+            Err(e) => {
+                brief.push_str(&format!(
+                    "\n⚠️ TaskScope validation FAILED: {e}\n\
+                     Falling back to free-text 'Work ONLY this task' rule.\n"
+                ));
+            }
+        }
+    }
+
     if !epistemic_note.trim().is_empty() {
         brief.push_str(&format!("\n{epistemic_note}\n"));
     }

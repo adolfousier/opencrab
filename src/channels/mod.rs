@@ -11,6 +11,7 @@ pub(crate) mod model_menu;
 pub mod question_common;
 pub mod session_init;
 pub mod session_resolve;
+pub mod single_flight;
 pub(crate) mod typing_tick;
 
 pub mod voice;

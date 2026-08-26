@@ -168,12 +168,13 @@ impl ChannelManager {
                         *h = Some(std::sync::Arc::downgrade(&tg_agent_service));
                     }
                     let agent = crate::channels::telegram::TelegramAgent::new(
-                        tg_agent_service,
+                        tg_agent_service.clone(),
                         self.channel_factory.service_context(),
                         self.channel_factory.shared_session_id(),
                         self.telegram_state.clone(),
                         self.channel_factory.config_rx(),
                         crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
+                        crate::db::SessionBindingRepository::new(self.db_pool.clone()),
                     );
                     tracing::info!(
                         "ChannelManager: spawning Telegram bot ({} allowed users)",
@@ -181,6 +182,57 @@ impl ChannelManager {
                     );
                     // Overwrites any stale finished handle.
                     handles.insert("telegram".to_string(), agent.start(token.clone()));
+
+                    // Re-register routes for sessions that were idle at boot (#1224).
+                    // Their persisted bindings name the chat/topic that owns them;
+                    // claim_for_channel also drains everything parked for the
+                    // session, so completions produced while the channel was down
+                    // are delivered here instead of waiting for a human to poke
+                    // the topic. Detached: a slow DB read must not delay the bot.
+                    let binding_repo =
+                        crate::db::SessionBindingRepository::new(self.db_pool.clone());
+                    let state_for_claims = self.telegram_state.clone();
+                    let enqueue_for_claims = tg_agent_service.message_enqueue_callback();
+                    tokio::spawn(async move {
+                        let loaded = binding_repo.all_for_channel("telegram").await;
+                        match (loaded, enqueue_for_claims) {
+                            (Ok(bindings), Some(enqueue)) => {
+                                let mut registered = 0usize;
+                                for b in bindings {
+                                    let Ok(sid) = uuid::Uuid::parse_str(&b.session_id) else {
+                                        continue;
+                                    };
+                                    let Ok(chat) = b.chat_id.parse::<i64>() else {
+                                        continue;
+                                    };
+                                    state_for_claims
+                                        .register_session_chat(sid, chat, b.thread_id)
+                                        .await;
+                                    crate::brain::agent::service::session_routes::claim_for_channel(
+                                        sid,
+                                        Some(enqueue.clone()),
+                                    );
+                                    registered += 1;
+                                }
+                                if registered > 0 {
+                                    tracing::info!(
+                                        "Re-registered {registered} persisted session \
+                                         route(s) at telegram connect (#1224)"
+                                    );
+                                }
+                            }
+                            (Ok(bindings), None) => {
+                                tracing::debug!(
+                                    "Skipping #1224 route restore: no enqueue callback \
+                                     on telegram agent service ({} bindings)",
+                                    bindings.len()
+                                );
+                            }
+                            (Err(e), _) => {
+                                tracing::warn!("Could not load session bindings at connect: {e}");
+                            }
+                        }
+                    });
                 }
             }
             ChannelAction::Stop => {

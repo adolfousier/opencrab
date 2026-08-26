@@ -13,7 +13,7 @@ use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
 use crate::channels::telegram::rich::mermaid::{
     MediaEntry, base64url, error_note, failure_html, find_mermaid_fences, has_mermaid_fence,
-    image_html, is_image_response, looks_like_mermaid_source, markdown_failure_block,
+    image_html, ink_url, is_image_response, looks_like_mermaid_source, markdown_failure_block,
     replacement_for, resolve_blocks, resolve_markdown_media,
 };
 
@@ -446,4 +446,66 @@ fn test_bare_fence_with_diagram_body_is_still_classified() {
     let tagged = "```mermaid\ngraph TD\n  A --> B\n```";
     assert!(has_mermaid_fence(tagged));
     assert_eq!(find_mermaid_fences(tagged).len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// hi-res PNG embed URLs: every prevalidate/embed URL must carry the
+// type/width/scale query so Telegram receives crisp rasters instead of the
+// renderer's small JPEG defaults.
+
+#[test]
+fn ink_url_appends_hires_png_params() {
+    let url = ink_url("graph TD\n    A --> B");
+    assert!(url.starts_with("https://mermaid.ink/img/"));
+    assert!(
+        url.ends_with("?type=png&width=1600&scale=2"),
+        "missing hi-res params: {url}"
+    );
+}
+
+#[test]
+fn ink_url_payload_is_base64url_without_padding() {
+    // The payload segment must be exactly what base64url() produces:
+    // URL-safe alphabet, no '=' padding (mermaid.ink 404s on standard b64).
+    let url = ink_url("pie\n    \"a\": 1");
+    let payload = url
+        .trim_start_matches("https://mermaid.ink/img/")
+        .split('?')
+        .next()
+        .expect("payload before query string");
+    assert!(!payload.contains('='), "padding leaked: {payload}");
+    assert!(!payload.contains('+') && !payload.contains('/'));
+}
+
+// ---------------------------------------------------------------------------
+// is_no_media_found: the NO_MEDIA_FOUND classifier that gates the single
+// rich-send retry (#tg-mermaid-delivery-hardening). Mirrors the api.rs error
+// shape — "Telegram rich API error ({status}): {desc}".
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_media_found_detects_renderer_fetch_failure() {
+    use crate::channels::telegram::delivery::is_no_media_found;
+    let e = anyhow::anyhow!(
+        "Telegram rich API error (400): RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND: media fetch failed"
+    );
+    assert!(is_no_media_found(&e));
+}
+
+#[test]
+fn no_media_found_rejects_structural_and_unrelated_errors() {
+    use crate::channels::telegram::delivery::is_no_media_found;
+    let structural =
+        anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_CONTENT_REQUIRED");
+    assert!(!is_no_media_found(&structural));
+    let unrelated = anyhow::anyhow!("network unreachable");
+    assert!(!is_no_media_found(&unrelated));
+}
+
+#[test]
+fn no_media_found_sees_through_anyhow_context_wraps() {
+    use crate::channels::telegram::delivery::is_no_media_found;
+    let inner = anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND");
+    let wrapped = inner.context("while delivering final response");
+    assert!(is_no_media_found(&wrapped));
 }

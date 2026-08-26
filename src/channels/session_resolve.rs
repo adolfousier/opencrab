@@ -60,6 +60,15 @@ pub async fn resolve_or_create_channel_session(
     idle_hours: Option<f64>,
     log_prefix: &str,
 ) -> Result<Uuid> {
+    // Single-flight per (channel, chat-id) key (#1201, #1228): resolution is
+    // look-up-then-create and the two steps are not atomic, so two messages
+    // into one brand-new chat both miss the lookup and both create a session
+    // (two parallel turns, orphaned context). The guard spans the ENTIRE
+    // resolve-or-create below — released when we return — so a concurrent
+    // second caller waits and then finds the session this one created.
+    let _resolve_gate =
+        crate::channels::single_flight::hold(format!("chan:{log_prefix}:{suffix}")).await;
+
     // A lookup ERROR is never no-session-found (#442): treating it as None
     // silently forks the chat onto a fresh session and orphans its history
     // (an i32-unreadable row did exactly that). Propagate; the caller tells

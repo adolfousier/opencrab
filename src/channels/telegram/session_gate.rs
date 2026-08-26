@@ -20,20 +20,27 @@
 //! registration that follows it, and is released before the turn runs.
 //! Holding it for the whole turn would serialize a topic's messages, which
 //! would defeat the mid-turn queueing that #302 exists to provide.
+//!
+//! The gate itself lives in [`crate::channels::single_flight`], which owns
+//! the `OnceLock<Mutex<HashMap<_, Arc<AsyncMutex>>>>` registry keyed by
+//! `String`. This module is a thin typed wrapper over it so the Telegram
+//! resolver keeps a `(chat_id, topic_id)` API. There is exactly one
+//! implementation; every channel maps its own key type onto the shared one.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::OwnedMutexGuard;
 
-use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
+use crate::channels::single_flight;
 
-/// One session may exist per chat and topic, so that pair is the key. The
-/// General topic and a non-forum group both key on `None`, which is what the
-/// rest of the Telegram state already does.
-type Key = (i64, Option<i32>);
-
-fn gates() -> &'static Mutex<HashMap<Key, Arc<AsyncMutex<()>>>> {
-    static GATES: OnceLock<Mutex<HashMap<Key, Arc<AsyncMutex<()>>>>> = OnceLock::new();
-    GATES.get_or_init(|| Mutex::new(HashMap::new()))
+/// Render a `(chat_id, topic_id)` pair as the shared gate's `String` key.
+///
+/// `None` (the General topic and non-forum groups) must map onto a distinct
+/// key so it is serialized like any other, matching how the rest of the
+/// Telegram state keys them.
+fn key(chat_id: i64, topic_id: Option<i32>) -> String {
+    match topic_id {
+        Some(topic) => format!("{chat_id}:{topic}"),
+        None => format!("{chat_id}:no-topic"),
+    }
 }
 
 /// Hold the resolution gate for `(chat_id, topic_id)` until the guard drops.
@@ -44,15 +51,11 @@ fn gates() -> &'static Mutex<HashMap<Key, Arc<AsyncMutex<()>>>> {
 /// A poisoned registry is recovered from rather than propagated: refusing to
 /// resolve a session is a worse outcome than the duplicate this prevents.
 pub(crate) async fn hold(chat_id: i64, topic_id: Option<i32>) -> OwnedMutexGuard<()> {
-    let gate = {
-        let mut map = gates().lock().unwrap_or_else(|e| e.into_inner());
-        Arc::clone(map.entry((chat_id, topic_id)).or_default())
-    };
-    gate.lock_owned().await
+    single_flight::hold(key(chat_id, topic_id)).await
 }
 
 /// How many gates are being tracked. Exposed for tests.
 #[cfg(test)]
 pub(crate) fn tracked() -> usize {
-    gates().lock().unwrap_or_else(|e| e.into_inner()).len()
+    single_flight::tracked()
 }

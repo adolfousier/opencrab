@@ -8,6 +8,7 @@ use super::session_resolve;
 use crate::brain::agent::{AgentService, ProgressCallback};
 use crate::config::{Config, RespondTo};
 use crate::db::ChannelMessageRepository;
+use crate::db::SessionBindingRepository;
 use crate::db::models::ChannelMessage as DbChannelMessage;
 use crate::services::SessionService;
 use crate::utils::sanitize::redact_secrets;
@@ -407,6 +408,7 @@ pub(crate) async fn handle_message(
     telegram_state: Arc<TelegramState>,
     config_rx: tokio::sync::watch::Receiver<Config>,
     channel_msg_repo: ChannelMessageRepository,
+    session_binding_repo: SessionBindingRepository,
 ) -> ResponseResult<()> {
     let user = match msg.from {
         Some(ref u) => u,
@@ -1822,6 +1824,22 @@ pub(crate) async fn handle_message(
     telegram_state
         .register_session_chat(session_id, msg.chat.id.0, topic_id)
         .await;
+
+    // Persist where this session lives so a restart re-registers its delivery
+    // route at channel-connect time; without this row an idle-at-boot session
+    // parks every completion until a human messages its topic (#1224).
+    // Best-effort: a failed write only degrades to pre-fix park-and-wait.
+    if let Err(e) = session_binding_repo
+        .upsert(
+            session_id.to_string(),
+            "telegram",
+            &msg.chat.id.0.to_string(),
+            topic_id,
+        )
+        .await
+    {
+        tracing::warn!("Could not persist session binding for {session_id}: {e}");
+    }
 
     // Resolution is complete and the binding is visible, so a message that
     // was waiting on the gate now finds this session instead of creating its
