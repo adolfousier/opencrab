@@ -59,13 +59,14 @@ pub(crate) async fn resolve_channel_or_silent<T>(
 /// Per-channel option-label budgets (#1176 G1): the widest label a renderer
 /// prints before folding to an ellipsized form. Values are CHARACTERS, not
 /// bytes; all truncation goes through [`truncate_label`].
-pub(crate) const TELEGRAM_LABEL_BUDGET: usize = 60;
+///
+/// Telegram is deliberately absent. It used to truncate at 60 and fold the
+/// whole keyboard past a 30-char threshold; #1204 replaced both with a
+/// measured layout ladder in `telegram::suggest_options`, which never
+/// truncates — it changes the SHAPE of the controls instead, so a label too
+/// long for a button becomes a numbered entry with its full text in the body.
 pub(crate) const DISCORD_LABEL_BUDGET: usize = 80;
 pub(crate) const SLACK_LABEL_BUDGET: usize = 75;
-
-/// Telegram folds the whole keyboard into a numbered list once any option
-/// exceeds this many characters (#1178 D3).
-pub(crate) const FOLD_THRESHOLD: usize = 30;
 
 /// The single char-based truncation helper (#1176 G3): passthrough under the
 /// budget, otherwise cut to leave room for a literal `...` tail. Replaces the

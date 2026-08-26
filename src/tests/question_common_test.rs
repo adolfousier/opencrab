@@ -71,32 +71,29 @@ fn truncate_label_cuts_on_char_boundaries_with_ellipsis() {
 }
 
 #[test]
-fn telegram_budget_reproduces_the_historic_fold_shape() {
+fn truncate_label_reproduces_the_historic_fold_shape() {
     // over-budget label -> (budget-3) chars + "...", exactly the old
-    // take(57)+"..." contract at budget 60.
+    // take(57)+"..." contract at budget 60. Telegram no longer uses a budget
+    // (#1204 gave it a layout ladder instead), but the helper still backs
+    // Discord and Slack and this is the shape they rely on.
     let long = "x".repeat(100);
-    let out = crate::channels::question_common::truncate_label(
-        &long,
-        crate::channels::question_common::TELEGRAM_LABEL_BUDGET,
-    );
+    let out = crate::channels::question_common::truncate_label(&long, 60);
     assert_eq!(out.chars().count(), 60);
     assert!(out.ends_with("..."));
 }
 
 #[test]
-fn channel_budgets_stay_sane_and_fold_aware() {
-    use crate::channels::question_common::{
-        DISCORD_LABEL_BUDGET, FOLD_THRESHOLD, SLACK_LABEL_BUDGET, TELEGRAM_LABEL_BUDGET,
-    };
+fn channel_budgets_stay_sane() {
+    use crate::channels::question_common::{DISCORD_LABEL_BUDGET, SLACK_LABEL_BUDGET};
+    use crate::channels::telegram::suggest_options::MAX_BUTTON_CHARS;
     // Evaluated at compile time: these are consts, so a runtime assert both
     // trips `assertions_on_constants` and defers to run-time a contradiction
     // the compiler can already see.
     const {
-        assert!(FOLD_THRESHOLD > 0);
-        assert!(
-            TELEGRAM_LABEL_BUDGET > FOLD_THRESHOLD,
-            "fold must fire before any single label gets truncated"
-        );
         assert!(DISCORD_LABEL_BUDGET > 0 && SLACK_LABEL_BUDGET > 0);
+        // Telegram's ladder replaced its budget: past this width a label
+        // cannot ride a button at all and becomes a numbered entry, so no
+        // Telegram label is ever silently cut (#1204).
+        assert!(MAX_BUTTON_CHARS > 0);
     }
 }
