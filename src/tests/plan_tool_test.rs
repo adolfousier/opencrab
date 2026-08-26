@@ -1552,6 +1552,7 @@ fn start_schema_teaches_subagent_spawn_not_isolation_jargon() {
     let schema = PlanTool.input_schema().to_string();
     assert!(schema.contains("DEDICATED SUBAGENT SESSION"));
     assert!(!schema.contains("freshly spawned isolated worker session"));
+}
 /// When a task carries a `TaskScope`, the worker brief must render it as
 /// an explicit "MAY write / MUST NOT write" contract — not free text. This
 /// is the structural fix for the contract-review.json leak (the parent
