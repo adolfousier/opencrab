@@ -428,14 +428,23 @@ pub(crate) async fn handle_message(
     // return, since the burying messages are usually not addressed to the bot.
     telegram_state.note_incoming_msg(msg.chat.id.0, msg.id.0);
 
+    // Forum-ness evidence (#1220): any thread-scoped message proves this chat
+    // is a forum group. Recorded for EVERY message before early returns, so
+    // chatter not addressed to the bot still feeds the cache.
+    let raw_thread = thread_id.map(|t| t.0.0);
+    telegram_state.note_thread_evidence(msg.chat.id.0, raw_thread).await;
+
     // Forum-topic session isolation (#215). #130 fixed the reply ADDRESS
     // (replies land in the right topic); this scopes the CONVERSATION so each
     // topic gets its own session instead of every topic sharing one. Gated on
     // is_topic_message so only real forum topics isolate: DMs, non-forum
-    // groups, the General topic, and plain reply-threads resolve to None and
-    // keep sharing the base [chat:<id>] session.
-    let topic_id =
-        session_resolve::topic_session_id(msg.is_topic_message, thread_id.map(|t| t.0.0));
+    // groups, plain reply-threads — and, since #1220, NOT the General topic
+    // of a known forum: there it normalizes to Some(GENERAL_TOPIC_ID), giving
+    // General its own session bucket so bg-task/subagent pushes route home.
+    let topic_id = session_resolve::normalize_topic(
+        session_resolve::topic_session_id(msg.is_topic_message, raw_thread),
+        telegram_state.is_known_forum(msg.chat.id.0).await,
+    );
 
     // Topic NAME for the session label, so a forum topic reads as "Devops"
     // rather than the numeric "topic:2". Prefer the name carried on THIS

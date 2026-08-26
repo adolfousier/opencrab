@@ -226,6 +226,43 @@ fn topic_session_id_gates_on_is_topic_message() {
     assert_eq!(topic_session_id(true, None), None);
 }
 
+/// #1220: General-topic normalization for known forums.
+#[test]
+fn normalize_topic_gives_general_its_own_bucket_in_known_forums() {
+    use super::super::telegram::session_resolve::{GENERAL_TOPIC_ID, normalize_topic};
+
+    // Raw topic resolution always wins — normalization only fills the gap.
+    assert_eq!(normalize_topic(Some(5), true), Some(5));
+    assert_eq!(normalize_topic(Some(5), false), Some(5));
+
+    // Known forum + no explicit topic = the General topic: own bucket.
+    assert_eq!(normalize_topic(None, true), Some(GENERAL_TOPIC_ID));
+
+    // Unknown chat (cold start) or genuinely topicless chat: legacy None.
+    assert_eq!(normalize_topic(None, false), None);
+}
+
+/// #1220: evidence-based forum detection on TelegramState.
+#[tokio::test]
+async fn thread_evidence_marks_forum_once_and_only_from_threaded_msgs() {
+    let state = TelegramState::new();
+    let chat = 777_i64;
+
+    // No evidence yet — cold start keeps legacy behaviour.
+    assert!(!state.is_known_forum(chat).await);
+
+    // A thread-scoped message proves forum-ness...
+    state.note_thread_evidence(chat, Some(42)).await;
+    assert!(state.is_known_forum(chat).await);
+
+    // ...and later topicless traffic never un-proves it.
+    state.note_thread_evidence(chat, None).await;
+    assert!(state.is_known_forum(chat).await);
+
+    // A different chat stays unknown.
+    assert!(!state.is_known_forum(888).await);
+}
+
 #[tokio::test]
 async fn chat_map_isolates_topic_from_base_session() {
     // The reverse map keys on (chat_id, topic_id): the same supergroup chat
