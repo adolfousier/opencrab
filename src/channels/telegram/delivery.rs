@@ -38,6 +38,16 @@ pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
     text_after_directive.trim().is_empty()
 }
 
+/// True when a rich-send failure means Telegram could not fetch the embedded
+/// media (the mermaid.ink diagram) — a transient renderer or network window
+/// that a single re-send can sail (#tg-mermaid-delivery-hardening). Our
+/// prevalidate runs seconds before Telegram's own server-side refetch, so
+/// `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND` is a race with a flaky renderer, not a
+/// structural rejection. Structural 400s (schema, content) are never retried.
+pub(crate) fn is_no_media_found(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains("RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND")
+}
+
 /// Drain all pending intermediate texts from the streaming state's display
 /// queue and send them immediately. Called by the follow-up-question callback
 /// BEFORE posting the question message, so the user sees contextual text
@@ -595,7 +605,7 @@ pub(crate) async fn deliver_final_response(
                 // to the HTML path where they showed as bare markup). Non-table
                 // rich content still tries blocks first (clean fences) then falls
                 // back to markdown.
-                let delivered_rich = super::rich::should_send_native_rich(&text_only) && {
+                let mut delivered_rich = super::rich::should_send_native_rich(&text_only) && {
                     let rich_md = text_only.clone();
                     // Send a FRESH rich message rather than editing the streamed
                     // placeholder into rich. Editing a normal message into a rich
@@ -634,7 +644,15 @@ pub(crate) async fn deliver_final_response(
                         // Rich MARKDOWN renders tables correctly; mermaid fences
                         // are routed to the rich-HTML image path inside the sender
                         // (#1044), everything else stays on markdown.
-                        match super::rich::send_rich_with_mermaid_id(
+                        // #tg-mermaid-delivery-hardening: retry once when
+                        // Telegram's server-side refetch of the embedded media
+                        // (mermaid.ink) died — `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`
+                        // is a race against a flaky renderer (our prevalidate ran
+                        // seconds earlier), not a structural rejection. The sender
+                        // re-resolves media on every call, so the retry naturally
+                        // re-fetches from the renderer. Structural 400s are never
+                        // retried.
+                        let mut rich_send = super::rich::send_rich_with_mermaid_id(
                             bot.api_url().as_str(),
                             bot.token(),
                             chat_id.0,
@@ -643,8 +661,24 @@ pub(crate) async fn deliver_final_response(
                             "turn",
                             "-",
                         )
-                        .await
+                        .await;
+                        if rich_send.is_err() && is_no_media_found(rich_send.as_ref().unwrap_err())
                         {
+                            tracing::warn!(
+                                "Telegram: rich send hit NO_MEDIA_FOUND (renderer flake?) — retrying once"
+                            );
+                            rich_send = super::rich::send_rich_with_mermaid_id(
+                                bot.api_url().as_str(),
+                                bot.token(),
+                                chat_id.0,
+                                thread_id,
+                                &rich_md,
+                                "turn",
+                                "-",
+                            )
+                            .await;
+                        }
+                        match rich_send {
                             Ok(id) => {
                                 // Success was silent, which is why an
                                 // unformatted table could not be traced (#860).
@@ -674,6 +708,45 @@ pub(crate) async fn deliver_final_response(
                     }
                 };
 
+                if !delivered_rich {
+                    // #tg-mermaid-delivery-hardening: last-chance mermaid render
+                    // before degrading to chunks — the classic chunked HTML path
+                    // cannot embed `<img>`, so when the source carried a diagram
+                    // try the rich HTML dialect once more (it supports images).
+                    // If the renderer recovered in the meantime the diagram still
+                    // lands inline instead of raw fence text; if it is still down
+                    // the resolve yields a legible failure block (renderer note +
+                    // source) rather than a bare code dump.
+                    if super::rich::mermaid::should_render_mermaid(&text_only) {
+                        let fallback_html =
+                            super::rich::markdown_to_html_mermaid_p(&text_only).await;
+                        match super::rich::api::send_rich_html_id(
+                            bot.api_url().as_str(),
+                            bot.token(),
+                            chat_id.0,
+                            thread_id,
+                            &fallback_html,
+                            None,
+                            "turn",
+                            "-",
+                        )
+                        .await
+                        {
+                            Ok(id) => {
+                                tracing::info!(
+                                    "Telegram: rich-html mermaid fallback delivered as msg {id}"
+                                );
+                                sent_reply_id = Some(id);
+                                delivered_rich = true;
+                            }
+                            Err(e2) => {
+                                tracing::warn!(
+                                    "Telegram: rich-html mermaid fallback failed ({e2}); degrading to chunks"
+                                );
+                            }
+                        }
+                    }
+                }
                 if !delivered_rich {
                     let chunks: Vec<String> = split_message(&display_html, 4096)
                         .into_iter()

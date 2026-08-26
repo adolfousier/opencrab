@@ -476,3 +476,36 @@ fn ink_url_payload_is_base64url_without_padding() {
     assert!(!payload.contains('='), "padding leaked: {payload}");
     assert!(!payload.contains('+') && !payload.contains('/'));
 }
+
+// ---------------------------------------------------------------------------
+// is_no_media_found: the NO_MEDIA_FOUND classifier that gates the single
+// rich-send retry (#tg-mermaid-delivery-hardening). Mirrors the api.rs error
+// shape — "Telegram rich API error ({status}): {desc}".
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_media_found_detects_renderer_fetch_failure() {
+    use crate::channels::telegram::delivery::is_no_media_found;
+    let e = anyhow::anyhow!(
+        "Telegram rich API error (400): RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND: media fetch failed"
+    );
+    assert!(is_no_media_found(&e));
+}
+
+#[test]
+fn no_media_found_rejects_structural_and_unrelated_errors() {
+    use crate::channels::telegram::delivery::is_no_media_found;
+    let structural = anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_CONTENT_REQUIRED");
+    assert!(!is_no_media_found(&structural));
+    let unrelated = anyhow::anyhow!("network unreachable");
+    assert!(!is_no_media_found(&unrelated));
+}
+
+#[test]
+fn no_media_found_sees_through_anyhow_context_wraps() {
+    use crate::channels::telegram::delivery::is_no_media_found;
+    let inner =
+        anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND");
+    let wrapped = inner.context("while delivering final response");
+    assert!(is_no_media_found(&wrapped));
+}
