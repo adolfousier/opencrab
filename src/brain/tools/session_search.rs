@@ -8,17 +8,63 @@
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use crate::db::Pool;
+#[cfg(feature = "telegram")]
+use crate::channels::telegram::TelegramState;
+#[cfg(feature = "telegram")]
+use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
 /// Tool for listing and searching session message history via direct DB search.
 pub struct SessionSearchTool {
     pool: Pool,
+    /// Live channel state, wired only by the interactive registration
+    /// (`with_telegram`); the core daemon/cron registration keeps `None`
+    /// and rows omit turn info rather than guess.
+    #[cfg(feature = "telegram")]
+    telegram: Option<Arc<TelegramState>>,
 }
 
 impl SessionSearchTool {
     pub fn new(pool: Pool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            #[cfg(feature = "telegram")]
+            telegram: None,
+        }
+    }
+
+    /// Attach live channel state so discovery rows report turn activity.
+    /// Registered by the interactive path once the bot connects; the registry
+    /// insert replaces the stateless core instance by name.
+    #[cfg(feature = "telegram")]
+    pub fn with_telegram(pool: Pool, telegram: Arc<TelegramState>) -> Self {
+        Self {
+            pool,
+            telegram: Some(telegram),
+        }
+    }
+
+    /// `"running"` while a turn is in flight for the session, `"idle"` when
+    /// it is waiting; `None` when no channel state is wired (#1203). A
+    /// running session drains a queued push at its next tool-loop boundary;
+    /// an idle one starts a fresh turn for it.
+    #[cfg(feature = "telegram")]
+    fn turn_state(&self, session_id: uuid::Uuid) -> Option<&'static str> {
+        self.telegram.as_ref().map(|tg| {
+            if tg.is_turn_active(session_id) {
+                "running"
+            } else {
+                "idle"
+            }
+        })
+    }
+
+    /// Stateless counterpart so call sites stay cfg-free: no channel state,
+    /// no turn info.
+    #[cfg(not(feature = "telegram"))]
+    fn turn_state(&self, _session_id: uuid::Uuid) -> Option<&'static str> {
+        None
     }
 }
 
@@ -38,7 +84,10 @@ impl Tool for SessionSearchTool {
          titles, last-active timestamps and message counts - e.g. to find another session's id \
          to target with session_notify. \
          'session' can be a number (1 = most recent), a title keyword, or 'all' (default; \
-         ignored by 'tail', which falls back to the newest session)."
+         ignored by 'tail', which falls back to the newest session). \
+         Each row also carries 'turn' - 'running' (a turn is in flight; a \
+         queued push drains at its next tool-loop boundary), 'idle' (waiting; \
+         a push starts a fresh turn) or null when channel state is unavailable."
     }
 
     fn input_schema(&self) -> Value {
@@ -192,19 +241,25 @@ impl SessionSearchTool {
             return Ok(ToolResult::success("No sessions found.".to_string()));
         }
 
-        let mut output =
-            String::from("Sessions, newest first ([short-id] identifies each row):\n");
+        let mut output = String::from(
+            "Sessions, newest first ([short-id] identifies each row; · running/idle = turn state):\n",
+        );
         for (i, session) in sessions.iter().enumerate() {
             let count = message_repo.count_by_session(session.id).await.unwrap_or(0);
             let title = session.title.as_deref().unwrap_or("Untitled");
             let date = session.updated_at.format("%Y-%m-%d %H:%M").to_string();
+            let turn = match self.turn_state(session.id) {
+                Some(t) => format!(" · {t}"),
+                None => String::new(),
+            };
             output.push_str(&format!(
-                "{}. [{}] \"{}\" — last active {}, {} messages\n",
+                "{}. [{}] \"{}\" — last active {}, {} messages{}\n",
                 i + 1,
                 &session.id.to_string()[..8],
                 title,
                 date,
-                count
+                count,
+                turn
             ));
         }
 
@@ -213,10 +268,12 @@ impl SessionSearchTool {
 
     /// Machine-readable session discovery.
     ///
-    /// Returns JSON rows `{id, title, last_active, messages}` with FULL UUIDs
-    /// so other tools (`session_notify`) can be targeted without parsing the
-    /// human-oriented `list` output. Rows are ordered by last activity,
-    /// newest first (repo-level ORDER BY).
+    /// Returns JSON rows `{id, title, last_active, messages, turn}` with FULL
+    /// UUIDs so other tools (`session_notify`) can be targeted without
+    /// parsing the human-oriented `list` output. Rows are ordered by last
+    /// activity, newest first (repo-level ORDER BY). `turn` is `"running"`
+    /// while a turn is in flight, `"idle"` when waiting, `null` when no live
+    /// channel state is wired.
     async fn query_sessions(
         &self,
         status: &str,
@@ -264,6 +321,7 @@ impl SessionSearchTool {
                     .updated_at
                     .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                 "messages": count,
+                "turn": self.turn_state(s.id),
             }));
         }
 
@@ -518,7 +576,7 @@ fn extract_snippet(body: &str, query: &str, max_len: usize) -> String {
 
 /// Parse an `updated_since` spec: RFC3339 timestamp, or `Nd`/`Nh` shorthand
 /// meaning N days/hours back from now.
-fn parse_updated_since(
+pub(crate) fn parse_updated_since(
     spec: &str,
 ) -> std::result::Result<chrono::DateTime<chrono::Utc>, String> {
     let spec = spec.trim();
@@ -544,34 +602,4 @@ fn parse_updated_since(
         _ => return Err(invalid()),
     };
     Ok(chrono::Utc::now() - duration)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_rfc3339() {
-        let dt = parse_updated_since("2026-08-25T00:00:00Z").expect("valid rfc3339");
-        assert_eq!(dt.to_rfc3339(), "2026-08-25T00:00:00+00:00");
-    }
-
-    #[test]
-    fn parses_shorthand() {
-        let before = chrono::Utc::now();
-        let dt = parse_updated_since("24h").expect("24h valid");
-        assert!(dt > before - chrono::Duration::hours(25));
-        assert!(dt <= chrono::Utc::now());
-
-        let dt = parse_updated_since("7d").expect("7d valid");
-        assert!(dt < before - chrono::Duration::days(6));
-    }
-
-    #[test]
-    fn rejects_garbage() {
-        assert!(parse_updated_since("yesterday").is_err());
-        assert!(parse_updated_since("").is_err());
-        assert!(parse_updated_since("12x").is_err());
-        assert!(parse_updated_since("-5d").is_err());
-    }
 }
