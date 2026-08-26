@@ -69,9 +69,14 @@ pub(crate) fn build_enqueue_callback(
             // preserved), so the user sees why the session woke up even when
             // the resumed answer restates it. Fires on BOTH delivery paths:
             // before the guard branch below means idle-wakes AND results that
-            // get queued into an in-flight turn are announced alike. Scoped to
-            // background-task completions only; sub-agent pushes stay silent.
-            if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask {
+            // get queued into an in-flight turn are announced alike. Covers
+            // background-task completions AND session_notify pushes (#1221
+            // notify lane); sub-agent pushes stay silent.
+            if matches!(
+                msg.origin,
+                crate::brain::agent::PushOrigin::BackgroundTask
+                    | crate::brain::agent::PushOrigin::SessionNotify
+            ) {
                 let html = render_bg_echo_html(&msg.context_text);
                 let mut echo = bot
                     .send_message(teloxide::types::ChatId(chat_id), html)
