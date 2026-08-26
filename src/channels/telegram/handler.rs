@@ -2373,6 +2373,7 @@ pub(crate) async fn handle_message(
         flow_status: None,
         flow_rich: false,
         response: String::new(),
+        final_bubble: None,
         dirty: false,
         recreate: false,
         header_preview: None,
@@ -2823,6 +2824,13 @@ pub(crate) async fn handle_message(
         .pending_suggestions
         .take();
     if let Some(options) = suggestions {
+        // Merge candidate (#tg-suggest-merge): the bubble the final response
+        // landed in, captured by deliver_final_response. Attaching the
+        // keyboard THERE kills the separate "Suggested next" bubble.
+        let merge_host = {
+            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            s.final_bubble.take()
+        };
         super::suggest_options::render_suggestions(
             &bot,
             &telegram_state,
@@ -2830,6 +2838,7 @@ pub(crate) async fn handle_message(
             msg.chat.id,
             thread_id,
             options,
+            merge_host,
         )
         .await;
     }

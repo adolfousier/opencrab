@@ -117,6 +117,10 @@ pub(crate) async fn deliver_final_response(
 ) -> ResponseResult<bool> {
     match result {
         Ok(response) => {
+            // Merge candidate captured below: whichever bubble carried the final
+            // response (classic HTML edit/send, or table-free rich message).
+            // render_suggestions attaches its keyboard to THIS bubble when Some.
+            let mut final_bubble: Option<super::state::MergeBubble> = None;
             // Extract <<IMG:path>> markers — send each as a Telegram photo.
             let (text_only, img_paths) = crate::utils::extract_img_markers(&response.content);
             // Strip LLM-hallucinated artifacts (<!-- tools-v2 -->, XML tool blocks)
@@ -459,6 +463,19 @@ pub(crate) async fn deliver_final_response(
                             rich_md.len(),
                             intermediate_ids.len()
                         );
+                        // Merge candidate (#tg-suggest-merge): table-free rich
+                        // bubbles can carry the suggestion controls too.
+                        if !super::rich::contains_table(&pre_dedup_text) {
+                            final_bubble =
+                                Some(super::state::MergeBubble {
+                                    message_id: teloxide::types::MessageId(
+                                        rich_msg_id,
+                                    ),
+                                    body: super::state::BubbleBody::Markdown(
+                                        pre_dedup_text.clone(),
+                                    ),
+                                });
+                        }
                         // Store bot reply in channel_messages even though
                         // text_only is empty (dedup stripped it). The rich
                         // fallback already sent pre_dedup_text, so the next
@@ -557,6 +574,13 @@ pub(crate) async fn deliver_final_response(
             // persist it and later recover the EXACT message a user replies to,
             // instead of guessing "the most recent bot message" (#234 follow-up).
             let mut sent_reply_id: Option<i32> = None;
+            // Merge candidate (#tg-suggest-merge): id + exact HTML of the bubble
+            // the classic HTML path delivered the final response in. Captured in
+            // every success arm below; handed to StreamingState after delivery so
+            // suggest_options can attach its keyboard to THIS bubble instead of
+            // posting a separate "Suggested next" message. Rich and voice paths
+            // deliberately leave it None — their bubbles are not re-editable as
+            // plain HTML without breaking their rendering.
             if !display_html.is_empty() {
                 // Rich-first delivery: a structured reply (tables / headings /
                 // lists / math) is delivered as a native Telegram rich message
@@ -634,6 +658,22 @@ pub(crate) async fn deliver_final_response(
                                     rich_md.len()
                                 );
                                 sent_reply_id = Some(id);
+                                // Merge candidate (#tg-suggest-merge): the
+                                // controls can ride this bubble too — but only
+                                // when it carries no table: merging re-sends as
+                                // rich HTML input, which flattens tables (#679);
+                                // those answers keep the standalone fallback.
+                                if !super::rich::contains_table(&rich_md) {
+                                    final_bubble =
+                                        Some(super::state::MergeBubble {
+                                            message_id: teloxide::types::MessageId(
+                                                id,
+                                            ),
+                                            body: super::state::BubbleBody::Markdown(
+                                                rich_md.clone(),
+                                            ),
+                                        });
+                                }
                                 true
                             }
                             Err(e) => {
@@ -679,32 +719,54 @@ pub(crate) async fn deliver_final_response(
                                     &super::telemetry::content_hash8(&chunks[0]),
                                 );
                                 sent_reply_id = Some(mid.0);
+                                // Merge candidate (#tg-suggest-merge): the
+                                // answer bubble suggest_options can ride on.
+                                final_bubble =
+                                    Some(super::state::MergeBubble {
+                                    message_id: mid,
+                                    body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                });
                             }
                             Err(teloxide::RequestError::RetryAfter(secs)) => {
                                 super::rate_limit::wait_out("edit", secs.duration(), "").await;
-                                if let Err(e) = bot
+                                match bot
                                     .edit_message_text(chat_id, mid, &chunks[0])
                                     .parse_mode(ParseMode::Html)
                                     .await
                                 {
-                                    tracing::warn!(
-                                        "Telegram: edit retry failed ({e}), falling back to delete+send"
-                                    );
-                                    best_effort_delete(bot, chat_id, mid, "edit-retry fallback")
-                                        .await;
-                                    // Never silent (#1019): this is the LAST fallback.
-                                    // The edit already failed and was logged; if the
-                                    // resend fails too the message is gone entirely,
-                                    // so the recovery path must not be the quiet one.
-                                    if let Err(e) = send_html_or_plain(
-                                        bot, chat_id, thread_id, &chunks[0], "turn",
-                                    )
-                                    .await
-                                    {
-                                        tracing::error!(
-                                            "Telegram: delete+send fallback failed in chat {chat_id}, \
-                                             the reply was lost: {e}"
+                                    Ok(_) => {
+                                        sent_reply_id = Some(mid.0);
+                                        final_bubble = Some(super::state::MergeBubble {
+                                    message_id: mid,
+                                    body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                });
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Telegram: edit retry failed ({e}), falling back to delete+send"
                                         );
+                                        best_effort_delete(bot, chat_id, mid, "edit-retry fallback")
+                                            .await;
+                                        // Never silent (#1019): this is the LAST fallback.
+                                        // The edit already failed and was logged; if the
+                                        // resend fails too the message is gone entirely,
+                                        // so the recovery path must not be the quiet one.
+                                        if let Ok(sent) = send_html_or_plain(
+                                            bot, chat_id, thread_id, &chunks[0], "turn",
+                                        )
+                                        .await
+                                        {
+                                            sent_reply_id = Some(sent.0);
+                                            final_bubble = Some(super::state::MergeBubble {
+                                        message_id: sent,
+                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                    });
+                                        } else {
+                                            tracing::error!(
+                                                "Telegram: delete+send fallback failed in chat {chat_id}, \
+                                                 the reply was lost"
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -713,9 +775,16 @@ pub(crate) async fn deliver_final_response(
                                     "Telegram: edit final failed ({e}), falling back to delete+send"
                                 );
                                 best_effort_delete(bot, chat_id, mid, "edit-final fallback").await;
-                                let _ =
+                                if let Ok(sent) =
                                     send_html_or_plain(bot, chat_id, thread_id, &chunks[0], "turn")
-                                        .await;
+                                        .await
+                                {
+                                    sent_reply_id = Some(sent.0);
+                                    final_bubble = Some(super::state::MergeBubble {
+                                        message_id: sent,
+                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                    });
+                                }
                             }
                         }
                     } else {
@@ -729,6 +798,10 @@ pub(crate) async fn deliver_final_response(
                                 send_html_or_plain(bot, chat_id, thread_id, chunk, "turn").await
                             {
                                 sent_reply_id = Some(sent.0);
+                                final_bubble = Some(super::state::MergeBubble {
+                                        message_id: sent,
+                                        body: super::state::BubbleBody::Html(chunk.clone()),
+                                    });
                             }
                         }
                     }
@@ -739,6 +812,17 @@ pub(crate) async fn deliver_final_response(
                 // flow message now, so just remove the now-empty streaming
                 // placeholder.
                 best_effort_delete(bot, chat_id, mid, "empty-final placeholder").await;
+            }
+
+            // Hand the merge candidate to the turn state (#tg-suggest-merge):
+            // handler.rs reads it immediately after this returns and passes it
+            // into render_suggestions. None (rich / voice / suppressed paths)
+            // means suggestions fall back to their standalone block as before.
+            if final_bubble.is_some() {
+                streaming
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .final_bubble = final_bubble;
             }
 
             // Record the bot's text reply into channel_messages.

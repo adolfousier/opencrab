@@ -26,19 +26,13 @@ use crate::brain::rsi_proposals::{BrainDedupProposal, ProposalsStore};
 use crate::brain::tools::dynamic::DynamicToolLoader;
 use crate::brain::tools::registry::ToolRegistry;
 use crate::brain::tools::rsi_proposals::RsiProposalsTool;
+// Canonical escaper (markdown.rs) — this module previously carried a
+// byte-identical private copy; one implementation, everywhere (#DRY).
+use super::markdown::escape_html;
 
 /// Callback-data prefix for every dedup approval button. The dispatcher in
 /// `agent.rs` strips this and hands the rest to [`handle_callback`].
 pub const DEDUP_PREFIX: &str = "dedup:";
-
-/// Escape the four HTML-special characters teloxide's `ParseMode::Html`
-/// recognises. The scanner fields are normally plain path/line references,
-/// but escaping defensively keeps a stray `&` or `<` from breaking the send.
-fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
 
 /// Build the rsi_proposals tool from a brain dir. Brain dedup apply/reject
 /// only touch the proposals store and the brain path, never the tool

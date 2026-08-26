@@ -292,7 +292,12 @@ impl TelegramAgent {
                                                  or never set)"
                                             );
                                         }
-                                        t.map(|text| (sid, text))
+                                        // (session, chosen text, merged host). The host is
+                                        // Some when the keyboard was merged onto the answer
+                                        // bubble (#tg-suggest-merge) — the pick record must
+                                        // then PRESERVE that answer text instead of
+                                        // replacing it.
+                                        t.map(|(text, host)| (sid, text, host))
                                     }
                                     None => {
                                         tracing::warn!(
@@ -302,7 +307,7 @@ impl TelegramAgent {
                                         None
                                     }
                                 };
-                                if let Some((sid, text)) = taken {
+                                if let Some((sid, text, merged_host)) = taken {
                                     let (chat_id, thread_id, prompt_msg_id) = query
                                         .message
                                         .as_ref()
@@ -359,18 +364,83 @@ impl TelegramAgent {
                                                     picked_block(&text, chooser.as_deref()),
                                             );
                                         let recorded = match prompt_msg_id {
-                                            Some(mid) => bot_clone
-                                                .edit_message_text(chat_id, mid, &picked)
-                                                .parse_mode(teloxide::types::ParseMode::Html)
-                                                .await
-                                                .map_err(|e| {
+                                            Some(mid) => {
+                                                // Merged keyboard (#tg-suggest-merge): the
+                                                // buttons live ON the answer bubble, so a
+                                                // whole-text replace would ERASE the answer.
+                                                // When this bubble is the recorded host,
+                                                // keep its HTML and append the pick record
+                                                // instead — and strip the now-dead buttons
+                                                // with an empty markup.
+                                                // Merged keyboard (#tg-suggest-merge): the
+                                                // buttons live ON the answer bubble, so a
+                                                // whole-text replace would ERASE the answer.
+                                                // When this bubble is the recorded host,
+                                                // keep its HTML and append the pick record
+                                                // instead — and strip the now-dead controls.
+                                                // Rich hosts ride edit_rich_html; classic
+                                                // hosts ride teloxide's edit_message_text.
+                                                let host_info =
+                                                    merged_host.as_ref().and_then(|h| {
+                                                        (h.message_id == mid)
+                                                            .then(|| (h.html.clone(), h.rich))
+                                                    });
+                                                let empty_kb = teloxide::types::
+                                                    InlineKeyboardMarkup::new(
+                                                        Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
+                                                    );
+                                                let outcome: Result<(), String> = match host_info {
+                                                    Some((full, true)) => {
+                                                        super::rich::api::edit_rich_html(
+                                                            bot_clone.api_url().as_str(),
+                                                            bot_clone.token(),
+                                                            chat_id.0,
+                                                            mid.0,
+                                                            &format!("{full}\n\n{picked}"),
+                                                            Some(&serde_json::json!(empty_kb)),
+                                                            "turn",
+                                                            "-",
+                                                        )
+                                                        .await
+                                                        .map(|_| ())
+                                                        .map_err(|e| e.to_string())
+                                                    }
+                                                    host_info => {
+                                                        let req = match host_info {
+                                                            Some((full, _)) => bot_clone
+                                                                .edit_message_text(
+                                                                    chat_id, mid, &full,
+                                                                )
+                                                                .parse_mode(
+                                                                    teloxide::types::ParseMode::
+                                                                        Html,
+                                                                )
+                                                                .reply_markup(empty_kb),
+                                                            None => bot_clone
+                                                                .edit_message_text(
+                                                                    chat_id, mid, &picked,
+                                                                )
+                                                                .parse_mode(
+                                                                    teloxide::types::ParseMode::
+                                                                        Html,
+                                                                ),
+                                                        };
+                                                        req.await
+                                                            .map(|_| ())
+                                                            .map_err(|e| e.to_string())
+                                                    }
+                                                };
+                                                if let Err(e) = outcome {
                                                     tracing::warn!(
                                                         "Telegram followup tap: could not edit the \
                                                          suggestion block ({e}) — falling back to \
                                                          a quoted echo"
                                                     );
-                                                })
-                                                .is_ok(),
+                                                    false
+                                                } else {
+                                                    true
+                                                }
+                                            }
                                             None => false,
                                         };
                                         if !recorded {
