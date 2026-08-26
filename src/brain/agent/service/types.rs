@@ -258,6 +258,9 @@ impl QueuedUserMessage {
         Some(Self {
             context_text: join_on(|m| m.context_text.as_str()),
             display_text: join_on(|m| m.display_text.as_str()),
+            // #1221: a joined batch inherits the head message's origin — the
+            // first-completed task dominates what the echo announces.
+            origin: msgs[0].origin,
         })
     }
 }
