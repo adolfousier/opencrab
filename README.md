@@ -2067,7 +2067,7 @@ context_limit = 200000           # usable context window in tokens. Enforced at 
 max_tokens = 65536               # cap on output tokens per API call
 silent_compaction = false        # false (default) keeps the agent's post-compaction narration; true switches
                                  # to a silent-continuation prompt so a compaction passes without comment
-plan_isolated_execution = true   # default: each started plan task runs in a fresh child session seeded only
+plan_isolated_execution = false  # default: plan tasks run inline; set true for per-task isolated worker sessions
                                  # with the task brief and the parent's plan file. false shares the parent session
 plan_auto_start = false          # default false: completing a plan task NEVER spawns the next one - complete is a pure
                                  # state transition and reports the next eligible task as a hint; you call start explicitly.

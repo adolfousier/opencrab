@@ -1318,7 +1318,7 @@ impl Tool for PlanTool {
                 },
                 "isolated": {
                     "type": "boolean",
-                    "description": "start only: true = a DEDICATED SUBAGENT SESSION is spawned to complete this task; this call blocks until the subagent returns and its result is verified against the plan on disk. false = no subagent is spawned; you execute the task yourself inline. Omit = config decides (agent.plan_isolated_execution, default true = one subagent per task)."
+                    "description": "start only: true = a DEDICATED SUBAGENT SESSION is spawned to complete this task; this call blocks until the subagent returns and its result is verified against the plan on disk. false = no subagent is spawned; you execute the task yourself inline. Omit = config decides (agent.plan_isolated_execution, default false = you execute inline; set that key true or pass isolated:true for a dedicated subagent session)."
                 },
                 "action": {
                     "type": "string",

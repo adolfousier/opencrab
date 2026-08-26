@@ -1149,12 +1149,12 @@ pub struct AgentConfig {
     /// Route plan-task `start` through isolated execution (#908 option A):
     /// each started task runs in a freshly spawned child session that gets
     /// ONLY the task brief plus the parent's plan file threaded via
-    /// `plan_session_override`. Default TRUE: isolation is the only sane
-    /// default for autonomous execution — Ralph loops run fresh-context and
-    /// spawn is fresh by construction with no non-isolated mode. Set false
-    /// to keep the legacy behavior: `start` returns the task details and the
-    /// current session executes inline. An explicit `isolated` on plan start
-    /// overrides this flag either way.
+    /// `plan_session_override`. Default FALSE since Aug 26: inline execution
+    /// is the default; the Aug 24-25 auto-isolation window showed per-item
+    /// subagents demand operational maturity (conflict-free scopes, verdict
+    /// discipline) before being safe as a silent default. Opt in per call
+    /// (`isolated: true`) or here for genuine Ralph fan-out. An explicit
+    /// `isolated` on plan start overrides this flag either way.
     #[serde(default = "default_plan_isolated_execution")]
     pub plan_isolated_execution: bool,
     /// Auto-start the next plan task when `complete` succeeds (#1195).
@@ -1368,7 +1368,12 @@ fn default_auto_update() -> bool {
 }
 
 fn default_plan_isolated_execution() -> bool {
-    true
+    // Default FALSE since #1195 follow-up (Aug 26): the Aug 24-25 incident
+    // showed hidden per-item workers carry more operational risk than value
+    // by default (drift, duplicate work, poisoned checklists). Inline remains
+    // the default; isolation stays one explicit `isolated:true` (or this key)
+    // away for genuine Ralph fan-out.
+    false
 }
 
 fn default_plan_auto_start() -> bool {
@@ -1392,7 +1397,7 @@ impl Default for AgentConfig {
             plan_model: None,
             execute_provider: None,
             execute_model: None,
-            plan_isolated_execution: true,
+            plan_isolated_execution: default_plan_isolated_execution(),
             plan_auto_start: default_plan_auto_start(),
             plan_worker_allow_nested: false,
             plan_worker_allow_write: false,
