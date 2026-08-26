@@ -169,7 +169,11 @@ tar = "0.4"
 mermaid-render = { version = "0.10", optional = true }
 # Keep default features: `text` + `system-fonts` are required for diagram
 # labels to rasterize with real glyphs, not boxes.
-resvg = { version = "0.48", optional = true }
+# Nameable instances of resvg 0.48's own rasterizer stack — versions MUST stay in
+# lockstep with what resvg pulls transitively (locked: usvg 0.48.1, tiny-skia 0.12.0),
+# or the Pixmap/Tree types fail to unify and render.rs breaks at E0308.
+usvg = { version = "0.48", optional = true }
+tiny-skia = { version = "0.12", optional = true }
 
 # Memory Search (FTS5 + vector search — store owned in src/memory, #1028)
 llama-cpp-2 = "0.1.137"
@@ -227,9 +231,9 @@ local-stt = ["rwhisper", "rodio", "hound", "rubato", "symphonia", "symphonia-ada
 local-tts = ["opusic-sys", "rubato"]
 browser = ["chromey"]
 pdfium = ["dep:pdfium-render"]
-# Local Mermaid rendering: mermaid-render + resvg. Disabled by default so
+# Local Mermaid rendering: mermaid-render + resvg (+ its usvg/tiny-skia stack, nameable directly). Disabled by default so
 # non-render builds stay lean; Compiler CI enables it for the full build.
-local-mermaid = ["dep:mermaid-render", "dep:resvg"]
+local-mermaid = ["dep:mermaid-render", "dep:resvg", "dep:usvg", "dep:tiny-skia"]
 
 [profile.dev]
 opt-level = 0
