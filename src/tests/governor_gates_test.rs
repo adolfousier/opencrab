@@ -246,16 +246,29 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
     ts::mark_forum(CHAT);
     ts::burn_bucket(CHAT, ts::BucketKind::Edits, 2, 1.0);
 
-    // Mocked Telegram server: the drainer's classic-HTML edit must arrive as
-    // POST /botTESTTOKEN/editMessageText carrying the LATEST payload.
+    // Mocked Telegram server: the drainer's classic-HTML edit must arrive
+    // carrying the LATEST payload.
+    //
+    // The method segment is PascalCase — teloxide 0.17 sends
+    // `EditMessageText`, not the lowercase form the Bot API docs use. With
+    // the lowercase path the mock never matched, so mockito answered with its
+    // own unmatched response, teloxide failed to decode that as a `Message`,
+    // and the drainer read it as a network error and re-queued forever.
     let mut server = mockito::Server::new_async().await;
     let delivered = server
-        .mock("POST", "/botTESTTOKEN/editMessageText")
+        .mock("POST", "/botTESTTOKEN/EditMessageText")
         .match_body(mockito::Matcher::PartialJson(
             serde_json::json!({"text": "<b>settled</b>"}),
         ))
         .with_status(200)
-        .with_body(r#"{"ok":true,"result":{"message_id":11}}"#)
+        .with_header("content-type", "application/json")
+        // A full Message, not just an id: teloxide decodes editMessageText's
+        // result into `Message`, and a bare {"message_id":11} fails to
+        // deserialize. The drainer then saw a network error, re-queued, and
+        // the mock's single expected hit never settled.
+        .with_body(
+            r#"{"ok":true,"result":{"message_id":11,"date":1756166400,"chat":{"id":-100333,"title":"gates","type":"supergroup"},"text":"settled"}}"#,
+        )
         .expect(1)
         .create_async()
         .await;
