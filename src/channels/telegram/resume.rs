@@ -867,3 +867,120 @@ async fn sender_label(
 fn short_session_id(uuid: Uuid) -> String {
     uuid.simple().to_string()[..8].to_owned()
 }
+
+/// How recently (seconds) a Telegram-bound session must have been active for
+/// the boot-time wake pass (#1227) to ping it.
+///
+/// Kept short on purpose: a back-to-back dev restart (the recurring case on
+/// the ops box, 10+/day) must not re-nudge every recently-active topic every
+/// time. Only sessions that touched their topic inside this window are told
+/// the platform survived.
+pub const WAKE_RECENT_SECS: i64 = 600;
+
+/// Text for the boot-time "I'm back" nudge. Deliberately states nothing was
+/// lost and asks for a message only if something was truly in flight, so a
+/// plain stream of restarts reads as reassuring rather than alarming.
+fn wake_text() -> String {
+    "⚙️ <b>beep</b> — I just restarted and I'm back online.\n\
+     Everything from before the restart is safe. If you had anything in \
+     flight, send a message and I'll pick it up — otherwise I'm ready."
+        .to_string()
+}
+
+/// Wait (bounded) for the Telegram bot to authenticate at startup.
+async fn wait_for_bot(state: &Arc<TelegramState>) -> Option<teloxide::Bot> {
+    for _ in 0..30 {
+        if let Some(bot) = state.bot().await {
+            return Some(bot);
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    tracing::error!(target: "telegram", "Boot wake: bot not available after 30s");
+    None
+}
+
+/// Ping every Telegram-bound session that was active shortly before boot but
+/// is not currently being resumed, so its topic does not look dead (#1227).
+///
+/// The on-disk journal only rescues turns that were literally mid-loop at the
+/// kill instant; between-turn sessions have no row (#1224 re-registers their
+/// delivery routes, which drains parked reports, but that happens quietly).
+/// Nothing tells such a topic that the platform survived, so it looks dead
+/// until someone pokes it. This pass closes that with a single lightweight
+/// message to the topic each session belongs to — it runs no turn and
+/// re-executes nothing, it is purely informational.
+///
+/// Sessions whose ids are in `already_resumed` are skipped: those were roused
+/// by a full continuation prompt via `resume_session` already, and would
+/// otherwise get a redundant nudge. Returns how many nudges were scheduled.
+pub async fn wake_recently_active(
+    pool: crate::db::Pool,
+    state: Arc<TelegramState>,
+    already_resumed: &std::collections::HashSet<Uuid>,
+) -> usize {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let since_epoch = now.saturating_sub(WAKE_RECENT_SECS);
+    let repo = crate::db::SessionBindingRepository::new(pool);
+    let Ok(bindings) = repo.recent_for_channel("telegram", since_epoch).await else {
+        tracing::warn!(target: "telegram", "Boot wake could not read recent session bindings");
+        return 0;
+    };
+
+    let mut scheduled = 0usize;
+    for b in bindings {
+        let Ok(sid) = Uuid::parse_str(&b.session_id) else { continue };
+        if already_resumed.contains(&sid) {
+            continue;
+        }
+        let Ok(chat_id) = b.chat_id.parse::<i64>() else { continue };
+        let thread_id = b
+            .thread_id
+            .map(|t| teloxide::types::ThreadId(teloxide::types::MessageId(t)));
+        let state = state.clone();
+        tokio::spawn(async move {
+            let Some(bot) = wait_for_bot(&state).await else { return };
+            // 429 discipline (#816): several wakes can land in the same chat
+            // at once right after a resume stream, so wait the window out and
+            // retry once with fresh content, matching delivery.rs / flow.rs.
+            let text = wake_text();
+            let send_now = |fresh: String| {
+                let mut req = bot
+                    .send_message(teloxide::types::ChatId(chat_id), fresh)
+                    .parse_mode(teloxide::types::ParseMode::Html);
+                if let Some(tid) = thread_id {
+                    req = req.message_thread_id(tid);
+                }
+                req
+            };
+            match send_now(text.clone()).await {
+                Ok(_) => {}
+                Err(teloxide::RequestError::RetryAfter(secs)) => {
+                    super::rate_limit::wait_out(
+                        "boot wake",
+                        secs.duration(),
+                        " on first delivery, retrying once",
+                    )
+                    .await;
+                    if let Err(e) = send_now(text).await {
+                        tracing::warn!(target: "telegram", "boot wake failed on 429 retry for session {sid}: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("boot wake failed for session {sid}: {e}");
+                }
+            }
+        });
+        scheduled += 1;
+    }
+
+    if scheduled > 0 {
+        tracing::info!(
+            target: "telegram",
+            "Scheduled boot wake for {scheduled} recently-active session(s) (#1227)"
+        );
+    }
+    scheduled
+}
