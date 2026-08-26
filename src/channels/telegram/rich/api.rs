@@ -372,12 +372,20 @@ pub(crate) fn build_body_html(
 
 /// Send `markdown` with a `media` array as a native rich message
 /// (Bot API 10.2+, #1044). The markdown references each image via
-/// Exercised today only by the cfg(test) suite; reserved as the
-/// media-carrying entry point for in-flight echo-bubble work (#1234).
-#[allow(dead_code)]
-/// `tg://photo?id=<id>`; the `media` array maps each id to a renderer URL
-/// Telegram fetches server-side. This is the mode that embeds images while
-/// keeping pipe tables native. Returns the new message id.
+/// `tg://photo?id=<id>`; the `media` array maps each id to an image source.
+///
+/// Two delivery modes, switched per entry (#1044 local-mermaid delivery swap):
+///
+/// - `MediaEntry::url` — the legacy URL path: the source is a renderer URL
+///   (e.g. mermaid.ink) that Telegram fetches server-side. Sent as a plain
+///   JSON body.
+/// - `MediaEntry::bytes` (local `local-mermaid` render) — the PNG bytes are
+///   uploaded to Telegram via multipart as `attach://<id>` photo parts, so
+///   Telegram never touches a third-party URL. The request must therefore be
+///   `multipart/form-data`, not JSON.
+///
+/// Returns the new message id. Returns `Err` on transport/API failure so the
+/// caller can fall back to the HTML dialect.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_markdown_media_id(
     api_url: &str,
@@ -419,13 +427,17 @@ pub(crate) async fn send_rich_markdown_media_target_id(
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
     let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
-    let result = post_rich(
-        &url,
-        &build_body_markdown_media_target(chat_id, thread_id, reply_to, markdown, media),
-        origin,
-        origin_detail,
-    )
-    .await?;
+    let body = build_body_markdown_media_target(chat_id, thread_id, reply_to, markdown, media);
+
+    let result = if media.iter().any(|m| m.bytes.is_some()) {
+        // Local render → multipart upload of the PNG bytes (attach://).
+        let form = build_multipart_form(&body, media);
+        post_rich_multipart(&url, &form, &body, origin, origin_detail).await?
+    } else {
+        // Legacy URL path → plain JSON; Telegram refetches the URL.
+        post_rich(&url, &body, origin, origin_detail).await?
+    };
+
     result
         .get("message_id")
         .and_then(serde_json::Value::as_i64)
@@ -433,9 +445,151 @@ pub(crate) async fn send_rich_markdown_media_target_id(
         .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
 }
 
-/// Pure request-shape helper exercised by the cfg(test) prototype-parity
-/// suite; nothing on the lib path constructs it yet (#1234 surface).
-#[allow(dead_code)]
+/// Build the multipart/form-data request for a `sendRichMessage` whose media
+/// array references uploaded PNG bytes via `attach://<id>`. Every top-level
+/// scalar field of the JSON body (`chat_id`, `message_thread_id`,
+/// `reply_parameters`, `rich_message`) becomes a string form part; each byte
+/// entry becomes a file part named exactly `<id>` so Telegram's
+/// `attach://<id>` reference resolves (§ Bot API multipart media convention).
+/// The JSON body is still passed in for correlation telemetry
+/// ([`rich_send_fields`] reads its `rich_message` pointer).
+fn build_multipart_form(
+    media: &[super::mermaid::MediaEntry],
+    body: &serde_json::Value,
+) -> reqwest::multipart::Form {
+    let mut fields: Vec<(String, String)> = Vec::new();
+    if let Some(v) = body.get("chat_id") {
+        fields.push(("chat_id".to_string(), v.to_string()));
+    }
+    if let Some(v) = body.get("message_thread_id") {
+        fields.push(("message_thread_id".to_string(), v.to_string()));
+    }
+    if let Some(v) = body.get("reply_parameters") {
+        fields.push(("reply_parameters".to_string(), v.to_string()));
+    }
+    if let Some(v) = body.get("rich_message") {
+        fields.push(("rich_message".to_string(), v.to_string()));
+    }
+
+    let mut form = reqwest::multipart::Form::new();
+    for (name, value) in fields {
+        form = form.text(name, value);
+    }
+    for m in media {
+        if let Some(bytes) = &m.bytes {
+            let part = reqwest::multipart::Part::bytes(bytes.clone())
+                .file_name(format!("{}.png", m.id))
+                .mime_str("image/png")
+                .expect("image/png is a valid mime");
+            form = form.part(m.id.clone(), part);
+        }
+    }
+    form
+}
+
+/// POST `form` (multipart, for `attach://` bytes upload) to `url`, mirroring
+/// [`post_rich`]'s retry / rate-limit / telemetry semantics exactly. Accepts
+/// only the media-with-bytes send; every non-`ok` response is an error that
+/// surfaces Telegram's `description`.
+async fn post_rich_multipart(
+    url: &str,
+    form: &reqwest::multipart::Form,
+    body: &serde_json::Value,
+    origin: &str,
+    origin_detail: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let client = reqwest::Client::new();
+    let mut attempt = 0u32;
+
+    loop {
+        {
+            let (_, chat_id, thread, _, _) = rich_send_fields(url, body);
+            crate::channels::telegram::governor::pace_rich(
+                teloxide::types::ChatId(chat_id),
+                thread,
+            )
+            .await;
+        }
+        let resp = client
+            .post(url)
+            .multipart(form.clone())
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+
+        if status.is_success()
+            && parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+        {
+            let result = parsed
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let (method, chat_id, thread, len, hash8) = rich_send_fields(url, body);
+            let msg_id = result
+                .get("message_id")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0) as i32;
+            crate::channels::telegram::telemetry::log_send_success(
+                origin,
+                origin_detail,
+                "-",
+                "rich_api",
+                method,
+                chat_id,
+                thread,
+                msg_id,
+                len,
+                &hash8,
+            );
+            return Ok(result);
+        }
+
+        if status.as_u16() == 429 && attempt < RICH_MAX_RETRIES {
+            let retry_after = parsed
+                .get("parameters")
+                .and_then(|p| p.get("retry_after"))
+                .and_then(|r| r.as_u64())
+                .unwrap_or(5);
+            attempt += 1;
+            crate::channels::telegram::rate_limit::wait_out(
+                "rich API",
+                std::time::Duration::from_secs(retry_after),
+                &format!(" (attempt {attempt}/{RICH_MAX_RETRIES})"),
+            )
+            .await;
+            continue;
+        }
+
+        let desc = parsed
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&text);
+        if status.as_u16() == 429 {
+            tracing::warn!(
+                "Rich API (multipart) still rate limited after {RICH_MAX_RETRIES} retries — falling back"
+            );
+        }
+        {
+            let (method, chat_id, thread, len, hash8) = rich_send_fields(url, body);
+            crate::channels::telegram::telemetry::log_send_failure(
+                origin,
+                origin_detail,
+                "-",
+                "rich_api",
+                method,
+                chat_id,
+                thread,
+                len,
+                &hash8,
+                &format!("({status}): {desc}"),
+            );
+        }
+        anyhow::bail!("Telegram rich API error ({status}): {desc}")
+    }
+}
+
 /// Build the `sendRichMessage` body with markdown input + a `media` array
 /// (Bot API 10.2+, #1044). Split out so the request shape is unit-testable
 /// without a live bot. Matches the validated prototype (message 1073):

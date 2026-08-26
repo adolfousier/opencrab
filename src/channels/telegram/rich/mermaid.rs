@@ -31,6 +31,8 @@ const MERMAID_INK_PARAMS: &str = "?type=png&width=1600&scale=2";
 
 /// Upper bound on a single pre-validation request. A slow renderer must not
 /// stall message delivery; on timeout we degrade to a failure block.
+/// Only meaningful on the mermaid.ink URL path, retired under `local-mermaid`.
+#[cfg(not(feature = "local-mermaid"))]
 const PREVALIDATE_TIMEOUT_SECS: u64 = 10;
 
 /// Cap on how much of the renderer's error body we surface, so a huge HTML
@@ -212,6 +214,11 @@ pub(crate) fn ink_url(source: &str) -> String {
 /// `image/*` content type; every other outcome (non-200, non-image, timeout,
 /// transport error, client build failure) yields [`MermaidResult::Failed`]
 /// with a legible note. Never panics, never hangs past the timeout.
+///
+/// Only used on the mermaid.ink URL path; under `local-mermaid` the fences are
+/// rendered in-process ([`resolve_fence`] routes to [`render`] instead), so
+/// this pre-validation function is compiled out to avoid dead code.
+#[cfg(not(feature = "local-mermaid"))]
 pub(crate) async fn prevalidate(source: &str) -> MermaidResult {
     let url = ink_url(source);
 
@@ -304,11 +311,33 @@ pub(crate) fn replacement_for(
     }
 }
 
+/// Resolve a single fence to a render outcome. This is the delivery-path
+/// switch (#1044 local-mermaid delivery swap):
+///
+/// - With the `local-mermaid` feature compiled in, the diagram is rendered
+///   IN-PROCESS to PNG bytes ([`render::render_local_png`]); those bytes are
+///   uploaded to Telegram via multipart (`attach://<id>`) — Telegram never
+///   fetches an image URL from us.
+/// - Without the feature, the legacy mermaid.ink URL path runs: pre-validate
+///   the image URL, then let Telegram refetch it server-side. This is the
+///   compile-time fallback/feature switch that keeps the network path intact
+///   for builds without the local renderer.
+async fn resolve_fence(source: &str) -> MermaidResult {
+    #[cfg(feature = "local-mermaid")]
+    {
+        crate::channels::telegram::rich::render::local_render_result(source)
+    }
+    #[cfg(not(feature = "local-mermaid"))]
+    {
+        prevalidate(source).await
+    }
+}
+
 /// Resolve every mermaid fence in `text` for the markdown+media path: valid
 /// diagrams become `![diagram](tg://photo?id=diagN)` references with a
 /// matching [`MediaEntry`], broken ones become legible markdown failure
 /// blocks. Non-fence text is untouched (byte-identical). Boxed because the
-/// resolver is async and returned across an await boundary.
+/// resolver is async and because it spans an await boundary.
 pub(crate) fn resolve_markdown_media(text: &str) -> BoxFuture<'static, (String, Vec<MediaEntry>)> {
     let text = text.to_string();
     async move {
@@ -320,7 +349,7 @@ pub(crate) fn resolve_markdown_media(text: &str) -> BoxFuture<'static, (String, 
         let mut media = Vec::new();
         // Replace from last to first so earlier byte offsets stay valid.
         for (i, fence) in fences.iter().enumerate().rev() {
-            let outcome = prevalidate(&fence.source).await;
+            let outcome = resolve_fence(&fence.source).await;
             let (replacement, entry) = replacement_for(&outcome, i, &fence.source);
             if let Some(e) = entry {
                 media.push(e);
@@ -357,7 +386,7 @@ fn resolve_block(block: Block) -> BoxFuture<'static, Block> {
                 if lang.as_deref().is_some_and(is_mermaid_lang)
                     || (lang.is_none() && looks_like_mermaid_source(&text)) =>
             {
-                let result = prevalidate(&text).await;
+                let result = resolve_fence(&text).await;
                 Block::Mermaid {
                     source: text,
                     result,
