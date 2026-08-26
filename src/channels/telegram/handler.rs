@@ -1487,6 +1487,14 @@ pub(crate) async fn handle_message(
     let legacy_title =
         session_resolve::build_legacy_session_title(is_dm, &user.first_name, user_id, chat_title);
 
+    // Single-flight per (chat, topic) (#1201): resolution is
+    // lookup-then-create and the two steps were not atomic, so two messages
+    // into one brand-new topic ~88 ms apart both missed and both created.
+    // Released right after the chat→session registration below, NOT held for
+    // the turn — holding it that long would serialize a topic's messages and
+    // defeat the mid-turn queueing #302 provides.
+    let resolve_gate = super::session_gate::hold(chat_id, topic_id).await;
+
     let session_id = {
         // Resolve policy (chat map → suffix → create): see
         // session_resolve::choose_resolve_source and telegram_session_resolve_test.
@@ -1803,6 +1811,12 @@ pub(crate) async fn handle_message(
     telegram_state
         .register_session_chat(session_id, msg.chat.id.0, topic_id)
         .await;
+
+    // Resolution is complete and the binding is visible, so a message that
+    // was waiting on the gate now finds this session instead of creating its
+    // own (#1201). Released HERE rather than at end of scope: the turn below
+    // must not hold it.
+    drop(resolve_gate);
 
     // Claim this session's background-task completions for Telegram: a completion
     // must be delivered by the surface that OWNS the session, not by whichever
