@@ -432,7 +432,9 @@ pub(crate) async fn handle_message(
     // is a forum group. Recorded for EVERY message before early returns, so
     // chatter not addressed to the bot still feeds the cache.
     let raw_thread = thread_id.map(|t| t.0.0);
-    telegram_state.note_thread_evidence(msg.chat.id.0, raw_thread).await;
+    telegram_state
+        .note_thread_evidence(msg.chat.id.0, raw_thread)
+        .await;
 
     // Forum-topic session isolation (#215). #130 fixed the reply ADDRESS
     // (replies land in the right topic); this scopes the CONVERSATION so each
