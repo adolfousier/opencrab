@@ -454,6 +454,7 @@ pub(crate) async fn deliver_final_response(
                     chat_id.0,
                     thread_id,
                     &rich_md,
+                    None,
                     "turn",
                     "-",
                 )
@@ -689,6 +690,7 @@ pub(crate) async fn deliver_final_response(
                                 chat_id.0,
                                 thread_id,
                                 &rich_md,
+                                None,
                                 "turn",
                                 "-",
                             )
@@ -705,6 +707,7 @@ pub(crate) async fn deliver_final_response(
                                     chat_id.0,
                                     thread_id,
                                     &rich_md,
+                                    None,
                                     "turn",
                                     "-",
                                 )

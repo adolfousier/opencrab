@@ -81,7 +81,7 @@ pub(crate) fn build_rich_body(
     receiver_user_id: i64,
     markdown: &str,
 ) -> serde_json::Value {
-    let mut body = super::rich::api::build_body(chat_id, thread_id, markdown);
+    let mut body = super::rich::api::build_body(chat_id, thread_id, markdown, None);
     body["receiver_user_id"] = serde_json::json!(receiver_user_id);
     body
 }

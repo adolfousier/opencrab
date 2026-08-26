@@ -93,12 +93,14 @@ pub(crate) async fn edit_rich_html(
 /// Send `markdown` as a native rich message and return the new message id.
 /// Used for intermediate streamed segments, which must be tracked for later
 /// footer-append / dedup. Returns `Err` so the caller can fall back to HTML.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_markdown_id(
     api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
     markdown: &str,
+    reply_to: Option<i32>,
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
@@ -107,7 +109,7 @@ pub(crate) async fn send_rich_markdown_id(
         token,
         chat_id,
         thread_id,
-        None,
+        reply_to,
         markdown,
         origin,
         origin_detail,
@@ -119,6 +121,7 @@ pub(crate) async fn send_rich_markdown_id(
 /// `reply_to` is a message id in the same chat; when set the rich body
 /// carries `reply_parameters` so the reply lands threaded to that message
 /// (#1230).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_markdown_target_id(
     api_url: &str,
     token: &str,
@@ -377,6 +380,7 @@ pub(crate) async fn send_rich_markdown_media_id(
     thread_id: Option<ThreadId>,
     markdown: &str,
     media: &[super::mermaid::MediaEntry],
+    reply_to: Option<i32>,
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
@@ -385,7 +389,7 @@ pub(crate) async fn send_rich_markdown_media_id(
         token,
         chat_id,
         thread_id,
-        None,
+        reply_to,
         markdown,
         media,
         origin,

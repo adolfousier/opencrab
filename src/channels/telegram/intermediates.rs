@@ -81,6 +81,7 @@ pub(crate) async fn try_send_intermediate_rich(
         chat_id.0,
         thread_id,
         text,
+        None,
         "turn",
         "-",
     )

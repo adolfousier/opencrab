@@ -316,6 +316,7 @@ fn rich_request_body_passes_markdown_through() {
         12345,
         None,
         "# Title\n\n| a | b |\n| - | - |\n| 1 | 2 |",
+        None,
     );
     assert_eq!(body["chat_id"], 12345);
     assert_eq!(

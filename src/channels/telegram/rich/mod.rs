@@ -183,6 +183,7 @@ pub(crate) async fn send_rich_with_mermaid(
         chat_id,
         thread_id,
         markdown,
+        None,
         origin,
         origin_detail,
     )
@@ -197,6 +198,7 @@ pub(crate) async fn send_rich_with_mermaid_id(
     chat_id: i64,
     thread_id: Option<teloxide::types::ThreadId>,
     markdown: &str,
+    reply_to: Option<i32>,
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
@@ -205,7 +207,7 @@ pub(crate) async fn send_rich_with_mermaid_id(
         token,
         chat_id,
         thread_id,
-        None,
+        reply_to,
         markdown,
         origin,
         origin_detail,
