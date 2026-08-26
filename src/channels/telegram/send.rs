@@ -214,6 +214,12 @@ where
 /// tells forensics the bot was mid-turn when the API hiccuped. Awaited
 /// sibling of [`chat_action_in_thread`] so call sites stop discarding the
 /// Result. (#1085 P3)
+///
+/// G1 flood governor (#1211): every typing path on the surface funnels through
+/// this one function, so the per-forum token bucket + per-topic coalescing in
+/// [`super::governor::admit_chat_action`] applies here and nowhere else. A
+/// suppressed refresh is a pure cosmetic loss — the indicator is stateless
+/// and the next tick re-fires it.
 pub async fn fire_chat_action<C>(
     bot: &Bot,
     chat_id: C,
@@ -223,7 +229,11 @@ pub async fn fire_chat_action<C>(
 ) where
     C: Into<ChatId>,
 {
-    if let Err(e) = chat_action_in_thread(bot, chat_id, thread_id, action)
+    let chat = chat_id.into();
+    if !super::governor::admit_chat_action(chat, thread_id.map(|t| t.0.0)).await {
+        return;
+    }
+    if let Err(e) = chat_action_in_thread(bot, chat, thread_id, action)
         .await
         .map(|_| ())
     {
@@ -250,6 +260,9 @@ pub async fn best_effort_note<C>(
     C: Into<ChatId>,
 {
     let chat = chat_id.into();
+    // G3 send pacing (#1211): system notices ride the same per-chat pacer as
+    // every other full message. DMs (positive ids) pass straight through.
+    super::governor::pace_send(chat).await;
     let len = text.len();
     let hash8 = super::telemetry::content_hash8(text);
     let request = message_in_thread(bot, chat, thread_id, text);

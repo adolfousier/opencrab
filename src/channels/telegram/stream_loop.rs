@@ -390,10 +390,23 @@ pub(crate) fn spawn_edit_loop(
                                     crate::utils::extract_react_marker(&snap.response_text);
                                 let html = markdown_to_telegram_html(&clean);
                                 let display = format!("{}\u{258b}", html); // ▋ cursor
-                                if let Err(e) = bot
-                                    .edit_message_text(chat, mid, display)
-                                    .parse_mode(ParseMode::Html)
-                                    .await
+                                // G2 flood governor (#1211): streaming preview churn is the
+                                // brain-preview ladder class — droppable when the per-forum
+                                // edit bucket is empty; the next chunk's render self-heals.
+                                let admitted = super::governor::edit_admission(
+                                    &bot,
+                                    chat,
+                                    mid,
+                                    super::governor::EditClass::BrainPreview,
+                                    display.clone(),
+                                    false,
+                                )
+                                .await;
+                                if admitted
+                                    && let Err(e) = bot
+                                        .edit_message_text(chat, mid, &display)
+                                        .parse_mode(ParseMode::Html)
+                                        .await
                                 {
                                     // Review F10: placeholder edits were fully
                                     // silent; a failing edit stream is now visible.
