@@ -462,9 +462,16 @@ pub(crate) fn build_body_markdown_media_target(
     let media_arr: Vec<serde_json::Value> = media
         .iter()
         .map(|m| {
+            // Local PNG bytes upload via multipart as `attach://<id>`; URL
+            // entries keep the legacy server-side fetch reference.
+            let source = match (&m.bytes, &m.url) {
+                (Some(_), _) => format!("attach://{}", m.id),
+                (None, Some(url)) => url.clone(),
+                (None, None) => String::new(),
+            };
             serde_json::json!({
                 "id": m.id,
-                "media": { "type": "photo", "media": m.url },
+                "media": { "type": "photo", "media": source },
             })
         })
         .collect();

@@ -258,7 +258,8 @@ fn replacement_for_image_emits_media_reference_and_entry() {
     assert_eq!(md, "![diagram](tg://photo?id=diag0)");
     let e = entry.expect("image outcome must carry a media entry");
     assert_eq!(e.id, "diag0");
-    assert_eq!(e.url, "https://mermaid.ink/img/xyz");
+    assert_eq!(e.url, Some("https://mermaid.ink/img/xyz".into()));
+    assert!(e.bytes.is_none());
 }
 
 #[test]
@@ -267,6 +268,17 @@ fn replacement_for_image_uses_fence_index_in_id() {
     let (md, entry) = replacement_for(&outcome, 3, "src");
     assert_eq!(md, "![diagram](tg://photo?id=diag3)");
     assert_eq!(entry.unwrap().id, "diag3");
+}
+
+#[test]
+fn replacement_for_image_bytes_carries_png_and_no_url() {
+    let outcome = MermaidResult::ImageBytes(vec![0x89, b'P', b'N', b'G', 0, 0, 0, 0]);
+    let (md, entry) = replacement_for(&outcome, 1, "graph TD;");
+    assert_eq!(md, "![diagram](tg://photo?id=diag1)");
+    let e = entry.expect("bytes outcome must carry a media entry");
+    assert_eq!(e.id, "diag1");
+    assert!(e.url.is_none());
+    assert_eq!(e.bytes.as_deref(), Some(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0][..]));
 }
 
 #[test]
@@ -303,7 +315,8 @@ fn markdown_failure_block_contains_warning_error_and_source() {
 fn build_body_markdown_media_matches_prototype_shape() {
     let media = vec![MediaEntry {
         id: "diag0".into(),
-        url: "https://mermaid.ink/img/abc".into(),
+        url: Some("https://mermaid.ink/img/abc".into()),
+        bytes: None,
     }];
     let body = build_body_markdown_media(-100, None, "text", &media, None);
     assert_eq!(body["chat_id"], -100);
@@ -323,6 +336,22 @@ fn build_body_markdown_media_includes_thread_id_when_present() {
     use teloxide::types::{MessageId, ThreadId};
     let body = build_body_markdown_media(-100, Some(ThreadId(MessageId(249))), "m", &[], None);
     assert_eq!(body["message_thread_id"], 249);
+}
+
+#[test]
+fn build_body_markdown_media_bytes_entry_uses_attach_reference() {
+    let media = vec![MediaEntry {
+        id: "diag1".into(),
+        url: None,
+        bytes: Some(vec![0x89, b'P']),
+    }];
+    let body = build_body_markdown_media(-100, None, "text", &media);
+    let arr = body["rich_message"]["media"]
+        .as_array()
+        .expect("media array");
+    assert_eq!(arr[0]["id"], "diag1");
+    assert_eq!(arr[0]["media"]["type"], "photo");
+    assert_eq!(arr[0]["media"]["media"], "attach://diag1");
 }
 
 // ---------------------------------------------------------------------------

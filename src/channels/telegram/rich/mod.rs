@@ -17,6 +17,8 @@ pub(crate) mod ast;
 mod inline;
 mod list;
 pub(crate) mod mermaid;
+#[cfg(feature = "local-mermaid")]
+pub(crate) mod render;
 mod parse;
 mod render_html;
 pub(crate) mod render_json;

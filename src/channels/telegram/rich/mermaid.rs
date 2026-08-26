@@ -38,12 +38,19 @@ const PREVALIDATE_TIMEOUT_SECS: u64 = 10;
 const ERROR_NOTE_MAX_CHARS: usize = 400;
 
 /// One media reference embedded via the markdown `media` field (#1044).
-/// `id` matches the `tg://photo?id=<id>` reference in the markdown text;
-/// `url` is the validated renderer image Telegram fetches server-side.
+/// `id` matches the `tg://photo?id=<id>` reference in the markdown text.
+///
+/// Exactly one of the payload sources is set:
+/// - `url`: the mermaid.ink renderer image URL Telegram fetches server-side
+///   (the legacy, network-dependent path).
+/// - `bytes`: locally-rendered PNG bytes (feature `local-mermaid`) uploaded
+///   to Telegram via multipart as `attach://<id>` — Telegram never touches a
+///   third-party URL.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MediaEntry {
     pub(crate) id: String,
-    pub(crate) url: String,
+    pub(crate) url: Option<String>,
+    pub(crate) bytes: Option<Vec<u8>>,
 }
 
 /// A located ```mermaid fence in the source markdown. `start` is the byte
@@ -277,7 +284,19 @@ pub(crate) fn replacement_for(
                 format!("![diagram](tg://photo?id={id})"),
                 Some(MediaEntry {
                     id,
-                    url: url.clone(),
+                    url: Some(url.clone()),
+                    bytes: None,
+                }),
+            )
+        }
+        MermaidResult::ImageBytes(bytes) => {
+            let id = format!("diag{index}");
+            (
+                format!("![diagram](tg://photo?id={id})"),
+                Some(MediaEntry {
+                    id,
+                    url: None,
+                    bytes: Some(bytes.clone()),
                 }),
             )
         }
