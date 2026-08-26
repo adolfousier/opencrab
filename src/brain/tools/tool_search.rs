@@ -12,19 +12,36 @@ use super::registry::ToolRegistry;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 /// Max tools returned (and activated) per search — keeps a single discovery
 /// from re-injecting a huge chunk of the schemas it was meant to avoid.
 const MAX_RESULTS: usize = 8;
 
+/// Bound to the registry whose ACTIVE SET the request builder reads.
+///
+/// That binding is the whole tool (#1210). A sub-agent's registry is a copy
+/// of its parent's holding the same `Arc<dyn Tool>` instances, so a
+/// `ToolSearchTool` built against the parent kept pointing there after the
+/// copy: in a child session it activated into the parent's registry under the
+/// child's session id, while the child's request builder read the child's.
+/// The searched tool's schema never rode on the child's next request, so the
+/// model could not call what it had just been told was callable, and searched
+/// again until the loop-breaker killed the turn.
+///
+/// `Weak` rather than `Arc` because the registry owns this tool: an `Arc`
+/// closes a registry -> tool -> registry cycle, which leaks the registry.
+/// That was survivable for the one long-lived parent and would not be for a
+/// child per spawn.
 pub struct ToolSearchTool {
-    registry: Arc<ToolRegistry>,
+    registry: Weak<ToolRegistry>,
 }
 
 impl ToolSearchTool {
-    pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+    pub fn new(registry: &Arc<ToolRegistry>) -> Self {
+        Self {
+            registry: Arc::downgrade(registry),
+        }
     }
 }
 
@@ -76,7 +93,20 @@ impl Tool for ToolSearchTool {
             ));
         }
 
-        let matches = self.registry.search_tools(query, MAX_RESULTS);
+        // The registry outlives every tool it holds in practice, so this is a
+        // "cannot happen" — say so rather than returning an empty result set,
+        // which the model would read as "no such tool exists".
+        let Some(registry) = self.registry.upgrade() else {
+            tracing::error!(
+                "tool_search: its registry is gone, so nothing can be discovered or activated"
+            );
+            return Ok(ToolResult::error(
+                "Tool discovery is unavailable: the tool registry is no longer live. This is a                  bug, not a missing tool — do not conclude the tool you searched for does not                  exist."
+                    .to_string(),
+            ));
+        };
+
+        let matches = registry.search_tools(query, MAX_RESULTS);
         if matches.is_empty() {
             return Ok(ToolResult::success(format!(
                 "No additional tools matched \"{query}\". Your core tools may already cover it; \
@@ -112,9 +142,8 @@ impl Tool for ToolSearchTool {
         // matches are capped per search (MAX_RESULTS) and `activate_tools`
         // evicts LRU past MAX_ACTIVE_EXTENDED. The request cannot balloon
         // without bound; it just stops lying about what is callable.
-        self.registry
-            .activate_tools(context.session_id, names.iter().cloned());
-        let defs = self.registry.definitions_for(&names);
+        registry.activate_tools(context.session_id, names.iter().cloned());
+        let defs = registry.definitions_for(&names);
 
         let mut out = format!(
             "Found {} tool(s) — call the one you need directly (params below); it activates on use:\n\n",
