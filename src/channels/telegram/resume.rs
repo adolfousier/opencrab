@@ -94,28 +94,30 @@ pub(crate) fn build_enqueue_callback(
                 } else {
                     "⚙️ background task result".to_owned()
                 };
-                let (markdown, html) = build_bg_echo_bubble(&body, &title);
-                // Rich-first: tables/headings/mermaid in the body get the
-                // native rich message; anything else — or any send failure —
-                // degrades to the classic HTML blockquote below.
-                let sent_rich = super::rich::should_send_native_rich(&markdown)
-                    && match super::rich::send_rich_with_mermaid(
-                        bot.api_url().as_str(),
-                        bot.token(),
-                        chat_id,
-                        thread_id,
-                        &markdown,
-                        "bg-resume",
-                        "-",
-                    )
-                    .await
-                    {
-                        Ok(()) => true,
-                        Err(e) => {
-                            tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
-                            false
-                        }
-                    };
+                let (_, html) = build_bg_echo_bubble(&body, &title);
+                // Rich-first: route the echo bubble through the same canonical
+                // rich send plan_card uses. Any send failure degrades to the
+                // classic HTML blockquote below.
+                let sent_rich = match super::rich::api::send_rich_html_id(
+                    bot.api_url().as_str(),
+                    bot.token(),
+                    chat_id,
+                    thread_id,
+                    &html,
+                    None,
+                    "bg-resume",
+                    "-",
+                )
+                .await
+                {
+                    Ok(_) => true,
+                    Err(e) => {
+                        tracing::warn!(
+                            "[bg-resume] #1225 rich echo failed, using HTML: {e}"
+                        );
+                        false
+                    }
+                };
                 if !sent_rich {
                     let mut echo = bot
                         .send_message(teloxide::types::ChatId(chat_id), html.clone())
