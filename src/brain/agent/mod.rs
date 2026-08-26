@@ -12,6 +12,7 @@ pub use context::AgentContext;
 pub use error::{AgentError, Result, format_user_error};
 pub use service::{
     AgentResponse, AgentService, AgentStreamResponse, ApprovalCallback, BrainRebuild,
-    ChannelSessionEvent, MessageQueueCallback, ProgressCallback, ProgressEvent, QueuedUserMessage,
+    ChannelSessionEvent, MessageQueueCallback, ProgressCallback, ProgressEvent, PushOrigin,
+    QueuedUserMessage,
     SshPasswordCallback, SudoCallback, ToolApprovalInfo,
 };
