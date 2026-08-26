@@ -1368,7 +1368,7 @@ pub(crate) async fn open_flow(
     if html.is_empty() {
         return;
     }
-    if let Ok(mid) = send_html_or_plain(bot, chat, thread_id, &html, "turn").await {
+    if let Ok(mid) = send_html_or_plain(bot, chat, thread_id, &html, "turn", None).await {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.open_group_msg_id = Some(mid);
         s.flow_rich = false;
@@ -1575,7 +1575,7 @@ pub(crate) async fn restick_flow_if_buried(
         if html.is_empty() {
             return false;
         }
-        match send_html_or_plain(bot, chat, thread_id, &html, "turn").await {
+        match send_html_or_plain(bot, chat, thread_id, &html, "turn", None).await {
             Ok(mid) => Some(mid),
             Err(e) => {
                 tracing::warn!(

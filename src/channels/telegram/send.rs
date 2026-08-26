@@ -315,6 +315,7 @@ pub(crate) async fn send_markdown_outbox(
     markdown: &str,
     origin: &str,
     origin_detail: &str,
+    reply_to: Option<i32>,
 ) -> std::result::Result<Vec<(i32, String)>, String> {
     let thread = thread_id.map(|t| t.0.0);
 
@@ -322,11 +323,12 @@ pub(crate) async fn send_markdown_outbox(
     // line for this send (with origin + detail threaded through), so the
     // outbox does not double-log the rich success (review F3/F8).
     if super::rich::should_send_native_rich(markdown) {
-        match super::rich::send_rich_with_mermaid_id(
+        match super::rich::send_rich_with_mermaid_target_id(
             bot.api_url().as_str(),
             bot.token(),
             chat_id.0,
             thread_id,
+            reply_to,
             markdown,
             origin,
             origin_detail,
@@ -348,7 +350,15 @@ pub(crate) async fn send_markdown_outbox(
     let total = chunks.len();
     let mut sent: Vec<(i32, String)> = Vec::new();
     for (i, chunk) in chunks.into_iter().enumerate() {
-        match super::intermediates::send_html_or_plain(bot, chat_id, thread_id, chunk, origin).await
+        match super::intermediates::send_html_or_plain(
+                bot,
+                chat_id,
+                thread_id,
+                chunk,
+                origin,
+                reply_to,
+            )
+            .await
         {
             Ok(mid) => {
                 super::telemetry::log_send_success(

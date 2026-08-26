@@ -200,12 +200,39 @@ pub(crate) async fn send_rich_with_mermaid_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
+    send_rich_with_mermaid_target_id(
+        api_url,
+        token,
+        chat_id,
+        thread_id,
+        None,
+        markdown,
+        origin,
+        origin_detail,
+    )
+    .await
+}
+
+/// Like [`send_rich_with_mermaid_id`] but carries an optional Telegram reply
+/// target (`reply_parameters`) on the rich send, so a rich reply lands
+/// threaded to an existing message (#1230).
+pub(crate) async fn send_rich_with_mermaid_target_id(
+    api_url: &str,
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<teloxide::types::ThreadId>,
+    reply_to: Option<i32>,
+    markdown: &str,
+    origin: &str,
+    origin_detail: &str,
+) -> anyhow::Result<i32> {
     if !mermaid::should_render_mermaid(markdown) {
-        return api::send_rich_markdown_id(
+        return api::send_rich_markdown_target_id(
             api_url,
             token,
             chat_id,
             thread_id,
+            reply_to,
             markdown,
             origin,
             origin_detail,
@@ -221,11 +248,12 @@ pub(crate) async fn send_rich_with_mermaid_id(
     // All fences failed → `resolved` carries only failure blocks, no media to
     // embed; send it as plain rich markdown (no `media` field).
     if media.is_empty() {
-        return api::send_rich_markdown_id(
+        return api::send_rich_markdown_target_id(
             api_url,
             token,
             chat_id,
             thread_id,
+            reply_to,
             &resolved,
             origin,
             origin_detail,
@@ -234,11 +262,12 @@ pub(crate) async fn send_rich_with_mermaid_id(
     }
 
     // Primary: markdown dialect + media array keeps pipe tables native.
-    match api::send_rich_markdown_media_id(
+    match api::send_rich_markdown_media_target_id(
         api_url,
         token,
         chat_id,
         thread_id,
+        reply_to,
         &resolved,
         &media,
         origin,

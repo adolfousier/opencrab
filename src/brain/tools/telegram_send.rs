@@ -509,6 +509,7 @@ impl TelegramSendTool {
             &text,
             "tool",
             "send",
+            None,
         )
         .await
         {
@@ -534,64 +535,31 @@ impl TelegramSendTool {
         let NewTarget { chat_id, thread_id } =
             pget!(resolve_new_target(input, context.session_id, &self.telegram_state).await);
         let message_id = pget!(get_id(input, "message_id"));
-        // Convert markdown to Telegram HTML, same as the "send"
-        // action, so formatting (bold, code, tables) renders instead
-        // of arriving as raw literal tags (#834).
-        let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
-        let reply_text = text.clone();
-        match send_retrying_rate_limit("telegram_send reply", || {
-            crate::channels::telegram::send::message_in_thread(
-                bot,
-                ChatId(chat_id),
-                thread_id,
-                html.clone(),
-            )
-            .parse_mode(teloxide::types::ParseMode::Html)
-            .reply_parameters(ReplyParameters::new(MessageId(message_id as i32)))
-        })
+        // Reply rich-first through the shared outbox ladder (#1230): a table
+        // in a reply renders as a native rich message (real grid), exactly
+        // like the `send` action — instead of the old direct
+        // markdown_to_telegram_html+ParseMode::Html path which degraded
+        // tables to a monospace `<pre>` grid. The outbox owns the reply
+        // target via `reply_to`, retry, chunking and plain-text fallback.
+        let sent = match crate::channels::telegram::send::send_markdown_outbox(
+            bot,
+            ChatId(chat_id),
+            thread_id,
+            &text,
+            "tool",
+            "reply",
+            Some(message_id),
+        )
         .await
         {
-            Ok(m) => {
-                log_send_success(
-                    "tool",
-                    "reply",
-                    "reply",
-                    &context.session_id.to_string(),
-                    "html",
-                    chat_id,
-                    thread_id.map(|t| t.0.0),
-                    m.id.0,
-                    html.len(),
-                    &content_hash8(&html),
-                );
-                // Persist for reply-recovery (a user can reply to this bot reply).
-                crate::channels::telegram::send::record_outgoing(
-                    None,
-                    chat_id,
-                    thread_id,
-                    &[(m.id.0, reply_text.clone())],
-                )
-                .await;
-                Ok(ToolResult::success(format!(
-                    "Reply sent to message {message_id}."
-                )))
-            }
-            Err(e) => {
-                log_send_failure(
-                    "tool",
-                    "reply",
-                    "reply",
-                    &context.session_id.to_string(),
-                    "html",
-                    chat_id,
-                    thread_id.map(|t| t.0.0),
-                    html.len(),
-                    &content_hash8(&html),
-                    &e.to_string(),
-                );
-                Ok(ToolResult::error(format!("Failed to reply: {e}")))
-            }
-        }
+            Ok(sent) => sent,
+            Err(e) => return Ok(ToolResult::error(format!("Failed to reply: {e}"))),
+        };
+        // Persist for reply-recovery (a user can reply to this bot reply).
+        crate::channels::telegram::send::record_outgoing(None, chat_id, thread_id, &sent).await;
+        Ok(ToolResult::success(format!(
+            "Reply sent to message {message_id}."
+        )))
     }
 
     /// `edit` — rewrite the text of an existing message.
@@ -606,6 +574,48 @@ impl TelegramSendTool {
             chat_id,
             message_id,
         } = pget!(resolve_existing_target(input, context.session_id, &self.telegram_state).await);
+        // Rich-first edit (#1230): a structured edit (table / heading /
+        // list) rewrites the message as a native rich message, so a table
+        // stays a real grid rather than degrading to a monospace `<pre>`
+        // block under the old HTML edit. Plain prose skips rich so Telegram
+        // never reinterprets incidental characters; on any rich failure we
+        // fall through to the classic HTML edit below so the edit always
+        // lands exactly like the `send` outbox fallback design.
+        if crate::channels::telegram::rich::should_send_native_rich(&text) {
+            match crate::channels::telegram::rich::api::edit_rich_markdown(
+                bot.api_url().as_str(),
+                bot.token(),
+                chat_id,
+                message_id as i32,
+                &text,
+                None,
+                "tool",
+                "edit",
+            )
+            .await
+            {
+                Ok(()) => {
+                    log_send_success(
+                        "tool",
+                        "edit",
+                        "edit",
+                        &context.session_id.to_string(),
+                        "rich",
+                        chat_id,
+                        None,
+                        message_id as i32,
+                        text.len(),
+                        &content_hash8(&text),
+                    );
+                    return Ok(ToolResult::success(format!("Message {message_id} edited.")));
+                }
+                Err(e) => {
+                    // Fall through to the HTML edit on any rich failure so
+                    // the edit is never dropped.
+                    tracing::warn!("telegram_send edit: native rich edit failed ({e}) — falling back to HTML");
+                }
+            }
+        }
         // Convert markdown to Telegram HTML, same as the "send"
         // action, so formatting renders correctly (#834).
         let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);

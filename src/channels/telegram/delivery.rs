@@ -855,7 +855,7 @@ pub(crate) async fn deliver_final_response(
                                         // resend fails too the message is gone entirely,
                                         // so the recovery path must not be the quiet one.
                                         if let Ok(sent) = send_html_or_plain(
-                                            bot, chat_id, thread_id, &chunks[0], "turn",
+                                            bot, chat_id, thread_id, &chunks[0], "turn", None,
                                         )
                                         .await
                                         {
@@ -881,7 +881,7 @@ pub(crate) async fn deliver_final_response(
                                 );
                                 best_effort_delete(bot, chat_id, mid, "edit-final fallback").await;
                                 if let Ok(sent) =
-                                    send_html_or_plain(bot, chat_id, thread_id, &chunks[0], "turn")
+                                    send_html_or_plain(bot, chat_id, thread_id, &chunks[0], "turn", None)
                                         .await
                                 {
                                     sent_reply_id = Some(sent.0);
@@ -900,7 +900,7 @@ pub(crate) async fn deliver_final_response(
                         for chunk in &chunks {
                             // Last chunk wins — that's the bubble a user replies to.
                             if let Ok(sent) =
-                                send_html_or_plain(bot, chat_id, thread_id, chunk, "turn").await
+                                send_html_or_plain(bot, chat_id, thread_id, chunk, "turn", None).await
                             {
                                 sent_reply_id = Some(sent.0);
                                 final_bubble = Some(super::state::MergeBubble {
