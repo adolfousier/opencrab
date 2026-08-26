@@ -1,17 +1,10 @@
-//! `tool_search` activates into the registry the child's request builder
-//! reads (#1210, follow-up to #1025).
+//! What `build_child_registry`'s re-binding costs, and what it must not cost
+//! (#1210).
 //!
-//! `build_child_registry` copies the parent's `Arc<dyn Tool>` values, so a
-//! `ToolSearchTool` constructed against the parent kept pointing there after
-//! the copy. In a child session it activated into the PARENT registry under
-//! the CHILD's session id, while the child's request builder read the child's
-//! own active set. The searched tool's schema never rode on the child's next
-//! request, so the model could not call what it had just been told was
-//! callable — and two models on two providers converged on the same
-//! byte-identical re-search loop until the loop-breaker killed the turn.
-//!
-//! #1025's tests passed because they exercise a single registry in isolation:
-//! none mounts a child with a copied registry and an externally-bound tool.
+//! The positive case — a child's `tool_search` activating into the child's
+//! own registry — is covered in `tool_search_activation_test`. This file
+//! covers the two things that are easy to get wrong while fixing it: the
+//! mechanism being replaced, and the ownership cycle the fix invites.
 
 use std::sync::Arc;
 
@@ -22,8 +15,6 @@ use crate::brain::tools::subagent::build_child_registry;
 use crate::brain::tools::tool_search::ToolSearchTool;
 use crate::brain::tools::r#trait::ToolExecutionContext;
 
-/// A parent registry carrying a searchable tool plus `tool_search`, wired the
-/// way `register_core_agent_tools` wires it.
 fn parent_with_tool_search() -> Arc<ToolRegistry> {
     let registry = Arc::new(ToolRegistry::new());
     crate::cli::tool_setup::register_runtime_tools(&registry, &crate::config::Config::default());
@@ -31,73 +22,69 @@ fn parent_with_tool_search() -> Arc<ToolRegistry> {
     registry
 }
 
-fn ctx(session_id: Uuid) -> ToolExecutionContext {
-    ToolExecutionContext::new(session_id)
-}
-
-#[tokio::test]
-async fn test_child_search_activates_in_the_child_registry() {
+#[test]
+fn test_a_child_registry_is_freed_when_its_last_owner_drops() {
+    // The registry OWNS its tool_search, so binding the tool back to the
+    // registry with an Arc closes a registry -> tool -> registry cycle and
+    // the registry is never freed. Harmless for the one long-lived parent;
+    // one leaked registry per spawn otherwise. `Weak` is what makes this
+    // assertion hold, and it is the only thing that does.
     let parent = parent_with_tool_search();
-    let child = Arc::new(build_child_registry(&parent));
-    // The rebinding spawn.rs performs.
-    child.register(Arc::new(ToolSearchTool::new(&child)));
-
-    let Some(search) = child.get("tool_search") else {
-        panic!("tool_search must be present in the child registry");
+    let watch = {
+        let child = build_child_registry(&parent);
+        assert!(
+            child.get("tool_search").is_some(),
+            "precondition: the child carries a re-bound tool_search"
+        );
+        Arc::downgrade(&child)
     };
-
-    let child_session = Uuid::new_v4();
-    let query = child
-        .list_tools()
-        .into_iter()
-        .find(|n| n != "tool_search")
-        .expect("child registry has something to find");
-
-    let result = search
-        .execute(serde_json::json!({ "query": query }), &ctx(child_session))
-        .await
-        .expect("tool_search executes");
-    assert!(result.success, "tool_search failed: {:?}", result.error);
-
     assert!(
-        !child.active_tools(child_session).is_empty(),
-        "#1210: the child's own active set is what its request builder reads, \
-         and it stayed empty — the schema never rides on the child's request"
-    );
-    assert!(
-        parent.active_tools(child_session).is_empty(),
-        "#1210: the child's activation must not land in the parent's registry"
+        watch.upgrade().is_none(),
+        "#1210: the child registry outlived its owner — the re-bound \
+         tool_search is holding it alive"
     );
 }
 
 #[tokio::test]
-async fn test_an_unrebound_child_search_writes_to_the_wrong_registry() {
-    // The pre-fix arrangement, kept as documentation of the failure: a child
-    // registry whose tool_search still points at the parent. This is what
-    // spawn.rs must not leave behind.
+async fn test_an_unbound_search_tool_writes_to_the_wrong_registry() {
+    // The mechanism the fix replaces, built by hand because
+    // `build_child_registry` now re-binds and can no longer produce it. Kept
+    // because it is what the report observed and what #1025's tests could not
+    // see: they exercise a single registry, where the two are the same object.
     let parent = parent_with_tool_search();
-    let child = Arc::new(build_child_registry(&parent));
 
-    let search = child.get("tool_search").expect("copied from the parent");
+    let child = Arc::new(ToolRegistry::new());
+    for name in parent.list_tools() {
+        if let Some(tool) = parent.get(&name) {
+            child.register(tool); // copies the PARENT-bound tool_search
+        }
+    }
+
     let child_session = Uuid::new_v4();
     let query = child
         .list_tools()
         .into_iter()
         .find(|n| n != "tool_search")
-        .expect("child registry has something to find");
+        .expect("something to find");
+    let search = child.get("tool_search").expect("copied from the parent");
 
     let result = search
-        .execute(serde_json::json!({ "query": query }), &ctx(child_session))
+        .execute(
+            serde_json::json!({ "query": query }),
+            &ToolExecutionContext::new(child_session),
+        )
         .await
         .expect("tool_search executes");
-    assert!(result.success);
+    assert!(result.success, "{:?}", result.error);
 
     assert!(
         child.active_tools(child_session).is_empty(),
-        "#1210: this is the bug — the copied tool wrote somewhere else"
+        "#1210: this is the bug — the child's request builder reads this, and \
+         it stayed empty"
     );
     assert!(
         !parent.active_tools(child_session).is_empty(),
-        "#1210: ...namely the parent, keyed by the child's session id"
+        "#1210: ...because the activation landed in the parent, keyed by the \
+         child's session id"
     );
 }

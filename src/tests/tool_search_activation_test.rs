@@ -91,7 +91,11 @@ impl Tool for ProbeTool {
     fn capabilities(&self) -> Vec<tools::ToolCapability> {
         vec![]
     }
-    async fn execute(&self, _input: Value, _ctx: &ToolExecutionContext) -> tools::error::Result<tools::ToolResult> {
+    async fn execute(
+        &self,
+        _input: Value,
+        _ctx: &ToolExecutionContext,
+    ) -> tools::error::Result<tools::ToolResult> {
         Ok(tools::ToolResult::success("sent".to_string()))
     }
 }
@@ -113,7 +117,7 @@ async fn child_tool_search_activates_into_the_child_registry() {
     // startup wiring does.
     let parent = Arc::new(ToolRegistry::new());
     parent.register(Arc::new(ProbeTool));
-    parent.register(Arc::new(ToolSearchTool::new(parent.clone())));
+    parent.register(Arc::new(ToolSearchTool::new(&parent)));
 
     // Child registry built the way spawn/resume/team_create build theirs.
     let child = subagent::build_child_registry(&parent);
@@ -126,10 +130,7 @@ async fn child_tool_search_activates_into_the_child_registry() {
     let session = Uuid::new_v4();
     let ctx = ToolExecutionContext::new(session);
     let result = child_search
-        .execute(
-            json!({"query": "send probe message on channel"}),
-            &ctx,
-        )
+        .execute(json!({"query": "send probe message on channel"}), &ctx)
         .await
         .expect("child tool_search executes");
     assert!(result.success, "search failed: {:?}", result.error);
