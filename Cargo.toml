@@ -162,6 +162,15 @@ tiktoken-rs = "0.9.1"
 flate2 = "1"
 tar = "0.4"
 
+# Local Mermaid rendering (optional, behind the `local-mermaid` feature).
+# Pure-Rust parser+SVG (mermaid-render) + SVG-to-PNG rasterizer (resvg). Kills
+# the mermaid.ink URL refetch dependency: bytes are rendered locally and uploaded
+# to Telegram via multipart, so the server never fetches a third-party URL.
+mermaid-render = { version = "0.10", optional = true }
+# Keep default features: `text` + `system-fonts` are required for diagram
+# labels to rasterize with real glyphs, not boxes.
+resvg = { version = "0.48", optional = true }
+
 # Memory Search (FTS5 + vector search — store owned in src/memory, #1028)
 llama-cpp-2 = "0.1.137"
 emojis = "0.8.0"
@@ -218,6 +227,9 @@ local-stt = ["rwhisper", "rodio", "hound", "rubato", "symphonia", "symphonia-ada
 local-tts = ["opusic-sys", "rubato"]
 browser = ["chromey"]
 pdfium = ["dep:pdfium-render"]
+# Local Mermaid rendering: mermaid-render + resvg. Disabled by default so
+# non-render builds stay lean; Compiler CI enables it for the full build.
+local-mermaid = ["dep:mermaid-render", "dep:resvg"]
 
 [profile.dev]
 opt-level = 0
