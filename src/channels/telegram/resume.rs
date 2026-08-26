@@ -63,7 +63,14 @@ pub(crate) fn build_enqueue_callback(
                     "[bg-resume] telegram: session {session_id} already streaming — queuing the \
                      result for the in-flight turn instead of opening a second block"
                 );
-                state.enqueue_reaction(session_id, msg);
+                // Tagged as detached work, not as a reaction (#1213). The
+                // guard covers the whole delivery window, not just the tool
+                // loop, so "already streaming" can mean the loop has finished
+                // and only the final bubble is still going out — in which case
+                // nothing will drain this between rounds and the end-of-turn
+                // flush has to know it needs a real tool loop, not a single
+                // toolless round.
+                state.enqueue_detached_result(session_id, msg);
                 return;
             };
 
