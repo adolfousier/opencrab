@@ -28,9 +28,8 @@ async fn test_notify_pushes_carry_sessionnotify_origin_for_topic_echo() {
     // Other default keeps every session_notify push invisible in topics.
     let _guard = test_guard();
     let session = Uuid::new_v4();
-    let captured: std::sync::Arc<
-        std::sync::Mutex<Option<QueuedUserMessage>>,
-    > = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let captured: std::sync::Arc<std::sync::Mutex<Option<QueuedUserMessage>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     let sink = captured.clone();
     crate::brain::agent::service::session_routes::register_session_route(
         session,

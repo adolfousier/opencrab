@@ -112,9 +112,7 @@ pub(crate) fn build_enqueue_callback(
                     {
                         Ok(()) => true,
                         Err(e) => {
-                            tracing::warn!(
-                                "[bg-resume] #1225 rich echo failed, using HTML: {e}"
-                            );
+                            tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
                             false
                         }
                     };
@@ -188,6 +186,23 @@ pub(crate) fn build_enqueue_callback(
                 return;
             };
 
+            // The topic that OWNS the session, not whichever one spoke last
+            // (#1200). Sessions are per-topic since #215, and
+            // `register_session_chat` records the topic, but this path asked
+            // the chat instead: in a forum, any traffic in another topic while
+            // a detached command ran sent the result there. Both background
+            // completions and sub-agent results share this callback, so they
+            // were both misrouted.
+            //
+            // The chat-wide lookup stays as the fallback. It is still right
+            // for a DM or a non-forum group (where `session_topic` is None
+            // anyway), and it is all we have for a session whose in-memory
+            // topic binding has not been re-registered since a restart.
+            let thread_id = match state.session_topic(session_id).await {
+                Some(topic) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(topic))),
+                None => super::send::latest_thread_id_for_chat(chat_id).await,
+            };
+>>>>>>> origin/main
             if let Err(e) = resume_session_inner(
                 bot,
                 teloxide::types::ChatId(chat_id),
@@ -753,13 +768,15 @@ async fn sender_label(
     let label = match sender_chat {
         None => None,
         Some(sc) if sc == recipient_chat => match sender_topic {
-            Some(tid) => super::titles::topic_title(
-                &api_url,
-                &token,
-                teloxide::types::ChatId(sc),
-                teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
-            )
-            .await,
+            Some(tid) => {
+                super::titles::topic_title(
+                    &api_url,
+                    &token,
+                    teloxide::types::ChatId(sc),
+                    teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
+                )
+                .await
+            }
             None => None,
         },
         Some(sc) => {

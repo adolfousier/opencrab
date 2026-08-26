@@ -25,7 +25,10 @@ fn split_notify_header_rejects_malformed_framing() {
     let bad_uuid = "[session-notify from=not-a-uuid]\n\nbody";
     let (sender, body) = split_notify_header(bad_uuid);
     assert_eq!(sender, None);
-    assert_eq!(body, bad_uuid, "malformed header must pass whole text through");
+    assert_eq!(
+        body, bad_uuid,
+        "malformed header must pass whole text through"
+    );
     let no_close = "[session-notify from=6c1c9cb9-8243-4def-abe5-d926d0ca8bed";
     let (sender, body) = split_notify_header(no_close);
     assert_eq!(sender, None);
@@ -47,17 +50,22 @@ fn strips_terminated_system_framing() {
 fn system_framing_without_closing_brace_passes_through() {
     let ctx = "[System: task finished]\nsome output";
     let inner = strip_system_framing(ctx);
-    assert_eq!(inner, ctx, "the ']' must terminate the block to be stripped");
+    assert_eq!(
+        inner, ctx,
+        "the ']' must terminate the block to be stripped"
+    );
 }
 
 #[test]
 fn strips_system_framing_even_after_notify_header() {
-    let ctx = format!(
-        "[session-notify from={SENDER}]\n\n[System: the push you asked for]\npushed body"
-    );
+    let ctx =
+        format!("[session-notify from={SENDER}]\n\n[System: the push you asked for]\npushed body");
     let (sender, body) = split_bg_echo_parts(&ctx);
     assert!(sender.is_some());
-    assert!(!body.contains("[System:"), "System framing stripped after header");
+    assert!(
+        !body.contains("[System:"),
+        "System framing stripped after header"
+    );
     assert!(body.contains("pushed body"));
 }
 

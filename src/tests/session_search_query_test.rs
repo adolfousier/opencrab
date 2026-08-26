@@ -2,7 +2,7 @@
 //! and per-row turn-state reporting. House rule: no inline test modules in
 //! source files — everything lives here under src/tests/.
 
-use crate::brain::tools::session_search::{parse_updated_since, SessionSearchTool};
+use crate::brain::tools::session_search::{SessionSearchTool, parse_updated_since};
 use crate::channels::telegram::TelegramState;
 use crate::db::Database;
 use std::sync::Arc;

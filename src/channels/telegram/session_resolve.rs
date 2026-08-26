@@ -96,7 +96,11 @@ pub const GENERAL_TOPIC_ID: i32 = 1;
 /// Cold start: until the chat's first thread-scoped message is observed
 /// (in-memory cache), `known_forum` is false and behaviour is unchanged.
 pub fn normalize_topic(raw: Option<i32>, known_forum: bool) -> Option<i32> {
-    raw.or_else(|| if known_forum { Some(GENERAL_TOPIC_ID) } else { None })
+    raw.or(if known_forum {
+        Some(GENERAL_TOPIC_ID)
+    } else {
+        None
+    })
 }
 
 /// True when a session exceeded the configured idle window (same rule as handler suffix path).

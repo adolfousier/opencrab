@@ -7,6 +7,8 @@
 
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
+#[cfg(feature = "telegram")]
+use crate::channels::telegram::TelegramState;
 use crate::db::Pool;
 #[cfg(feature = "telegram")]
 use crate::channels::telegram::TelegramState;
@@ -14,6 +16,8 @@ use crate::channels::telegram::TelegramState;
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
+#[cfg(feature = "telegram")]
+use std::sync::Arc;
 
 /// Tool for listing and searching session message history via direct DB search.
 pub struct SessionSearchTool {
@@ -50,7 +54,7 @@ impl SessionSearchTool {
     /// running session drains a queued push at its next tool-loop boundary;
     /// an idle one starts a fresh turn for it.
     #[cfg(feature = "telegram")]
-    fn turn_state(&self, session_id: uuid::Uuid) -> Option<&'static str> {
+    pub(crate) fn turn_state(&self, session_id: uuid::Uuid) -> Option<&'static str> {
         self.telegram.as_ref().map(|tg| {
             if tg.is_turn_active(session_id) {
                 "running"
@@ -303,7 +307,7 @@ impl SessionSearchTool {
         let mut selected: Vec<_> = sessions
             .into_iter()
             .filter(|s| status != "archived" || s.archived_at.is_some())
-            .filter(|s| updated_since.map_or(true, |since| s.updated_at > since))
+            .filter(|s| updated_since.is_none_or(|since| s.updated_at > since))
             .collect();
 
         if selected.is_empty() {
