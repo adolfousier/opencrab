@@ -2787,40 +2787,50 @@ pub(crate) async fn handle_message(
 
     let leftover_reactions: Vec<_> = leftover_reactions.into_iter().map(|i| i.msg).collect();
     if !leftover_reactions.is_empty() {
+        // #1213: leftovers can be background-task or subagent completions that
+        // raced the final-bubble delivery — the resume callback found the turn
+        // guard still held and queued them here, but no tool loop remained to
+        // drain them between rounds. A toolless single-shot reply leaves the
+        // model announcing follow-up work it has no tools to execute, then the
+        // session stalls until the next inbound message. Run them through the
+        // FULL streaming pipeline instead (tools intact), under the turn gate
+        // so a completion resuming concurrently cannot fork a second
+        // overlapping block (#845). If another turn won the race, re-queue:
+        // that turn drains them between rounds as designed.
         let combined = leftover_reactions
             .iter()
             .map(|m| m.context_text.as_str())
             .collect::<Vec<_>>()
             .join("\n\n");
-        let combined_display = leftover_reactions
-            .iter()
-            .map(|m| m.display_text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        match agent
-            .send_message_with_display(session_id, combined, Some(combined_display), None)
-            .await
-        {
-            Ok(resp) => {
-                let (txt, _imgs) = crate::utils::extract_img_markers(&resp.content);
-                let txt = crate::utils::sanitize::strip_llm_artifacts(&txt);
-                let txt = redact_secrets(&txt);
-                let (txt, react_emoji) = crate::utils::extract_react_marker(&txt);
-                if let Some(em) = react_emoji {
-                    fire_reaction(&bot, msg.chat.id, msg.id, &em).await;
-                }
-                if !txt.trim().is_empty() {
-                    let html = markdown_to_telegram_html(&txt);
-                    if let Err(e) =
-                        send_html_or_plain(&bot, msg.chat.id, thread_id, &html, "turn").await
-                    {
-                        tracing::warn!("Telegram: failed to deliver flushed reaction reply: {e}");
-                    }
+        match telegram_state.try_begin_turn(session_id) {
+            Some(_flush_turn_guard) => {
+                tracing::info!(
+                    "Telegram: flushing {} stranded reaction(s) for session {session_id} via full pipeline (#1213)",
+                    leftover_reactions.len()
+                );
+                // Guard held across the await: the resumed pipeline owns the
+                // session exclusively, same as any other turn.
+                if let Err(e) = super::resume::resume_session_inner(
+                    bot.clone(),
+                    msg.chat.id,
+                    thread_id,
+                    session_id,
+                    combined,
+                    agent.clone(),
+                    telegram_state.clone(),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Telegram: flushed-reaction full pipeline failed for session {session_id}: {e}"
+                    );
                 }
             }
-            Err(e) => tracing::warn!(
-                "Telegram: flushed reaction turn failed for session {session_id}: {e}"
-            ),
+            None => {
+                for r in leftover_reactions {
+                    telegram_state.enqueue_reaction(session_id, r);
+                }
+            }
         }
     }
 
