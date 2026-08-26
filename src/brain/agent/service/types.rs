@@ -191,13 +191,16 @@ pub type MessageEnqueueCallback = Arc<dyn Fn(Uuid, QueuedUserMessage) + Send + S
 /// "[System: ...]" tag), so prompt scaffolding never pollutes the session.
 /// What produced a queued/injected message (#1221). The Telegram resume
 /// callback uses it to decide whether the delivery earns a collapsible echo
-/// bubble: background-task completions do (the user must see WHAT woke the
-/// session), sub-agent results, ingress queueing and recovery replays do not
-/// render one.
+/// bubble: background-task completions and cross-session session_notify
+/// pushes do (the user must see WHAT woke the session), while sub-agent
+/// results, ingress queueing and recovery replays do not render one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushOrigin {
     /// A detached bash task finished (background_tasks completion path).
     BackgroundTask,
+    /// A cross-session push via the session_notify tool (#1203). Echoes into
+    /// the recipient's topic like background-task completions (#1221).
+    SessionNotify,
     /// A spawned sub-agent reported back (spawn.rs push_result / notify).
     SubAgent,
     /// Startup crash-recovery replaying an interrupted turn.
