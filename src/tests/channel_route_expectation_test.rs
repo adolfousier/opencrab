@@ -45,6 +45,7 @@ fn msg(text: &str) -> QueuedUserMessage {
     QueuedUserMessage {
         context_text: text.to_string(),
         display_text: text.to_string(),
+        origin: crate::brain::agent::PushOrigin::Other,
     }
 }
 

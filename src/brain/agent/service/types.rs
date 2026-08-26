@@ -189,12 +189,33 @@ pub type MessageEnqueueCallback = Arc<dyn Fn(Uuid, QueuedUserMessage) + Send + S
 /// guidance belong in `context_text` for the live turn ONLY; the DB and the
 /// TUI history get `display_text` (the user's actual words, or a compact
 /// "[System: ...]" tag), so prompt scaffolding never pollutes the session.
+/// What produced a queued/injected message (#1221). The Telegram resume
+/// callback uses it to decide whether the delivery earns a collapsible echo
+/// bubble: background-task completions do (the user must see WHAT woke the
+/// session), sub-agent results, ingress queueing and recovery replays do not
+/// render one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushOrigin {
+    /// A detached bash task finished (background_tasks completion path).
+    BackgroundTask,
+    /// A spawned sub-agent reported back (spawn.rs push_result / notify).
+    SubAgent,
+    /// Startup crash-recovery replaying an interrupted turn.
+    Recovery,
+    /// A user message queued mid-turn (ingress or reaction path).
+    Ingress,
+    /// Anything else — safe default, never renders a push echo.
+    Other,
+}
+
 #[derive(Debug, Clone)]
 pub struct QueuedUserMessage {
     /// Full text injected into the LLM context for the live turn.
     pub context_text: String,
     /// What persists to the DB and shows in the session history.
     pub display_text: String,
+    /// Which producer built this message (#1221).
+    pub origin: PushOrigin,
 }
 
 impl QueuedUserMessage {
@@ -203,6 +224,7 @@ impl QueuedUserMessage {
         Self {
             context_text: text.clone(),
             display_text: text,
+            origin: PushOrigin::Other,
         }
     }
 
@@ -213,6 +235,7 @@ impl QueuedUserMessage {
         Self {
             context_text: context,
             display_text: display,
+            origin: PushOrigin::Other,
         }
     }
 
