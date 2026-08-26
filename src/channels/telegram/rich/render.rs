@@ -54,7 +54,9 @@ pub(crate) fn render_local_png(source: &str) -> Result<Vec<u8>, String> {
 
     let mut pixmap = tiny_skia::Pixmap::new(pw, ph).ok_or_else(|| "could not allocate image".into())?;
     let scale = tiny_skia::Transform::from_scale(RASTER_SCALE as f32, RASTER_SCALE as f32);
-    resvg::render(&tree, scale, pixmap.as_mut());
+    // resvg >=0.45 takes `&mut PixmapMut<'_>`; `as_mut()` alone yields the
+    // guard by value (E0308, CI run 33022807360).
+    resvg::render(&tree, scale, &mut pixmap.as_mut());
 
     pixmap
         .encode_png()
