@@ -114,6 +114,26 @@ pub(crate) fn folded_list_html(options: &[String]) -> String {
         .join("\n")
 }
 
+/// Rich-surface variant of [`folded_list_html`]: the rich (sendRichMessage)
+/// HTML input collapses raw newlines, so each numbered line rides its own
+/// `<p>` block or the options list renders as one long line (#1226).
+/// Classic ParseMode::Html preserves raw newlines and keeps using
+/// [`folded_list_html`].
+pub(crate) fn folded_list_html_p(options: &[String]) -> String {
+    options
+        .iter()
+        .enumerate()
+        .map(|(i, opt)| {
+            format!(
+                "<p>{}. {}</p>",
+                i + 1,
+                super::markdown::format_inline(&super::markdown::escape_html(opt))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 /// The suggestion controls as native rich-button rows (Bot API 10.3
 /// `<tg-button-row>`), laid out per the measured ladder. Primary style
 /// throughout — picked over app-default after Alexey compared both live.
@@ -231,8 +251,15 @@ pub(crate) async fn render_suggestions(
             super::state::BubbleBody::Markdown(md) => (super::rich::markdown_to_html_p(&md), true),
         };
         if layout == SuggestLayout::NumberedProse {
-            new_html.push('\n');
-            new_html.push_str(folded_list_html(&options).trim_start());
+            if rich {
+                // Rich HTML collapses raw newlines (#1226): the numbered list
+                // rides <p>-wrapped lines so it keeps its shape; classic hosts
+                // preserve the raw newline join via folded_list_html.
+                new_html.push_str(&folded_list_html_p(&options));
+            } else {
+                new_html.push('\n');
+                new_html.push_str(folded_list_html(&options).trim_start());
+            }
         }
         if rich {
             new_html.push('\n');
