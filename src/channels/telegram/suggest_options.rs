@@ -228,7 +228,7 @@ pub(crate) async fn render_suggestions(
         // them because rich HTML input flattens tables (#679).
         let (mut new_html, rich) = match host.body {
             super::state::BubbleBody::Html(html) => (html, false),
-            super::state::BubbleBody::Markdown(md) => (super::rich::markdown_to_html(&md), true),
+            super::state::BubbleBody::Markdown(md) => (super::rich::markdown_to_html_p(&md), true),
         };
         if layout == SuggestLayout::NumberedProse {
             new_html.push('\n');
