@@ -8,7 +8,7 @@
 //! fallback in `resume.rs`, never an error bubble.
 
 use std::time::Duration;
-use teloxide::types::{ChatId, MessageId, ThreadId};
+use teloxide::types::{ChatId, ThreadId};
 
 fn api_base(api_url: &str) -> &str {
     api_url.trim_end_matches('/')

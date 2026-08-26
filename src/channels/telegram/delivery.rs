@@ -571,15 +571,15 @@ pub(crate) async fn deliver_final_response(
                         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                         s.pending_suggestions.is_some()
                     };
-                    if options_pending {
-                        if let Some(folded) = take_folded_final(bot, chat_id, streaming).await {
-                            tracing::info!(
-                                "Telegram: promote {} folded chars into final bubble \
+                    if options_pending
+                        && let Some(folded) = take_folded_final(bot, chat_id, streaming).await
+                    {
+                        tracing::info!(
+                            "Telegram: promote {} folded chars into final bubble \
                                  (suggestions pending, #1226)",
-                                folded.len()
-                            );
-                            final_text = format!("{folded}\n\n{final_text}");
-                        }
+                            folded.len()
+                        );
+                        final_text = format!("{folded}\n\n{final_text}");
                     }
                     final_text
                 }

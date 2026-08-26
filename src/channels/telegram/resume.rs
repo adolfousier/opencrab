@@ -698,6 +698,7 @@ pub(crate) fn split_notify_header(context_text: &str) -> (Option<Uuid>, &str) {
 /// Strip the synthetic `[System: ...]` framing (constructors in
 /// `brain/agent/service` terminate the block with `]`). Any other shape
 /// passes through untouched.
+#[cfg(test)]
 pub(crate) fn strip_system_framing(text: &str) -> &str {
     let trimmed = text.trim();
     trimmed
