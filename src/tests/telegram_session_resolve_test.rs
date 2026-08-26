@@ -229,7 +229,7 @@ fn topic_session_id_gates_on_is_topic_message() {
 /// #1220: General-topic normalization for known forums.
 #[test]
 fn normalize_topic_gives_general_its_own_bucket_in_known_forums() {
-    use super::super::telegram::session_resolve::{GENERAL_TOPIC_ID, normalize_topic};
+    use crate::channels::telegram::session_resolve::{GENERAL_TOPIC_ID, normalize_topic};
 
     // Raw topic resolution always wins — normalization only fills the gap.
     assert_eq!(normalize_topic(Some(5), true), Some(5));
