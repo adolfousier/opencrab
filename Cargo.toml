@@ -167,6 +167,8 @@ tar = "0.4"
 # the mermaid.ink URL refetch dependency: bytes are rendered locally and uploaded
 # to Telegram via multipart, so the server never fetches a third-party URL.
 mermaid-render = { version = "0.10", optional = true }
+# The rasterizer itself — render.rs calls resvg::render directly.
+resvg = { version = "0.48", optional = true }
 # Keep default features: `text` + `system-fonts` are required for diagram
 # labels to rasterize with real glyphs, not boxes.
 # Nameable instances of resvg 0.48's own rasterizer stack — versions MUST stay in
