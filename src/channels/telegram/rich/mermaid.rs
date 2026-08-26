@@ -20,6 +20,15 @@ use futures::future::BoxFuture;
 /// base64url-appended. NOTE: this sends the diagram text to a third party.
 const MERMAID_INK_BASE: &str = "https://mermaid.ink/img/";
 
+/// Query parameters appended to every mermaid.ink render request.
+///
+/// The service's defaults produce small blurry JPEGs; these request PNG at
+/// double resolution instead (empirically verified 2026-08-26:
+/// `type=png&width=1600&scale=2` yields a 3200px-wide PNG where bare `/img/`
+/// yields a ~1900px-wide JPEG of the same source). `scale` is ignored
+/// without `width`, so the two always travel together.
+const MERMAID_INK_PARAMS: &str = "?type=png&width=1600&scale=2";
+
 /// Upper bound on a single pre-validation request. A slow renderer must not
 /// stall message delivery; on timeout we degrade to a failure block.
 const PREVALIDATE_TIMEOUT_SECS: u64 = 10;
@@ -180,13 +189,24 @@ pub(crate) fn should_render_mermaid(text: &str) -> bool {
     tg.rich_messages && tg.mermaid_render && has_mermaid_fence(text)
 }
 
+/// Full mermaid.ink embed/prevalidate URL for a diagram source: b64url
+/// payload plus the hi-res PNG parameters ([`MERMAID_INK_PARAMS`]).
+pub(crate) fn ink_url(source: &str) -> String {
+    format!(
+        "{}{}{}",
+        MERMAID_INK_BASE,
+        base64url(source),
+        MERMAID_INK_PARAMS
+    )
+}
+
 /// Pre-validate a single mermaid diagram against the renderer. Returns
 /// [`MermaidResult::Image`] with the embed URL only on HTTP 200 + an
 /// `image/*` content type; every other outcome (non-200, non-image, timeout,
 /// transport error, client build failure) yields [`MermaidResult::Failed`]
 /// with a legible note. Never panics, never hangs past the timeout.
 pub(crate) async fn prevalidate(source: &str) -> MermaidResult {
-    let url = format!("{}{}", MERMAID_INK_BASE, base64url(source));
+    let url = ink_url(source);
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(PREVALIDATE_TIMEOUT_SECS))
