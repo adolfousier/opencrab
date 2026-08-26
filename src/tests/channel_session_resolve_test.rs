@@ -190,3 +190,115 @@ async fn idle_session_archives_and_creates_new() {
         .expect("exists");
     assert!(archived.is_archived(), "old row must be archived");
 }
+
+// ---------------------------------------------------------------------------
+// Single-flight (#1201 generalized, #1228): the shared gate the generic
+// resolver holds must serialize look-up-then-create per key, so two
+// near-simultaneous messages into one fresh chat create ONE session.
+// We pin the gate's semantics directly (concurrent resolve-one-create) with
+// the same await-between-halves shape the DB path has, without a live DB —
+// the in-memory pool is single-conn and holding it across a resolve would
+// deadlock (see idle test note above).
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn concurrent_resolves_create_exactly_one_session() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // An in-memory stand-in for `SessionService.persistence`: Option stores
+    // the created session id, atomics count creations.
+    let store = Arc::new(tokio::sync::Mutex::new(None::<u64>));
+    let created = Arc::new(AtomicUsize::new(0));
+
+    // Same look-then-create shape as resolve_or_create_channel_session:
+    // lookup, await, then insert only if the lookup missed.
+    async fn resolve_once(
+        store: &Arc<tokio::sync::Mutex<Option<u64>>>,
+        created: &AtomicUsize,
+    ) -> u64 {
+        let existing = *store.lock().await;
+        // The await (DB round-trip inside real resolution) that would let a
+        // second concurrent caller in and both miss.
+        tokio::task::yield_now().await;
+        if existing.is_none() {
+            created.fetch_add(1, Ordering::SeqCst);
+            let id = 42u64;
+            *store.lock().await = Some(id);
+            id
+        } else {
+            existing.unwrap()
+        }
+    }
+
+    const KEY: &str = "chan:Discord:[chat:testsuite-dm-1]";
+
+    let tasks: Vec<_> = (0..2)
+        .map(|_| {
+            let store = Arc::clone(&store);
+            let created = Arc::clone(&created);
+            tokio::spawn(async move {
+                // The resolver's gate guards the whole look-up-then-create.
+                let _g = crate::channels::single_flight::hold(KEY).await;
+                resolve_once(&store, &created).await
+            })
+        })
+        .collect();
+    let mut ids = Vec::new();
+    for t in tasks {
+        ids.push(t.await.expect("resolve task panicked"));
+    }
+
+    assert_eq!(
+        created.load(Ordering::SeqCst),
+        1,
+        "#1228: the second message must find the first's session, \
+         not create a parallel one"
+    );
+    // Both callers observed the single session.
+    assert_eq!(ids, vec![42, 42]);
+}
+
+#[tokio::test]
+async fn shared_gate_distinct_keys_do_not_block() {
+    const KEY_A: &str = "chan:Discord:[chat:a]";
+    const KEY_B: &str = "chan:Discord:[chat:b]";
+
+    let held = crate::channels::single_flight::hold(KEY_A).await;
+
+    let other = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        crate::channels::single_flight::hold(KEY_B),
+    )
+    .await;
+    assert!(
+        other.is_ok(),
+        "#1228: a distinct chat id must not wait on another's gate"
+    );
+    drop(held);
+}
+
+#[tokio::test]
+async fn same_key_serializes_then_releases() {
+    const KEY: &str = "chan:Slack:#general";
+
+    let held = crate::channels::single_flight::hold(KEY).await;
+    let blocked = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        crate::channels::single_flight::hold(KEY),
+    )
+    .await;
+    assert!(
+        blocked.is_err(),
+        "#1228: the same key must be single-flight"
+    );
+    drop(held);
+
+    let after = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        crate::channels::single_flight::hold(KEY),
+    )
+    .await;
+    assert!(
+        after.is_ok(),
+        "#1228: the gate must be released, not leaked"
+    );
+}
