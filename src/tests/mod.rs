@@ -177,11 +177,11 @@ pub mod config_provider_registry_test;
 pub mod config_reload_reason_test;
 pub mod config_repair_test;
 pub mod config_secrets_test;
-pub mod config_write_path_test;
 pub mod config_section_resolve_test;
 pub mod config_types_loader_test;
 pub mod config_update_test;
 pub mod config_watcher_test;
+pub mod config_write_path_test;
 pub mod context_provider_anchor_test;
 pub mod context_store_concurrent_save_test;
 pub mod context_window_test;
@@ -342,6 +342,7 @@ pub mod telegram_reaction_routing_test;
 pub mod telegram_table_render_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_topic_routing_test;
+pub mod tool_search_child_registry_test;
 pub mod tools_md_regression_test;
 pub mod write_opencrabs_file_inline_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows
