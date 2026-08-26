@@ -2810,7 +2810,7 @@ pub(crate) async fn handle_message(
                 );
                 // Guard held across the await: the resumed pipeline owns the
                 // session exclusively, same as any other turn.
-                if let Err(e) = resume_session(
+                if let Err(e) = super::resume::resume_session_inner(
                     bot.clone(),
                     msg.chat.id,
                     thread_id,
