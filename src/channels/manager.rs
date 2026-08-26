@@ -199,8 +199,7 @@ impl ChannelManager {
                             (Ok(bindings), Some(enqueue)) => {
                                 let mut registered = 0usize;
                                 for b in bindings {
-                                    let Ok(sid) = uuid::Uuid::parse_str(&b.session_id)
-                                    else {
+                                    let Ok(sid) = uuid::Uuid::parse_str(&b.session_id) else {
                                         continue;
                                     };
                                     let Ok(chat) = b.chat_id.parse::<i64>() else {
@@ -230,9 +229,7 @@ impl ChannelManager {
                                 );
                             }
                             (Err(e), _) => {
-                                tracing::warn!(
-                                    "Could not load session bindings at connect: {e}"
-                                );
+                                tracing::warn!("Could not load session bindings at connect: {e}");
                             }
                         }
                     });

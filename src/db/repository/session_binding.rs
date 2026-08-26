@@ -6,7 +6,7 @@
 //! has no way to reach ingress: without this record every background-task
 //! completion and sub-agent result parks until a human pokes the topic.
 
-use crate::db::{database::interact_err, Pool};
+use crate::db::{Pool, database::interact_err};
 use anyhow::{Context, Result};
 use rusqlite::params;
 

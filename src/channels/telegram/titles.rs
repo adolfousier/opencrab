@@ -45,14 +45,6 @@ pub(crate) async fn chat_title(api_url: &str, token: &str, chat_id: ChatId) -> O
         serde_json::json!({ "chat_id": chat_id.0 }),
     )
     .await?;
-    let result = post_api(
-        api_url,
-        token,
-        "getChat",
-        serde_json::json!({ "chat_id": chat_id.0 }),
-    )
-    .await?;
->>>>>>> origin/main
     result
         .get("title")
         .and_then(serde_json::Value::as_str)

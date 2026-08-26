@@ -202,7 +202,6 @@ pub(crate) fn build_enqueue_callback(
                 Some(topic) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(topic))),
                 None => super::send::latest_thread_id_for_chat(chat_id).await,
             };
->>>>>>> origin/main
             if let Err(e) = resume_session_inner(
                 bot,
                 teloxide::types::ChatId(chat_id),
@@ -710,9 +709,40 @@ pub(crate) fn strip_system_framing(text: &str) -> &str {
 
 /// Split a push's text into `(sender, clean_body)`: notify header and System
 /// framing both removed. `sender` is `None` for plain background-task pushes.
+///
+/// The push body is producer-controlled scaffolding around user-facing
+/// content: a `[System: ...]` block opened at the start of the body is the
+/// frame (often multi-line, ending in `]`), and everything after the block
+/// is the real payload. Strip the wrapper, keep inner content + tail (#1225
+/// leftover: the squash shipped tests asserting this shape but the old
+/// whole-string-only strip could never satisfy them).
 pub(crate) fn split_bg_echo_parts(context_text: &str) -> (Option<Uuid>, String) {
     let (sender, rest) = split_notify_header(context_text);
-    (sender, strip_system_framing(rest).to_owned())
+    (sender, strip_push_scaffolding(rest))
+}
+
+/// Aggressive scaffolding strip for push bodies: if the text opens with a
+/// `[System:` block that terminates with `]`, drop the wrapper and join the
+/// inner content with whatever follows. Unterminated blocks pass through
+/// whole (cannot tell frame from payload). Contrast [`strip_system_framing`],
+/// the conservative variant that only unwraps a whole-string wrap.
+fn strip_push_scaffolding(rest: &str) -> String {
+    let trimmed = rest.trim_start();
+    match trimmed.strip_prefix("[System:") {
+        Some(s) => match s.find(']') {
+            Some(end) => {
+                let inner = s[..end].trim();
+                let tail = s[end + 1..].trim();
+                if tail.is_empty() {
+                    inner.to_owned()
+                } else {
+                    format!("{inner}\n{tail}")
+                }
+            }
+            None => rest.to_owned(),
+        },
+        None => rest.to_owned(),
+    }
 }
 
 /// Assemble the echo bubble from the clean body + title. Returns the
@@ -780,8 +810,8 @@ async fn sender_label(
             None => None,
         },
         Some(sc) => {
-            let chat = super::titles::chat_title(&api_url, &token, teloxide::types::ChatId(sc))
-                .await;
+            let chat =
+                super::titles::chat_title(&api_url, &token, teloxide::types::ChatId(sc)).await;
             match (chat, sender_topic) {
                 (Some(c), Some(tid)) => {
                     match super::titles::topic_title(

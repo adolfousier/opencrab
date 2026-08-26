@@ -4,10 +4,10 @@
 
 use super::error::{Result, ToolError};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
+use crate::brain::tools::subagent::agent_type::ALWAYS_EXCLUDED;
 use crate::tui::plan::{
     PlanDocument, PlanStatus, PlanTask, TaskDep, TaskScope, TaskStatus, TaskType,
 };
-use crate::brain::tools::subagent::agent_type::ALWAYS_EXCLUDED;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -2722,9 +2722,7 @@ pub(crate) fn build_worker_brief(
     if let Some(scope) = &task.scope {
         match validate_task_scope(scope, working_dir) {
             Ok(()) => {
-                brief.push_str(
-                    "\nScope contract (HARD — paths are relative to working_dir):\n",
-                );
+                brief.push_str("\nScope contract (HARD — paths are relative to working_dir):\n");
                 if !scope.do_write.is_empty() {
                     brief.push_str("  ✅ MAY write:\n");
                     for p in &scope.do_write {
