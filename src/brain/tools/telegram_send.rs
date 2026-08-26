@@ -548,7 +548,7 @@ impl TelegramSendTool {
             &text,
             "tool",
             "reply",
-            Some(message_id),
+            Some(message_id as i32),
         )
         .await
         {
