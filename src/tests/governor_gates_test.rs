@@ -66,7 +66,7 @@ async fn dm_chat_ids_bypass_all_three_governors() {
     governor::pace_send(ChatId(777)).await;
 
     assert!(
-        ts::snapshot(777).is_none(),
+        ts::snapshot(ChatId(777)).is_none(),
         "a DM must never be registered as a governed peer"
     );
 }
@@ -87,7 +87,7 @@ async fn negative_peer_stays_ungoverned_until_a_topic_is_seen() {
     assert!(governor::admit_chat_action(ChatId(-700), None).await);
     assert!(governor::admit_chat_action(ChatId(-700), None).await);
     assert!(governor::admit_chat_action(ChatId(-700), None).await);
-    let snap = ts::snapshot(-700).expect("gate observed the chat");
+    let snap = ts::snapshot(ChatId(-700)).expect("gate observed the chat");
     assert!(!snap.forum_seen, "topic-less traffic must not arm the peer");
     assert_eq!(snap.typing_admitted, 0, "ungoverned passes are not counted");
     assert_eq!(snap.typing_dropped, 0);
@@ -97,7 +97,7 @@ async fn negative_peer_stays_ungoverned_until_a_topic_is_seen() {
     assert!(governor::admit_chat_action(ChatId(-700), Some(9)).await);
     assert!(governor::admit_chat_action(ChatId(-700), Some(9)).await);
     assert!(!governor::admit_chat_action(ChatId(-700), Some(9)).await);
-    let snap = ts::snapshot(-700).unwrap();
+    let snap = ts::snapshot(ChatId(-700)).unwrap();
     assert!(snap.forum_seen);
     assert_eq!(snap.typing_admitted, 2);
     assert_eq!(snap.typing_dropped, 1);
@@ -116,7 +116,7 @@ async fn simultaneous_agent_sessions_share_one_typing_budget() {
         typing_max_hold_secs: 0,
     );
 
-    const CHAT: ChatId = -100_111;
+    const CHAT: ChatId = ChatId(-100_111);
     const TOPIC: i32 = 30679;
 
     // Spend the burst sequentially, like eight turns starting one after
@@ -134,7 +134,7 @@ async fn simultaneous_agent_sessions_share_one_typing_budget() {
     let mut refused = 0;
     for t in tasks {
         assert!(
-            t.await.expect("typing gate task panicked"),
+            !t.await.expect("typing gate task panicked"),
             "an over-budget typing refresh leaked past G1"
         );
         refused += 1;
@@ -161,7 +161,7 @@ async fn edit_ladder_drops_in_priority_order_and_queues_latest_wins_finals() {
         edit_burst: 2,
     );
 
-    const CHAT: ChatId = -100_222;
+    const CHAT: ChatId = ChatId(-100_222);
     let bot = Bot::new("TESTTOKEN");
 
     ts::mark_forum(CHAT);
@@ -190,14 +190,28 @@ async fn edit_ladder_drops_in_priority_order_and_queues_latest_wins_finals() {
 
     // Finals NEVER drop: they queue latest-wins per message id. Two enqueues
     // for the same message collapse into ONE pending payload.
-    assert!(!governor::edit_admission(
-        &bot, CHAT, MessageId(9), governor::EditClass::Final, "<b>v1</b>".into(), false,
-    )
-    .await);
-    assert!(!governor::edit_admission(
-        &bot, CHAT, MessageId(9), governor::EditClass::Final, "<b>v2</b>".into(), false,
-    )
-    .await);
+    assert!(
+        !governor::edit_admission(
+            &bot,
+            CHAT,
+            MessageId(9),
+            governor::EditClass::Final,
+            "<b>v1</b>".into(),
+            false,
+        )
+        .await
+    );
+    assert!(
+        !governor::edit_admission(
+            &bot,
+            CHAT,
+            MessageId(9),
+            governor::EditClass::Final,
+            "<b>v2</b>".into(),
+            false,
+        )
+        .await
+    );
     let snap = ts::snapshot(CHAT).unwrap();
     assert_eq!(snap.queued_finals, 2, "both enqueues are counted");
     assert_eq!(snap.superseded_finals, 1, "v1 was replaced by v2");
@@ -205,10 +219,17 @@ async fn edit_ladder_drops_in_priority_order_and_queues_latest_wins_finals() {
 
     // Refill admits chrome edits again — drops self-heal on the next render.
     ts::advance(1_100);
-    assert!(governor::edit_admission(
-        &bot, CHAT, MessageId(5), governor::EditClass::Status, "h".into(), false,
-    )
-    .await);
+    assert!(
+        governor::edit_admission(
+            &bot,
+            CHAT,
+            MessageId(5),
+            governor::EditClass::Status,
+            "h".into(),
+            false,
+        )
+        .await
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -221,7 +242,7 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
         edit_burst: 2,
     );
 
-    const CHAT: ChatId = -100_333;
+    const CHAT: ChatId = ChatId(-100_333);
     ts::mark_forum(CHAT);
     ts::burn_bucket(CHAT, ts::BucketKind::Edits, 2, 1.0);
 
@@ -229,10 +250,7 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
     // POST /botTESTTOKEN/editMessageText carrying the LATEST payload.
     let mut server = mockito::Server::new_async().await;
     let delivered = server
-        .mock(
-            "POST",
-            "/botTESTTOKEN/editMessageText",
-        )
+        .mock("POST", "/botTESTTOKEN/editMessageText")
         .match_body(mockito::Matcher::PartialJson(
             serde_json::json!({"text": "<b>settled</b>"}),
         ))
@@ -243,10 +261,18 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
         .await;
 
     let bot = Bot::new("TESTTOKEN").set_api_url(server.url().parse().unwrap());
-    assert!(!governor::edit_admission(
-        &bot, CHAT, MessageId(11), governor::EditClass::Final, "<b>settled</b>".into(), false,
-    )
-    .await, "starved bucket queues the final");
+    assert!(
+        !governor::edit_admission(
+            &bot,
+            CHAT,
+            MessageId(11),
+            governor::EditClass::Final,
+            "<b>settled</b>".into(),
+            false,
+        )
+        .await,
+        "starved bucket queues the final"
+    );
     assert_eq!(ts::snapshot(CHAT).unwrap().finals_pending, 1);
 
     // Mock the passage of time until a token refills, polling in DRAIN_TICK
@@ -286,7 +312,7 @@ async fn send_pacer_delays_then_fails_open_never_drops() {
         sends_burst: 2,
     );
 
-    const CHAT: ChatId = -100_444;
+    const CHAT: ChatId = ChatId(-100_444);
     ts::mark_forum(CHAT);
     ts::burn_bucket(CHAT, ts::BucketKind::SendsSec, 2, 20.0);
     ts::burn_bucket(CHAT, ts::BucketKind::SendsMin, 2, 2.0 / 60.0);
@@ -313,4 +339,93 @@ async fn send_pacer_delays_then_fails_open_never_drops() {
     );
     // No drop counter exists for G3 BY DESIGN — the assertion is that the
     // calls above RETURNED (fail-open) rather than hanging or discarding.
+}
+
+// ---------------------------------------------------------------------------
+// G4 — rich endpoint pacing (#1211 follow-up)
+// ---------------------------------------------------------------------------
+
+/// The rich endpoint is metered separately from typing / edits / sends, so
+/// none of G1-G3 sees its traffic.
+///
+/// This is not hypothetical. On the maintainer's deployment, over the same
+/// four days that produced 391 typing 429s on the reporter's box, typing 429s
+/// were **zero** and the rich endpoint took 261-462 real 429s per day, each
+/// carrying a 17-24 s `retry_after`. On 2026-08-25: 7,891 rich edits, 399
+/// rich sends, 260 429s — roughly 87 minutes of stalled flow rendering. The
+/// 429s cluster in the p99 minutes (40-46 calls) while the median minute runs
+/// 18, which is what the 30/min default is sized against.
+#[tokio::test(start_paused = true)]
+async fn rich_calls_are_paced_once_the_bucket_empties() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(1_000);
+    rl_config!(enabled: true, rich_per_minute: 30, rich_burst: 4);
+
+    const CHAT: ChatId = ChatId(-100_555);
+    const TOPIC: i32 = 4242;
+
+    // The burst passes without any hold at all: ordinary traffic is untouched.
+    for _ in 0..4 {
+        governor::pace_rich(CHAT, Some(TOPIC)).await;
+    }
+    let snap = ts::snapshot(CHAT).unwrap();
+    assert_eq!(snap.admitted_rich, 4);
+    assert_eq!(
+        snap.throttled_rich_ms, 0,
+        "nothing within the burst may be held"
+    );
+
+    // The next one has to wait for a refill — 30/min is one token every 2 s.
+    ts::burn_bucket(CHAT, ts::BucketKind::Rich, 4, 0.5);
+    ts::advance(2_100);
+    governor::pace_rich(CHAT, Some(TOPIC)).await;
+    assert_eq!(
+        ts::snapshot(CHAT).unwrap().admitted_rich,
+        5,
+        "a refilled token must admit rather than drop — a rich call is content"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn rich_pacing_leaves_dms_and_non_forums_alone() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(1_000);
+    rl_config!(enabled: true, rich_burst: 1);
+
+    // DM: positive id, never governed, no peer state created.
+    for _ in 0..10 {
+        governor::pace_rich(ChatId(4242), Some(7)).await;
+    }
+    assert!(
+        ts::snapshot(ChatId(4242)).is_none(),
+        "a DM must not even allocate peer state"
+    );
+
+    // Group that has never been seen carrying a topic: forums-only rollout.
+    const PLAIN: ChatId = ChatId(-100_666);
+    for _ in 0..10 {
+        governor::pace_rich(PLAIN, None).await;
+    }
+    assert_eq!(
+        ts::snapshot(PLAIN).map(|s| s.admitted_rich).unwrap_or(0),
+        0,
+        "a non-forum group is passed through ungoverned"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_disabled_limiter_governs_nothing() {
+    let _guard = ts::registry_guard().await;
+    ts::reset(1_000);
+    rl_config!(enabled: false, rich_burst: 1, typing_burst: 1);
+
+    const CHAT: ChatId = ChatId(-100_777);
+    for _ in 0..10 {
+        governor::pace_rich(CHAT, Some(9)).await;
+        assert!(governor::admit_chat_action(CHAT, Some(9)).await);
+    }
+    // The master switch is what restores fully reactive behaviour, so it must
+    // short-circuit before any bucket is touched.
+    ts::burn_bucket(CHAT, ts::BucketKind::Typing, 1, 1.0);
+    assert!(governor::admit_chat_action(CHAT, Some(9)).await);
 }

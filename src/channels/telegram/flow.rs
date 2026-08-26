@@ -1403,7 +1403,13 @@ pub(crate) async fn append_tool_group(
                 }
             }
         }
-        refresh_flow(bot, chat, streaming, super::governor::EditClass::Intermediary).await;
+        refresh_flow(
+            bot,
+            chat,
+            streaming,
+            super::governor::EditClass::Intermediary,
+        )
+        .await;
     } else {
         open_flow(bot, chat, thread_id, streaming).await;
         let mid = streaming
@@ -1474,7 +1480,13 @@ pub(crate) async fn append_intermediate_to_flow(
         s.open_group_msg_id
     };
     if open.is_some() {
-        refresh_flow(bot, chat, streaming, super::governor::EditClass::Intermediary).await;
+        refresh_flow(
+            bot,
+            chat,
+            streaming,
+            super::governor::EditClass::Intermediary,
+        )
+        .await;
     } else {
         open_flow(bot, chat, thread_id, streaming).await;
     }

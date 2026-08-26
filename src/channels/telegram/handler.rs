@@ -2634,7 +2634,13 @@ pub(crate) async fn handle_message(
     // Settle render (#1211 G2 Final): never dropped — if the edit bucket is
     // empty the payload queues latest-wins and the governor's drainer lands
     // it on refill.
-    refresh_flow(&bot, msg.chat.id, &streaming, super::governor::EditClass::Final).await;
+    refresh_flow(
+        &bot,
+        msg.chat.id,
+        &streaming,
+        super::governor::EditClass::Final,
+    )
+    .await;
     // Settle the persistent plan card (#580, #621): remove the old card first
     // so refresh_plan_card posts a fresh one at the bottom. This re-stick keeps
     // the card at the latest position instead of editing a buried message far

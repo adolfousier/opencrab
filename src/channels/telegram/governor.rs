@@ -49,9 +49,9 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use teloxide::Bot;
 use teloxide::prelude::Requester;
 use teloxide::types::{ChatId, MessageId, ParseMode};
-use teloxide::Bot;
 
 use crate::config::Config;
 
@@ -125,6 +125,10 @@ struct Limits {
     send_minute_ceiling: u32,
     /// G3 burst capacity.
     send_burst: u32,
+    /// G4 refill rate in tokens (rich calls) per second.
+    rich_rate_per_sec: f64,
+    /// G4 burst capacity.
+    rich_burst: u32,
     /// Spacing of the telemetry summary INFO line.
     summary_log_period: Duration,
 }
@@ -143,6 +147,8 @@ impl Limits {
             send_interval: Duration::from_millis(rl.send_min_interval_millis.max(50)),
             send_minute_ceiling: ceiling,
             send_burst: rl.sends_burst.max(1),
+            rich_rate_per_sec: (rl.rich_per_minute.max(1) as f64) / 60.0,
+            rich_burst: rl.rich_burst.max(1),
             summary_log_period: Duration::from_secs(rl.summary_log_secs.max(30)),
         }
     }
@@ -154,15 +160,15 @@ impl Limits {
 
 /// Minimal continuous-refill token bucket. Pure with respect to the injected
 /// `now`, so the admission math is unit-testable without tokio or config.
-struct Bucket {
-    tokens: f64,
+pub(crate) struct Bucket {
+    pub(crate) tokens: f64,
     capacity: f64,
     refill_per_sec: f64,
     last_refill: Instant,
 }
 
 impl Bucket {
-    fn new(capacity: u32, refill_per_sec: f64) -> Self {
+    pub(crate) fn new(capacity: u32, refill_per_sec: f64) -> Self {
         Self {
             tokens: f64::from(capacity),
             capacity: f64::from(capacity),
@@ -179,7 +185,7 @@ impl Bucket {
     }
 
     /// Consume one token, or report how long until the next refills.
-    fn take(&mut self, now: Instant) -> Result<(), Duration> {
+    pub(crate) fn take(&mut self, now: Instant) -> Result<(), Duration> {
         let wait = self.next_token_in(now);
         if wait.is_zero() {
             self.tokens -= 1.0;
@@ -203,10 +209,16 @@ impl Bucket {
 /// Initialize or reshape a lazily-built bucket slot. A config change that
 /// moves capacity or rate rebuilds the bucket fresh (burst restored) rather
 /// than silently keeping the old shape for the life of the process.
-fn ensure_bucket(slot: &mut Option<Bucket>, capacity: u32, refill_per_sec: f64) -> &mut Bucket {
+pub(crate) fn ensure_bucket(
+    slot: &mut Option<Bucket>,
+    capacity: u32,
+    refill_per_sec: f64,
+) -> &mut Bucket {
     let stale = match slot {
-        Some(b) => b.capacity != f64::from(capacity)
-            || (b.refill_per_sec - refill_per_sec).abs() > f64::EPSILON,
+        Some(b) => {
+            b.capacity != f64::from(capacity)
+                || (b.refill_per_sec - refill_per_sec).abs() > f64::EPSILON
+        }
         None => true,
     };
     if stale {
@@ -233,27 +245,29 @@ struct PendingFinal {
 /// Counters behind the periodic summary line. Field-per-class instead of a
 /// map so the summary formatting cannot silently miss a newly named class.
 #[derive(Default)]
-struct Counters {
-    admitted_typing: u64,
-    admitted_edits: u64,
-    admitted_sends: u64,
-    dropped_typing: u64,
-    dropped_clock: u64,
-    dropped_brain_preview: u64,
-    dropped_intermediary: u64,
-    dropped_status: u64,
-    queued_finals: u64,
-    superseded_finals: u64,
-    delivered_finals: u64,
-    failed_finals: u64,
-    throttled_typing_ms: u64,
-    throttled_send_ms: u64,
+pub(crate) struct Counters {
+    pub(crate) admitted_typing: u64,
+    pub(crate) admitted_edits: u64,
+    pub(crate) admitted_sends: u64,
+    pub(crate) admitted_rich: u64,
+    pub(crate) dropped_typing: u64,
+    pub(crate) dropped_clock: u64,
+    pub(crate) dropped_brain_preview: u64,
+    pub(crate) dropped_intermediary: u64,
+    pub(crate) dropped_status: u64,
+    pub(crate) queued_finals: u64,
+    pub(crate) superseded_finals: u64,
+    pub(crate) delivered_finals: u64,
+    pub(crate) failed_finals: u64,
+    pub(crate) throttled_typing_ms: u64,
+    pub(crate) throttled_send_ms: u64,
+    pub(crate) throttled_rich_ms: u64,
 }
 
 impl Counters {
     /// Record a ladder drop. The Final arm stays empty ON PURPOSE: finals are
     /// never dropped here — admission queues them instead (#1211).
-    fn note_drop(&mut self, class: EditClass) {
+    pub(crate) fn note_drop(&mut self, class: EditClass) {
         match class {
             EditClass::Clock => self.dropped_clock += 1,
             EditClass::BrainPreview => self.dropped_brain_preview += 1,
@@ -294,6 +308,7 @@ struct Peer {
     edits: Option<Bucket>,
     sends_sec: Option<Bucket>,
     sends_min: Option<Bucket>,
+    rich: Option<Bucket>,
     /// Queued finals keyed by message id — insert-replace IS latest-wins.
     finals: HashMap<i32, PendingFinal>,
     /// A drainer task is currently running for this peer.
@@ -308,19 +323,20 @@ fn peers() -> &'static Mutex<HashMap<i64, Peer>> {
 
 /// Format one peer's summary line. Pure so the field coverage is pinned by a
 /// test: adding a counter without extending this format fails the test.
-fn format_summary(chat_id: i64, c: &Counters, finals_pending: usize) -> Option<String> {
+pub(crate) fn format_summary(chat_id: i64, c: &Counters, finals_pending: usize) -> Option<String> {
     if c.all_zero() && finals_pending == 0 {
         return None;
     }
     Some(format!(
         "Telegram rate-limiter chat={chat_id}: \
-         admitted{{typing={},edits={},sends={}}} \
+         admitted{{typing={},edits={},sends={},rich={}}} \
          dropped{{clock={},brain_preview={},intermediary={},status={},typing={}}} \
          finals{{queued={},superseded={},delivered={},failed={},pending={}}} \
-         throttled_ms{{typing={},send={}}}",
+         throttled_ms{{typing={},send={},rich={}}}",
         c.admitted_typing,
         c.admitted_edits,
         c.admitted_sends,
+        c.admitted_rich,
         c.dropped_clock,
         c.dropped_brain_preview,
         c.dropped_intermediary,
@@ -333,11 +349,13 @@ fn format_summary(chat_id: i64, c: &Counters, finals_pending: usize) -> Option<S
         finals_pending,
         c.throttled_typing_ms,
         c.throttled_send_ms,
+        c.throttled_rich_ms,
     ))
 }
 
 /// One summary INFO line per active forum every `[rate_limiter].
 /// summary_log_secs`. Spawned lazily by the first gated call.
+#[cfg(not(test))]
 async fn summary_loop() {
     loop {
         let period = Limits::from_config().summary_log_period;
@@ -346,11 +364,7 @@ async fn summary_loop() {
             let map = peers().lock().unwrap_or_else(|e| e.into_inner());
             map.iter()
                 .filter_map(|(chat_id, peer)| {
-                    format_summary(
-                        *chat_id,
-                        &peer.counters,
-                        peer.finals.len(),
-                    )
+                    format_summary(*chat_id, &peer.counters, peer.finals.len())
                 })
                 .collect()
         };
@@ -366,8 +380,9 @@ fn ensure_summary_task() {
     // refills. The summary format is pinned by its own unit test instead.
     #[cfg(test)]
     {
-        let _ = Limits::from_config();
-        return;
+        // Read the knob rather than discarding the whole struct, so the field
+        // is exercised in this cfg too instead of reading as dead.
+        let _ = Limits::from_config().summary_log_period;
     }
     #[cfg(not(test))]
     {
@@ -453,6 +468,12 @@ pub(crate) async fn admit_chat_action(chat: ChatId, thread_id: Option<i32>) -> b
             Decision::Hold(wait) => {
                 let start = gate_now();
                 tokio::time::sleep(wait).await;
+                // Under tokio's paused runtime the sleep above returns
+                // instantly, so the virtual clock has to absorb it or the
+                // hold accounting never moves and this loop cannot reach its
+                // bound. Production reads the same real clock for both.
+                #[cfg(test)]
+                test_support::advance(wait.as_millis() as u64);
                 waited += gate_now().duration_since(start);
             }
         }
@@ -469,7 +490,11 @@ fn fold_throttle_ms(chat_id: i64, waited: Duration) {
     if ms == 0 {
         return;
     }
-    if let Some(peer) = peers().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&chat_id) {
+    if let Some(peer) = peers()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_mut(&chat_id)
+    {
         peer.counters.throttled_typing_ms += ms;
     }
 }
@@ -499,7 +524,7 @@ pub(crate) enum EditClass {
 impl EditClass {
     /// Ladder rank: higher drops later. Kept explicit so a test pins the
     /// ordering the issue locks in, even if variants reorder.
-    fn drop_rank(self) -> u8 {
+    pub(crate) fn drop_rank(self) -> u8 {
         match self {
             EditClass::Clock => 0,
             EditClass::BrainPreview => 1,
@@ -626,6 +651,12 @@ fn take_due_final(chat_id: i64, lim: &Limits) -> Option<(i32, PendingFinal)> {
 async fn drain_finals(chat_id: i64) {
     loop {
         tokio::time::sleep(DRAIN_TICK).await;
+        // Same clock divergence as the gate loops: under the paused runtime
+        // this returns instantly, so without absorbing it the edit bucket
+        // never refills and a queued final is never drained.
+        #[cfg(test)]
+        test_support::advance(DRAIN_TICK.as_millis() as u64);
+
         let lim = Limits::from_config();
         let Some(job) = take_due_final(chat_id, &lim) else {
             // Queue drained (draining flag cleared inside) or no budget yet.
@@ -663,7 +694,7 @@ fn ensure_drain(chat_id: i64) {
 
 /// Errors that mean a queued final will NEVER land, no matter how often the
 /// drainer retries: the target is gone or the content is already there.
-fn is_permanent_edit_error(error: &str) -> bool {
+pub(crate) fn is_permanent_edit_error(error: &str) -> bool {
     error.contains("message to edit not found")
         || error.contains("message is not modified")
         || error.contains("message can't be edited")
@@ -729,6 +760,12 @@ async fn deliver_final(chat_id: i64, msg_id: i32, mut pending: PendingFinal) {
             if let Some(window) = retry_after {
                 let (wait, _) = super::rate_limit::clamp_inline_wait(window);
                 tokio::time::sleep(wait).await;
+                // Under tokio's paused runtime the sleep above returns
+                // instantly, so the virtual clock has to absorb it or the
+                // hold accounting never moves and this loop cannot reach its
+                // bound. Production reads the same real clock for both.
+                #[cfg(test)]
+                test_support::advance(wait.as_millis() as u64);
             }
         }
     }
@@ -757,6 +794,7 @@ async fn run_final_edit(
         .await
         .map_err(|e| e.to_string())
     } else {
+        use teloxide::payloads::EditMessageTextSetters;
         bot.edit_message_text(ChatId(chat_id), MessageId(msg_id), html)
             .parse_mode(ParseMode::Html)
             .await
@@ -841,9 +879,117 @@ pub(crate) async fn pace_send(chat: ChatId) {
             PaceVerdict::Wait(delay) => {
                 let start = gate_now();
                 tokio::time::sleep(delay).await;
+                // Under tokio's paused runtime the sleep above returns
+                // instantly, so the virtual clock has to absorb it or the
+                // hold accounting never moves and this loop cannot reach its
+                // bound. Production reads the same real clock for both.
+                #[cfg(test)]
+                test_support::advance(delay.as_millis() as u64);
                 waited += gate_now().duration_since(start);
             }
         }
+    }
+}
+
+/// G4 gate ahead of rich-endpoint calls (`sendRichMessage` and its edit
+/// sibling), which sit in their own method family with their own budget.
+///
+/// G1/G2/G3 govern `sendChatAction`, `editMessageText` and `sendMessage`.
+/// Telegram meters the rich endpoint separately, so none of those buckets
+/// sees its traffic — a deployment can therefore take zero typing 429s while
+/// the rich endpoint 429s hundreds of times a day. Measured on one: 260 real
+/// 429s in a day against 7,891 rich edits and 399 rich sends, each costing a
+/// 17-24 s `retry_after`, roughly 87 minutes of stalled flow rendering. Those
+/// 429s cluster in the p99 minutes (40-46 calls) while the median minute runs
+/// 18, which is what the 30/min default is sized against.
+///
+/// Holds rather than drops, like [`pace_send`]: a rich call is content, and
+/// the reactive `wait_out` backstop still owns anything that gets through.
+/// Fails open past [`SEND_MAX_HOLD`] so a pathological configuration degrades
+/// to today's behavior instead of stalling turns.
+pub(crate) async fn pace_rich(chat: ChatId, thread_id: Option<i32>) {
+    let chat_id = chat.0;
+    // DMs (positive ids) untouched, cheap exit first.
+    if chat_id >= 0 {
+        return;
+    }
+    let lim = Limits::from_config();
+    if !lim.enabled {
+        return;
+    }
+    ensure_summary_task();
+    let mut waited = Duration::ZERO;
+    loop {
+        let verdict = {
+            let mut map = peers().lock().unwrap_or_else(|e| e.into_inner());
+            let peer = map.entry(chat_id).or_default();
+            // The rich path carries the topic itself, so it can establish
+            // forums-only rollout on its own rather than waiting for a typing
+            // gate to have run first for this chat.
+            if thread_id.is_some() {
+                peer.forum_seen = true;
+            }
+            if !peer.forum_seen {
+                return;
+            }
+            let bucket = ensure_bucket(&mut peer.rich, lim.rich_burst, lim.rich_rate_per_sec);
+            let now = gate_now();
+            let need = bucket.next_token_in(now);
+            if need.is_zero() {
+                let _ = bucket.take(now);
+                peer.counters.admitted_rich += 1;
+                PaceVerdict::Go
+            } else if waited + need > SEND_MAX_HOLD {
+                peer.counters.admitted_rich += 1;
+                PaceVerdict::FailOpen(need)
+            } else {
+                PaceVerdict::Wait(need)
+            }
+        };
+        match verdict {
+            PaceVerdict::Go => {
+                fold_rich_ms(chat_id, waited);
+                return;
+            }
+            PaceVerdict::FailOpen(next) => {
+                tracing::warn!(
+                    "Telegram rate-limiter: rich pacing held {waited:?} for chat={chat_id}, \
+                     still {} from a token — failing open to the reactive backstop",
+                    next.as_secs_f64()
+                );
+                fold_rich_ms(chat_id, waited);
+                return;
+            }
+            PaceVerdict::Wait(delay) => {
+                let start = gate_now();
+                tokio::time::sleep(delay).await;
+                // Under tokio's paused runtime the sleep above returns
+                // instantly, so the virtual clock has to absorb it or the
+                // hold accounting never moves and this loop cannot reach its
+                // bound. Production reads the same real clock for both.
+                #[cfg(test)]
+                test_support::advance(delay.as_millis() as u64);
+                waited += gate_now().duration_since(start);
+            }
+        }
+    }
+}
+
+/// Attribute G4 hold time back to the peer's counters.
+fn fold_rich_ms(chat_id: i64, waited: Duration) {
+    if waited.is_zero() {
+        return;
+    }
+    let ms = waited.as_millis() as u64;
+    if ms == 0 {
+        return;
+    }
+    if let Some(peer) = peers()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_mut(&chat_id)
+    {
+        peer.counters.throttled_rich_ms += ms;
     }
 }
 
@@ -857,7 +1003,11 @@ fn fold_send_ms(chat_id: i64, waited: Duration) {
     if ms == 0 {
         return;
     }
-    if let Some(peer) = peers().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&chat_id) {
+    if let Some(peer) = peers()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_mut(&chat_id)
+    {
         peer.counters.throttled_send_ms += ms;
     }
 }
@@ -918,6 +1068,7 @@ pub(crate) mod test_support {
             BucketKind::Edits => &mut peer.edits,
             BucketKind::SendsSec => &mut peer.sends_sec,
             BucketKind::SendsMin => &mut peer.sends_min,
+            BucketKind::Rich => &mut peer.rich,
         };
         let bucket = ensure_bucket(slot, capacity, rate_per_sec);
         for _ in 0..capacity {
@@ -932,6 +1083,7 @@ pub(crate) mod test_support {
         Edits,
         SendsSec,
         SendsMin,
+        Rich,
     }
 
     /// Point-in-time copy of everything a test can assert on for one peer.
@@ -950,6 +1102,8 @@ pub(crate) mod test_support {
         pub delivered_finals: u64,
         pub failed_finals: u64,
         pub throttled_typing_ms: u64,
+        pub admitted_rich: u64,
+        pub throttled_rich_ms: u64,
         pub throttled_send_ms: u64,
         pub finals_pending: usize,
     }
@@ -960,144 +1114,22 @@ pub(crate) mod test_support {
         let map = peers().lock().unwrap_or_else(|e| e.into_inner());
         map.get(&chat_id).map(|p| Snap {
             forum_seen: p.forum_seen,
-            typing_admitted: p.counters.admitted_typing as u64,
-            typing_dropped: p.counters.dropped_typing as u64,
-            edits_admitted: p.counters.admitted_edits as u64,
-            dropped_clock: p.counters.dropped_clock as u64,
-            dropped_brain_preview: p.counters.dropped_brain_preview as u64,
-            dropped_intermediary: p.counters.dropped_intermediary as u64,
-            dropped_status: p.counters.dropped_status as u64,
-            queued_finals: p.counters.queued_finals as u64,
-            superseded_finals: p.counters.superseded_finals as u64,
-            delivered_finals: p.counters.delivered_finals as u64,
-            failed_finals: p.counters.failed_finals as u64,
-            throttled_typing_ms: p.counters.throttled_typing_ms as u64,
-            throttled_send_ms: p.counters.throttled_send_ms as u64,
+            typing_admitted: p.counters.admitted_typing,
+            typing_dropped: p.counters.dropped_typing,
+            edits_admitted: p.counters.admitted_edits,
+            dropped_clock: p.counters.dropped_clock,
+            dropped_brain_preview: p.counters.dropped_brain_preview,
+            dropped_intermediary: p.counters.dropped_intermediary,
+            dropped_status: p.counters.dropped_status,
+            queued_finals: p.counters.queued_finals,
+            superseded_finals: p.counters.superseded_finals,
+            delivered_finals: p.counters.delivered_finals,
+            failed_finals: p.counters.failed_finals,
+            throttled_typing_ms: p.counters.throttled_typing_ms,
+            admitted_rich: p.counters.admitted_rich,
+            throttled_rich_ms: p.counters.throttled_rich_ms,
+            throttled_send_ms: p.counters.throttled_send_ms,
             finals_pending: p.finals.len(),
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bucket_allows_burst_then_throttles() {
-        let mut b = Bucket::new(3, 1.0);
-        let t0 = Instant::now();
-        assert!(b.take(t0).is_ok());
-        assert!(b.take(t0).is_ok());
-        assert!(b.take(t0).is_ok());
-        // Empty: refuses, and reports the full refill spacing.
-        let err = b.take(t0).expect_err("bucket should be empty");
-        assert_eq!(err, Duration::from_secs(1));
-    }
-
-    #[test]
-    fn bucket_refills_over_time_and_caps_at_capacity() {
-        let mut b = Bucket::new(2, 1.0);
-        let t0 = Instant::now();
-        assert!(b.take(t0).is_ok());
-        assert!(b.take(t0).is_ok());
-        assert!(b.take(t0).is_err());
-        // Halfway through one interval there is still no full token.
-        assert!(b.take(t0 + Duration::from_millis(500)).is_err());
-        // A full interval later the token is back.
-        assert!(b.take(t0 + Duration::from_secs(1)).is_ok());
-        // Idling far past capacity must not hoard tokens beyond the cap.
-        let t1 = t0 + Duration::from_secs(60);
-        assert!(b.take(t1).is_ok());
-        assert!(b.take(t1).is_ok());
-        assert!(b.take(t1).is_err());
-    }
-
-    #[test]
-    fn ensure_bucket_rebuilds_on_shape_change_keeps_on_match() {
-        let mut slot = None;
-        let rate = 0.5;
-        ensure_bucket(&mut slot, 10, rate).take(Instant::now()).ok();
-        // Same shape: the partially-consumed bucket survives.
-        let kept = ensure_bucket(&mut slot, 10, rate);
-        assert!(kept.tokens < f64::from(10u32));
-        // Different shape: rebuilt fresh at full capacity.
-        let fresh = ensure_bucket(&mut slot, 5, rate);
-        assert!((fresh.tokens - 5.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn ladder_order_drops_clock_first_and_final_never_drops() {
-        let ladder = [
-            EditClass::Clock,
-            EditClass::BrainPreview,
-            EditClass::Intermediary,
-            EditClass::Status,
-        ];
-        for pair in ladder.windows(2) {
-            assert!(
-                pair[0].drop_rank() < pair[1].drop_rank(),
-                "ladder must drop {pair:?} in ascending value order"
-            );
-        }
-        // Final outranks everything and is refused by the dropper.
-        assert_eq!(EditClass::Final.drop_rank(), 4);
-        let mut c = Counters::default();
-        c.note_drop(EditClass::Final);
-        assert_eq!(c.dropped_clock + c.dropped_status, 0, "finals are never dropped");
-    }
-
-    #[test]
-    fn note_drop_counts_each_chrome_class() {
-        let mut c = Counters::default();
-        c.note_drop(EditClass::Clock);
-        c.note_drop(EditClass::Clock);
-        c.note_drop(EditClass::BrainPreview);
-        c.note_drop(EditClass::Intermediary);
-        c.note_drop(EditClass::Status);
-        assert_eq!(c.dropped_clock, 2);
-        assert_eq!(c.dropped_brain_preview, 1);
-        assert_eq!(c.dropped_intermediary, 1);
-        assert_eq!(c.dropped_status, 1);
-    }
-
-    #[test]
-    fn summary_is_silent_when_idle() {
-        let c = Counters::default();
-        assert!(format_summary(-100123, &c, 0).is_none());
-    }
-
-    #[test]
-    fn summary_carries_every_counter_group() {
-        let mut c = Counters::default();
-        c.admitted_typing = 12;
-        c.admitted_edits = 34;
-        c.admitted_sends = 5;
-        c.dropped_clock = 1;
-        c.dropped_brain_preview = 2;
-        c.dropped_intermediary = 3;
-        c.dropped_status = 4;
-        c.dropped_typing = 6;
-        c.queued_finals = 7;
-        c.superseded_finals = 8;
-        c.delivered_finals = 9;
-        c.failed_finals = 10;
-        c.throttled_typing_ms = 1500;
-        c.throttled_send_ms = 2500;
-        let line = format_summary(-100123, &c, 2).expect("active peer must summarize");
-        assert!(line.contains("chat=-100123"));
-        assert!(line.contains("admitted{typing=12,edits=34,sends=5}"));
-        assert!(line.contains("dropped{clock=1,brain_preview=2,intermediary=3,status=4,typing=6}"));
-        assert!(line.contains("finals{queued=7,superseded=8,delivered=9,failed=10,pending=2}"));
-        assert!(line.contains("throttled_ms{typing=1500,send=2500}"));
-    }
-
-    #[test]
-    fn permanent_edit_error_vocabulary_is_exact() {
-        assert!(is_permanent_edit_error(
-            "Telegram error: message to edit not found"
-        ));
-        assert!(is_permanent_edit_error("Bad Request: message is not modified"));
-        assert!(!is_permanent_edit_error("Too Many Requests: retry after 3"));
-        assert!(!is_permanent_edit_error("timeout"));
     }
 }

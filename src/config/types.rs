@@ -553,6 +553,17 @@ pub struct RateLimiterConfig {
     /// G3 sends: burst capacity of the send pacer. Default: 5.
     #[serde(default = "default_sends_burst")]
     pub sends_burst: u32,
+    /// G4 rich: steady-state budget per forum peer per minute for the rich
+    /// message endpoint (`sendRichMessage` / its edit sibling), which sits in
+    /// its own method family with its own bucket. Sized from a deployment
+    /// taking 260 real 429s/day on this endpoint against a median of 18
+    /// calls/min, p90 23, p99 40: a 30/min ceiling paces only the p99 spikes
+    /// the 429s cluster in and leaves ordinary traffic untouched. Default: 30.
+    #[serde(default = "default_rich_per_minute")]
+    pub rich_per_minute: u32,
+    /// G4 rich: burst capacity of the rich bucket. Default: 10.
+    #[serde(default = "default_rich_burst")]
+    pub rich_burst: u32,
     /// Spacing of the telemetry summary INFO line (one line per active forum:
     /// admissions, ladder drops per class, finals stats, throttled ms).
     /// Default: 300.
@@ -574,6 +585,8 @@ impl Default for RateLimiterConfig {
             send_min_interval_millis: default_send_min_interval_millis(),
             sends_ceiling_per_minute: default_sends_ceiling_per_minute(),
             sends_burst: default_sends_burst(),
+            rich_per_minute: default_rich_per_minute(),
+            rich_burst: default_rich_burst(),
             summary_log_secs: default_summary_log_secs(),
         }
     }
@@ -609,6 +622,14 @@ fn default_sends_ceiling_per_minute() -> u32 {
 
 fn default_sends_burst() -> u32 {
     5
+}
+
+fn default_rich_per_minute() -> u32 {
+    30
+}
+
+fn default_rich_burst() -> u32 {
+    10
 }
 
 fn default_summary_log_secs() -> u64 {
