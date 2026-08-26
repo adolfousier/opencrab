@@ -593,16 +593,16 @@ impl TelegramState {
     /// `host` is set when the keyboard was MERGED onto the final response
     /// bubble: the tap handler uses it to record the pick without erasing
     /// the answer text.
-    pub async fn set_pending_followups(
+    pub(crate) async fn set_pending_followups(
         &self,
         session_id: Uuid,
         options: Vec<String>,
         host: Option<MergedHost>,
     ) {
-        self.pending_followups.lock().await.insert(
-            session_id,
-            PendingFollowupSet { options, host },
-        );
+        self.pending_followups
+            .lock()
+            .await
+            .insert(session_id, PendingFollowupSet { options, host });
     }
 
     /// Take a tapped follow-up suggestion by index, consuming the WHOLE set for
@@ -610,7 +610,7 @@ impl TelegramState {
     /// the suggestion string plus the merged host (when the keyboard lived on
     /// the answer bubble), or None if nothing is pending or the index is out
     /// of range.
-    pub async fn take_pending_followup(
+    pub(crate) async fn take_pending_followup(
         &self,
         session_id: Uuid,
         idx: usize,

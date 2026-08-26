@@ -18,8 +18,6 @@ use super::TelegramState;
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 
-/// Label-length budget above which Telegram folds suggestions into the body
-
 /// What the suggestion block becomes once one of its options is tapped.
 ///
 /// Replaces the prompt and its keyboard in place. The Bot API has no
@@ -194,19 +192,20 @@ pub(crate) async fn render_suggestions(
         )
     };
     let rows: Vec<Vec<InlineKeyboardButton>> = match layout {
-        SuggestLayout::SharedRow => vec![options
-            .iter()
-            .enumerate()
-            .map(|(i, opt)| text_btn(i, opt))
-            .collect()],
+        SuggestLayout::SharedRow => vec![
+            options
+                .iter()
+                .enumerate()
+                .map(|(i, opt)| text_btn(i, opt))
+                .collect(),
+        ],
         SuggestLayout::Column => options
             .iter()
             .enumerate()
             .map(|(i, opt)| vec![text_btn(i, opt)])
             .collect(),
         SuggestLayout::NumberedProse => {
-            let all: Vec<InlineKeyboardButton> =
-                (0..options.len()).map(num_btn).collect();
+            let all: Vec<InlineKeyboardButton> = (0..options.len()).map(num_btn).collect();
             all.chunks(MAX_NUMBERS_PER_ROW)
                 .map(|c| c.to_vec())
                 .collect()
@@ -229,12 +228,10 @@ pub(crate) async fn render_suggestions(
         // them because rich HTML input flattens tables (#679).
         let (mut new_html, rich) = match host.body {
             super::state::BubbleBody::Html(html) => (html, false),
-            super::state::BubbleBody::Markdown(md) => {
-                (super::rich::markdown_to_html(&md), true)
-            }
+            super::state::BubbleBody::Markdown(md) => (super::rich::markdown_to_html(&md), true),
         };
         if layout == SuggestLayout::NumberedProse {
-            new_html.push_str("\n");
+            new_html.push('\n');
             new_html.push_str(folded_list_html(&options).trim_start());
         }
         if rich {
@@ -331,7 +328,10 @@ mod layout_tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert!(opts.iter().all(|o| o.chars().count() <= SHARED_ROW_MAX_CHARS));
+        assert!(
+            opts.iter()
+                .all(|o| o.chars().count() <= SHARED_ROW_MAX_CHARS)
+        );
         assert_eq!(pick_layout(&opts), SuggestLayout::Column);
     }
 
