@@ -431,8 +431,7 @@ pub(crate) async fn send_rich_markdown_media_target_id(
 
     let result = if media.iter().any(|m| m.bytes.is_some()) {
         // Local render → multipart upload of the PNG bytes (attach://).
-        let form = build_multipart_form(&body, media);
-        post_rich_multipart(&url, &form, &body, origin, origin_detail).await?
+        post_rich_multipart(&url, media, &body, origin, origin_detail).await?
     } else {
         // Legacy URL path → plain JSON; Telegram refetches the URL.
         post_rich(&url, &body, origin, origin_detail).await?
@@ -493,7 +492,7 @@ fn build_multipart_form(
 /// surfaces Telegram's `description`.
 async fn post_rich_multipart(
     url: &str,
-    form: &reqwest::multipart::Form,
+    media: &[super::mermaid::MediaEntry],
     body: &serde_json::Value,
     origin: &str,
     origin_detail: &str,
@@ -510,9 +509,11 @@ async fn post_rich_multipart(
             )
             .await;
         }
+        // Form is not Clone, so rebuild it from media+body each attempt.
+        let form = build_multipart_form(media, body);
         let resp = client
             .post(url)
-            .multipart(form.clone())
+            .multipart(form)
             .send()
             .await?;
         let status = resp.status();
