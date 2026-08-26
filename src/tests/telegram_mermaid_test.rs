@@ -393,8 +393,57 @@ fn looks_like_mermaid_source_matches_known_openers() {
     assert!(looks_like_mermaid_source("graph BT\na-->b"));
     assert!(looks_like_mermaid_source("flowchart LR\na-->b"));
     assert!(looks_like_mermaid_source("stateDiagram-v2\n[*] --> s1"));
-    assert!(looks_like_mermaid_source("erDiagram\nUSER ||--o{ POST : has"));
-    assert!(looks_like_mermaid_source("%% comment\nclassDiagram\nclass A"));
+    assert!(looks_like_mermaid_source(
+        "erDiagram\nUSER ||--o{ POST : has"
+    ));
+    assert!(looks_like_mermaid_source(
+        "%% comment\nclassDiagram\nclass A"
+    ));
     assert!(!looks_like_mermaid_source("let x = 1;"));
     assert!(!looks_like_mermaid_source(""));
+}
+
+/// A fence carrying an explicit non-mermaid info string is never
+/// content-classified (#1208 review).
+///
+/// Content classification is for BARE fences: the doc contract says "untagged
+/// fences, whose info string is empty", and `resolve_block` enforces exactly
+/// that with `lang.is_none()`. The two line scanners tested the info string of
+/// the CLOSING fence instead, which is bare on essentially every block, so any
+/// tagged fence with diagram-shaped content classified as a diagram and the
+/// three render paths disagreed with each other.
+#[test]
+fn test_tagged_non_mermaid_fence_is_never_content_classified() {
+    use crate::channels::telegram::rich::mermaid::{find_mermaid_fences, has_mermaid_fence};
+
+    for text in [
+        "```dot\ngraph TD\n  A --> B\n```",
+        "```text\nsequenceDiagram\n  A->>B: hi\n```",
+        "```rust\n// pie\nlet x = 1;\n```",
+    ] {
+        assert!(
+            !has_mermaid_fence(text),
+            "explicit info string must suppress content classification: {text:?}"
+        );
+        assert!(
+            find_mermaid_fences(text).is_empty(),
+            "and the extractor must agree with the gate: {text:?}"
+        );
+    }
+}
+
+/// The bare-fence case the feature exists for still works, and both scanners
+/// agree on it.
+#[test]
+fn test_bare_fence_with_diagram_body_is_still_classified() {
+    use crate::channels::telegram::rich::mermaid::{find_mermaid_fences, has_mermaid_fence};
+
+    let text = "```\ngraph TD\n  A --> B\n```";
+    assert!(has_mermaid_fence(text));
+    assert_eq!(find_mermaid_fences(text).len(), 1);
+
+    // And an explicit mermaid tag is unaffected by any of this.
+    let tagged = "```mermaid\ngraph TD\n  A --> B\n```";
+    assert!(has_mermaid_fence(tagged));
+    assert_eq!(find_mermaid_fences(tagged).len(), 1);
 }
