@@ -7,13 +7,13 @@
 
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
-use crate::db::Pool;
 #[cfg(feature = "telegram")]
 use crate::channels::telegram::TelegramState;
-#[cfg(feature = "telegram")]
-use std::sync::Arc;
+use crate::db::Pool;
 use async_trait::async_trait;
 use serde_json::Value;
+#[cfg(feature = "telegram")]
+use std::sync::Arc;
 
 /// Tool for listing and searching session message history via direct DB search.
 pub struct SessionSearchTool {

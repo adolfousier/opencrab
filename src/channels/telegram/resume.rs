@@ -112,9 +112,7 @@ pub(crate) fn build_enqueue_callback(
                     {
                         Ok(()) => true,
                         Err(e) => {
-                            tracing::warn!(
-                                "[bg-resume] #1225 rich echo failed, using HTML: {e}"
-                            );
+                            tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
                             false
                         }
                     };
@@ -188,7 +186,7 @@ pub(crate) fn build_enqueue_callback(
                 return;
             };
 
-if let Err(e) = resume_session(
+            if let Err(e) = resume_session(
                 bot,
                 teloxide::types::ChatId(chat_id),
                 thread_id,
@@ -703,18 +701,20 @@ async fn sender_label(
     let label = match sender_chat {
         None => None,
         Some(sc) if sc == recipient_chat => match sender_topic {
-            Some(tid) => super::titles::topic_title(
-                &api_url,
-                &token,
-                teloxide::types::ChatId(sc),
-                teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
-            )
-            .await,
+            Some(tid) => {
+                super::titles::topic_title(
+                    &api_url,
+                    &token,
+                    teloxide::types::ChatId(sc),
+                    teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
+                )
+                .await
+            }
             None => None,
         },
         Some(sc) => {
-            let chat = super::titles::chat_title(&api_url, &token, teloxide::types::ChatId(sc))
-                .await;
+            let chat =
+                super::titles::chat_title(&api_url, &token, teloxide::types::ChatId(sc)).await;
             match (chat, sender_topic) {
                 (Some(c), Some(tid)) => {
                     match super::titles::topic_title(

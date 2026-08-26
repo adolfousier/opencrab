@@ -37,13 +37,14 @@ async fn post_api(
 
 /// Chat display name: `title` for groups/channels, `username` as fallback
 /// for private chats (getChat leaves `title` absent on Private).
-pub(crate) async fn chat_title(
-    api_url: &str,
-    token: &str,
-    chat_id: ChatId,
-) -> Option<String> {
-    let result = post_api(api_url, token, "getChat", serde_json::json!({ "chat_id": chat_id.0 }))
-        .await?;
+pub(crate) async fn chat_title(api_url: &str, token: &str, chat_id: ChatId) -> Option<String> {
+    let result = post_api(
+        api_url,
+        token,
+        "getChat",
+        serde_json::json!({ "chat_id": chat_id.0 }),
+    )
+    .await?;
     result
         .get("title")
         .and_then(serde_json::Value::as_str)
