@@ -395,17 +395,7 @@ impl Tool for SpawnAgentTool {
             // recursive/dangerous ones, then restricted to read-only when the
             // parent granted only read access. The #649 Editing-parent
             // restriction below applies on top of either grant.
-            let child_registry = Arc::new(super::build_child_registry(&self.parent_registry));
-            // build_child_registry copies the parent's Arc<dyn Tool> values,
-            // so the copied tool_search still activates into the PARENT
-            // registry — keyed by this child's session id, where nothing
-            // reads it. Rebind it to the registry the child's request builder
-            // actually consults (#1210).
-            if child_registry.get("tool_search").is_some() {
-                child_registry.register(Arc::new(
-                    crate::brain::tools::tool_search::ToolSearchTool::new(&child_registry),
-                ));
-            }
+            let child_registry = super::build_child_registry(&self.parent_registry);
             // Explicit read_only grant from the spawn call (#1173): strip
             // mutating tools before any other consideration.
             if read_only {

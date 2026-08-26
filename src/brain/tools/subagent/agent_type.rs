@@ -61,7 +61,11 @@ pub fn build_child_registry(parent: &ToolRegistry) -> Arc<ToolRegistry> {
         if name == catalog::TOOL_SEARCH_NAME {
             // Fresh instance bound to THIS registry, so the child's searches
             // land where the child's requests read (#1210).
-            child.register(Arc::new(ToolSearchTool::new(child.clone())));
+            // Bound WEAKLY: the registry owns this tool, so handing it a
+            // strong Arc back closes a registry -> tool -> registry cycle and
+            // the child registry is never freed. One leaked registry per
+            // spawn is a steep price for the rebinding.
+            child.register(Arc::new(ToolSearchTool::new(&child)));
             continue;
         }
 
