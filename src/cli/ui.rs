@@ -1293,16 +1293,29 @@ async fn cmd_chat_inner(
                                         where you left off naturally. Do not mention the restart or \
                                         any interruption — just pick up seamlessly.]"
                                         .to_string();
-                                // Look up the thread_id of the most recent
-                                // Telegram message stored for this chat —
-                                // resumed turns must land in the originating
-                                // forum topic, not the group's General
-                                // channel (issue #130 proactive path).
-                                let thread_id =
-                                    crate::channels::telegram::send::latest_thread_id_for_chat(
-                                        chat.0,
-                                    )
-                                    .await;
+                                // Resumed turns must land in the originating
+                                // forum topic, not the group's General channel
+                                // (issue #130 proactive path). Prefer the
+                                // topic bound to THIS session; the chat-wide
+                                // "most recent message" lookup is only a
+                                // fallback, because in a forum it resolves to
+                                // whichever topic spoke last (#1200).
+                                //
+                                // At startup the in-memory binding is usually
+                                // still empty, so this mostly falls back here.
+                                // That is today's behaviour, not a regression:
+                                // it can only improve once a topic is bound.
+                                let thread_id = match tg.session_topic(session_id).await {
+                                    Some(topic) => Some(teloxide::types::ThreadId(
+                                        teloxide::types::MessageId(topic),
+                                    )),
+                                    None => {
+                                        crate::channels::telegram::send::latest_thread_id_for_chat(
+                                            chat.0,
+                                        )
+                                        .await
+                                    }
+                                };
                                 if let Err(e) = crate::channels::telegram::handler::resume_session(
                                     bot, chat, thread_id, session_id, prompt, agent, tg,
                                 )
