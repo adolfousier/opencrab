@@ -378,6 +378,27 @@ pub(crate) async fn refresh_plan_card(
             if last_sig == rich_sig {
                 return;
             }
+            // G2 flood governor (#1211): plan-card refreshes are FINAL class —
+            // never dropped. When the edit bucket is empty the payload queues
+            // latest-wins and the governor's drainer lands it on refill; the
+            // tracked signature is saved now so identical later refreshes skip
+            // (a permanently failed queue drain self-heals on the next
+            // differing-content plan change).
+            let admitted = super::governor::edit_admission(
+                bot,
+                chat,
+                mid,
+                super::governor::EditClass::Final,
+                rich_html.clone(),
+                true,
+            )
+            .await;
+            if !admitted {
+                state
+                    .set_plan_card(session_id, chat, thread_id, mid, rich_sig)
+                    .await;
+                return;
+            }
             match super::rich::api::edit_rich_html(
                 bot.api_url().as_str(),
                 bot.token(),
@@ -415,6 +436,8 @@ pub(crate) async fn refresh_plan_card(
             }
         }
         // No live card or edit failed: create fresh via rich API.
+        // G3 send pacing (#1211): a fresh card is a full message post.
+        super::governor::pace_send(chat).await;
         match super::rich::api::send_rich_html_id(
             bot.api_url().as_str(),
             bot.token(),
@@ -458,6 +481,23 @@ pub(crate) async fn refresh_plan_card(
         if last_sig == signature {
             return;
         }
+        // G2 flood governor (#1211): same FINAL contract as the rich path —
+        // queue latest-wins when the edit bucket is empty, never drop.
+        let admitted = super::governor::edit_admission(
+            bot,
+            chat,
+            mid,
+            super::governor::EditClass::Final,
+            html.clone(),
+            false,
+        )
+        .await;
+        if !admitted {
+            state
+                .set_plan_card(session_id, chat, thread_id, mid, signature)
+                .await;
+            return;
+        }
         let mut req = bot
             .edit_message_text(chat, mid, html.clone())
             .parse_mode(ParseMode::Html);
@@ -491,6 +531,8 @@ pub(crate) async fn refresh_plan_card(
     }
 
     // No live card (or it was unusable): post a fresh one at the bottom.
+    // G3 send pacing (#1211): a fresh card is a full message post.
+    super::governor::pace_send(chat).await;
     let mut req = message_in_thread(bot, chat, thread_id, html).parse_mode(ParseMode::Html);
     if let Some(ref k) = kb {
         req = req.reply_markup(k.clone());

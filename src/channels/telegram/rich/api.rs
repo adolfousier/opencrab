@@ -147,6 +147,18 @@ async fn post_rich(
     let mut attempt = 0u32;
 
     loop {
+        // G4 (#1211): this endpoint has its own Telegram budget, so none of
+        // the typing/edit/send governors sees its traffic. Paced here, at the
+        // one place every rich send and edit passes through, ahead of the
+        // reactive 429 handling below.
+        {
+            let (_, chat_id, thread, _, _) = rich_send_fields(url, body);
+            crate::channels::telegram::governor::pace_rich(
+                teloxide::types::ChatId(chat_id),
+                thread,
+            )
+            .await;
+        }
         let resp = client.post(url).json(body).send().await?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();

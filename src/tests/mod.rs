@@ -367,6 +367,8 @@ pub mod gemini_fetch_test;
 pub mod gemini_schema_sanitize_test;
 pub mod generate_image_backend_test;
 pub mod github_provider_test;
+pub mod governor_gates_test;
+pub mod governor_internals_test;
 pub mod html_comment_strip_test;
 pub mod http_request_test;
 pub mod onboard_channel_test;

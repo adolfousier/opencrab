@@ -449,6 +449,21 @@ pub struct TelegramConfig {
     /// Requires `rich_messages` to also be enabled. Default: true.
     #[serde(default = "default_true")]
     pub draft_streaming: bool,
+    /// Proactive per-peer flood governors (#1211), `[channels.telegram.
+    /// rate_limiter]`. Three independent token buckets keyed by forum chat id
+    /// — typing (~1 call / 3 s, burst 8, concurrent sessions coalesced per
+    /// topic), edits (~30/min with a priority drop ladder clock → brain
+    /// preview → intermediary → status; settle renders and plan-card refreshes
+    /// queue latest-wins and are never dropped) and sends (~1/s under an
+    /// ~18/min ceiling) — keep a busy multi-topic deployment under Telegram's
+    /// documented per-peer budgets BEFORE the API answers 429, instead of only
+    /// sleeping after (`rate_limit::wait_out`). Enforcement is forums-only:
+    /// a chat counts as governed once any call is observed carrying a topic
+    /// id, and DMs (positive chat ids) are never touched. Defaults mirror the
+    /// documented bot regime; tuning down is safe, tuning up invites back the
+    /// flood windows this exists to prevent.
+    #[serde(default)]
+    pub rate_limiter: RateLimiterConfig,
     /// Per-group access control and behavior overrides, keyed by chat id:
     /// `[channels.telegram.groups.<chat_id>]`. A user listed under a group's
     /// `allowed_users` may interact in THAT group only and is still refused in
@@ -491,6 +506,134 @@ pub struct TelegramGroupConfig {
     /// false.
     #[serde(default)]
     pub open: bool,
+}
+
+/// Proactive flood-governor knobs (#1211), `[channels.telegram.rate_limiter]`.
+///
+/// Defaults are the documented Telegram bot regime per peer: ~20 typing
+/// actions / 5 s + 40 / 30 s, edits observed safe at 30/min, sends under
+/// ~20/min. The governors read these live on every gate evaluation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimiterConfig {
+    /// Master switch. Default true — enforcement only ever engages for FORUM
+    /// peers (a chat seen carrying a topic id); DMs are untouched either way,
+    /// so opting out is only needed to restore fully reactive behavior.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// G1 typing: minimum spacing between `sendChatAction` calls per forum
+    /// peer. Telegram documents short FLOOD_WAITs when action bursts land
+    /// inside one second; 3 s per topic keeps N concurrent sessions collapsed
+    /// well under the documented regime. Default: 3.
+    #[serde(default = "default_typing_min_interval_secs")]
+    pub typing_min_interval_secs: u64,
+    /// G1 typing: burst capacity of the bucket (refreshes allowed before
+    /// pacing bites). Default: 8.
+    #[serde(default = "default_typing_burst")]
+    pub typing_burst: u32,
+    /// G1 typing: longest a refresh may be HELD waiting for a token before it
+    /// is dropped instead. The indicator expires after ~5 s, so holding past
+    /// this serves nobody. Default: 30.
+    #[serde(default = "default_typing_max_hold_secs")]
+    pub typing_max_hold_secs: u64,
+    /// G2 edits: steady-state `editMessageText` budget per forum peer per
+    /// minute (32/min observed with exactly one 429 all day). Default: 30.
+    #[serde(default = "default_edits_per_minute")]
+    pub edits_per_minute: u32,
+    /// G2 edits: burst capacity of the edit bucket. Default: 10.
+    #[serde(default = "default_edit_burst")]
+    pub edit_burst: u32,
+    /// G3 sends: minimum spacing between full messages sent to one chat, in
+    /// milliseconds. Default: 1000 (~1/s).
+    #[serde(default = "default_send_min_interval_millis")]
+    pub send_min_interval_millis: u64,
+    /// G3 sends: per-group ceiling on full messages per minute, under the
+    /// official ~20/min group limit. Default: 18.
+    #[serde(default = "default_sends_ceiling_per_minute")]
+    pub sends_ceiling_per_minute: u32,
+    /// G3 sends: burst capacity of the send pacer. Default: 5.
+    #[serde(default = "default_sends_burst")]
+    pub sends_burst: u32,
+    /// G4 rich: steady-state budget per forum peer per minute for the rich
+    /// message endpoint (`sendRichMessage` / its edit sibling), which sits in
+    /// its own method family with its own bucket. Sized from a deployment
+    /// taking 260 real 429s/day on this endpoint against a median of 18
+    /// calls/min, p90 23, p99 40: a 30/min ceiling paces only the p99 spikes
+    /// the 429s cluster in and leaves ordinary traffic untouched. Default: 30.
+    #[serde(default = "default_rich_per_minute")]
+    pub rich_per_minute: u32,
+    /// G4 rich: burst capacity of the rich bucket. Default: 10.
+    #[serde(default = "default_rich_burst")]
+    pub rich_burst: u32,
+    /// Spacing of the telemetry summary INFO line (one line per active forum:
+    /// admissions, ladder drops per class, finals stats, throttled ms).
+    /// Default: 300.
+    #[serde(default = "default_summary_log_secs")]
+    pub summary_log_secs: u64,
+}
+
+impl Default for RateLimiterConfig {
+    /// Default-ON: the whole point of #1211 is that the safe regime is the
+    /// default regime; opting out is the explicit act.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            typing_min_interval_secs: default_typing_min_interval_secs(),
+            typing_burst: default_typing_burst(),
+            typing_max_hold_secs: default_typing_max_hold_secs(),
+            edits_per_minute: default_edits_per_minute(),
+            edit_burst: default_edit_burst(),
+            send_min_interval_millis: default_send_min_interval_millis(),
+            sends_ceiling_per_minute: default_sends_ceiling_per_minute(),
+            sends_burst: default_sends_burst(),
+            rich_per_minute: default_rich_per_minute(),
+            rich_burst: default_rich_burst(),
+            summary_log_secs: default_summary_log_secs(),
+        }
+    }
+}
+
+fn default_typing_min_interval_secs() -> u64 {
+    3
+}
+
+fn default_typing_burst() -> u32 {
+    8
+}
+
+fn default_typing_max_hold_secs() -> u64 {
+    30
+}
+
+fn default_edits_per_minute() -> u32 {
+    30
+}
+
+fn default_edit_burst() -> u32 {
+    10
+}
+
+fn default_send_min_interval_millis() -> u64 {
+    1000
+}
+
+fn default_sends_ceiling_per_minute() -> u32 {
+    18
+}
+
+fn default_sends_burst() -> u32 {
+    5
+}
+
+fn default_rich_per_minute() -> u32 {
+    30
+}
+
+fn default_rich_burst() -> u32 {
+    10
+}
+
+fn default_summary_log_secs() -> u64 {
+    300
 }
 
 impl TelegramConfig {

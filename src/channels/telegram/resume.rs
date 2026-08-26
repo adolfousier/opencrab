@@ -453,7 +453,8 @@ pub(crate) async fn resume_session(
     // attaches only at turn end (#571), materializes on the final render — the
     // main handler does the same right after stamping the outcome.
     super::flow_chrome::refresh_sections(&streaming, &agent, session_id).await;
-    refresh_flow(&bot, chat_id, &streaming).await;
+    // Crash-resume settle render (#1211 G2 Final): queued, never dropped.
+    refresh_flow(&bot, chat_id, &streaming, super::governor::EditClass::Final).await;
     // Settle the plan card too (#580): final checklist state + the Approve/
     // Discard keyboard, which is now gated to turn end on the card.
     let plan_kb = {

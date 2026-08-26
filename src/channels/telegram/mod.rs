@@ -11,6 +11,7 @@ pub(crate) mod delivery;
 pub(crate) mod ephemeral;
 pub(crate) mod flow;
 pub(crate) mod flow_chrome;
+pub(crate) mod governor;
 pub(crate) mod group_name;
 pub(crate) mod handler;
 pub(crate) mod inbound_media;

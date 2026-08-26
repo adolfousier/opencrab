@@ -777,11 +777,15 @@ pub(crate) async fn tick_flow_header(
             needs_refresh |= refresh_sections(streaming, agent, session_id).await;
         }
         if needs_refresh {
-            refresh_flow(bot, chat, streaming).await;
+            // Chrome-tick render (#1211 G2): the clock/preview ladder class.
+            // Dropping one tick is invisible — the next tick re-renders full
+            // state — which is exactly the self-healing the drop ladder
+            // relies on for everything below `Final`.
+            refresh_flow(bot, chat, streaming, super::governor::EditClass::Clock).await;
         }
     } else {
         if needs_refresh {
-            refresh_flow(bot, chat, streaming).await;
+            refresh_flow(bot, chat, streaming, super::governor::EditClass::Clock).await;
         }
         if show_status && !turn_done {
             // Merge pre-flow into the flow message: first activity tick opens

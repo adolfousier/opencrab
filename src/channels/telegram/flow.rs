@@ -1000,6 +1000,7 @@ pub(crate) async fn refresh_flow(
     bot: &Bot,
     chat: ChatId,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    class: super::governor::EditClass,
 ) {
     let (mid, rich) = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -1009,9 +1010,9 @@ pub(crate) async fn refresh_flow(
         }
     };
     if rich {
-        refresh_flow_rich_details(bot, chat, mid, streaming).await;
+        refresh_flow_rich_details(bot, chat, mid, streaming, class).await;
     } else {
-        refresh_flow_html(bot, chat, mid, streaming).await;
+        refresh_flow_html(bot, chat, mid, streaming, class).await;
     }
 }
 
@@ -1043,11 +1044,18 @@ pub(crate) fn classify_rich_edit_error(msg: &str) -> RichEditError {
 /// threshold. A not-modified response is a no-op; a 429 is retried on the rich
 /// path next tick; any other failure falls back to the classic HTML edit so the
 /// block never silently stops updating.
+///
+/// G2 flood governor (#1211): `class` places this edit on the priority drop
+/// ladder. Chrome classes are dropped (counted, self-healing on the next
+/// full-state render) when the per-forum edit bucket is empty; the `Final`
+/// class queues the payload latest-wins instead of dropping it, and the
+/// governor's drainer lands it on refill.
 pub(crate) async fn refresh_flow_rich_details(
     bot: &Bot,
     chat: ChatId,
     mid: MessageId,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    class: super::governor::EditClass,
 ) {
     let details = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -1058,6 +1066,9 @@ pub(crate) async fn refresh_flow_rich_details(
     }
     if details.chars().count() > 30000 {
         freeze_flow_block_and_strip_kb(bot, chat, streaming, mid, "rich size limit reached").await;
+        return;
+    }
+    if !super::governor::edit_admission(bot, chat, mid, class, details.clone(), true).await {
         return;
     }
     match super::rich::api::edit_rich_html(
@@ -1099,18 +1110,23 @@ pub(crate) async fn refresh_flow_rich_details(
                     mid,
                     e
                 );
-                refresh_flow_html(bot, chat, mid, streaming).await;
+                refresh_flow_html(bot, chat, mid, streaming, class).await;
             }
         },
     }
 }
 
 /// HTML edit path for the processing-log flow. 4096-char limit.
+///
+/// G2 flood governor (#1211): same ladder contract as the rich path above —
+/// `class` decides whether an empty per-forum edit bucket drops (chrome,
+/// self-healing) or queues (finals, latest-wins).
 pub(crate) async fn refresh_flow_html(
     bot: &Bot,
     chat: ChatId,
     mid: MessageId,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    class: super::governor::EditClass,
 ) {
     let html = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -1127,6 +1143,9 @@ pub(crate) async fn refresh_flow_html(
     }
     // The plan Approve/Discard keyboard now rides the persistent plan card, not
     // the flow block (#580), so no reply_markup is attached here.
+    if !super::governor::edit_admission(bot, chat, mid, class, html.clone(), false).await {
+        return;
+    }
     let req = bot
         .edit_message_text(chat, mid, html)
         .parse_mode(ParseMode::Html);
@@ -1289,7 +1308,7 @@ pub(crate) async fn open_flow(
         s.open_group_msg_id.is_some()
     };
     if already_open {
-        refresh_flow(bot, chat, streaming).await;
+        refresh_flow(bot, chat, streaming, super::governor::EditClass::Status).await;
         return;
     }
 
@@ -1305,6 +1324,8 @@ pub(crate) async fn open_flow(
             render_flow_details_state(&s)
         };
         if !details.is_empty() {
+            // G3 send pacing (#1211): opening the flow posts a new message.
+            super::governor::pace_send(chat).await;
             match super::rich::api::send_rich_html_id(
                 bot.api_url().as_str(),
                 bot.token(),
@@ -1382,7 +1403,13 @@ pub(crate) async fn append_tool_group(
                 }
             }
         }
-        refresh_flow(bot, chat, streaming).await;
+        refresh_flow(
+            bot,
+            chat,
+            streaming,
+            super::governor::EditClass::Intermediary,
+        )
+        .await;
     } else {
         open_flow(bot, chat, thread_id, streaming).await;
         let mid = streaming
@@ -1453,7 +1480,13 @@ pub(crate) async fn append_intermediate_to_flow(
         s.open_group_msg_id
     };
     if open.is_some() {
-        refresh_flow(bot, chat, streaming).await;
+        refresh_flow(
+            bot,
+            chat,
+            streaming,
+            super::governor::EditClass::Intermediary,
+        )
+        .await;
     } else {
         open_flow(bot, chat, thread_id, streaming).await;
     }
@@ -1608,7 +1641,7 @@ pub(crate) async fn take_folded_final(
     // NOT deleted anymore: the flow message is the turn's chrome surface
     // (header, sections, ctx) and settles header-only at turn end, same as a
     // no-tool long turn.
-    refresh_flow(bot, chat, streaming).await;
+    refresh_flow(bot, chat, streaming, super::governor::EditClass::Final).await;
     text
 }
 
