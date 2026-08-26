@@ -5,8 +5,8 @@
 //! wrapper tags stay intact).
 
 use crate::channels::telegram::resume::{
-    background_task_title, build_bg_echo_bubble, split_bg_echo_parts, split_notify_header,
-    strip_system_framing,
+    background_task_title, build_bg_echo_bubble, build_bg_echo_bubble_rich, split_bg_echo_parts,
+    split_notify_header, strip_system_framing,
 };
 use uuid::Uuid;
 
@@ -143,4 +143,29 @@ fn html_fallback_escapes_dynamic_title() {
     let (_, html) = build_bg_echo_bubble("body", "📨 Ops <script> / Push");
     assert!(html.contains("<b>📨 Ops &lt;script&gt; / Push</b>"));
     assert!(!html.contains("<script>"), "title must not inject raw HTML");
+}
+#[test]
+fn rich_bubble_uses_details_summary_envelope() {
+    let rich = build_bg_echo_bubble_rich("some output", "📨 Ops / Push to session");
+    assert!(rich.starts_with("<details><summary><b>"), "rich envelope must open details+summary");
+    assert!(rich.contains("</summary>"), "summary must close before body");
+    assert!(rich.ends_with("</details>"), "rich envelope must close details");
+    assert!(!rich.contains("blockquote"), "classic dialect must not leak into rich bubble");
+    assert!(rich.contains("<b>📨 Ops / Push to session</b>"));
+    assert!(rich.contains("some output"));
+}
+
+#[test]
+fn rich_bubble_escapes_dynamic_title() {
+    let rich = build_bg_echo_bubble_rich("body", "📨 Ops <script> / Push");
+    assert!(rich.contains("<b>📨 Ops &lt;script&gt; / Push</b>"));
+    assert!(!rich.contains("<script>"), "title must not inject raw HTML");
+}
+
+#[test]
+fn classic_and_rich_builders_stay_separate() {
+    let (_, classic) = build_bg_echo_bubble("body", "T");
+    let rich = build_bg_echo_bubble_rich("body", "T");
+    assert!(classic.contains("blockquote expandable"), "fallback stays classic-dialect");
+    assert!(rich.contains("details"), "primary stays rich-dialect");
 }

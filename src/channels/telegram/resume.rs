@@ -94,7 +94,15 @@ pub(crate) fn build_enqueue_callback(
                 } else {
                     "⚙️ background task result".to_owned()
                 };
-                let (_, html) = build_bg_echo_bubble(&body, &title);
+                let (_, classic_html) = build_bg_echo_bubble(&body, &title);
+                // Rich dialect needs the RICH envelope: `<details><summary>`
+                // collapsibles (RichBlockDetails, Bot API 10.1) — the same card
+                // component plan_card renders. The classic
+                // `<blockquote expandable>` markup is the sendMessage dialect;
+                // under sendRichMessage it renders as a flat quote, not a rich
+                // card (user-verified 2026-08-26).
+                let rich_html = build_bg_echo_bubble_rich(&body, &title);
+                
                 // Rich-first: route the echo bubble through the same canonical
                 // rich send plan_card uses. Any send failure degrades to the
                 // classic HTML blockquote below.
@@ -103,7 +111,7 @@ pub(crate) fn build_enqueue_callback(
                     bot.token(),
                     chat_id,
                     thread_id,
-                    &html,
+                    &rich_html,
                     None,
                     "bg-resume",
                     "-",
@@ -120,7 +128,7 @@ pub(crate) fn build_enqueue_callback(
                 };
                 if !sent_rich {
                     let mut echo = bot
-                        .send_message(teloxide::types::ChatId(chat_id), html.clone())
+                        .send_message(teloxide::types::ChatId(chat_id), classic_html.clone())
                         .parse_mode(teloxide::types::ParseMode::Html);
                     // Forum topics address a thread; DMs and non-forum groups must
                     // omit the parameter entirely (E0308: not an unwrap decision).
@@ -143,7 +151,7 @@ pub(crate) fn build_enqueue_callback(
                             )
                             .await;
                             let mut retry = bot
-                                .send_message(teloxide::types::ChatId(chat_id), html)
+                                .send_message(teloxide::types::ChatId(chat_id), classic_html)
                                 .parse_mode(teloxide::types::ParseMode::Html);
                             if let Some(tid) = thread_id {
                                 retry = retry.message_thread_id(tid);
@@ -767,6 +775,25 @@ pub(crate) fn build_bg_echo_bubble(body: &str, title: &str) -> (String, String) 
         super::rich::markdown_to_html(body),
     );
     (markdown, html)
+}
+
+/// RICH dialect envelope for the echo bubble: `<details><summary>` collapsible
+/// — the exact card component plan_card renders via `send_rich_html_id`
+/// (Bot API 10.1 RichBlockDetails). The classic
+/// `<blockquote expandable>` markup from [`build_bg_echo_bubble`] belongs to
+/// the sendMessage dialect and renders flat under `sendRichMessage`.
+/// Mirrors plan_card.rs `CollapsibleStyle::DetailsSummary`:
+/// `<details><summary><b>{title}</b></summary>{body}</details>`.
+pub(crate) fn build_bg_echo_bubble_rich(body: &str, title: &str) -> String {
+    let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
+    let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
+    let suffix = if truncated { " (truncated)" } else { "" };
+    format!(
+        "<details><summary><b>{}{}</b></summary>{}</details>",
+        super::markdown::escape_html(title),
+        suffix,
+        super::rich::markdown_to_html(body),
+    )
 }
 
 /// Bubble header for a background-task echo: reuse the producer's display
