@@ -540,11 +540,12 @@ pub(crate) async fn deliver_final_response(
             } else {
                 // Non-CLI case: check if the trailing folded text matches the final
                 // answer and remove it to prevent duplication
+                let mut final_text = text_only;
                 let trailing_matches = {
                     let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                     match s.flow_entries.last() {
                         Some(FlowEntry::Text(folded)) => {
-                            folded_duplicates_final(folded, &text_only)
+                            folded_duplicates_final(folded, &final_text)
                         }
                         _ => false,
                     }
@@ -552,8 +553,38 @@ pub(crate) async fn deliver_final_response(
                 if trailing_matches {
                     // Remove the duplicate from the block
                     take_folded_final(bot, chat_id, streaming).await;
+                    final_text
+                } else {
+                    // #1226 flow-fold: a turn ending at the suggest_options
+                    // surface halts with its substantive pre-options answer
+                    // folded inside the flow block (thin narration folds, #582;
+                    // sent_intermediates stays empty, so dedup never sees it)
+                    // while response.content carries a short closing pointer.
+                    // When suggestions are pending, promote any REMAINING
+                    // trailing folded run into the final bubble — otherwise the
+                    // answer lives only inside the collapsed processing log and
+                    // the buttons merge onto the thin pointer. Trailing Text
+                    // after the last tool IS the final answer (flow.rs
+                    // invariant), so interstitial narration cannot be promoted.
+                    // Norm-equal / prefix duplicates were already popped above.
+                    let options_pending = {
+                        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                        s.pending_suggestions.is_some()
+                    };
+                    if options_pending {
+                        if let Some(folded) =
+                            take_folded_final(bot, chat_id, streaming).await
+                        {
+                            tracing::info!(
+                                "Telegram: promote {} folded chars into final bubble \
+                                 (suggestions pending, #1226)",
+                                folded.len()
+                            );
+                            final_text = format!("{folded}\n\n{final_text}");
+                        }
+                    }
+                    final_text
                 }
-                text_only
             };
 
             // #690: re-expand any table the model collapsed onto one line so it
