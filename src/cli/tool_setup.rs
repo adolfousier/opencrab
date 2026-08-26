@@ -145,9 +145,7 @@ pub(crate) fn register_core_agent_tools(
     ));
     // Cross-session push (issue #1203): needs no manager — deliver_to_session
     // is a free function on the in-process session-route registry.
-    tool_registry.register(Arc::new(
-        crate::brain::tools::subagent::SessionNotifyTool,
-    ));
+    tool_registry.register(Arc::new(crate::brain::tools::subagent::SessionNotifyTool));
 
     // Phase 6: Team orchestration
     let team_manager = Arc::new(crate::brain::tools::subagent::TeamManager::new());
