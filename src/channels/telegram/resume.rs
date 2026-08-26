@@ -73,12 +73,15 @@ pub(crate) fn build_enqueue_callback(
             // background-task completions only; sub-agent pushes stay silent.
             if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask {
                 let html = render_bg_echo_html(&msg.context_text);
-                if let Err(e) = bot
-                    .send_message(chat_id, html)
-                    .parse_mode(teloxide::types::ParseMode::Html)
-                    .message_thread_id(thread_id)
-                    .await
-                {
+                let mut echo = bot
+                    .send_message(teloxide::types::ChatId(chat_id), html)
+                    .parse_mode(teloxide::types::ParseMode::Html);
+                // Forum topics address a thread; DMs and non-forum groups must
+                // omit the parameter entirely (E0308: not an unwrap decision).
+                if let Some(tid) = thread_id {
+                    echo = echo.message_thread_id(tid);
+                }
+                if let Err(e) = echo.await {
                     tracing::warn!("[bg-resume] #1221 echo bubble failed to send: {e}");
                 }
             }
