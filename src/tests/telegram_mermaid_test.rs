@@ -495,7 +495,8 @@ fn no_media_found_detects_renderer_fetch_failure() {
 #[test]
 fn no_media_found_rejects_structural_and_unrelated_errors() {
     use crate::channels::telegram::delivery::is_no_media_found;
-    let structural = anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_CONTENT_REQUIRED");
+    let structural =
+        anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_CONTENT_REQUIRED");
     assert!(!is_no_media_found(&structural));
     let unrelated = anyhow::anyhow!("network unreachable");
     assert!(!is_no_media_found(&unrelated));
@@ -504,8 +505,7 @@ fn no_media_found_rejects_structural_and_unrelated_errors() {
 #[test]
 fn no_media_found_sees_through_anyhow_context_wraps() {
     use crate::channels::telegram::delivery::is_no_media_found;
-    let inner =
-        anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND");
+    let inner = anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND");
     let wrapped = inner.context("while delivering final response");
     assert!(is_no_media_found(&wrapped));
 }

@@ -202,6 +202,7 @@ async fn idle_session_archives_and_creates_new() {
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn concurrent_resolves_create_exactly_one_session() {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     // An in-memory stand-in for `SessionService.persistence`: Option stores

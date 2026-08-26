@@ -1559,7 +1559,7 @@ fn start_schema_teaches_subagent_spawn_not_isolation_jargon() {
 /// had no way to tell the worker "do not touch content/").
 #[test]
 fn worker_brief_renders_task_scope_as_contract() {
-    use crate::tui::plan::{TaskScope, TaskType};
+    use crate::tui::plan::{PlanTask, TaskScope, TaskType};
 
     let mut task = PlanTask::new(
         1,
@@ -1590,10 +1590,7 @@ fn worker_brief_renders_task_scope_as_contract() {
         "scope contract header missing:\n{brief}"
     );
     // The MAY list is rendered.
-    assert!(
-        brief.contains("✅ MAY write:"),
-        "MAY list missing"
-    );
+    assert!(brief.contains("✅ MAY write:"), "MAY list missing");
     assert!(
         brief.contains("landing/recipes/_template.html"),
         "expected path in MAY list missing"
@@ -1651,8 +1648,8 @@ fn validate_task_scope_rejects_malformed() {
         do_call: None,
         do_not_call: None,
     };
-    let err = validate_task_scope(&absolute, wd)
-        .expect_err("absolute path must be rejected");
+    let err = validate_task_scope(&absolute, wd).expect_err("absolute path must be rejected");
+    let err = err.to_string();
     assert!(
         err.contains("absolute"),
         "error should mention absolute path: {err}"
@@ -1677,8 +1674,8 @@ fn validate_task_scope_rejects_malformed() {
         do_call: Some(vec!["spawn_agent".into()]),
         do_not_call: None,
     };
-    let err = validate_task_scope(&bad_tool, wd)
-        .expect_err("spawn_agent must be rejected");
+    let err = validate_task_scope(&bad_tool, wd).expect_err("spawn_agent must be rejected");
+    let err = err.to_string();
     assert!(
         err.contains("ALWAYS_EXCLUDED"),
         "error should mention ALWAYS_EXCLUDED: {err}"

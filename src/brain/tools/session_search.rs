@@ -10,10 +10,6 @@ use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 #[cfg(feature = "telegram")]
 use crate::channels::telegram::TelegramState;
 use crate::db::Pool;
-#[cfg(feature = "telegram")]
-use crate::channels::telegram::TelegramState;
-#[cfg(feature = "telegram")]
-use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 #[cfg(feature = "telegram")]
