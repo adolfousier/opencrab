@@ -74,4 +74,14 @@ fn plan_worker_spawn_json_is_pure() {
         src.contains("c.agent.plan_worker_allow_nested"),
         "worker nesting must be gated on [agent] plan_worker_allow_nested"
     );
+    // #1229 drift guard: plan workers are READ-ONLY by default (#1173 grant);
+    // mutations stay with the parent unless [agent] plan_worker_allow_write.
+    assert!(
+        src.contains("\"read_only\": worker_read_only,"),
+        "plan workers must pass read_only explicitly (drift guard)"
+    );
+    assert!(
+        src.contains("c.agent.plan_worker_allow_write"),
+        "worker read-only mode must be gated on [agent] plan_worker_allow_write"
+    );
 }

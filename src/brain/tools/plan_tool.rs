@@ -2735,20 +2735,20 @@ pub(crate) fn build_worker_brief(
                         brief.push_str(&format!("    - {p}\n"));
                     }
                 }
-                if let Some(do_call) = &scope.do_call {
-                    if !do_call.is_empty() {
-                        brief.push_str("  ✅ MAY call tools:\n");
-                        for t in do_call {
-                            brief.push_str(&format!("    - {t}\n"));
-                        }
+                if let Some(do_call) = &scope.do_call
+                    && !do_call.is_empty()
+                {
+                    brief.push_str("  ✅ MAY call tools:\n");
+                    for t in do_call {
+                        brief.push_str(&format!("    - {t}\n"));
                     }
                 }
-                if let Some(do_not_call) = &scope.do_not_call {
-                    if !do_not_call.is_empty() {
-                        brief.push_str("  🚫 MUST NOT call tools:\n");
-                        for t in do_not_call {
-                            brief.push_str(&format!("    - {t}\n"));
-                        }
+                if let Some(do_not_call) = &scope.do_not_call
+                    && !do_not_call.is_empty()
+                {
+                    brief.push_str("  🚫 MUST NOT call tools:\n");
+                    for t in do_not_call {
+                        brief.push_str(&format!("    - {t}\n"));
                     }
                 }
                 brief.push_str(
@@ -2769,14 +2769,25 @@ pub(crate) fn build_worker_brief(
     if !epistemic_note.trim().is_empty() {
         brief.push_str(&format!("\n{epistemic_note}\n"));
     }
-    brief.push_str(
+    // Drift guard (#1195/#1229): pure workers verify + report; they never
+    // mutate - duplicated fixes across siblings are exactly what killed the
+    // Aug-25 checklist. Write-capable workers keep the original work mode.
+    let work_rule = if crate::config::Config::load()
+        .map(|c| !c.agent.plan_worker_allow_write)
+        .unwrap_or(true)
+    {
+        "1. READ-ONLY WORKER: investigate, run checks, verify with real commands - do NOT edit files, stage, or commit. Discovered defects go in your FINAL MESSAGE; the parent routes fixes.\n"
+    } else {
+        "1. Do the work with real tool calls. Verify with real commands before claiming anything.\n"
+    };
+    brief.push_str(&format!(
         "\nRules:\n\
-         1. Do the work with real tool calls. Verify with real commands before claiming anything.\n\
+         {work_rule}\
          2. You have NO plan tool access. When done, report the outcome in your FINAL MESSAGE: \
          success or failure plus an honest summary. Never claim success you did not verify; \
          your parent session records the verdict on the checklist.\n\
          3. Work ONLY this task. Do not start other tasks; do not touch plans at all.\n",
-    );
+    ));
     brief
 }
 
@@ -2859,10 +2870,19 @@ async fn spawn_plan_worker(
         .clone()
         .ok_or_else(|| ToolError::Execution("no parent tool registry wired".to_string()))?;
     let spawn_tool = crate::brain::tools::subagent::SpawnAgentTool::new(manager, registry);
-    // Worker purity (#1195): plan workers are spawned unable to nest further
-    // sub-agents or background tasks. Opt-out: [agent] plan_worker_allow_nested.
-    let worker_nesting = crate::config::Config::load()
+    // Worker purity (#1195): plan workers cannot nest further sub-agents or
+    // background tasks, and run READ-ONLY by default (drift guard: workers
+    // must not re-execute changes their siblings may have made). They verify
+    // and report; file mutations stay with the parent session. Opt-outs:
+    // [agent] plan_worker_allow_nested / plan_worker_allow_write.
+    let cfg = crate::config::Config::load().ok();
+    let worker_nesting = cfg
+        .as_ref()
         .map(|c| c.agent.plan_worker_allow_nested)
+        .unwrap_or(false);
+    let worker_read_only = !cfg
+        .as_ref()
+        .map(|c| c.agent.plan_worker_allow_write)
         .unwrap_or(false);
     let input = serde_json::json!({
         "prompt": brief,
@@ -2870,6 +2890,7 @@ async fn spawn_plan_worker(
         "agent_type": "general",
         "plan_session": plan_sid.to_string(),
         "allow_nested": worker_nesting,
+        "read_only": worker_read_only,
     });
     let res = spawn_tool.execute(input, context).await?;
     if !res.success {
