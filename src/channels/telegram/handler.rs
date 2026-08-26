@@ -2704,17 +2704,19 @@ pub(crate) async fn handle_message(
         // flood control and produced duplicate cards. Skipping the re-stick
         // still refreshes in place below, so the card stays correct; it just
         // stays where it is until the next re-stick is due.
-        if crate::utils::plan_files::recent_archived_plan(
-            session_id,
-            std::time::Duration::from_secs(120),
-        )
-        .await
-        {
-            // Plan completed THIS settle (#1158): finalize the tracked card
-            // in place (✅ header, keyboard stripped, one-shot untrack)
-            // instead of re-sticking or refreshing a now-archived plan.
-            super::plan_card::finalize_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
-                .await;
+        if crate::utils::plan_files::take_plan_just_archived(session_id).await {
+            // Plan completed THIS settle (#1158, #1231): finalize the tracked
+            // card (✅ header, keyboard stripped, one-shot untrack) and re-stick
+            // the completed card to the bottom of the thread instead of
+            // re-sticking or refreshing a now-archived plan.
+            super::plan_card::finalize_plan_card(
+                &bot,
+                msg.chat.id,
+                thread_id,
+                &telegram_state,
+                session_id,
+            )
+            .await;
         } else {
             const RESTICK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(90);
             if telegram_state
