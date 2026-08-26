@@ -78,10 +78,10 @@ pub(crate) fn looks_like_mermaid_source(source: &str) -> bool {
                 )
             }),
             "flowchart" | "sequencediagram" | "classdiagram" | "classdiagram-v2"
-            | "statediagram" | "statediagram-v2" | "erdiagram" | "journey" | "gantt"
-            | "pie" | "quadrantchart" | "requirementdiagram" | "gitgraph" | "mindmap"
-            | "timeline" | "zenuml" | "sankey-beta" | "xychart-beta" | "block-beta"
-            | "packet-beta" | "architecture-beta" => true,
+            | "statediagram" | "statediagram-v2" | "erdiagram" | "journey" | "gantt" | "pie"
+            | "quadrantchart" | "requirementdiagram" | "gitgraph" | "mindmap" | "timeline"
+            | "zenuml" | "sankey-beta" | "xychart-beta" | "block-beta" | "packet-beta"
+            | "architecture-beta" => true,
             _ => false,
         };
     }
@@ -95,6 +95,11 @@ pub(crate) fn looks_like_mermaid_source(source: &str) -> bool {
 pub(crate) fn has_mermaid_fence(text: &str) -> bool {
     let mut in_fence = false;
     let mut tagged_mermaid = false;
+    // Whether the OPENING fence carried no info string. Content
+    // classification applies to bare fences only, so the opening tag is what
+    // decides it — the closing line is bare almost every time and says
+    // nothing about the block.
+    let mut untagged = false;
     let mut body_start = 0usize;
     let mut pos = 0usize;
     for line in text.split_inclusive('\n') {
@@ -103,13 +108,15 @@ pub(crate) fn has_mermaid_fence(text: &str) -> bool {
         if let Some(rest) = trimmed.strip_prefix("```") {
             if in_fence {
                 let body = text[body_start..pos].trim_end_matches('\n');
-                if tagged_mermaid || (rest.is_empty() && looks_like_mermaid_source(body)) {
+                if tagged_mermaid || (untagged && looks_like_mermaid_source(body)) {
                     return true;
                 }
                 in_fence = false;
             } else {
                 in_fence = true;
-                tagged_mermaid = rest.trim().eq_ignore_ascii_case("mermaid");
+                let info = rest.trim();
+                tagged_mermaid = info.eq_ignore_ascii_case("mermaid");
+                untagged = info.is_empty();
                 body_start = line_end;
             }
         }
@@ -128,6 +135,9 @@ pub(crate) fn find_mermaid_fences(text: &str) -> Vec<MermaidFence> {
     let mut fences = Vec::new();
     let mut in_fence = false;
     let mut is_mermaid = false;
+    // See `has_mermaid_fence`: classification keys off the OPENING info
+    // string, never the closing line's.
+    let mut untagged = false;
     let mut block_start = 0usize;
     let mut source_start = 0usize;
     let mut pos = 0usize;
@@ -138,7 +148,7 @@ pub(crate) fn find_mermaid_fences(text: &str) -> Vec<MermaidFence> {
         if let Some(rest) = trimmed.strip_prefix("```") {
             if in_fence {
                 let source = &text[source_start..pos];
-                if is_mermaid || (rest.is_empty() && looks_like_mermaid_source(source)) {
+                if is_mermaid || (untagged && looks_like_mermaid_source(source)) {
                     fences.push(MermaidFence {
                         start: block_start,
                         end: line_end,
@@ -150,7 +160,9 @@ pub(crate) fn find_mermaid_fences(text: &str) -> Vec<MermaidFence> {
             } else {
                 block_start = pos;
                 source_start = line_end;
-                is_mermaid = rest.trim().eq_ignore_ascii_case("mermaid");
+                let info = rest.trim();
+                is_mermaid = info.eq_ignore_ascii_case("mermaid");
+                untagged = info.is_empty();
                 in_fence = true;
             }
         }
