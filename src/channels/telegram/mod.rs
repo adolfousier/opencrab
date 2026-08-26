@@ -33,6 +33,7 @@ pub(crate) mod resume;
 pub(crate) mod rich;
 pub(crate) mod rich_decode;
 pub(crate) mod send;
+pub(crate) mod session_gate;
 pub(crate) mod session_resolve;
 pub(crate) mod stream_loop;
 pub(crate) mod suggest_options;
