@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use super::types::{MessageEnqueueCallback, QueuedUserMessage};
+use super::types::{MessageEnqueueCallback, PushOrigin, QueuedUserMessage};
 
 /// How long a parked report waits for its channel to register a route before
 /// it is delivered locally instead. Long enough for channels to finish
@@ -336,6 +336,7 @@ fn interrupted_message(row: &crate::db::BackgroundTaskRow) -> QueuedUserMessage 
     QueuedUserMessage {
         context_text,
         display_text: format!("⚠️ Background task interrupted by restart: {}", row.label),
+        origin: PushOrigin::Recovery,
     }
 }
 
@@ -419,5 +420,6 @@ fn subagent_interrupted_message(
     QueuedUserMessage {
         context_text,
         display_text: format!("⚠️ Sub-agent interrupted by restart: {}", status.label),
+        origin: PushOrigin::Recovery,
     }
 }

@@ -84,6 +84,7 @@ impl Tool for SessionNotifyTool {
         let msg = crate::brain::agent::QueuedUserMessage {
             context_text: format!("[session-notify from={from}]\n\n{message}"),
             display_text: format!("📨 notify from {}:\n{message}", short_id(from)),
+            origin: crate::brain::agent::PushOrigin::SessionNotify,
         };
 
         use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};

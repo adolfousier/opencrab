@@ -57,6 +57,7 @@ pub mod bash_posix_quote_test;
 pub mod bash_retry_loop_test;
 pub mod bash_ssh_detection_test;
 pub mod bash_toml_blocklist_test;
+pub mod bg_push_echo_test;
 pub mod brain_agent_context_test;
 pub mod brain_agent_service_phantom_lang_test;
 pub mod brain_agent_service_phantom_test;
@@ -323,6 +324,8 @@ pub mod services_file_test;
 pub mod services_message_test;
 pub mod services_project_test;
 pub mod services_session_test;
+#[cfg(feature = "telegram")]
+pub mod session_search_query_test;
 pub mod session_search_tail_test;
 pub mod shell_scan_test;
 #[cfg(feature = "telegram")]

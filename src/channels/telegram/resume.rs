@@ -47,6 +47,118 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: agent gone; dropping resume");
                 return;
             };
+            // The topic that OWNS the session, not whichever one spoke last
+            // (#1200). Sessions are per-topic since #215, and
+            // `register_session_chat` records the topic, but this path asked
+            // the chat instead: in a forum, any traffic in another topic while
+            // a detached command ran sent the result there. Both background
+            // completions and sub-agent results share this callback, so they
+            // were both misrouted.
+            //
+            // The chat-wide lookup stays as the fallback. It is still right
+            // for a DM or a non-forum group (where `session_topic` is None
+            // anyway), and it is all we have for a session whose in-memory
+            // topic binding has not been re-registered since a restart.
+            let thread_id = match state.session_topic(session_id).await {
+                Some(topic) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(topic))),
+                None => super::send::latest_thread_id_for_chat(chat_id).await,
+            };
+
+            // #1221: announce WHAT arrived before anything else happens — an
+            // expandable blockquote echoing the completion output (rich format
+            // preserved), so the user sees why the session woke up even when
+            // the resumed answer restates it. Fires on BOTH delivery paths:
+            // before the guard branch below means idle-wakes AND results that
+            // get queued into an in-flight turn are announced alike. Covers
+            // background-task completions AND session_notify pushes (#1221
+            // notify lane); sub-agent pushes stay silent.
+            if matches!(
+                msg.origin,
+                crate::brain::agent::PushOrigin::BackgroundTask
+                    | crate::brain::agent::PushOrigin::SessionNotify
+            ) {
+                // #1225: session_notify pushes carry a mechanical
+                // `[session-notify from=<uuid>]` header — replace the raw id
+                // with a human label (topic name for same-chat pushes, chat
+                // name / chat+topic for cross-chat, per Alexey's rule), so the
+                // bubble reads "📨 From: Ops / Push to session", not a UUID
+                // spray. Background-task pushes have no sender: the title
+                // names the task from the producer's display line instead of
+                // the generic "⚙️ background task result" (Alexey 2026-08-26).
+                let (sender, body) = split_bg_echo_parts(&msg.context_text);
+                let title = if let Some(s) = sender {
+                    format!("📨 {}", sender_label(&state, &bot, s, chat_id).await)
+                } else if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask {
+                    // Borrow: `msg` is moved wholesale later in this callback.
+                    background_task_title(&msg.display_text)
+                } else {
+                    "⚙️ background task result".to_owned()
+                };
+                let (markdown, html) = build_bg_echo_bubble(&body, &title);
+                // Rich-first: tables/headings/mermaid in the body get the
+                // native rich message; anything else — or any send failure —
+                // degrades to the classic HTML blockquote below.
+                let sent_rich = super::rich::should_send_native_rich(&markdown)
+                    && match super::rich::send_rich_with_mermaid(
+                        bot.api_url().as_str(),
+                        bot.token(),
+                        chat_id,
+                        thread_id,
+                        &markdown,
+                        "bg-resume",
+                        "-",
+                    )
+                    .await
+                    {
+                        Ok(()) => true,
+                        Err(e) => {
+                            tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
+                            false
+                        }
+                    };
+                if !sent_rich {
+                    let mut echo = bot
+                        .send_message(teloxide::types::ChatId(chat_id), html.clone())
+                        .parse_mode(teloxide::types::ParseMode::Html);
+                    // Forum topics address a thread; DMs and non-forum groups must
+                    // omit the parameter entirely (E0308: not an unwrap decision).
+                    if let Some(tid) = thread_id {
+                        echo = echo.message_thread_id(tid);
+                    }
+                    // 429 discipline (#816): the raw send_message used to race
+                    // the resumed stream + typing loop into the same chat and
+                    // drop silently — 11/11 real echo sends failed that way on
+                    // 2026-08-26 (per-chat flood windows, compiler batch log).
+                    // Wait the window out (shared wait_out policy) and retry ONCE
+                    // with fresh content, matching delivery.rs / flow.rs.
+                    match echo.await {
+                        Ok(_) => {}
+                        Err(teloxide::RequestError::RetryAfter(secs)) => {
+                            super::rate_limit::wait_out(
+                                "bg-resume echo",
+                                secs.duration(),
+                                " on first delivery, retrying once",
+                            )
+                            .await;
+                            let mut retry = bot
+                                .send_message(teloxide::types::ChatId(chat_id), html)
+                                .parse_mode(teloxide::types::ParseMode::Html);
+                            if let Some(tid) = thread_id {
+                                retry = retry.message_thread_id(tid);
+                            }
+                            if let Err(e) = retry.await {
+                                tracing::warn!(
+                                    "[bg-resume] #1221 echo bubble failed on 429 retry: {e}"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("[bg-resume] #1221 echo bubble failed to send: {e}");
+                        }
+                    }
+                }
+            }
+
             // One streaming turn per session (#845). Several detached commands
             // finishing together used to spawn a resume turn each, all on this
             // session and all in this chat, so every one opened and edited its
@@ -560,4 +672,139 @@ pub(crate) async fn resume_session_inner(
     }
 
     Ok(())
+}
+
+/// Cap for the #1221 echo body: classic `sendMessage` caps a message at 4096
+/// chars; header, tags and Telegram's own margin eat the rest of the budget.
+const BG_ECHO_BODY_CAP_CHARS: usize = 3200;
+
+/// Split the mechanical `[session-notify from=<uuid>]` header (#1203) off a
+/// push's context text. Absent or malformed header → `(None, whole text)`.
+pub(crate) fn split_notify_header(context_text: &str) -> (Option<Uuid>, &str) {
+    let trimmed = context_text.trim_start();
+    let Some(after_open) = trimmed.strip_prefix("[session-notify from=") else {
+        return (None, trimmed);
+    };
+    let Some(close) = after_open.find(']') else {
+        return (None, trimmed);
+    };
+    let rest = after_open[close + 1..].trim_start();
+    match Uuid::parse_str(&after_open[..close]) {
+        Ok(sender) => (Some(sender), rest),
+        Err(_) => (None, trimmed),
+    }
+}
+
+/// Strip the synthetic `[System: ...]` framing (constructors in
+/// `brain/agent/service` terminate the block with `]`). Any other shape
+/// passes through untouched.
+pub(crate) fn strip_system_framing(text: &str) -> &str {
+    let trimmed = text.trim();
+    trimmed
+        .strip_prefix("[System:")
+        .and_then(|s| s.strip_suffix(']'))
+        .map(str::trim)
+        .unwrap_or(trimmed)
+}
+
+/// Split a push's text into `(sender, clean_body)`: notify header and System
+/// framing both removed. `sender` is `None` for plain background-task pushes.
+pub(crate) fn split_bg_echo_parts(context_text: &str) -> (Option<Uuid>, String) {
+    let (sender, rest) = split_notify_header(context_text);
+    (sender, strip_system_framing(rest).to_owned())
+}
+
+/// Assemble the echo bubble from the clean body + title. Returns the
+/// rich-capable markdown and the classic HTML blockquote fallback. Raw text
+/// is truncated BEFORE conversion so the wrapper tags stay well-formed —
+/// cutting rendered HTML can split a tag and make Telegram strip the
+/// formatting entirely (plan_card lesson).
+pub(crate) fn build_bg_echo_bubble(body: &str, title: &str) -> (String, String) {
+    let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
+    let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
+    let suffix = if truncated { " (truncated)" } else { "" };
+    let markdown = format!("{title}{suffix}\n\n{body}");
+    // The title is dynamic (sender label / task display line): escape it for
+    // the HTML dialect so a `<` in a label can't corrupt the wrapper.
+    let html = format!(
+        "<blockquote expandable><b>{}{}</b>\n{}</blockquote>",
+        super::markdown::escape_html(title),
+        suffix,
+        super::rich::markdown_to_html(body),
+    );
+    (markdown, html)
+}
+
+/// Bubble header for a background-task echo: reuse the producer's display
+/// line, which already names the task ("🔧 background task finished:
+/// <label>") — the generic "⚙️ background task result" said nothing about
+/// which task woke the session (Alexey 2026-08-26). Blank display → generic
+/// fallback; overlong labels are capped so the header stays readable.
+pub(crate) fn background_task_title(display_text: &str) -> String {
+    let t = display_text.trim();
+    if t.is_empty() {
+        "⚙️ background task result".to_owned()
+    } else {
+        crate::utils::string::truncate_chars(t, 120).to_owned()
+    }
+}
+
+/// Human-readable sender label for a session_notify push (Alexey's rule):
+/// sender chat == recipient chat → the sender's topic name; a different
+/// non-forum chat → chat name; a different forum → chat + topic name.
+/// Best-effort: any lookup failure falls back to the short session id
+/// (the same prefix `session_search list` displays).
+async fn sender_label(
+    state: &TelegramState,
+    bot: &teloxide::Bot,
+    sender: Uuid,
+    recipient_chat: i64,
+) -> String {
+    let sender_chat = state.session_chat(sender).await;
+    let sender_topic = state.session_topic(sender).await;
+    let api_url = bot.api_url().to_string();
+    let token = bot.token().to_owned();
+    let label = match sender_chat {
+        None => None,
+        Some(sc) if sc == recipient_chat => match sender_topic {
+            Some(tid) => {
+                super::titles::topic_title(
+                    &api_url,
+                    &token,
+                    teloxide::types::ChatId(sc),
+                    teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
+                )
+                .await
+            }
+            None => None,
+        },
+        Some(sc) => {
+            let chat =
+                super::titles::chat_title(&api_url, &token, teloxide::types::ChatId(sc)).await;
+            match (chat, sender_topic) {
+                (Some(c), Some(tid)) => {
+                    match super::titles::topic_title(
+                        &api_url,
+                        &token,
+                        teloxide::types::ChatId(sc),
+                        teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
+                    )
+                    .await
+                    {
+                        Some(t) => Some(format!("{c} / {t}")),
+                        None => Some(c),
+                    }
+                }
+                (Some(c), None) => Some(c),
+                (None, _) => None,
+            }
+        }
+    };
+    label.unwrap_or_else(|| short_session_id(sender))
+}
+
+/// Short session id: first 8 hex chars of the uuid (matches `session_search`
+/// list's short-id prefix display).
+fn short_session_id(uuid: Uuid) -> String {
+    uuid.simple().to_string()[..8].to_owned()
 }
