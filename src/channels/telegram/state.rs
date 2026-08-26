@@ -114,6 +114,13 @@ pub struct TelegramState {
     /// pre-topic behaviour. Each forum topic therefore binds its own session.
     chat_sessions: Mutex<HashMap<(i64, Option<i32>), Uuid>>,
     session_topic: Mutex<HashMap<Uuid, Option<i32>>>,
+    /// Evidence-based forum detection (#1220): chat_id → true once ANY
+    /// thread-scoped message was seen from that chat. A bare thread id can
+    /// only exist on forum topics (governor.rs reached the same rule), so
+    /// one observation proves forum-ness permanently for the process
+    /// lifetime. Consumed by `normalize_topic` at ingress to give the
+    /// General topic its own session bucket instead of None.
+    chat_forums: Mutex<HashMap<i64, bool>>,
     /// Pending approval channels: approval_id → oneshot sender of (approved, always).
     pending_approvals: Mutex<HashMap<String, oneshot::Sender<(bool, bool)>>>,
     /// Pending follow-up questions: question_id → (oneshot sender of
@@ -283,6 +290,7 @@ impl TelegramState {
             session_chats: Mutex::new(HashMap::new()),
             chat_sessions: Mutex::new(HashMap::new()),
             session_topic: Mutex::new(HashMap::new()),
+            chat_forums: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
             pending_followups: Mutex::new(HashMap::new()),
             solo_evaluated: Mutex::new(HashMap::new()),
@@ -490,13 +498,37 @@ impl TelegramState {
         self.bot.lock().await.is_some()
     }
 
+    /// Record forum-ness evidence for a chat (#1220). Any message carrying a
+    /// bare `thread_id` proves the chat is a forum group — ordinary
+    /// reply-threads never set it (same rule governor.rs uses). One-way:
+    /// forum-ness never un-proves itself for the process lifetime.
+    pub async fn note_thread_evidence(&self, chat_id: i64, thread_id: Option<i32>) {
+        if thread_id.is_some() {
+            self.chat_forums.lock().await.insert(chat_id, true);
+        }
+    }
+
+    /// Whether this chat has ever hosted a thread-scoped message (#1220).
+    /// False until the first observation — the cold-start window during which
+    /// General-topic messages keep the legacy shared-session behaviour.
+    pub async fn is_known_forum(&self, chat_id: i64) -> bool {
+        self.chat_forums
+            .lock()
+            .await
+            .get(&chat_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
     /// Record which chat_id corresponds to a given session (for approval routing).
     /// Also maintains a reverse map so callbacks can resolve session from chat.
     ///
     /// The reverse map keys on `(chat_id, topic_id)` so distinct forum topics in
-    /// one supergroup bind distinct sessions (#215); pass `None` for DMs,
-    /// non-forum groups, and the General topic. The forward `session_chats` map
-    /// stays topic-agnostic (approval routing only needs the chat_id).
+    /// one supergroup bind distinct sessions (#215); since #1220 the General
+    /// topic of a KNOWN forum passes `Some(GENERAL_TOPIC_ID)` (normalized at
+    /// ingress), while plain `None` remains for DMs / non-forum groups. The
+    /// forward `session_chats` map stays topic-agnostic (approval routing only
+    /// needs the chat_id).
     pub async fn register_session_chat(
         &self,
         session_id: Uuid,
@@ -517,8 +549,9 @@ impl TelegramState {
     }
 
     /// Look up the forum topic_id for a given session_id. Returns `Some(tid)`
-    /// for forum-topic sessions, `None` for DMs / non-forum groups / General.
-    /// Used by `make_approval_callback` to route
+    /// for forum-topic sessions — including General-topic sessions of known
+    /// forums (`Some(GENERAL_TOPIC_ID)`, #1220) — and `None` for DMs /
+    /// non-forum groups. Used by `make_approval_callback` to route
     /// messages to the correct forum topic (#247, #249).
     pub async fn session_topic(&self, session_id: Uuid) -> Option<i32> {
         self.session_topic
