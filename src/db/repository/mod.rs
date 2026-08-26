@@ -15,6 +15,7 @@ pub mod plan_card;
 pub mod project;
 pub mod recent_paths;
 pub mod session;
+pub mod session_binding;
 pub mod tool_execution;
 pub mod usage_ledger;
 
@@ -31,6 +32,7 @@ pub use plan_card::{PlanCard, PlanCardRepository};
 pub use project::ProjectRepository;
 pub use recent_paths::RecentPathsRepository;
 pub use session::{SessionListOptions, SessionRepository};
+pub use session_binding::SessionBindingRepository;
 pub use tool_execution::ToolExecutionRepository;
 pub use usage_ledger::UsageLedgerRepository;
 

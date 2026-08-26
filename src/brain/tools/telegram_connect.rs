@@ -132,6 +132,8 @@ impl Tool for TelegramConnectTool {
 
         let channel_msg_repo =
             crate::db::ChannelMessageRepository::new((*service_context.pool).clone());
+        let session_binding_repo =
+            crate::db::SessionBindingRepository::new((*service_context.pool).clone());
         let tg_agent = crate::channels::telegram::TelegramAgent::new(
             agent,
             service_context,
@@ -139,6 +141,7 @@ impl Tool for TelegramConnectTool {
             telegram_state.clone(),
             config_rx,
             channel_msg_repo,
+            session_binding_repo,
         );
 
         // Detached background task; the bot runs until the process exits.

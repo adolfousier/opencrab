@@ -1,0 +1,101 @@
+//! Session Binding Repository
+//!
+//! Persists which channel (and chat / forum topic) owns each session so a
+//! restart can re-register delivery routes at channel-connect time instead
+//! of waiting for the next inbound message (#1224). A session idle at boot
+//! has no way to reach ingress: without this record every background-task
+//! completion and sub-agent result parks until a human pokes the topic.
+
+use crate::db::{database::interact_err, Pool};
+use anyhow::{Context, Result};
+use rusqlite::params;
+
+/// One persisted binding: "session S lives on channel C, chat X, topic T".
+#[derive(Debug, Clone)]
+pub struct SessionBinding {
+    pub session_id: String,
+    pub channel: String,
+    pub chat_id: String,
+    pub thread_id: Option<i32>,
+}
+
+/// Reads and writes [`SessionBinding`] rows.
+#[derive(Clone)]
+pub struct SessionBindingRepository {
+    pool: Pool,
+}
+
+impl SessionBindingRepository {
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+
+    /// Record or refresh where a session lives. Idempotent per session:
+    /// re-binding replaces the previous channel/chat/thread, which is what a
+    /// session moving between surfaces needs.
+    pub async fn upsert(
+        &self,
+        session_id: String,
+        channel: &str,
+        chat_id: &str,
+        thread_id: Option<i32>,
+    ) -> Result<()> {
+        let ch = channel.to_string();
+        let cid = chat_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "INSERT INTO session_bindings (session_id, channel, chat_id, thread_id) \
+                     VALUES (?1, ?2, ?3, ?4) \
+                     ON CONFLICT(session_id) DO UPDATE SET \
+                       channel = excluded.channel, \
+                       chat_id = excluded.chat_id, \
+                       thread_id = excluded.thread_id, \
+                       updated_at = strftime('%s', 'now')",
+                    params![session_id, ch, cid, thread_id],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to upsert session binding")?;
+        Ok(())
+    }
+
+    /// Every binding recorded for one channel, least-recently-changed first.
+    /// INNER JOIN against sessions drops bindings whose session was deleted,
+    /// so connect-time re-registration never revives dead routes (#1224).
+    /// Called once per channel connect to re-register routes (#1224).
+    pub async fn all_for_channel(&self, channel: &str) -> Result<Vec<SessionBinding>> {
+        let ch = channel.to_string();
+        let mapped = self
+            .pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.prepare(
+                    "SELECT b.session_id, b.channel, b.chat_id, b.thread_id \
+                     FROM session_bindings b \
+                     JOIN sessions s ON s.id = b.session_id \
+                     WHERE b.channel = ?1 \
+                     ORDER BY b.updated_at ASC",
+                )?
+                .query_map(params![ch], |row| {
+                    Ok(SessionBinding {
+                        session_id: row.get("session_id")?,
+                        channel: row.get("channel")?,
+                        chat_id: row.get("chat_id")?,
+                        thread_id: row.get("thread_id")?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to list session bindings")?;
+        Ok(mapped)
+    }
+}

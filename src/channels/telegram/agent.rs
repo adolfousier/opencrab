@@ -7,6 +7,7 @@ use super::handler::{handle_message, handle_reaction};
 use crate::brain::agent::AgentService;
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
+use crate::db::SessionBindingRepository;
 use crate::services::{ServiceContext, SessionService};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -25,6 +26,7 @@ pub struct TelegramAgent {
     telegram_state: Arc<TelegramState>,
     config_rx: tokio::sync::watch::Receiver<Config>,
     channel_msg_repo: ChannelMessageRepository,
+    session_binding_repo: SessionBindingRepository,
 }
 
 impl TelegramAgent {
@@ -35,6 +37,7 @@ impl TelegramAgent {
         telegram_state: Arc<TelegramState>,
         config_rx: tokio::sync::watch::Receiver<Config>,
         channel_msg_repo: ChannelMessageRepository,
+        session_binding_repo: SessionBindingRepository,
     ) -> Self {
         Self {
             agent_service,
@@ -43,6 +46,7 @@ impl TelegramAgent {
             telegram_state,
             config_rx,
             channel_msg_repo,
+            session_binding_repo,
         }
     }
 
@@ -128,6 +132,7 @@ impl TelegramAgent {
             let telegram_state = self.telegram_state.clone();
             let config_rx = self.config_rx.clone();
             let channel_msg_repo = self.channel_msg_repo.clone();
+            let session_binding_repo = self.session_binding_repo.clone();
 
             // Shared dependencies handed to every agent dispatch (first-frame,
             // settled-after-streaming, or immediate). `bot_token` and
@@ -141,6 +146,7 @@ impl TelegramAgent {
                 telegram_state: telegram_state.clone(),
                 config_rx: config_rx.clone(),
                 channel_msg_repo,
+                session_binding_repo,
             };
 
             // Pending edit-stream buffer keyed by (chat, message). Peer bots in
@@ -1831,6 +1837,7 @@ struct DispatchDeps {
     telegram_state: Arc<TelegramState>,
     config_rx: tokio::sync::watch::Receiver<Config>,
     channel_msg_repo: ChannelMessageRepository,
+    session_binding_repo: SessionBindingRepository,
 }
 
 /// Should this message be held until its edit stream settles? True only for
@@ -1857,6 +1864,7 @@ fn spawn_handle_message(bot: Bot, msg: Message, deps: DispatchDeps) {
                 deps.telegram_state,
                 deps.config_rx,
                 deps.channel_msg_repo,
+                deps.session_binding_repo,
             )
             .await
         })

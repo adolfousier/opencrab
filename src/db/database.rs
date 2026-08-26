@@ -146,6 +146,9 @@ pub(crate) fn build_migrations() -> Migrations<'static> {
         M::up(include_str!(
             "../migrations/20260822000001_add_a2a_context_sessions.sql"
         )),
+        M::up(include_str!(
+            "../migrations/20260826000001_add_session_bindings.sql"
+        )),
     ])
 }
 
