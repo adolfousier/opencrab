@@ -1009,6 +1009,14 @@ impl Config {
     fn write_item(section: &str, key: &str, parsed: toml_edit::Item) -> Result<()> {
         use toml_edit::DocumentMut;
 
+        // Reject a section that is not a real config path BEFORE touching the
+        // file (#1199). The navigation below creates any table it is asked
+        // for, so an unknown section wrote successfully into an orphan table
+        // that serde discards on load: tooling reported success, the setting
+        // never applied, and reads kept honestly returning the old value.
+        crate::config::sections::validate_write_path(section)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
         // Hold lock for entire read-modify-write to prevent races between
         // concurrent write_key calls (e.g. fallback provider switching fires
         // multiple writes in rapid succession).
