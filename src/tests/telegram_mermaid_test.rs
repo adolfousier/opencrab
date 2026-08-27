@@ -305,7 +305,7 @@ fn build_body_markdown_media_matches_prototype_shape() {
         id: "diag0".into(),
         url: "https://mermaid.ink/img/abc".into(),
     }];
-    let body = build_body_markdown_media(-100, None, "text", &media);
+    let body = build_body_markdown_media(-100, None, "text", &media, None);
     assert_eq!(body["chat_id"], -100);
     assert_eq!(body["rich_message"]["markdown"], "text");
     let arr = body["rich_message"]["media"]
@@ -321,7 +321,7 @@ fn build_body_markdown_media_matches_prototype_shape() {
 #[test]
 fn build_body_markdown_media_includes_thread_id_when_present() {
     use teloxide::types::{MessageId, ThreadId};
-    let body = build_body_markdown_media(-100, Some(ThreadId(MessageId(249))), "m", &[]);
+    let body = build_body_markdown_media(-100, Some(ThreadId(MessageId(249))), "m", &[], None);
     assert_eq!(body["message_thread_id"], 249);
 }
 

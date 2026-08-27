@@ -37,6 +37,34 @@ pub(crate) async fn send_rich_html_id(
         .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
 }
 
+/// Edit an existing rich message with markdown input (#1230). Telegram's
+/// `editMessageText` accepts `rich_message.markdown`; editing from the raw
+/// source (rather than pre-converted HTML) keeps pipe tables native through
+/// the edit, exactly like the markdown rich send path. `reply_markup` is
+/// optional — pass `None` to leave the keyboard unchanged.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn edit_rich_markdown(
+    api_url: &str,
+    token: &str,
+    chat_id: i64,
+    message_id: i32,
+    markdown: &str,
+    reply_markup: Option<&serde_json::Value>,
+    origin: &str,
+    origin_detail: &str,
+) -> anyhow::Result<()> {
+    let url = format!("{}/bot{token}/editMessageText", api_base(api_url));
+    let mut body = serde_json::json!({
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "rich_message": { "markdown": markdown },
+    });
+    if let Some(kb) = reply_markup {
+        body["reply_markup"] = kb.clone();
+    }
+    post_and_check(&url, &body, origin, origin_detail).await
+}
+
 /// Edit an existing rich message with HTML input (#420 path A).
 /// `reply_markup` is optional — pass `None` to leave the keyboard unchanged.
 #[allow(clippy::too_many_arguments)]
@@ -65,11 +93,41 @@ pub(crate) async fn edit_rich_html(
 /// Send `markdown` as a native rich message and return the new message id.
 /// Used for intermediate streamed segments, which must be tracked for later
 /// footer-append / dedup. Returns `Err` so the caller can fall back to HTML.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_markdown_id(
     api_url: &str,
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
+    markdown: &str,
+    reply_to: Option<i32>,
+    origin: &str,
+    origin_detail: &str,
+) -> anyhow::Result<i32> {
+    send_rich_markdown_target_id(
+        api_url,
+        token,
+        chat_id,
+        thread_id,
+        reply_to,
+        markdown,
+        origin,
+        origin_detail,
+    )
+    .await
+}
+
+/// [`send_rich_markdown_id`] with an optional Telegram reply target.
+/// `reply_to` is a message id in the same chat; when set the rich body
+/// carries `reply_parameters` so the reply lands threaded to that message
+/// (#1230).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn send_rich_markdown_target_id(
+    api_url: &str,
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    reply_to: Option<i32>,
     markdown: &str,
     origin: &str,
     origin_detail: &str,
@@ -77,7 +135,7 @@ pub(crate) async fn send_rich_markdown_id(
     let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let result = post_rich(
         &url,
-        &build_body(chat_id, thread_id, markdown),
+        &build_body_target(chat_id, thread_id, reply_to, markdown),
         origin,
         origin_detail,
     )
@@ -263,6 +321,19 @@ pub(crate) fn build_body(
     chat_id: i64,
     thread_id: Option<ThreadId>,
     markdown: &str,
+    reply_to: Option<i32>,
+) -> serde_json::Value {
+    build_body_target(chat_id, thread_id, reply_to, markdown)
+}
+
+/// [`build_body`] with an optional Telegram reply target (#1230). When
+/// `reply_to` is set, the body carries `reply_parameters: {message_id}`
+/// so a rich reply lands threaded to that message.
+pub(crate) fn build_body_target(
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    reply_to: Option<i32>,
+    markdown: &str,
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
         "chat_id": chat_id,
@@ -271,6 +342,9 @@ pub(crate) fn build_body(
     if let Some(t) = thread_id {
         // ThreadId wraps a MessageId(i32).
         body["message_thread_id"] = serde_json::json!(t.0.0);
+    }
+    if let Some(mid) = reply_to {
+        body["reply_parameters"] = serde_json::json!({ "message_id": mid });
     }
     body
 }
@@ -306,13 +380,42 @@ pub(crate) async fn send_rich_markdown_media_id(
     thread_id: Option<ThreadId>,
     markdown: &str,
     media: &[super::mermaid::MediaEntry],
+    reply_to: Option<i32>,
+    origin: &str,
+    origin_detail: &str,
+) -> anyhow::Result<i32> {
+    send_rich_markdown_media_target_id(
+        api_url,
+        token,
+        chat_id,
+        thread_id,
+        reply_to,
+        markdown,
+        media,
+        origin,
+        origin_detail,
+    )
+    .await
+}
+
+/// [`send_rich_markdown_media_id`] with an optional Telegram reply target
+/// (#1230); carries `reply_parameters` when `reply_to` is set.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn send_rich_markdown_media_target_id(
+    api_url: &str,
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    reply_to: Option<i32>,
+    markdown: &str,
+    media: &[super::mermaid::MediaEntry],
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
     let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let result = post_rich(
         &url,
-        &build_body_markdown_media(chat_id, thread_id, markdown, media),
+        &build_body_markdown_media_target(chat_id, thread_id, reply_to, markdown, media),
         origin,
         origin_detail,
     )
@@ -333,6 +436,19 @@ pub(crate) fn build_body_markdown_media(
     thread_id: Option<ThreadId>,
     markdown: &str,
     media: &[super::mermaid::MediaEntry],
+    reply_to: Option<i32>,
+) -> serde_json::Value {
+    build_body_markdown_media_target(chat_id, thread_id, reply_to, markdown, media)
+}
+
+/// [`build_body_markdown_media`] with an optional Telegram reply target
+/// (#1230); carries `reply_parameters` when `reply_to` is set.
+pub(crate) fn build_body_markdown_media_target(
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    reply_to: Option<i32>,
+    markdown: &str,
+    media: &[super::mermaid::MediaEntry],
 ) -> serde_json::Value {
     let media_arr: Vec<serde_json::Value> = media
         .iter()
@@ -349,6 +465,9 @@ pub(crate) fn build_body_markdown_media(
     });
     if let Some(t) = thread_id {
         body["message_thread_id"] = serde_json::json!(t.0.0);
+    }
+    if let Some(mid) = reply_to {
+        body["reply_parameters"] = serde_json::json!({ "message_id": mid });
     }
     body
 }

@@ -1146,6 +1146,7 @@ async fn deliver_telegram(
             &message,
             "cron",
             &job_name,
+            None,
         )
         .await
         {

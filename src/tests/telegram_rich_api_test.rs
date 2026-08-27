@@ -24,6 +24,7 @@ async fn send_rich_markdown_id_uses_custom_api_url() {
         12345,
         None,
         "hello **world**",
+        None,
         "test",
         "-",
     )
@@ -110,6 +111,7 @@ async fn send_rich_markdown_media_id_uses_custom_api_url() {
             id: "1".to_string(),
             url: "https://example.com/img.png".to_string(),
         }],
+        None,
         "test",
         "-",
     )

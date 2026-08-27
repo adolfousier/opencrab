@@ -11,7 +11,7 @@ use super::markdown::{markdown_to_telegram_html, split_message, strip_html_tags}
 use super::send::message_in_thread;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{MessageId, ParseMode};
+use teloxide::types::{MessageId, ParseMode, ReplyParameters};
 
 /// Send an HTML message, falling back to plain text if Telegram rejects the HTML.
 /// Returns the resulting `MessageId` so callers that need to track or later delete
@@ -81,6 +81,7 @@ pub(crate) async fn try_send_intermediate_rich(
         chat_id.0,
         thread_id,
         text,
+        None,
         "turn",
         "-",
     )
@@ -160,7 +161,7 @@ pub(crate) async fn deliver_intermediate_message(
     }
     let mut sent_ids: Vec<MessageId> = Vec::new();
     for chunk in split_message(&html, 4096) {
-        match send_html_or_plain(bot, chat, thread_id, chunk, "turn").await {
+        match send_html_or_plain(bot, chat, thread_id, chunk, "turn", None).await {
             Ok(id) => {
                 tg.note_bot_bubble(chat.0, id.0);
                 sent_ids.push(id);
@@ -256,6 +257,7 @@ pub(crate) async fn send_html_or_plain(
     thread_id: Option<teloxide::types::ThreadId>,
     html: &str,
     origin: &str,
+    reply_to: Option<i32>,
 ) -> std::result::Result<MessageId, teloxide::RequestError> {
     // G3 send pacing (#1211): the universal outbox ladder funnels cron
     // deliveries, tool sends and chunked replies through here, so the
@@ -289,8 +291,14 @@ pub(crate) async fn send_html_or_plain(
     // matching every other send path — previously this hand-rolled a single
     // retry. Only a final failure falls back to plain text, and the
     // fallback rides the same ladder so a 429 cannot drop it either.
+    // `reply_to` (optional) attaches Telegram reply_parameters so the same
+    // seam carries tool-reply targeting without a separate writer (#1230).
     match send_retrying_rate_limit("HTML send", || {
-        message_in_thread(bot, chat_id, thread_id, html).parse_mode(ParseMode::Html)
+        let mut req = message_in_thread(bot, chat_id, thread_id, html);
+        if let Some(mid) = reply_to {
+            req = req.reply_parameters(ReplyParameters::new(MessageId(mid)));
+        }
+        req.parse_mode(ParseMode::Html)
     })
     .await
     {
@@ -307,7 +315,11 @@ pub(crate) async fn send_html_or_plain(
             let plain_hash8 = super::telemetry::content_hash8(&plain);
             let plain_len = plain.len();
             match send_retrying_rate_limit("plain fallback", || {
-                message_in_thread(bot, chat_id, thread_id, plain.as_str())
+                let mut req = message_in_thread(bot, chat_id, thread_id, plain.as_str());
+                if let Some(mid) = reply_to {
+                    req = req.reply_parameters(ReplyParameters::new(MessageId(mid)));
+                }
+                req
             })
             .await
             {

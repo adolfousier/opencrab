@@ -44,7 +44,7 @@ fn html_body_sets_parse_mode() {
 fn rich_body_is_the_public_body_plus_the_receiver() {
     // The scoped rich attempt must be byte-for-byte the public rich request
     // apart from the scoping field, or the two paths render differently.
-    let public = crate::channels::telegram::rich::api::build_body(-100200, None, "# hi");
+    let public = crate::channels::telegram::rich::api::build_body(-100200, None, "# hi", None);
     let scoped = build_rich_body(-100200, None, 12345, "# hi");
     assert_eq!(scoped["rich_message"], public["rich_message"]);
     assert_eq!(scoped["chat_id"], public["chat_id"]);

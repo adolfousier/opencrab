@@ -120,7 +120,7 @@ pub(crate) async fn handle_channel_command(
             }
             if let Err(e) = req.await {
                 tracing::warn!("Telegram: model-switch reply failed: {e}");
-                send_html_or_plain(bot, msg.chat.id, thread_id, reply, "turn").await?;
+                send_html_or_plain(bot, msg.chat.id, thread_id, reply, "turn", None).await?;
             }
             return Ok(CommandOutcome::Handled);
         }
@@ -158,7 +158,7 @@ pub(crate) async fn handle_channel_command(
                     // A short delivery finishes publicly: dropping the tail
                     // would truncate the reply with nothing to show for it.
                     for chunk in chunks.iter().skip(delivered) {
-                        send_html_or_plain(bot, msg.chat.id, thread_id, chunk, "turn").await?;
+                        send_html_or_plain(bot, msg.chat.id, thread_id, chunk, "turn", None).await?;
                     }
                     return Ok(CommandOutcome::Handled);
                 }
@@ -189,7 +189,7 @@ pub(crate) async fn handle_channel_command(
             if !sent_rich {
                 let html = command_md_to_html(&reply);
                 for chunk in split_message(&html, 4096) {
-                    send_html_or_plain(bot, msg.chat.id, thread_id, chunk, "turn").await?;
+                    send_html_or_plain(bot, msg.chat.id, thread_id, chunk, "turn", None).await?;
                 }
             }
             return Ok(CommandOutcome::Handled);
