@@ -724,8 +724,7 @@ async fn finalize_plan_card_locked(
                     )))
                     .await
             {
-                    tracing::debug!("Telegram plan card finalize edit failed ({mid:?}): {e}");
-                }
+                tracing::debug!("Telegram plan card finalize edit failed ({mid:?}): {e}");
             }
         }
     }
