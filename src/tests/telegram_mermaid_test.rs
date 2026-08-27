@@ -348,7 +348,7 @@ fn build_body_markdown_media_bytes_entry_uses_attach_reference() {
         url: None,
         bytes: Some(vec![0x89, b'P']),
     }];
-    let body = build_body_markdown_media(-100, None, "text", &media);
+    let body = build_body_markdown_media(-100, None, "text", &media, None);
     let arr = body["rich_message"]["media"]
         .as_array()
         .expect("media array");

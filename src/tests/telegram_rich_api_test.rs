@@ -109,7 +109,8 @@ async fn send_rich_markdown_media_id_uses_custom_api_url() {
         "![img](tg://photo?id=1)",
         &[crate::channels::telegram::rich::mermaid::MediaEntry {
             id: "1".to_string(),
-            url: "https://example.com/img.png".to_string(),
+            url: Some("https://example.com/img.png".to_string()),
+            bytes: None,
         }],
         None,
         "test",

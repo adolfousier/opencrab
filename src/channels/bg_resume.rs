@@ -163,7 +163,7 @@ mod tests {
         )
         .await;
         assert_eq!(got, None);
-        assert_eq!(polls.load(Ordering::Relaxed), READY_WAIT_SECS);
+        assert_eq!(polls.load(Ordering::Relaxed) as usize, READY_WAIT_SECS as usize);
     }
 
     /// Already-ready handle → immediate delivery, single poll, no sleep.
