@@ -351,14 +351,9 @@ pub(crate) async fn send_markdown_outbox(
     let mut sent: Vec<(i32, String)> = Vec::new();
     for (i, chunk) in chunks.into_iter().enumerate() {
         match super::intermediates::send_html_or_plain(
-                bot,
-                chat_id,
-                thread_id,
-                chunk,
-                origin,
-                reply_to,
-            )
-            .await
+            bot, chat_id, thread_id, chunk, origin, reply_to,
+        )
+        .await
         {
             Ok(mid) => {
                 super::telemetry::log_send_success(

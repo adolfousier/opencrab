@@ -612,7 +612,9 @@ impl TelegramSendTool {
                 Err(e) => {
                     // Fall through to the HTML edit on any rich failure so
                     // the edit is never dropped.
-                    tracing::warn!("telegram_send edit: native rich edit failed ({e}) — falling back to HTML");
+                    tracing::warn!(
+                        "telegram_send edit: native rich edit failed ({e}) — falling back to HTML"
+                    );
                 }
             }
         }
