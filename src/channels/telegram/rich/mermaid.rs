@@ -245,7 +245,7 @@ pub(crate) fn png_dims(png: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// Pre-validate a single mermaid diagram against the renderer. On HTTP 200
-/// + an `image/*` content type it DOWNLOADS the rendered PNG and returns
+/// with an `image/*` content type it DOWNLOADS the rendered PNG and returns
 /// [`MermaidResult::ImageBytes`] — Telegram never fetches a URL from us
 /// (its own URL fetcher proved the unreliable link: `400 failed to get
 /// HTTP URL content` on live probes while the same URL fetched fine from
@@ -340,12 +340,10 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
                         return MermaidResult::Failed("width-clamp retry dropped the image".into());
                     }
                 };
-                if let Some((cw, ch)) = png_dims(&cbytes) {
-                    if !photo_fits(cw, ch) {
-                        return MermaidResult::Failed(format!(
-                            "rendered diagram exceeds the photo box even at the width clamp: {cw}x{ch} px"
-                        ));
-                    }
+                if let Some((cw, ch)) = png_dims(&cbytes).filter(|&(cw, ch)| !photo_fits(cw, ch)) {
+                    return MermaidResult::Failed(format!(
+                        "rendered diagram exceeds the photo box even at the width clamp: {cw}x{ch} px"
+                    ));
                 }
                 tracing::info!(
                     bytes = cbytes.len(),

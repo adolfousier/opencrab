@@ -8,7 +8,7 @@
 //! point `should_render_mermaid` is not unit-tested because it reads the live
 //! `Config`, whose values in tests depend on the embedded example config.
 
-use crate::channels::telegram::rich::api::build_body_markdown_media;
+use crate::channels::telegram::rich::api::build_body_markdown_media_target;
 use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
 use crate::channels::telegram::rich::mermaid::{
@@ -311,17 +311,17 @@ fn markdown_failure_block_contains_warning_error_and_source() {
 }
 
 // ---------------------------------------------------------------------------
-// build_body_markdown_media (JSON shape, matches validated prototype 1073)
+// build_body_markdown_media_target (JSON shape, matches validated prototype 1073)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn build_body_markdown_media_matches_prototype_shape() {
+fn build_body_markdown_media_target_matches_prototype_shape() {
     let media = vec![MediaEntry {
         id: "diag0".into(),
         url: Some("https://mermaid.ink/img/abc".into()),
         bytes: None,
     }];
-    let body = build_body_markdown_media(-100, None, "text", &media, None);
+    let body = build_body_markdown_media_target(-100, None, None, "text", &media);
     assert_eq!(body["chat_id"], -100);
     assert_eq!(body["rich_message"]["markdown"], "text");
     let arr = body["rich_message"]["media"]
@@ -335,20 +335,21 @@ fn build_body_markdown_media_matches_prototype_shape() {
 }
 
 #[test]
-fn build_body_markdown_media_includes_thread_id_when_present() {
+fn build_body_markdown_media_target_includes_thread_id_when_present() {
     use teloxide::types::{MessageId, ThreadId};
-    let body = build_body_markdown_media(-100, Some(ThreadId(MessageId(249))), "m", &[], None);
+    let body =
+        build_body_markdown_media_target(-100, Some(ThreadId(MessageId(249))), None, "m", &[]);
     assert_eq!(body["message_thread_id"], 249);
 }
 
 #[test]
-fn build_body_markdown_media_bytes_entry_uses_attach_reference() {
+fn build_body_markdown_media_target_bytes_entry_uses_attach_reference() {
     let media = vec![MediaEntry {
         id: "diag1".into(),
         url: None,
         bytes: Some(vec![0x89, b'P']),
     }];
-    let body = build_body_markdown_media(-100, None, "text", &media, None);
+    let body = build_body_markdown_media_target(-100, None, None, "text", &media);
     let arr = body["rich_message"]["media"]
         .as_array()
         .expect("media array");

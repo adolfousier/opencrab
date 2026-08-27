@@ -164,6 +164,7 @@ fn test_no_probe_fails_open() {
 }
 
 #[tokio::test]
+#[expect(clippy::await_holding_lock)]
 async fn test_tool_reports_refusal_with_remedy() {
     let _guard = test_guard();
     let session = Uuid::new_v4();
@@ -190,6 +191,7 @@ async fn test_tool_reports_refusal_with_remedy() {
 }
 
 #[tokio::test]
+#[expect(clippy::await_holding_lock)]
 async fn test_tool_interrupt_param_reaches_delivery() {
     let _guard = test_guard();
     let session = Uuid::new_v4();

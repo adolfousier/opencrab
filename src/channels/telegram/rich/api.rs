@@ -384,36 +384,9 @@ pub(crate) fn build_body_html(
 ///   `attach://<id>` photo parts, so Telegram never touches a third-party
 ///   URL. The request must therefore be `multipart/form-data`, not JSON.
 ///
-/// Returns the new message id. Returns `Err` on transport/API failure so the
-/// caller can fall back to the HTML dialect.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn send_rich_markdown_media_id(
-    api_url: &str,
-    token: &str,
-    chat_id: i64,
-    thread_id: Option<ThreadId>,
-    markdown: &str,
-    media: &[super::mermaid::MediaEntry],
-    reply_to: Option<i32>,
-    origin: &str,
-    origin_detail: &str,
-) -> anyhow::Result<i32> {
-    send_rich_markdown_media_target_id(
-        api_url,
-        token,
-        chat_id,
-        thread_id,
-        reply_to,
-        markdown,
-        media,
-        origin,
-        origin_detail,
-    )
-    .await
-}
-
-/// [`send_rich_markdown_media_id`] with an optional Telegram reply target
-/// (#1230); carries `reply_parameters` when `reply_to` is set.
+/// Carries `reply_parameters` when `reply_to` is set (#1230). Returns the
+/// new message id. Returns `Err` on transport/API failure so the caller can
+/// fall back to the HTML dialect.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_rich_markdown_media_target_id(
     api_url: &str,
@@ -591,18 +564,7 @@ async fn post_rich_multipart(
 /// (Bot API 10.2+, #1044). Split out so the request shape is unit-testable
 /// without a live bot. Matches the validated prototype (message 1073):
 /// `rich_message: {markdown, media: [{id, media: {type:"photo", media:url}}]}`.
-pub(crate) fn build_body_markdown_media(
-    chat_id: i64,
-    thread_id: Option<ThreadId>,
-    markdown: &str,
-    media: &[super::mermaid::MediaEntry],
-    reply_to: Option<i32>,
-) -> serde_json::Value {
-    build_body_markdown_media_target(chat_id, thread_id, reply_to, markdown, media)
-}
-
-/// [`build_body_markdown_media`] with an optional Telegram reply target
-/// (#1230); carries `reply_parameters` when `reply_to` is set.
+/// Carries `reply_parameters` when `reply_to` is set (#1230).
 pub(crate) fn build_body_markdown_media_target(
     chat_id: i64,
     thread_id: Option<ThreadId>,
