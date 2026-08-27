@@ -7,10 +7,12 @@
 //! fallback for servers without the `media` field. A broken image URL makes
 //! the whole send fail with `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`, so before
 //! delivery each fence is pre-validated against the renderer (mermaid.ink):
-//! a 200 + `image/*` response embeds the image, anything else degrades to a
-//! legible failure block (the renderer's error note plus the original
-//! source) instead of killing the message. Pre-validation never panics or
-//! hangs; every failure path yields [`MermaidResult::Failed`].
+//! a 200 + `image/*` response embeds the image; anything else falls back to
+//! the in-process renderer when the `local-mermaid` feature is compiled in
+//! (PNG bytes uploaded via multipart), else degrades to a legible failure
+//! block (the renderer's error note plus the original source) instead of
+//! killing the message. Pre-validation never panics or hangs; failure paths
+//! yield [`MermaidResult::Failed`] when no fallback render succeeds either.
 
 use super::ast::{Block, MermaidResult};
 use futures::FutureExt;
@@ -30,9 +32,8 @@ const MERMAID_INK_BASE: &str = "https://mermaid.ink/img/";
 const MERMAID_INK_PARAMS: &str = "?type=png&width=1600&scale=2";
 
 /// Upper bound on a single pre-validation request. A slow renderer must not
-/// stall message delivery; on timeout we degrade to a failure block.
-/// Only meaningful on the mermaid.ink URL path, retired under `local-mermaid`.
-#[cfg(not(feature = "local-mermaid"))]
+/// stall message delivery; on timeout we fall back (to the local renderer
+/// when compiled in, else to a failure block).
 const PREVALIDATE_TIMEOUT_SECS: u64 = 10;
 
 /// Cap on how much of the renderer's error body we surface, so a huge HTML
@@ -215,10 +216,10 @@ pub(crate) fn ink_url(source: &str) -> String {
 /// transport error, client build failure) yields [`MermaidResult::Failed`]
 /// with a legible note. Never panics, never hangs past the timeout.
 ///
-/// Only used on the mermaid.ink URL path; under `local-mermaid` the fences are
-/// rendered in-process ([`resolve_fence`] routes to [`render`] instead), so
-/// this pre-validation function is compiled out to avoid dead code.
-#[cfg(not(feature = "local-mermaid"))]
+/// Primary path for every build: on success [`resolve_fence`] embeds the
+/// URL; on [`MermaidResult::Failed`] it hands off to the in-process
+/// renderer ([`local_fallback`]) when the `local-mermaid` feature is
+/// compiled in.
 pub(crate) async fn prevalidate(source: &str) -> MermaidResult {
     let url = ink_url(source);
 
@@ -311,25 +312,41 @@ pub(crate) fn replacement_for(
     }
 }
 
-/// Resolve a single fence to a render outcome. This is the delivery-path
-/// switch (#1044 local-mermaid delivery swap):
+/// Resolve a single fence to a render outcome. Hybrid delivery (#1044,
+/// hybrid round): mermaid.ink is the PRIMARY render path (ELK layout,
+/// Chromium text rendering, full mermaid 11 diagram coverage) and the
+/// in-process renderer is the AUTOMATIC fallback for when the service is
+/// down, erroring, or slow.
 ///
-/// - With the `local-mermaid` feature compiled in, the diagram is rendered
-///   IN-PROCESS to PNG bytes ([`render::render_local_png`]); those bytes are
-///   uploaded to Telegram via multipart (`attach://<id>`) — Telegram never
-///   fetches an image URL from us.
-/// - Without the feature, the legacy mermaid.ink URL path runs: pre-validate
-///   the image URL, then let Telegram refetch it server-side. This is the
-///   compile-time fallback/feature switch that keeps the network path intact
-///   for builds without the local renderer.
+/// - [`prevalidate`] succeeds → the hi-res embed URL is returned and
+///   Telegram refetches the image server-side, as before.
+/// - [`prevalidate`] fails ([`MermaidResult::Failed`]) → the fence is
+///   re-resolved LOCALLY when the `local-mermaid` feature is compiled in:
+///   PNG bytes rendered in-process and uploaded via multipart
+///   (`attach://<id>`) — Telegram never fetches a URL from us in that case.
+/// - Without the feature, the prevalidation note degrades to the legible
+///   failure block exactly as the pre-hybrid URL path did.
 async fn resolve_fence(source: &str) -> MermaidResult {
+    match prevalidate(source).await {
+        ok @ MermaidResult::Image(_) => ok,
+        MermaidResult::Failed(note) => local_fallback(source, note),
+        other => other,
+    }
+}
+
+/// Local-render fallback for a failed mermaid.ink prevalidation. Sync on
+/// purpose: tests drive it directly without touching the network (same seam
+/// pattern as [`is_image_response`]).
+pub(crate) fn local_fallback(source: &str, note: String) -> MermaidResult {
     #[cfg(feature = "local-mermaid")]
     {
+        tracing::warn!(note = %note, "mermaid.ink down; falling back to local render");
         crate::channels::telegram::rich::render::local_render_result(source)
     }
     #[cfg(not(feature = "local-mermaid"))]
     {
-        prevalidate(source).await
+        tracing::debug!(note = %note, "mermaid.ink down; no local renderer compiled in");
+        MermaidResult::Failed(note)
     }
 }
 

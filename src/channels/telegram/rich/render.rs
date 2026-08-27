@@ -128,8 +128,10 @@ pub(crate) fn wrap_svg_document(svg: &str, width: f32, height: f32) -> String {
 }
 
 /// Render a diagram to a [`MermaidResult`], the shape the mermaid delivery
-/// path already consumes. Mirrors the URL path's `prevalidate` outcome but
-/// ends in bytes, not a URL — the "image" is uploaded, not referenced.
+/// path already consumes. Serves as the AUTOMATIC fallback when the
+/// mermaid.ink prevalidation fails (see `local_fallback` in the `mermaid`
+/// module); ends in bytes, not a URL — the "image" is uploaded, not
+/// referenced.
 pub(crate) fn local_render_result(source: &str) -> MermaidResult {
     match render_local_png(source) {
         // Success telemetry lives inside `render_local_png`, where pixel
