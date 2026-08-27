@@ -90,6 +90,9 @@ pub(crate) async fn edit_rich_html(
     post_and_check(&url, &body, origin, origin_detail).await
 }
 
+/// Lib-pass dead-code exempt: production callers went through the media
+/// variant; this shape stays for the cfg(test) API suite (custom api_url).
+#[allow(dead_code)]
 /// Send `markdown` as a native rich message and return the new message id.
 /// Used for intermediate streamed segments, which must be tracked for later
 /// footer-append / dedup. Returns `Err` so the caller can fall back to HTML.
@@ -369,6 +372,9 @@ pub(crate) fn build_body_html(
 
 /// Send `markdown` with a `media` array as a native rich message
 /// (Bot API 10.2+, #1044). The markdown references each image via
+/// Exercised today only by the cfg(test) suite; reserved as the
+/// media-carrying entry point for in-flight echo-bubble work (#1234).
+#[allow(dead_code)]
 /// `tg://photo?id=<id>`; the `media` array maps each id to a renderer URL
 /// Telegram fetches server-side. This is the mode that embeds images while
 /// keeping pipe tables native. Returns the new message id.
@@ -427,6 +433,9 @@ pub(crate) async fn send_rich_markdown_media_target_id(
         .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
 }
 
+/// Pure request-shape helper exercised by the cfg(test) prototype-parity
+/// suite; nothing on the lib path constructs it yet (#1234 surface).
+#[allow(dead_code)]
 /// Build the `sendRichMessage` body with markdown input + a `media` array
 /// (Bot API 10.2+, #1044). Split out so the request shape is unit-testable
 /// without a live bot. Matches the validated prototype (message 1073):

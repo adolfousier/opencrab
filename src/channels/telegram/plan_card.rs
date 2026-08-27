@@ -669,7 +669,7 @@ async fn finalize_plan_card_locked(
     if posted.is_none() {
         // G3 send pacing (#1211): a fresh card is a full message post.
         super::governor::pace_send(chat).await;
-        let mut req = message_in_thread(bot, chat, thread_id, html.clone()).parse_mode(ParseMode::Html);
+        let req = message_in_thread(bot, chat, thread_id, html.clone()).parse_mode(ParseMode::Html);
         match req.await {
             Ok(m) => posted = Some(m.id),
             Err(e) => tracing::debug!("Telegram plan card restick post failed ({mid:?}): {e}"),
@@ -714,8 +714,8 @@ async fn finalize_plan_card_locked(
                     Err(e) => tracing::debug!("Telegram plan card rich finalize failed ({mid:?}): {e}"),
                 }
             }
-            if !edited {
-                if let Err(e) = bot
+            if !edited
+                && let Err(e) = bot
                     .edit_message_text(chat, mid, html.clone())
                     .parse_mode(teloxide::types::ParseMode::Html)
                     .reply_markup(teloxide::types::InlineKeyboardMarkup::new(Vec::<
@@ -723,7 +723,7 @@ async fn finalize_plan_card_locked(
                     >::new(
                     )))
                     .await
-                {
+            {
                     tracing::debug!("Telegram plan card finalize edit failed ({mid:?}): {e}");
                 }
             }

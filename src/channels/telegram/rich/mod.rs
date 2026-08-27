@@ -191,6 +191,7 @@ pub(crate) async fn send_rich_with_mermaid(
     .map(|_| ())
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Same as [`send_rich_with_mermaid`] but returns the new message id.
 pub(crate) async fn send_rich_with_mermaid_id(
     api_url: &str,
@@ -215,6 +216,7 @@ pub(crate) async fn send_rich_with_mermaid_id(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Like [`send_rich_with_mermaid_id`] but carries an optional Telegram reply
 /// target (`reply_parameters`) on the rich send, so a rich reply lands
 /// threaded to an existing message (#1230).
