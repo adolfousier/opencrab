@@ -478,11 +478,10 @@ impl ClaudeCliProvider {
     fn build_prompt(request: &LLMRequest) -> String {
         let mut parts = Vec::new();
 
-        if let Some(system) = request.system_full()
-            && !system.is_empty()
-        {
-            parts.push(system);
-        }
+        // request.system_full() is intentionally NOT pushed into the user prompt:
+        // it is delivered via `--append-system-prompt` (Claude's real system
+        // channel) at spawn time, matching the anthropic/openai providers, so
+        // Claude's prompt-injection defense stops distrusting the brain block.
 
         for msg in &request.messages {
             let role = match msg.role {
@@ -726,6 +725,9 @@ impl Provider for ClaudeCliProvider {
 
     async fn stream(&self, request: LLMRequest) -> Result<ProviderStream> {
         let prompt = Self::build_prompt(&request);
+        // Brain/persona travels through Claude's system channel (see spawn below),
+        // NOT the user prompt — the fix for the injection-defense breaking persona.
+        let system_prompt = request.system_full().filter(|s| !s.is_empty());
         let original_model = Self::normalize_model(&request.model);
         let model = Self::map_model(&request.model).to_string();
 
@@ -737,9 +739,10 @@ impl Provider for ClaudeCliProvider {
             .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")));
 
         tracing::info!(
-            "Spawning claude CLI: model={}, prompt_len={}, cwd={}",
+            "Spawning claude CLI: model={}, prompt_len={}, system_prompt_len={}, cwd={}",
             model,
             prompt.len(),
+            system_prompt.as_ref().map(|s| s.len()).unwrap_or(0),
             cwd.display()
         );
 
@@ -749,8 +752,8 @@ impl Provider for ClaudeCliProvider {
         // when concurrent requests (TUI + Telegram/Slack) shared the same session.
         let session_id_str = uuid::Uuid::new_v4().to_string();
 
-        let mut child = tokio::process::Command::new(&self.claude_path)
-            .env_remove("CLAUDECODE")
+        let mut cmd = tokio::process::Command::new(&self.claude_path);
+        cmd.env_remove("CLAUDECODE")
             .env_remove("CLAUDE_CODE_ENTRYPOINT")
             .arg("-p")
             .arg("--output-format")
@@ -759,20 +762,28 @@ impl Provider for ClaudeCliProvider {
             .arg("--include-partial-messages")
             .arg("--session-id")
             .arg(&session_id_str)
-            .arg("--dangerously-skip-permissions")
-            // Disable Claude's default `Co-Authored-By: Claude` trailer on git
-            // commits. Uses the newer `attribution` setting (empty strings =
-            // hide attribution) which takes precedence over the deprecated
-            // `includeCoAuthoredBy` flag. Passed as an inline JSON override so
-            // we don't touch the user's ~/.claude/settings.json.
-            .arg("--settings")
+            .arg("--dangerously-skip-permissions");
+        // Deliver the OpenCrabs brain/persona through Claude's real system channel,
+        // like the anthropic/openai providers do (see build_prompt). Flattening it
+        // into the user prompt made Claude's prompt-injection defense distrust the
+        // block and break persona / claim the channel is not real.
+        if let Some(ref system) = system_prompt {
+            cmd.arg("--append-system-prompt").arg(system);
+        }
+        // Disable Claude's default `Co-Authored-By: Claude` trailer on git
+        // commits. Uses the newer `attribution` setting (empty strings =
+        // hide attribution) which takes precedence over the deprecated
+        // `includeCoAuthoredBy` flag. Passed as an inline JSON override so
+        // we don't touch the user's ~/.claude/settings.json.
+        cmd.arg("--settings")
             .arg(r#"{"attribution":{"commit":"","pr":""},"includeCoAuthoredBy":false}"#)
             .arg("--model")
             .arg(&model)
             .current_dir(&cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd
             .spawn()
             .map_err(|e| ProviderError::Internal(format!("failed to spawn claude CLI: {}", e)))?;
 
