@@ -374,15 +374,15 @@ pub(crate) fn build_body_html(
 /// (Bot API 10.2+, #1044). The markdown references each image via
 /// `tg://photo?id=<id>`; the `media` array maps each id to an image source.
 ///
-/// Two delivery modes, switched per entry (#1044 local-mermaid delivery swap):
+/// Two delivery modes, switched per entry (#1044 media plumbing):
 ///
 /// - `MediaEntry::url` — the legacy URL path: the source is a renderer URL
 ///   (e.g. mermaid.ink) that Telegram fetches server-side. Sent as a plain
 ///   JSON body.
-/// - `MediaEntry::bytes` (local `local-mermaid` render) — the PNG bytes are
-///   uploaded to Telegram via multipart as `attach://<id>` photo parts, so
-///   Telegram never touches a third-party URL. The request must therefore be
-///   `multipart/form-data`, not JSON.
+/// - `MediaEntry::bytes` (the active path: pre-validated mermaid.ink render,
+///   #1238) — the PNG bytes are uploaded to Telegram via multipart as
+///   `attach://<id>` photo parts, so Telegram never touches a third-party
+///   URL. The request must therefore be `multipart/form-data`, not JSON.
 ///
 /// Returns the new message id. Returns `Err` on transport/API failure so the
 /// caller can fall back to the HTML dialect.

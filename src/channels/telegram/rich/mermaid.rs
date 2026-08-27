@@ -7,12 +7,13 @@
 //! fallback for servers without the `media` field. A broken image URL makes
 //! the whole send fail with `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`, so before
 //! delivery each fence is pre-validated against the renderer (mermaid.ink):
-//! a 200 + `image/*` response embeds the image; anything else falls back to
-//! the in-process renderer when the `local-mermaid` feature is compiled in
-//! (PNG bytes uploaded via multipart), else degrades to a legible failure
-//! block (the renderer's error note plus the original source) instead of
-//! killing the message. Pre-validation never panics or hangs; failure paths
-//! yield [`MermaidResult::Failed`] when no fallback render succeeds either.
+//! the render's PNG bytes are fetched by us and uploaded via multipart
+//! (`attach://`), so Telegram never fetches a third-party URL. A request
+//! ladder keeps the render inside Telegram's photo box (natural size first,
+//! then a proportional 1200px width clamp); anything else degrades to a
+//! legible failure block (the renderer's error note plus the original
+//! source) instead of killing the message. Pre-validation never panics or
+//! hangs; failure paths yield [`MermaidResult::Failed`].
 
 use super::ast::{Block, MermaidResult};
 use futures::FutureExt;
@@ -42,9 +43,7 @@ const MERMAID_INK_CLAMP_PARAMS: &str = "?type=png&width=1200";
 /// (measured live, #1238: 3200×7404 refused, 1611×3727 accepted).
 const PHOTO_MAX_TOTAL_DIMS: f32 = 9_600.0;
 
-/// Upper bound on a single pre-validation request. A slow renderer must not
-/// stall message delivery; on timeout we fall back (to the local renderer
-/// when compiled in, else to a failure block).
+/// stall message delivery; on timeout we degrade to a legible failure block.
 const PREVALIDATE_TIMEOUT_SECS: u64 = 10;
 
 /// Cap on how much of the renderer's error body we surface, so a huge HTML
@@ -57,9 +56,9 @@ const ERROR_NOTE_MAX_CHARS: usize = 400;
 /// Exactly one of the payload sources is set:
 /// - `url`: the mermaid.ink renderer image URL Telegram fetches server-side
 ///   (the legacy, network-dependent path).
-/// - `bytes`: locally-rendered PNG bytes (feature `local-mermaid`) uploaded
-///   to Telegram via multipart as `attach://<id>` — Telegram never touches a
-///   third-party URL.
+/// - `bytes`: the pre-validated mermaid.ink PNG bytes, uploaded to Telegram
+///   via multipart as `attach://<id>` — the active delivery mode; Telegram
+///   never touches a third-party URL.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MediaEntry {
     pub(crate) id: String,
@@ -256,11 +255,11 @@ pub(crate) fn png_dims(png: &[u8]) -> Option<(u32, u32)> {
 /// past the timeout.
 ///
 /// Delivery is remote-only (#1238, owner directive: the in-process
-/// renderer's visual quality is not acceptable in production): the URL
-/// ladder walks natural size → proportional width clamp, both served by
+/// renderer's visual quality is not acceptable in production, and the owner
+/// later ordered it removed from the tree entirely): the request ladder
+/// walks natural size → proportional width clamp, both served by
 /// mermaid.ink; if every rung fails or still busts Telegram's photo box,
-/// the fence degrades to a legible failure block. No local redraw in the
-/// delivery path — the local renderer stays compiled for offline tests.
+/// the fence degrades to a legible failure block. No local renderer exists.
 pub(crate) async fn prevalidate(source: &str) -> MermaidResult {
     let url = ink_url(source);
 
@@ -418,25 +417,7 @@ pub(crate) fn replacement_for(
 /// legible failure block; the in-process renderer is never invoked in
 /// delivery.
 async fn resolve_fence(source: &str) -> MermaidResult {
-    match prevalidate(source).await {
-        other => other,
-    }
-}
-
-/// Local-render fallback for a failed mermaid.ink prevalidation. Sync on
-/// purpose: tests drive it directly without touching the network (same seam
-/// pattern as [`is_image_response`]).
-pub(crate) fn local_fallback(source: &str, note: String) -> MermaidResult {
-    #[cfg(feature = "local-mermaid")]
-    {
-        tracing::warn!(note = %note, "mermaid.ink primary path failed; falling back to local render");
-        crate::channels::telegram::rich::render::local_render_result(source)
-    }
-    #[cfg(not(feature = "local-mermaid"))]
-    {
-        tracing::debug!(note = %note, "mermaid.ink down; no local renderer compiled in");
-        MermaidResult::Failed(note)
-    }
+    prevalidate(source).await
 }
 
 /// Resolve every mermaid fence in `text` for the markdown+media path: valid

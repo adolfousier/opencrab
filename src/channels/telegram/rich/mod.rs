@@ -18,8 +18,6 @@ mod inline;
 mod list;
 pub(crate) mod mermaid;
 mod parse;
-#[cfg(feature = "local-mermaid")]
-pub(crate) mod render;
 mod render_html;
 pub(crate) mod render_json;
 mod table;
