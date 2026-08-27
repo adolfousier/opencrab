@@ -25,6 +25,7 @@ pub mod rsi_git_history;
 pub mod rsi_proposals;
 pub mod rsi_pruned;
 pub mod rsi_skill_sequences;
+pub mod rsi_stale_ledger;
 pub mod rsi_stale_scan;
 pub mod rsi_subsystem;
 pub mod rsi_sync;

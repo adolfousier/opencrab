@@ -706,6 +706,270 @@ fn pending_proposal_count() -> usize {
         + store.list_skill_proposals().len()
 }
 
+// ------------------------------------------------- #1240 stale-claim scan
+
+/// Structured stale-scan input for the improvement step (#1240 RFC step 5).
+///
+/// The RFC's whole point in one struct: `self_improve action='update'`
+/// exists and is the correct verb for sharpening a rule whose wording is
+/// wrong about the world, but nothing ever PRODUCED that input — so stale
+/// prescriptions sat in brain files forever while the verifier checked
+/// structure only. This is that input, built by the gated scan ahead of
+/// the improvement step and partitioned exactly along the RFC's action
+/// matrix (`rsi_stale_scan::decide_action`):
+///
+/// - `reword_via_update` — the actionable set. Anchor-verified stale
+///   prescriptions (dead binary / unconfigured provider / unknown config
+///   key) where the RULE stays and only its claim about the world is
+///   wrong. The cycle agent sharpens each in place via
+///   `self_improve action='update'`, which rewords and never deletes, so
+///   append-only protected brains stay append-only (RFC design decision
+///   2).
+/// - `owner_signoff` — stale anchors (vanished paths) whose natural fix
+///   is a REMOVAL. Proposed removals never execute autonomously: they are
+///   quoted to the owner via the cycle summary for explicit sign-off.
+/// - `cleared` — previously-stale anchors positively re-verified healthy
+///   again. Informational; a flag going quiet is news the cycle agent
+///   should see, never a silent drop (ledger semantics).
+///
+/// An EMPTY input is the common case by construction: the cadence gate
+/// skips most cycles (daily, forced on binary-version change), and the
+/// ledger's dedup suppresses same-verdict repeats, so each finding reaches
+/// a cycle prompt at most once. Empty input renders as an empty prompt
+/// block and the cycle is byte-identical to the pre-#1240 baseline.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StaleScanInput {
+    /// Stale prescriptions the agent may reword via
+    /// `self_improve action='update'`.
+    pub(crate) reword_via_update: Vec<crate::brain::rsi_stale_scan::StaleFinding>,
+    /// Stale anchors whose fix is a removal — owner sign-off required,
+    /// never edited by the agent.
+    pub(crate) owner_signoff: Vec<crate::brain::rsi_stale_scan::StaleFinding>,
+    /// Previously-stale anchors now verified healthy (informational).
+    pub(crate) cleared: Vec<crate::brain::rsi_stale_scan::StaleFinding>,
+}
+
+impl StaleScanInput {
+    /// Partition one gated scan outcome into the improvement-step input.
+    ///
+    /// [`crate::brain::rsi_stale_ledger::ScanRunOutcome::Skipped`] — the
+    /// cadence gate said not now, which is most cycles — maps to the empty
+    /// input: zero prompt impact, one ledger-file read of cost. A run that
+    /// surfaced nothing new (every anchor healthy, or same-verdict repeats
+    /// suppressed by the ledger) also maps to empty — findings reach the
+    /// prompt exactly once each, which is the no-spam guarantee.
+    pub(crate) fn from_outcome(outcome: &crate::brain::rsi_stale_ledger::ScanRunOutcome) -> Self {
+        let crate::brain::rsi_stale_ledger::ScanRunOutcome::Ran { report, .. } = outcome else {
+            return Self::default();
+        };
+        let mut reword_via_update = Vec::new();
+        let mut owner_signoff = Vec::new();
+        for finding in &report.to_surface {
+            match finding.action {
+                crate::brain::rsi_stale_scan::FindingAction::RewordViaUpdate => {
+                    reword_via_update.push(finding.clone())
+                }
+                crate::brain::rsi_stale_scan::FindingAction::SurfaceToUser => {
+                    owner_signoff.push(finding.clone())
+                }
+                crate::brain::rsi_stale_scan::FindingAction::None => {}
+            }
+        }
+        Self {
+            reword_via_update,
+            owner_signoff,
+            cleared: report.cleared.clone(),
+        }
+    }
+
+    /// True when the scan has nothing to say this cycle (the byte-identical
+    /// fast path).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.reword_via_update.is_empty()
+            && self.owner_signoff.is_empty()
+            && self.cleared.is_empty()
+    }
+}
+
+/// Human label for one anchor kind, for the prompt block.
+fn anchor_kind_label(kind: crate::brain::rsi_stale_scan::AnchorKind) -> &'static str {
+    match kind {
+        crate::brain::rsi_stale_scan::AnchorKind::Binary => "binary",
+        crate::brain::rsi_stale_scan::AnchorKind::ProviderName => "provider",
+        crate::brain::rsi_stale_scan::AnchorKind::ConfigKey => "config key",
+        crate::brain::rsi_stale_scan::AnchorKind::FilePath => "path",
+    }
+}
+
+/// Render the structured scan input as the prompt block fed to the
+/// improvement step (#1240). Empty input → empty string, so the cycle
+/// prompt keeps its exact pre-#1240 bytes on the fast path.
+///
+/// Ordering inside the block mirrors the RFC's action matrix: the
+/// actionable reword set first (each item carrying file, line, the dead
+/// anchor, and the evidence, plus the explicit `self_improve
+/// action='update'` recommendation), then the owner-sign-off set with an
+/// explicit do-not-edit instruction (removals are the owner's call), then
+/// cleared anchors as a one-line informational note.
+pub(crate) fn stale_scan_prompt_block(input: &StaleScanInput) -> String {
+    if input.is_empty() {
+        return String::new();
+    }
+    let mut block = String::from(
+        "\nSTALE-CLAIM SCAN FINDINGS (#1240)\n\n\
+         A read-only deterministic scan verified the world-state anchors \
+         (binaries on PATH, configured providers, config-schema keys, file \
+         paths) cited by brain-file rules. Everything below is \
+         anchor-verified — never a guess that a rule seems old.\n\n",
+    );
+    if !input.reword_via_update.is_empty() {
+        block.push_str(
+            "ACTIONABLE — reword each rule below with self_improve action='update'. \
+             The rule's wording is wrong about this install's reality; the rule itself \
+             stays. 'update' sharpens an existing instruction in place and never \
+             deletes content, so append-only protected brains stay append-only. \
+             Reword each so it no longer cites the dead anchor (name the live \
+             replacement, or drop the anchor from the sentence). Do not add new \
+             rules for these — the rule exists, only its claim about the world \
+             is wrong:\n\n",
+        );
+        for (i, f) in input.reword_via_update.iter().enumerate() {
+            block.push_str(&format!(
+                "{}. {}:{}\n   line: {}\n   dead anchor: {} `{}` — {}\n",
+                i + 1,
+                f.file,
+                f.line_no,
+                f.line,
+                anchor_kind_label(f.anchor_kind),
+                f.anchor,
+                f.evidence
+            ));
+        }
+    }
+    if !input.owner_signoff.is_empty() {
+        block.push_str(
+            "\nOWNER SIGN-OFF REQUIRED — do NOT edit these yourself. The natural fix \
+             is a removal, and removals are the owner's call, never the cycle's \
+             (append-only reality). Quote each verbatim in your cycle summary so \
+             the owner decides:\n\n",
+        );
+        for f in &input.owner_signoff {
+            block.push_str(&format!(
+                "- {}:{}\n  line: {}\n  dead anchor: {} `{}` — {}\n",
+                f.file,
+                f.line_no,
+                f.line,
+                anchor_kind_label(f.anchor_kind),
+                f.anchor,
+                f.evidence
+            ));
+        }
+    }
+    if !input.cleared.is_empty() {
+        block.push_str(
+            "\nPREVIOUSLY STALE, NOW HEALTHY AGAIN — informational only, no action \
+             needed; the anchor cited by each rule verified back to Ok:\n\n",
+        );
+        for f in &input.cleared {
+            block.push_str(&format!(
+                "- {}:{} — `{}` verified ok ({})\n",
+                f.file, f.line_no, f.anchor, f.evidence
+            ));
+        }
+    }
+    block
+}
+
+/// Run the gated stale-claim scan for one improvement step (#1240): daily
+/// cadence with a binary-version force trigger, plus ledger dedup — both
+/// inside `rsi_stale_ledger`, so most cycles cost one ledger-file read and
+/// map to an empty [`StaleScanInput`]. The scan lives HERE, inside the
+/// cycle, deliberately: it never spawns a cycle of its own, never emits an
+/// `ImprovementOpportunity` notification, and never touches the
+/// finding-set hash or the convergence pause — the existing inbox-noise
+/// gates stay exactly as they were, and findings ride along only in cycles
+/// that were already going to run, at most once each.
+///
+/// A failed ledger persist is logged loudly but is never fatal: findings
+/// still feed this cycle; the only cost is that the next successful run
+/// may re-flag them.
+fn stale_scan_cycle_input(config: &Config) -> StaleScanInput {
+    let home = crate::config::opencrabs_home();
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Best-effort cycle stamp: the engine increments rsi/cycle_number after
+    // each loop pass, so this is the count of completed cycles — good
+    // enough for the ledger's `last_verified_cycle` bookkeeping.
+    let cycle = std::fs::read_to_string(home.join("rsi/cycle_number"))
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    let outcome = crate::brain::rsi_stale_ledger::run_scan_with_ledger(
+        config,
+        &home,
+        &crate::brain::rsi_stale_ledger::default_ledger_path(),
+        now_unix,
+        cycle,
+        crate::VERSION,
+    );
+    if let crate::brain::rsi_stale_ledger::ScanRunOutcome::Ran {
+        persisted: Err(e), ..
+    } = &outcome
+    {
+        tracing::warn!(
+            "RSI stale scan: ledger persist failed ({e}) — findings still feed this \
+             cycle; the next successful scan may re-flag them"
+        );
+    }
+    let input = StaleScanInput::from_outcome(&outcome);
+    if !input.is_empty() {
+        tracing::info!(
+            "RSI stale scan fed the cycle: {} reword-via-update finding(s), {} \
+             owner-signoff, {} cleared",
+            input.reword_via_update.len(),
+            input.owner_signoff.len(),
+            input.cleared.len()
+        );
+    }
+    input
+}
+
+/// Build the improvement-step user prompt.
+///
+/// The construction is the pre-#1240 body lifted verbatim out of
+/// `run_rsi_agent_cycle` (extracted so the empty-scan path is testable
+/// byte-for-byte against the baseline), plus one addition: a non-empty
+/// `stale_block` is inserted BETWEEN the analyze line and the
+/// capability-gap actions, so the #842 rule that capability gaps close the
+/// prompt still holds. An empty `stale_block` is a no-op push — the prompt
+/// is byte-identical to what the cycle built before the stale scan
+/// existed.
+pub(crate) fn build_cycle_prompt(opportunities: &[String], stale_block: &str) -> String {
+    let mut prompt = "Run an autonomous self-improvement cycle.\n\n".to_string();
+    if !opportunities.is_empty() {
+        prompt.push_str("Detected opportunities:\n");
+        for (i, opp) in opportunities.iter().enumerate() {
+            prompt.push_str(&format!("{}. {opp}\n", i + 1));
+        }
+        prompt.push('\n');
+    }
+    prompt.push_str(
+        "Analyze the feedback data, identify the highest-impact issues, and apply improvements.\n",
+    );
+    if !stale_block.is_empty() {
+        prompt.push_str(stale_block);
+    }
+    // Capability gaps last, so the closing instruction is not "apply
+    // improvements" — which reads as `self_improve` and was answered that way
+    // on every cycle while the proposal path went unused (#842).
+    prompt.push_str(&crate::brain::rsi_disposition::required_actions_block(
+        opportunities,
+    ));
+    prompt
+}
+
 async fn run_rsi_agent_cycle(
     pool: crate::db::Pool,
     config: &Config,
@@ -845,24 +1109,17 @@ async fn run_rsi_agent_cycle(
         }
     }
 
-    // Build the user prompt with detected opportunities
-    let mut prompt = "Run an autonomous self-improvement cycle.\n\n".to_string();
-    if !opportunities.is_empty() {
-        prompt.push_str("Detected opportunities:\n");
-        for (i, opp) in opportunities.iter().enumerate() {
-            prompt.push_str(&format!("{}. {opp}\n", i + 1));
-        }
-        prompt.push('\n');
-    }
-    prompt.push_str(
-        "Analyze the feedback data, identify the highest-impact issues, and apply improvements.\n",
-    );
-    // Capability gaps last, so the closing instruction is not "apply
-    // improvements" — which reads as `self_improve` and was answered that way
-    // on every cycle while the proposal path went unused (#842).
-    prompt.push_str(&crate::brain::rsi_disposition::required_actions_block(
-        opportunities,
-    ));
+    // #1240 stale-claim scan, ahead of the improvement step: cadence +
+    // ledger dedup make most cycles cost one ledger-file read and nothing
+    // else (a Skip — or a run with nothing new — yields an empty block and
+    // the prompt below is byte-identical to the pre-#1240 baseline). The
+    // scan rides inside this cycle deliberately: it cannot spawn agent
+    // runs, add notifications, or move the finding-set hash / convergence
+    // pause, so the existing inbox-noise gates are untouched.
+    let stale_input = stale_scan_cycle_input(config);
+    // Build the user prompt with detected opportunities (+ stale-scan
+    // findings when the gated scan produced any).
+    let prompt = build_cycle_prompt(opportunities, &stale_scan_prompt_block(&stale_input));
 
     let model = config.agent.self_improvement_model.clone();
 
