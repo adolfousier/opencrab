@@ -24,6 +24,25 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] slack: no channel for session {session_id}; dropping");
                 return;
             };
+            // #1242: token/client used to be fetched only AFTER the resume
+            // turn ran, so a completion delivered during a boot window burned
+            // the whole model call and then dropped the result. Acquire both
+            // BEFORE running anything; past the bound, park the untouched
+            // message so its route claim delivers it when Slack is up.
+            let Some((token_val, client)) = bg_resume::wait_ready(
+                || async {
+                    match (state.bot_token().await, state.client().await) {
+                        (Some(t), Some(c)) => Some((t, c)),
+                        _ => None,
+                    }
+                },
+                "slack: token/client",
+            )
+            .await
+            else {
+                bg_resume::park_undeliverable(session_id, msg, "slack");
+                return;
+            };
             let Some(agent) = bg_resume::upgrade(&agent_holder) else {
                 tracing::warn!("[bg-resume] slack: agent gone; dropping resume");
                 return;
@@ -32,11 +51,6 @@ pub(crate) fn build_enqueue_callback(
                 bg_resume::run_resume_turn(agent, session_id, msg.context_text, "slack", &channel)
                     .await
             else {
-                return;
-            };
-            let (Some(token_val), Some(client)) = (state.bot_token().await, state.client().await)
-            else {
-                tracing::warn!("[bg-resume] slack: client/token not available; dropping delivery");
                 return;
             };
             let api_token = SlackApiToken::new(SlackApiTokenValue::from(token_val));

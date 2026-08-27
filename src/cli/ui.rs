@@ -1187,6 +1187,26 @@ async fn cmd_chat_inner(
     // they are not nudged a second time by it.
     let mut resumed_session_ids: std::collections::HashSet<uuid::Uuid> =
         std::collections::HashSet::new();
+    // #1242 boot-resume accounting + defined flush-path ordering (AC3):
+    //
+    //   1. restart_recovery::recover() parks interruption reports whose
+    //      sessions have no route yet (route map is empty this early);
+    //   2. THIS pass spawns the startup replays — each telegram-bound one
+    //      inside a bounded bot-readiness wait, parking its continuation
+    //      prompt past the bound instead of dropping it;
+    //   3. ChannelManager spawns the channel agents; each connect runs the
+    //      #1224 binding restore, whose claim_for_channel drains everything
+    //      parked (step 1 AND step 2 items) into the now-live enqueue
+    //      callbacks, which re-check handle readiness themselves;
+    //   4. flush-after-grace is daemon-disabled (local=None): nothing is
+    //      flushed to a void surface, parked items simply keep waiting for
+    //      their owning channel.
+    //
+    // So parks are consumed exactly once — by the route claim — never
+    // dropped, never double-run: callers only park messages that have not
+    // been executed yet.
+    let boot_found = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let boot_parked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     {
         let pending_repo = crate::db::PendingRequestRepository::new(db.pool().clone());
         match pending_repo.get_interrupted().await {
@@ -1194,6 +1214,10 @@ async fn cmd_chat_inner(
                 tracing::info!(
                     "Found {} interrupted request(s) — resuming on startup",
                     requests.len()
+                );
+                boot_found.store(
+                    requests.len(),
+                    std::sync::atomic::Ordering::Relaxed,
                 );
                 // Clear the table so these don't resume again if THIS run also crashes
                 if let Err(e) = pending_repo.clear_all().await {
@@ -1283,33 +1307,48 @@ async fn cmd_chat_inner(
                             let chat = teloxide::types::ChatId(chat_id);
                             let agent = agent.clone();
                             let tg = tg.clone();
+                            let boot_parked_tg = boot_parked.clone();
                             tokio::spawn(async move {
-                                // Wait up to 30s for the Telegram bot to authenticate
-                                let bot = {
-                                    let mut attempts = 0;
-                                    loop {
-                                        if let Some(bot) = tg.bot().await {
-                                            break Some(bot);
-                                        }
-                                        attempts += 1;
-                                        if attempts >= 30 {
-                                            tracing::error!(
-                                                "Telegram resume: bot not available after 30s for session {}",
-                                                session_id
-                                            );
-                                            break None;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    }
-                                };
-                                let Some(bot) = bot else {
-                                    return;
-                                };
+                                // Continuation prompt shared by both branches:
+                                // the inline replay below AND the parked
+                                // fallback when the bot never comes up.
                                 let prompt = "[System: A restart just occurred while you were \
                                         processing a request. Read the conversation context and continue \
                                         where you left off naturally. Do not mention the restart or \
                                         any interruption — just pick up seamlessly.]"
                                         .to_string();
+                                // Wait up to READY_WAIT_SECS for the bot to authenticate.
+                                // #1242: this used to give up silently — the pending rows
+                                // were already cleared above, so that was permanent loss.
+                                // Past the bound the prompt is PARKED: it rides
+                                // deliver_or_park until the #1224 route restore claims the
+                                // session; the enqueue callback then runs it through the
+                                // same full streaming pipeline.
+                                let Some(bot) = crate::channels::bg_resume::wait_ready(
+                                    || tg.bot(),
+                                    "startup resume: telegram bot",
+                                )
+                                .await
+                                else {
+                                    boot_parked_tg.fetch_add(
+                                        1,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    crate::brain::agent::service::restart_recovery::deliver_or_park(
+                                        session_id,
+                                        crate::brain::agent::QueuedUserMessage {
+                                            context_text: prompt,
+                                            display_text: format!(
+                                                "🔁 Startup replay parked until its route \
+                                                 claim (#1242): session {}",
+                                                &session_id.simple().to_string()[..8]
+                                            ),
+                                            origin:
+                                                crate::brain::agent::PushOrigin::Recovery,
+                                        },
+                                    );
+                                    return;
+                                };
                                 // Resumed turns must land in the originating
                                 // forum topic, not the group's General channel
                                 // (issue #130 proactive path). Prefer the
@@ -1471,6 +1510,32 @@ async fn cmd_chat_inner(
             Ok(_) => {}
             Err(e) => tracing::warn!("Failed to check for interrupted requests: {}", e),
         }
+    }
+
+    // #1242 (AC2): one end-of-boot line answering "did everything resume?" —
+    // emitted EVERY boot, zero counts included, delayed past READY_WAIT_SECS
+    // so parked outcomes settle before it fires.
+    {
+        let found = boot_found.clone();
+        let parked = boot_parked.clone();
+        let resumed: Vec<String> = resumed_session_ids
+            .iter()
+            .map(|id| id.simple().to_string()[..8].to_string())
+            .collect();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                crate::channels::bg_resume::READY_WAIT_SECS + 1,
+            ))
+            .await;
+            tracing::info!(
+                target: "boot-resume",
+                "Boot resume summary (#1242): interrupted={} resumed={} [{}] parked_awaiting_route={}",
+                found.load(std::sync::atomic::Ordering::Relaxed),
+                resumed.len(),
+                resumed.join(","),
+                parked.load(std::sync::atomic::Ordering::Relaxed)
+            );
+        });
     }
 
     // Wake (#1227): recently-active bound sessions that were NOT mid-turn at

@@ -23,6 +23,17 @@ pub(crate) fn build_enqueue_callback(
                 );
                 return;
             };
+            // #1242: client used to be fetched only AFTER the resume turn ran,
+            // so a completion arriving in a boot window burned the model call
+            // and dropped the result. Acquire the client BEFORE running
+            // anything; past the bound, park the untouched message for its
+            // route claim.
+            let Some(client) =
+                bg_resume::wait_ready(|| state.client(), "whatsapp: client").await
+            else {
+                bg_resume::park_undeliverable(session_id, msg, "whatsapp");
+                return;
+            };
             let Some(agent) = bg_resume::upgrade(&agent_holder) else {
                 tracing::warn!("[bg-resume] whatsapp: agent gone; dropping resume");
                 return;
@@ -36,10 +47,6 @@ pub(crate) fn build_enqueue_callback(
             )
             .await
             else {
-                return;
-            };
-            let Some(client) = state.client().await else {
-                tracing::warn!("[bg-resume] whatsapp: client not available; dropping delivery");
                 return;
             };
             let Ok(jid) = jid_str.parse::<wacore_binary::jid::Jid>() else {

@@ -24,8 +24,13 @@ pub(crate) fn build_enqueue_callback(
                 );
                 return;
             };
-            let Some(http) = state.http().await else {
-                tracing::warn!("[bg-resume] discord: http not available; dropping resume");
+            // #1242: one-shot http fetch — a completion arriving while Discord
+            // was still connecting was dropped outright. Bounded wait, then
+            // park so the route-restore claim delivers it once connected.
+            let Some(http) =
+                bg_resume::wait_ready(|| state.http(), "discord: http").await
+            else {
+                bg_resume::park_undeliverable(session_id, msg, "discord");
                 return;
             };
             let Some(agent) = bg_resume::upgrade(&agent_holder) else {

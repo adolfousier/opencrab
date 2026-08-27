@@ -9,6 +9,7 @@ use super::TelegramState;
 use super::handler::*;
 use super::send::{best_effort_delete, fire_chat_action};
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
+use crate::channels::bg_resume;
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
 use std::sync::Arc;
@@ -35,8 +36,15 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: no chat for session {session_id}; dropping");
                 return;
             };
-            let Some(bot) = state.bot().await else {
-                tracing::warn!("[bg-resume] telegram: bot not available; dropping resume");
+            // #1242: this used to be a one-shot fetch — a completion arriving
+            // while the bot was still authenticating after a restart was
+            // dropped with no retry and no record (2026-08-26/27 boot logs).
+            // Wait the bounded window out first; past it, park so the #1224
+            // route restore delivers when the channel claims the session.
+            let Some(bot) =
+                bg_resume::wait_ready(|| state.bot(), "telegram: bot").await
+            else {
+                bg_resume::park_undeliverable(session_id, msg, "telegram");
                 return;
             };
             let Some(agent) = agent_holder
