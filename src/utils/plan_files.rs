@@ -553,13 +553,33 @@ fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
 ///
 /// Path-based and synchronous to match `archive_plan_files`, so the TUI's
 /// synchronous reload can call it.
+///
+/// Scopes to THIS session's entries (#1239): every channel session shares one
+/// flat `archive/` dir on this box, so a lexicographic max across ALL entries
+/// picks whichever session id sorts last — observed live, session B's
+/// completion rendered session A's checklist card.
 pub fn latest_archived_plan_from_path(json_path: &Path) -> Option<PlanDocument> {
     let dir = json_path.parent()?.join("archive");
+    // Only this session's own archives qualify (#1239). archive_plan_files
+    // renames into `{live-stem}-{ts}.json`, so the live file's stem prefixes
+    // precisely its session's entries no matter which layout dir holds them.
+    let prefix = format!(
+        "{}-",
+        json_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("plan")
+    );
     let newest = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix))
+        })
         .max_by_key(|p| {
             p.file_name()
                 .map(|n| n.to_string_lossy().to_string())
