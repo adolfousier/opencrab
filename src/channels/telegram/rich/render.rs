@@ -12,16 +12,42 @@
 
 use super::ast::MermaidResult;
 
-/// Scale factor for the rasterized PNG. 2× keeps text crispy on Telegram's
-/// photo sizes without ballooning upload size; mermaid-render returns
-/// layout units at {font_size}, so a fixed integer upscale is enough.
-const RASTER_SCALE: u32 = 2;
+/// Raster scales tried, sharpest first. Layout dims are read off the usvg
+/// tree before any allocation, so each candidate is checked against
+/// Telegram's photo limits; the sharpest fitting rung wins
+/// ([`fit_photo_scale`]).
+const PHOTO_SCALE_LADDER: [f32; 5] = [2.0, 1.25, 0.75, 0.5, 0.25];
+
+/// Telegram's `sendPhoto` rejects rasters exceeding ~10_000 px combined
+/// (width + height) or on either side. Keep headroom under both caps — the
+/// combined cap binds first on large diagrams (#1238: a 44-node TD stack
+/// rasterized to ~27k sum and died with `PHOTO_INVALID_DIMENSIONS` despite
+/// rendering perfectly).
+const PHOTO_MAX_TOTAL_DIMS: u32 = 9_600;
+
+/// Pick the sharpest ladder scale whose rasterized dims stay inside the
+/// photo box. Uniform scaling preserves aspect ratio, so extreme-aspect
+/// layouts (empirical wall ≳45:1) are NOT curable by shrinking — this
+/// lifts the size-class ceiling only; those degrade in the delivery path,
+/// which reports the pixels it was refused for.
+pub(crate) fn fit_photo_scale(base_w: u32, base_h: u32) -> f32 {
+    let fits = |s: f32| -> bool {
+        let pw = ((base_w as f32) * s).ceil().max(1.0);
+        let ph = ((base_h as f32) * s).ceil().max(1.0);
+        pw + ph <= f32::from(PHOTO_MAX_TOTAL_DIMS)
+    };
+    PHOTO_SCALE_LADDER
+        .iter()
+        .copied()
+        .find(|&s| fits(s))
+        .unwrap_or(*PHOTO_SCALE_LADDER.last().expect("ladder non-empty"))
+}
 
 /// Rasterize a mermaid diagram source to PNG bytes, fully in-process.
 ///
 /// Pipeline: `mermaid_render::parse_mermaid` → `render_diagram` (SVG string
 /// + width/height in layout units) → `usvg::Tree::from_str` → `resvg::render`
-/// onto a `RASTER_SCALE`× pixmap → `Pixmap::encode_png`.
+/// onto an adaptive-scale pixmap (`fit_photo_scale`) → `Pixmap::encode_png`.
 ///
 /// Returns `Err` (never panics) when the source doesn't parse, the renderer
 /// refuses it, or SVG rasterization fails — caller degrades to a legible
@@ -57,19 +83,30 @@ pub(crate) fn render_local_png(source: &str) -> Result<Vec<u8>, String> {
 
     let tree_w = tree.size().width().ceil() as u32;
     let tree_h = tree.size().height().ceil() as u32;
-    let pw = (tree_w * RASTER_SCALE).max(1);
-    let ph = (tree_h * RASTER_SCALE).max(1);
+    // Photo-box-aware raster scale: crisp 2x when it fits, stepping down
+    // until the combined dimensions clear Telegram's rejection wall.
+    let raster_scale = fit_photo_scale(tree_w, tree_h);
+    let pw = ((tree_w as f32) * raster_scale).ceil().max(1.0) as u32;
+    let ph = ((tree_h as f32) * raster_scale).ceil().max(1.0) as u32;
 
     let mut pixmap =
         tiny_skia::Pixmap::new(pw, ph).ok_or_else(|| "could not allocate image".to_string())?;
-    let scale = tiny_skia::Transform::from_scale(RASTER_SCALE as f32, RASTER_SCALE as f32);
+    let scale = tiny_skia::Transform::from_scale(raster_scale, raster_scale);
     // resvg >=0.45 takes `&mut PixmapMut<'_>`; `as_mut()` alone yields the
     // guard by value (E0308, CI run 33022807360).
     resvg::render(&tree, scale, &mut pixmap.as_mut());
 
-    pixmap
+    let png = pixmap
         .encode_png()
-        .map_err(|e| format!("could not encode PNG: {e}"))
+        .map_err(|e| format!("could not encode PNG: {e}"))?;
+    tracing::debug!(
+        bytes = png.len(),
+        px_width = pw,
+        px_height = ph,
+        raster_scale,
+        "local mermaid render ok"
+    );
+    Ok(png)
 }
 
 /// Wrap an SVG fragment in a minimal document root, or pass through input
@@ -95,10 +132,9 @@ pub(crate) fn wrap_svg_document(svg: &str, width: f32, height: f32) -> String {
 /// ends in bytes, not a URL — the "image" is uploaded, not referenced.
 pub(crate) fn local_render_result(source: &str) -> MermaidResult {
     match render_local_png(source) {
-        Ok(bytes) => {
-            tracing::debug!(bytes = bytes.len(), "local mermaid render ok");
-            MermaidResult::ImageBytes(bytes)
-        }
+        // Success telemetry lives inside `render_local_png`, where pixel
+        // geometry and chosen scale are still in scope.
+        Ok(bytes) => MermaidResult::ImageBytes(bytes),
         Err(note) => {
             tracing::warn!(note = %note, "local mermaid render failed");
             MermaidResult::Failed(note)
@@ -151,5 +187,23 @@ mod tests {
         assert_eq!(wrap_svg_document(full, 1.0, 1.0), full);
         let xml = "<?xml version=\"1.0\"?><svg xmlns=\"x\"></svg>";
         assert_eq!(wrap_svg_document(xml, 1.0, 1.0), xml);
+    }
+
+    #[test]
+    fn fit_keeps_sharpest_scale_for_small_diagrams() {
+        assert_eq!(fit_photo_scale(640, 480), 2.0);
+    }
+
+    #[test]
+    fn fit_steps_down_until_tall_stack_fits() {
+        // The #1238 size-class: at 2x this is a ~27k-sum reject
+        // (PHOTO_INVALID_DIMENSIONS); only the floor rung clears 9_600.
+        assert_eq!(fit_photo_scale(1200, 26_000), 0.25);
+    }
+
+    #[test]
+    fn fit_falls_back_to_floor_when_no_rung_fits() {
+        // Nothing shrinks a 40k+40k layout into the box; best effort wins.
+        assert_eq!(fit_photo_scale(40_000, 40_000), 0.25);
     }
 }
