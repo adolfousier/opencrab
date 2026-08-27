@@ -114,6 +114,16 @@ pub(crate) fn push_result(
                  {parent_session_id}; the parent will not hear about it"
             );
         }
+        Delivery::RefusedInFlight => {
+            // Unreachable by construction: interrupt=true is passed above and
+            // the fork #13 gate refuses only when interrupt is unset. Arm kept
+            // explicit so a future call-site change cannot drop the outcome
+            // silently (port seam: upstream's match has no catch-all).
+            tracing::warn!(
+                "Sub-agent {agent_id}'s result was refused by the interrupt gate \
+                 for session {parent_session_id}; the parent will not hear about it"
+            );
+        }
     }
 }
 
