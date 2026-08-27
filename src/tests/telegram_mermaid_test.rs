@@ -278,7 +278,10 @@ fn replacement_for_image_bytes_carries_png_and_no_url() {
     let e = entry.expect("bytes outcome must carry a media entry");
     assert_eq!(e.id, "diag1");
     assert!(e.url.is_none());
-    assert_eq!(e.bytes.as_deref(), Some(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0][..]));
+    assert_eq!(
+        e.bytes.as_deref(),
+        Some(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0][..])
+    );
 }
 
 #[test]

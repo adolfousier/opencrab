@@ -511,11 +511,7 @@ async fn post_rich_multipart(
         }
         // Form is not Clone, so rebuild it from media+body each attempt.
         let form = build_multipart_form(media, body);
-        let resp = client
-            .post(url)
-            .multipart(form)
-            .send()
-            .await?;
+        let resp = client.post(url).multipart(form).send().await?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
