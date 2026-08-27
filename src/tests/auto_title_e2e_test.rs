@@ -192,9 +192,19 @@ fn auto_title_end_to_end_covers_all_scenarios() {
     // parsing) now legitimately needs more depth than that (#1237).
     // 16MB makes the gate deterministic across contributor platforms;
     // verified empirically: SIGABRT unset, pass at any RUST_MIN_STACK >= 8MB.
+    // The inner future must actually be driven on this thread: spawning the
+    // async fn bare would construct the future and drop it unpolled, making
+    // the whole e2e a silent no-op (caught by clippy's unused_must_use on
+    // the joined value).
     let handle = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
-        .spawn(inner_auto_title_end_to_end)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build title e2e runtime");
+            rt.block_on(inner_auto_title_end_to_end());
+        })
         .expect("spawn title e2e worker");
     handle.join().expect("title e2e worker panicked");
 }

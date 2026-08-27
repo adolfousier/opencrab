@@ -22,6 +22,10 @@ fn msg() -> QueuedUserMessage {
 }
 
 #[tokio::test]
+// The guard serializes suites touching the process-global parked-queue state
+// (#1206); holding it across the tool `.await` below is the entire point —
+// the awaited region must not interleave with another test's park.
+#[allow(clippy::await_holding_lock)]
 async fn test_notify_pushes_carry_sessionnotify_origin_for_topic_echo() {
     // #1221 notify lane: the Telegram resume callback echoes only origins it
     // knows about, so the tool must tag its pushes SessionNotify — the silent

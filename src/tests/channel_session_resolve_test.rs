@@ -220,13 +220,13 @@ async fn concurrent_resolves_create_exactly_one_session() {
         // The await (DB round-trip inside real resolution) that would let a
         // second concurrent caller in and both miss.
         tokio::task::yield_now().await;
-        if existing.is_none() {
+        if let Some(id) = existing {
+            id
+        } else {
             created.fetch_add(1, Ordering::SeqCst);
             let id = 42u64;
             *store.lock().await = Some(id);
             id
-        } else {
-            existing.unwrap()
         }
     }
 
