@@ -102,33 +102,35 @@ pub(crate) fn build_enqueue_callback(
                 } else {
                     "⚙️ background task result".to_owned()
                 };
+                // Classic blockquote stays as the degraded-path source (#1234):
+                // computed up front; only touched if the outbox send fails.
                 let (_, classic_html) = build_bg_echo_bubble(&body, &title);
-                // Rich dialect needs the RICH envelope: `<details><summary>`
-                // collapsibles (RichBlockDetails, Bot API 10.1) — the same card
-                // component plan_card renders. The classic
-                // `<blockquote expandable>` markup is the sendMessage dialect;
-                // under sendRichMessage it renders as a flat quote, not a rich
-                // card (user-verified 2026-08-26).
-                let rich_html = build_bg_echo_bubble_rich(&body, &title);
-
-                // Rich-first: route the echo bubble through the same canonical
-                // rich send plan_card uses. Any send failure degrades to the
-                // classic HTML blockquote below.
-                let sent_rich = match super::rich::api::send_rich_html_id(
-                    bot.api_url().as_str(),
-                    bot.token(),
-                    chat_id,
+                // #1234: the body rides the CANONICAL markdown→rich outbox
+                // (the same pipeline as every cron/kanal message) so pipe
+                // tables reach Telegram's rich parser as native markdown
+                // source and render as real grids. The #1225 details card
+                // pre-flattened bodies through the fallback HTML converter
+                // first — tables died before the server ever saw them.
+                // Markdown mode cannot express a <details> collapse (#421
+                // tried, shipped flat) — accepted trade: real grids beat
+                // collapsible chrome for cron output.
+                let echo_md = build_bg_echo_bubble_md(&body, &title);
+                let sent_rich = match super::send::send_markdown_outbox(
+                    bot,
+                    teloxide::types::ChatId(chat_id),
                     thread_id,
-                    &rich_html,
-                    None,
+                    &echo_md,
                     "bg-resume",
                     "-",
+                    None,
                 )
                 .await
                 {
                     Ok(_) => true,
                     Err(e) => {
-                        tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
+                        tracing::warn!(
+                            "[bg-resume] #1234 rich echo failed, using HTML: {e}"
+                        );
                         false
                     }
                 };
@@ -783,23 +785,16 @@ pub(crate) fn build_bg_echo_bubble(body: &str, title: &str) -> (String, String) 
     (markdown, html)
 }
 
-/// RICH dialect envelope for the echo bubble: `<details><summary>` collapsible
-/// — the exact card component plan_card renders via `send_rich_html_id`
-/// (Bot API 10.1 RichBlockDetails). The classic
-/// `<blockquote expandable>` markup from [`build_bg_echo_bubble`] belongs to
-/// the sendMessage dialect and renders flat under `sendRichMessage`.
-/// Mirrors plan_card.rs `CollapsibleStyle::DetailsSummary`:
-/// `<details><summary><b>{title}</b></summary>{body}</details>`.
-pub(crate) fn build_bg_echo_bubble_rich(body: &str, title: &str) -> String {
+/// Markdown leg for the echo bubble (#1234): bolded title line + the capped
+/// RAW markdown body. Feeds [`super::send::send_markdown_outbox`] — pipe
+/// tables reach the server's markdown parser as native source and render as
+/// real grids. Truncation happens before composition so payloads stay capped;
+/// no HTML escaping here — this is markdown, tags-in-titles pass verbatim.
+pub(crate) fn build_bg_echo_bubble_md(body: &str, title: &str) -> String {
     let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
     let suffix = if truncated { " (truncated)" } else { "" };
-    format!(
-        "<details><summary><b>{}{}</b></summary>{}</details>",
-        super::markdown::escape_html(title),
-        suffix,
-        super::rich::markdown_to_html(body),
-    )
+    format!("**{title}{suffix}**\n\n{body}")
 }
 
 /// Bubble header for a background-task echo: reuse the producer's display

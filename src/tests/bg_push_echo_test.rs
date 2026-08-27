@@ -5,7 +5,7 @@
 //! wrapper tags stay intact).
 
 use crate::channels::telegram::resume::{
-    background_task_title, build_bg_echo_bubble, build_bg_echo_bubble_rich, split_bg_echo_parts,
+    background_task_title, build_bg_echo_bubble, build_bg_echo_bubble_md, split_bg_echo_parts,
     split_notify_header, strip_system_framing,
 };
 use uuid::Uuid;
@@ -144,43 +144,36 @@ fn html_fallback_escapes_dynamic_title() {
     assert!(html.contains("<b>📨 Ops &lt;script&gt; / Push</b>"));
     assert!(!html.contains("<script>"), "title must not inject raw HTML");
 }
+
 #[test]
-fn rich_bubble_uses_details_summary_envelope() {
-    let rich = build_bg_echo_bubble_rich("some output", "📨 Ops / Push to session");
-    assert!(
-        rich.starts_with("<details><summary><b>"),
-        "rich envelope must open details+summary"
-    );
-    assert!(
-        rich.contains("</summary>"),
-        "summary must close before body"
-    );
-    assert!(
-        rich.ends_with("</details>"),
-        "rich envelope must close details"
-    );
-    assert!(
-        !rich.contains("blockquote"),
-        "classic dialect must not leak into rich bubble"
-    );
-    assert!(rich.contains("<b>📨 Ops / Push to session</b>"));
-    assert!(rich.contains("some output"));
+fn bubble_md_and_classic_stay_separate() {
+    let (md, classic) = build_bg_echo_bubble("body", "T");
+    assert!(classic.contains("blockquote expandable"), "fallback stays classic-dialect");
+    assert!(!md.contains('<'), "markdown leg stays tag-free for the rich parser");
 }
 
 #[test]
-fn rich_bubble_escapes_dynamic_title() {
-    let rich = build_bg_echo_bubble_rich("body", "📨 Ops <script> / Push");
-    assert!(rich.contains("<b>📨 Ops &lt;script&gt; / Push</b>"));
-    assert!(!rich.contains("<script>"), "title must not inject raw HTML");
+fn md_leg_passes_title_verbatim_into_markdown() {
+    let md = build_bg_echo_bubble_md("body", "📨 Ops <script> / Push");
+    assert!(
+        md.contains("📨 Ops <script> / Push"),
+        "markdown leg is not HTML — title passes through verbatim"
+    );
 }
 
 #[test]
-fn classic_and_rich_builders_stay_separate() {
-    let (_, classic) = build_bg_echo_bubble("body", "T");
-    let rich = build_bg_echo_bubble_rich("body", "T");
-    assert!(
-        classic.contains("blockquote expandable"),
-        "fallback stays classic-dialect"
-    );
-    assert!(rich.contains("details"), "primary stays rich-dialect");
+fn md_leg_keeps_pipe_tables_native_for_rich_parser() {
+    // The whole point of #1234: raw pipe-table source survives the leg, so
+    // the outbox's markdown dialect renders it as a real grid server-side.
+    let table = "| host | up |\n|---|---|\n| vpn | 1 |";
+    let md = build_bg_echo_bubble_md(table, "T");
+    assert!(md.contains("|---|---|"), "pipe table must reach the parser unconverted");
+}
+
+#[test]
+fn classic_and_md_builders_stay_separate() {
+    let (md, _) = build_bg_echo_bubble("body", "T");
+    let only_md = build_bg_echo_bubble_md("body", "T");
+    assert!(!md.contains("<details"), "#1234 retires the details envelope");
+    assert_eq!(only_md, "**T**\n\nbody", "md leg is bolded title + raw body");
 }
