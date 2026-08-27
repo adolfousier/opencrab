@@ -341,11 +341,12 @@ impl OnboardingWizard {
                     | OnboardingStep::TrelloSetup
                     | OnboardingStep::Complete
             );
-        let write_voice = !self.quick_jump
-            || matches!(
-                self.step,
-                OnboardingStep::VoiceSetup | OnboardingStep::Complete
-            );
+        // Voice flags are disk truth the moment any writer lands them (#1233).
+        // Write here only if THIS RUN touched VoiceSetup; reaching Complete via
+        // other steps must preserve on-disk [providers.stt.*] / [providers.tts.*]
+        // flags instead of recomputing them from stale wizard page state.
+        let write_voice =
+            self.voice_step_touched || matches!(self.step, OnboardingStep::VoiceSetup);
         let write_image = !self.quick_jump
             || matches!(
                 self.step,

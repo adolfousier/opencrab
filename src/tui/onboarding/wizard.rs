@@ -164,6 +164,11 @@ pub struct OnboardingWizard {
     /// Set by `next_step()` when `quick_jump` is true — signals the step is done
     /// and `handle_key` should return `WizardAction::Cancel`.
     pub quick_jump_done: bool,
+    /// True only after this run actually went through the voice step (#1233).
+    /// Gates voice-flag writes so a Complete reached without touching voice
+    /// preserves on-disk `[providers.stt.*]` / `[providers.tts.*]` truth
+    /// instead of rewriting it from page state.
+    pub voice_step_touched: bool,
     /// Whether onboarding auto-triggered because no config exists (true) vs
     /// user manually re-ran it via /onboard (false). Used to decide whether
     /// to send the first-time welcome message on completion.
@@ -515,6 +520,7 @@ impl OnboardingWizard {
             error_message: None,
             quick_jump: false,
             quick_jump_done: false,
+            voice_step_touched: false,
             is_first_time: false,
             resume_notice: None,
             user_scroll_offset: 0,

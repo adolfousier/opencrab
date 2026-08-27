@@ -112,6 +112,8 @@ impl OnboardingWizard {
                 self.step = OnboardingStep::Channels;
             }
             OnboardingStep::VoiceSetup => {
+                // This run touched voice, so its writes are legitimate (#1233)
+                self.voice_step_touched = true;
                 self.step = OnboardingStep::ImageSetup;
                 self.image_field = ImageField::VisionToggle;
                 self.detect_existing_image_key();

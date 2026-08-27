@@ -178,6 +178,9 @@ fn onboard_voice_stt(rest: &str) -> Result<ToolResult> {
             if let Err(e) = crate::config::write_secret_key("providers.groq", "api_key", key) {
                 return Ok(ToolResult::error(format!("Failed to save key: {e}")));
             }
+            // Persist the enablement too: keys alone do not flip the runtime
+            // voice gate (#1233). Mirrors the openai-compatible arm below.
+            set_flags(&[("providers.stt.groq", "enabled", "true")])?;
             Ok(ToolResult::success(
                 "Groq Whisper STT enabled (uses your Groq key).".into(),
             ))
