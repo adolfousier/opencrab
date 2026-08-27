@@ -102,7 +102,7 @@ pub(crate) fn build_enqueue_callback(
                 // under sendRichMessage it renders as a flat quote, not a rich
                 // card (user-verified 2026-08-26).
                 let rich_html = build_bg_echo_bubble_rich(&body, &title);
-                
+
                 // Rich-first: route the echo bubble through the same canonical
                 // rich send plan_card uses. Any send failure degrades to the
                 // classic HTML blockquote below.
@@ -120,9 +120,7 @@ pub(crate) fn build_enqueue_callback(
                 {
                     Ok(_) => true,
                     Err(e) => {
-                        tracing::warn!(
-                            "[bg-resume] #1225 rich echo failed, using HTML: {e}"
-                        );
+                        tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
                         false
                     }
                 };
