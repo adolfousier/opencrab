@@ -8,8 +8,6 @@
 //! The layout cases below were lifted out of `suggest_options.rs`: the house
 //! rule is that no source file carries a `#[cfg(test)] mod tests` block.
 
-use uuid::Uuid;
-
 use crate::channels::telegram::suggest_options::{
     FOLLOWUP_PREFIX, MAX_BUTTON_CHARS, MAX_NUMBERS_PER_ROW, SHARED_ROW_MAX_CHARS, SuggestLayout,
     folded_list_html, pick_layout, suggestion_rows_rich_html,
@@ -78,11 +76,14 @@ fn test_a_folded_list_carries_no_header_and_is_escaped() {
 fn test_callback_data_carries_the_index_not_the_text() {
     // Telegram caps callback_data at 64 BYTES and an option's text can exceed
     // that on its own, so the index is what travels and the stash resolves it.
-    let session = Uuid::new_v4();
-    let html = suggestion_rows_rich_html(&opts(&["Ship it", "Hold"]), session);
+    // #1217: the token is opaque (8 hex chars), NOT the session id — the tap
+    // resolves the serving session from the stash entry, never from data the
+    // client could forge or mix across overlapping keyboards.
+    let token = "ab12cd34";
+    let html = suggestion_rows_rich_html(&opts(&["Ship it", "Hold"]), token);
 
     for i in 0..2 {
-        let expected = format!("{FOLLOWUP_PREFIX}{session}:{i}");
+        let expected = format!("{FOLLOWUP_PREFIX}{token}:{i}");
         assert!(
             html.contains(&expected),
             "missing callback data {expected} in {html}"
@@ -93,6 +94,7 @@ fn test_callback_data_carries_the_index_not_the_text() {
             expected.len()
         );
     }
+    // The option text must not ride in the payload (it can exceed the cap).
     assert!(
         !html.contains("Ship it\" data="),
         "option text must not ride in callback data"
@@ -101,10 +103,10 @@ fn test_callback_data_carries_the_index_not_the_text() {
 
 #[test]
 fn test_callback_data_stays_within_the_cap_at_the_worst_index() {
-    // A uuid is 36 chars and the prefix 9, so the cap is only ever threatened
-    // by the index. Pin the widest realistic one.
-    let session = Uuid::new_v4();
-    let widest = format!("{FOLLOWUP_PREFIX}{session}:{}", usize::from(u8::MAX));
+    // Token form is 9 + 8 + 1 + idx chars; pin the widest realistic index
+    // against the cap (#1204).
+    let token = "ffffffff";
+    let widest = format!("{FOLLOWUP_PREFIX}{token}:{}", usize::from(u8::MAX));
     assert!(
         widest.len() <= 64,
         "#1204: {} bytes exceeds the callback_data cap",

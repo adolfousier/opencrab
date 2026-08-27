@@ -285,17 +285,17 @@ impl TelegramAgent {
                             ) {
                                 crate::channels::telegram::keyboards::ack_callback(&bot, &query, "followup").await;
                                 tracing::info!("Telegram followup tap: rest={rest}");
-                                let parsed = rest.rsplit_once(':').and_then(|(s, i)| {
-                                    Some((uuid::Uuid::parse_str(s).ok()?, i.parse::<usize>().ok()?))
+                                let parsed = rest.rsplit_once(':').and_then(|(tok, i)| {
+                                    Some((tok.to_string(), i.parse::<usize>().ok()?))
                                 });
                                 let taken = match parsed {
-                                    Some((sid, idx)) => {
-                                        let t = state.take_pending_followup(sid, idx).await;
+                                    Some((cb_token, idx)) => {
+                                        let t = state.take_pending_followup(&cb_token, idx).await;
                                         if t.is_none() {
                                             tracing::warn!(
-                                                "Telegram followup tap: no pending followup for \
-                                                 session {sid} idx {idx} (stash empty — consumed \
-                                                 or never set)"
+                                                "Telegram followup tap: unknown/expired \
+                                                 keyboard token {cb_token} idx {idx} \
+                                                 (consumed or superseded — #1217 guard)"
                                             );
                                             // Stale shell (#1226): the picker behind this
                                             // keyboard was consumed or lost to a deploy.
@@ -320,7 +320,10 @@ impl TelegramAgent {
                                         // bubble (#tg-suggest-merge) — the pick record must
                                         // then PRESERVE that answer text instead of
                                         // replacing it.
-                                        t.map(|(text, host)| (sid, text, host))
+                                        // (session, text, host): the session
+                                        // comes from the stash entry, never
+                                        // from client callback data (#1217)
+                                        t
                                     }
                                     None => {
                                         tracing::warn!(

@@ -139,10 +139,10 @@ pub(crate) fn folded_list_html_p(options: &[String]) -> String {
 /// throughout — picked over app-default after Alexey compared both live.
 /// Callback payloads stay `followup:<session>:<idx>`, so taps route through
 /// the existing callback dispatcher unchanged regardless of surface.
-pub(crate) fn suggestion_rows_rich_html(options: &[String], session_id: Uuid) -> String {
+pub(crate) fn suggestion_rows_rich_html(options: &[String], token: &str) -> String {
     let btn = |i: usize, label: &str| {
         format!(
-            "<tg-button type=\"callback_data\" data=\"{FOLLOWUP_PREFIX}{session_id}:{i}\" \
+            "<tg-button type=\"callback_data\" data=\"{FOLLOWUP_PREFIX}{token}:{i}\" \
              style=\"primary\">{}</tg-button>",
             super::markdown::escape_html(label)
         )
@@ -192,6 +192,13 @@ pub(crate) async fn render_suggestions(
         return;
     }
 
+    // Per-keyboard identity (#1217): register BEFORE building buttons so the
+    // opaque token rides in every callback payload; taps resolve against this
+    // exact set even when a newer turn registers its own keyboard meanwhile.
+    let token = state
+        .register_pending_followups(session_id, options.clone())
+        .await;
+
     // Layout tiers are measured, not guessed (see MAX_BUTTON_CHARS): short
     // labels share one row, medium labels get a full-width row each, and
     // anything longer folds into the body as a numbered list with compact
@@ -200,16 +207,10 @@ pub(crate) async fn render_suggestions(
     // callback-data limit, so we never put it there.
     let layout = pick_layout(&options);
     let text_btn = |i: usize, opt: &str| {
-        InlineKeyboardButton::callback(
-            opt.to_string(),
-            format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
-        )
+        InlineKeyboardButton::callback(opt.to_string(), format!("{FOLLOWUP_PREFIX}{token}:{i}"))
     };
     let num_btn = |i: usize| {
-        InlineKeyboardButton::callback(
-            (i + 1).to_string(),
-            format!("{FOLLOWUP_PREFIX}{session_id}:{i}"),
-        )
+        InlineKeyboardButton::callback((i + 1).to_string(), format!("{FOLLOWUP_PREFIX}{token}:{i}"))
     };
     let rows: Vec<Vec<InlineKeyboardButton>> = match layout {
         SuggestLayout::SharedRow => vec![
@@ -263,7 +264,7 @@ pub(crate) async fn render_suggestions(
         }
         if rich {
             new_html.push('\n');
-            new_html.push_str(&suggestion_rows_rich_html(&options, session_id));
+            new_html.push_str(&suggestion_rows_rich_html(&options, &token));
         }
         let outcome: Result<(), String> = if rich {
             super::rich::api::edit_rich_html(
@@ -291,14 +292,13 @@ pub(crate) async fn render_suggestions(
             Ok(()) => {
                 placed = true;
                 state
-                    .set_pending_followups(
-                        session_id,
-                        options.clone(),
-                        Some(super::state::MergedHost {
+                    .attach_followup_host(
+                        &token,
+                        super::state::MergedHost {
                             message_id: mid,
                             html: new_html,
                             rich,
-                        }),
+                        },
                     )
                     .await;
             }
@@ -320,9 +320,6 @@ pub(crate) async fn render_suggestions(
         } else {
             String::from("\u{1f4a1}")
         };
-        state
-            .set_pending_followups(session_id, options.clone(), None)
-            .await;
         let mut req = bot.send_message(chat_id, body).reply_markup(keyboard);
         req = req.parse_mode(ParseMode::Html);
         if let Some(tid) = thread_id {
@@ -332,7 +329,7 @@ pub(crate) async fn render_suggestions(
             tracing::warn!("Telegram suggest_options: send failed: {e}");
             // The buttons never landed — drop the stash so a stale entry can't
             // swallow an unrelated future tap.
-            state.clear_pending_followups(session_id).await;
+            state.drop_pending_followup(&token).await;
         }
     }
 }

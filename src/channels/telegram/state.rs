@@ -50,10 +50,15 @@ pub(crate) enum BubbleBody {
     Markdown(String),
 }
 
-/// One session's pending follow-up suggestion set: the options themselves
-/// plus, when the buttons were merged onto the answer bubble, that host.
+/// One registered follow-up suggestion keyboard: which session it belongs to,
+/// the options it offered, and — when the buttons were merged onto the answer
+/// bubble (#tg-suggest-merge) — that bubble. Keyed by an opaque short token,
+/// NOT by session: consecutive turns' keyboards coexist, and each tap
+/// resolves against its OWN keyboard's set instead of whatever newer set
+/// last overwrote a per-session slot (#1217).
 #[derive(Clone)]
-pub(crate) struct PendingFollowupSet {
+pub(crate) struct PendingFollowupEntry {
+    pub session_id: Uuid,
     pub options: Vec<String>,
     pub host: Option<MergedHost>,
 }
@@ -133,7 +138,7 @@ pub struct TelegramState {
     /// chosen suggestion as the user's next message. Keyed by session so the
     /// tap handler resolves `idx -> suggestion string`; cleared on tap or when
     /// the user sends anything.
-    pending_followups: Mutex<HashMap<Uuid, PendingFollowupSet>>,
+    pending_followups: Mutex<HashMap<String, PendingFollowupEntry>>,
     /// Solo-owner auto-registration cache (#1155): chat_id → decision already
     /// reached. `true` = eligible solo group, full owner catalog registered;
     /// `false` = evaluated and ineligible. Cleared on membership events so the
@@ -626,16 +631,33 @@ impl TelegramState {
     /// `host` is set when the keyboard was MERGED onto the final response
     /// bubble: the tap handler uses it to record the pick without erasing
     /// the answer text.
-    pub(crate) async fn set_pending_followups(
+    pub(crate) async fn register_pending_followups(
         &self,
         session_id: Uuid,
         options: Vec<String>,
-        host: Option<MergedHost>,
-    ) {
-        self.pending_followups
-            .lock()
-            .await
-            .insert(session_id, PendingFollowupSet { options, host });
+    ) -> String {
+        let token = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        self.pending_followups.lock().await.insert(
+            token.clone(),
+            PendingFollowupEntry {
+                session_id,
+                options,
+                host: None,
+            },
+        );
+        token
+    }
+
+    /// Record the answer-bubble host after a successful merge-edit (#1217).
+    pub(crate) async fn attach_followup_host(&self, token: &str, host: MergedHost) {
+        if let Some(entry) = self.pending_followups.lock().await.get_mut(token) {
+            entry.host = Some(host);
+        }
+    }
+
+    /// Forget an unused registration (buttons never landed).
+    pub(crate) async fn drop_pending_followup(&self, token: &str) {
+        self.pending_followups.lock().await.remove(token);
     }
 
     /// Take a tapped follow-up suggestion by index, consuming the WHOLE set for
@@ -645,18 +667,25 @@ impl TelegramState {
     /// of range.
     pub(crate) async fn take_pending_followup(
         &self,
-        session_id: Uuid,
+        token: &str,
         idx: usize,
-    ) -> Option<(String, Option<MergedHost>)> {
-        let set = self.pending_followups.lock().await.remove(&session_id)?;
-        let host = set.host;
-        set.options.get(idx).cloned().map(|text| (text, host))
+    ) -> Option<(Uuid, String, Option<MergedHost>)> {
+        let entry = self.pending_followups.lock().await.remove(token)?;
+        let host = entry.host.clone();
+        entry
+            .options
+            .get(idx)
+            .cloned()
+            .map(|text| (entry.session_id, text, host))
     }
 
     /// Drop this session's pending follow-up suggestions (the user sent their
     /// own message, so the buttons are stale).
     pub async fn clear_pending_followups(&self, session_id: Uuid) {
-        self.pending_followups.lock().await.remove(&session_id);
+        self.pending_followups
+            .lock()
+            .await
+            .retain(|_, e| e.session_id != session_id);
     }
 
     /// Store a cancel token for a session (before starting an agent call).
