@@ -506,18 +506,19 @@ fn test_bare_fence_with_diagram_body_is_still_classified() {
 }
 
 // ---------------------------------------------------------------------------
-// hi-res PNG embed URLs: every prevalidate/embed URL must carry the
-// type/width/scale query so Telegram receives crisp rasters instead of the
-// renderer's small JPEG defaults.
+// natural-size PNG embed URLs (#1238): the request carries no width/scale
+// overrides, so mermaid.ink returns the diagram at its intrinsic size — the
+// dimension ladder keeps that size inside Telegram's photo box.
 
 #[test]
-fn ink_url_appends_hires_png_params() {
+fn ink_url_requests_natural_size_png() {
     let url = ink_url("graph TD\n    A --> B");
     assert!(url.starts_with("https://mermaid.ink/img/"));
     assert!(
-        url.ends_with("?type=png&width=1600&scale=2"),
-        "missing hi-res params: {url}"
+        url.ends_with("?type=png"),
+        "expected natural-size params: {url}"
     );
+    assert!(!url.contains("scale=") && !url.contains("width="));
 }
 
 #[test]
@@ -532,6 +533,19 @@ fn ink_url_payload_is_base64url_without_padding() {
         .expect("payload before query string");
     assert!(!payload.contains('='), "padding leaked: {payload}");
     assert!(!payload.contains('+') && !payload.contains('/'));
+}
+
+#[test]
+fn photo_fits_matches_the_measured_photo_box() {
+    use crate::channels::telegram::rich::mermaid::photo_fits;
+    // Measured live (#1238): natural 1611×3727 accepted, prod-params
+    // 3200×7404 refused; the box edge is 9600 combined px.
+    assert!(photo_fits(1611, 3727));
+    assert!(photo_fits(1200, 2776));
+    assert!(photo_fits(800, 1851));
+    assert!(!photo_fits(3200, 7404));
+    assert!(photo_fits(4800, 4800)); // exactly 9600: fits
+    assert!(!photo_fits(4800, 4801)); // 9601: busts
 }
 
 // ---------------------------------------------------------------------------
