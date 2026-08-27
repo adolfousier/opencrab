@@ -209,7 +209,7 @@ pub(crate) fn should_render_mermaid(text: &str) -> bool {
     tg.rich_messages && tg.mermaid_render && has_mermaid_fence(text)
 }
 
-/// Full mermaid.ink embed/prevalidate URL for a diagram source: b64url
+/// Full mermaid.ink embed/resolve URL for a diagram source: b64url
 /// payload plus the natural-size PNG parameters ([`MERMAID_INK_PARAMS`]).
 pub(crate) fn ink_url(source: &str) -> String {
     ink_url_params(source, MERMAID_INK_PARAMS)
@@ -260,7 +260,7 @@ pub(crate) fn png_dims(png: &[u8]) -> Option<(u32, u32)> {
 /// walks natural size → proportional width clamp, both served by
 /// mermaid.ink; if every rung fails or still busts Telegram's photo box,
 /// the fence degrades to a legible failure block. No local renderer exists.
-pub(crate) async fn prevalidate(source: &str) -> MermaidResult {
+pub(crate) async fn resolve(source: &str) -> MermaidResult {
     let url = ink_url(source);
 
     let client = match reqwest::Client::builder()
@@ -417,7 +417,7 @@ pub(crate) fn replacement_for(
 /// legible failure block; the in-process renderer is never invoked in
 /// delivery.
 async fn resolve_fence(source: &str) -> MermaidResult {
-    prevalidate(source).await
+    resolve(source).await
 }
 
 /// Resolve every mermaid fence in `text` for the markdown+media path: valid
