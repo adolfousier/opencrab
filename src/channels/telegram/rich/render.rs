@@ -41,11 +41,19 @@ pub(crate) fn render_local_png(source: &str) -> Result<Vec<u8>, String> {
         return Err("diagram has zero size".into());
     }
 
+    // mermaid-render returns an SVG FRAGMENT, not a document: its
+    // renderers build `String::new()` and push only inner shapes
+    // (`<rect>`, `<path>`, `<text>`, …) — no `<svg xmlns…>` root is ever
+    // emitted (see upstream flowchart.rs/render.rs; error_svg.rs is the
+    // sole full-document emitter). usvg requires a well-formed document,
+    // so wrap the fragment here; #1238.
+    let doc = wrap_svg_document(&svg, w, h);
+
     let mut opt = usvg::Options::default();
     // usvg needs actual fonts to shape diagram labels; default options use
     // an empty database, which renders text as nothing. Load the system set.
     opt.fontdb_mut().load_system_fonts();
-    let tree = usvg::Tree::from_str(&svg, &opt).map_err(|e| format!("bad SVG output: {e}"))?;
+    let tree = usvg::Tree::from_str(&doc, &opt).map_err(|e| format!("bad SVG output: {e}"))?;
 
     let tree_w = tree.size().width().ceil() as u32;
     let tree_h = tree.size().height().ceil() as u32;
@@ -64,13 +72,37 @@ pub(crate) fn render_local_png(source: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("could not encode PNG: {e}"))
 }
 
+/// Wrap an SVG fragment in a minimal document root, or pass through input
+/// that is already a full document/standalone XML file.
+///
+/// `mermaid-render` returns inner content only; the document envelope with
+/// namespace, size and viewBox is our responsibility. Widths are rounded to
+/// integers — layout units are f32 but SVG length attributes accept unitless
+/// integers, and sub-pixel canvas edges buy nothing at 2× raster scale.
+pub(crate) fn wrap_svg_document(svg: &str, width: f32, height: f32) -> String {
+    let t = svg.trim_start();
+    if t.starts_with("<?xml") || t.starts_with("<svg") {
+        return svg.to_string();
+    }
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\" \
+         height=\"{height:.0}\" viewBox=\"0 0 {width:.0} {height:.0}\">{svg}</svg>"
+    )
+}
+
 /// Render a diagram to a [`MermaidResult`], the shape the mermaid delivery
 /// path already consumes. Mirrors the URL path's `prevalidate` outcome but
 /// ends in bytes, not a URL — the "image" is uploaded, not referenced.
 pub(crate) fn local_render_result(source: &str) -> MermaidResult {
     match render_local_png(source) {
-        Ok(bytes) => MermaidResult::ImageBytes(bytes),
-        Err(note) => MermaidResult::Failed(note),
+        Ok(bytes) => {
+            tracing::debug!(bytes = bytes.len(), "local mermaid render ok");
+            MermaidResult::ImageBytes(bytes)
+        }
+        Err(note) => {
+            tracing::warn!(note = %note, "local mermaid render failed");
+            MermaidResult::Failed(note)
+        }
     }
 }
 
@@ -102,5 +134,22 @@ mod tests {
     fn rejects_garbage_source() {
         let err = render_local_png("not a diagram at all").unwrap_err();
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn wrap_adds_root_to_fragment() {
+        let doc = wrap_svg_document("<g></g>", 640.0, 480.0);
+        assert!(doc.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+        assert!(doc.contains("width=\"640\""));
+        assert!(doc.contains("viewBox=\"0 0 640 480\""));
+        assert!(doc.ends_with("<g></g></svg>"));
+    }
+
+    #[test]
+    fn wrap_passes_through_document() {
+        let full = "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>";
+        assert_eq!(wrap_svg_document(full, 1.0, 1.0), full);
+        let xml = "<?xml version=\"1.0\"?><svg xmlns=\"x\"></svg>";
+        assert_eq!(wrap_svg_document(xml, 1.0, 1.0), xml);
     }
 }
