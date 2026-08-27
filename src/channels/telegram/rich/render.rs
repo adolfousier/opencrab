@@ -25,6 +25,14 @@ const PHOTO_SCALE_LADDER: [f32; 5] = [2.0, 1.25, 0.75, 0.5, 0.25];
 /// rendering perfectly).
 const PHOTO_MAX_TOTAL_DIMS: f32 = 9_600.0;
 
+/// Whether a raster of `(width, height)` px fits Telegram's photo box
+/// (combined-dims cap with headroom, [`PHOTO_MAX_TOTAL_DIMS`]). Pure, and
+/// shared so the mermaid bytes-delivery guard enforces the exact threshold
+/// the ladder uses.
+pub(crate) fn photo_fits_box(pw: u32, ph: u32) -> bool {
+    (pw as f32) + (ph as f32) <= PHOTO_MAX_TOTAL_DIMS
+}
+
 /// Pick the sharpest ladder scale whose rasterized dims stay inside the
 /// photo box. Uniform scaling preserves aspect ratio, so extreme-aspect
 /// layouts (empirical wall ≳45:1) are NOT curable by shrinking — this

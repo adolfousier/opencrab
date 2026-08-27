@@ -566,3 +566,32 @@ fn no_media_found_sees_through_anyhow_context_wraps() {
     let wrapped = inner.context("while delivering final response");
     assert!(is_no_media_found(&wrapped));
 }
+
+// ---------------------------------------------------------------------------
+// png_dims (bytes-delivery oversize guard)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn png_dims_parses_ihdr() {
+    use crate::channels::telegram::rich::mermaid::png_dims;
+
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    png.extend_from_slice(&[0, 0, 0, 13]); // IHDR chunk length
+    png.extend_from_slice(b"IHDR");
+    png.extend_from_slice(&1611u32.to_be_bytes());
+    png.extend_from_slice(&3727u32.to_be_bytes());
+    assert_eq!(png_dims(&png), Some((1611, 3727)));
+}
+
+#[test]
+fn png_dims_rejects_non_png_and_short_buffers() {
+    use crate::channels::telegram::rich::mermaid::png_dims;
+
+    assert_eq!(png_dims(b"not a png at all...."), None);
+    assert_eq!(png_dims(&[0x89, b'P']), None);
+    let mut hdr = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    hdr.extend_from_slice(&[0, 0, 0, 13]);
+    hdr.extend_from_slice(b"IDAT"); // wrong chunk type
+    hdr.extend_from_slice(&[0u8; 16]);
+    assert_eq!(png_dims(&hdr), None);
+}

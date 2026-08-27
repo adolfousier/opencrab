@@ -210,16 +210,20 @@ pub(crate) fn ink_url(source: &str) -> String {
     )
 }
 
-/// Pre-validate a single mermaid diagram against the renderer. Returns
-/// [`MermaidResult::Image`] with the embed URL only on HTTP 200 + an
-/// `image/*` content type; every other outcome (non-200, non-image, timeout,
-/// transport error, client build failure) yields [`MermaidResult::Failed`]
-/// with a legible note. Never panics, never hangs past the timeout.
+/// Pre-validate a single mermaid diagram against the renderer. On HTTP 200
+/// + an `image/*` content type it DOWNLOADS the rendered PNG and returns
+/// [`MermaidResult::ImageBytes`] — Telegram never fetches a URL from us
+/// (its own URL fetcher proved the unreliable link: `400 failed to get
+/// HTTP URL content` on live probes while the same URL fetched fine from
+/// this host). Every other outcome (non-200, non-image, timeout, transport
+/// error, client build failure, dropped body) yields
+/// [`MermaidResult::Failed`] with a legible note. Never panics, never hangs
+/// past the timeout.
 ///
-/// Primary path for every build: on success [`resolve_fence`] embeds the
-/// URL; on [`MermaidResult::Failed`] it hands off to the in-process
-/// renderer ([`local_fallback`]) when the `local-mermaid` feature is
-/// compiled in.
+/// Primary path for every build: on success [`resolve_fence`] delivers the
+/// bytes via multipart; on [`MermaidResult::Failed`] it hands off to the
+/// in-process renderer ([`local_fallback`]) when the `local-mermaid`
+/// feature is compiled in.
 pub(crate) async fn prevalidate(source: &str) -> MermaidResult {
     let url = ink_url(source);
 
@@ -252,7 +256,29 @@ pub(crate) async fn prevalidate(source: &str) -> MermaidResult {
         .to_string();
 
     if is_image_response(status, &content_type) {
-        return MermaidResult::Image(url);
+        // Bytes delivery (hybrid round 2): download the PNG here and hand
+        // Telegram the bytes via multipart (`attach://`). Telegram's own
+        // server-side URL fetcher is the unreliable hop — it 400s with
+        // "failed to get HTTP URL content" on URLs this host fetches fine —
+        // so Telegram never sees a URL at all.
+        let body = match resp.bytes().await {
+            Ok(b) => b,
+            Err(_) => {
+                return local_fallback(source, "diagram renderer dropped the image".to_string());
+            }
+        };
+        // Oversize renders fall to the local ladder, which downscales
+        // instead of letting Telegram reject the photo outright (#1238).
+        if let Some((w, h)) = png_dims(&body) {
+            if !crate::channels::telegram::rich::render::photo_fits_box(w, h) {
+                return local_fallback(
+                    source,
+                    format!("rendered diagram {w}x{h} exceeds the photo box"),
+                );
+            }
+        }
+        tracing::info!(bytes = body.len(), "mermaid.ink render ok; delivering bytes");
+        return MermaidResult::ImageBytes(body.to_vec());
     }
 
     // Not a usable image: surface the renderer's own error text (mermaid.ink
@@ -318,8 +344,8 @@ pub(crate) fn replacement_for(
 /// in-process renderer is the AUTOMATIC fallback for when the service is
 /// down, erroring, or slow.
 ///
-/// - [`prevalidate`] succeeds → the hi-res embed URL is returned and
-///   Telegram refetches the image server-side, as before.
+/// - [`prevalidate`] succeeds → the PNG bytes ride to Telegram via
+///   multipart (`attach://`); Telegram never refetches a URL.
 /// - [`prevalidate`] fails ([`MermaidResult::Failed`]) → the fence is
 ///   re-resolved LOCALLY when the `local-mermaid` feature is compiled in:
 ///   PNG bytes rendered in-process and uploaded via multipart
@@ -340,7 +366,7 @@ async fn resolve_fence(source: &str) -> MermaidResult {
 pub(crate) fn local_fallback(source: &str, note: String) -> MermaidResult {
     #[cfg(feature = "local-mermaid")]
     {
-        tracing::warn!(note = %note, "mermaid.ink down; falling back to local render");
+        tracing::warn!(note = %note, "mermaid.ink primary path failed; falling back to local render");
         crate::channels::telegram::rich::render::local_render_result(source)
     }
     #[cfg(not(feature = "local-mermaid"))]
