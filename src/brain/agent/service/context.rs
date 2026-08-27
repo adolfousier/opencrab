@@ -345,6 +345,7 @@ impl AgentService {
 
         let summary = Self::compute_compaction_summary(
             provider,
+            self.fallback_chain_snapshot(),
             session_id,
             context.messages.clone(),
             context.token_count,
@@ -384,6 +385,124 @@ impl AgentService {
         Ok(summary)
     }
 
+    /// Send the summariser request, walking `[providers.fallback]` when the
+    /// session's provider fails (#1247).
+    ///
+    /// Compaction used to call `provider.complete()` once and surface whatever
+    /// came back. Every other request path in the process walks the chain, so
+    /// a session whose primary was rate-limited or out of credit kept chatting
+    /// happily via a fallback while `/compact` died on the dead primary — and
+    /// with the context window full, a session that cannot compact cannot
+    /// recover at all.
+    ///
+    /// Mirrors the tool loop's walk deliberately: skip the primary's own name,
+    /// skip providers the #952 quota breaker has marked exhausted, remap the
+    /// model to each fallback's default when it doesn't carry the requested
+    /// one, and report the whole ledger if everything dies.
+    /// `pub(crate)` for the regression tests in `src/tests` — no caller outside
+    /// compaction should send a summariser request.
+    pub(crate) async fn complete_compaction_request(
+        primary: &Arc<dyn Provider>,
+        fallbacks: &[Arc<dyn Provider>],
+        request: LLMRequest,
+        cancel: &CancellationToken,
+    ) -> Result<crate::brain::provider::LLMResponse> {
+        use crate::brain::provider::{error as provider_error, health};
+
+        let primary_name = primary.name().to_string();
+        let first_err = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                tracing::info!("Compaction cancelled before completion");
+                return Err(AgentError::Cancelled);
+            }
+            r = primary.complete(request.clone()) => match r {
+                Ok(response) => return Ok(response),
+                Err(e) => e,
+            },
+        };
+
+        // #952 breaker: a hard quota won't lift, so later turns skip this
+        // provider instead of paying the round trip to learn that again.
+        if first_err.is_quota_exhausted() {
+            health::mark_exhausted(&primary_name);
+        }
+
+        if fallbacks.is_empty() || !provider_error::should_try_next_provider(&first_err) {
+            return Err(AgentError::Provider(first_err));
+        }
+
+        tracing::warn!(
+            "Compaction: primary '{}' failed ({}) — walking fallback chain",
+            primary_name,
+            provider_error::short_error_reason(&first_err),
+        );
+
+        let mut tried: Vec<String> = Vec::new();
+        let mut skipped: Vec<String> = Vec::new();
+        let mut last_err = first_err;
+
+        for fallback in fallbacks {
+            let name = fallback.name().to_string();
+            if name == primary_name {
+                continue;
+            }
+            if health::is_exhausted(&name) {
+                skipped.push(name);
+                continue;
+            }
+
+            // Never send a provider a model it doesn't publish — same
+            // invariant the chat path and `FallbackProvider` enforce.
+            let mut fb_request = request.clone();
+            let supported = fallback.supported_models();
+            if !supported.is_empty() && !supported.iter().any(|m| m == &fb_request.model) {
+                fb_request.model = fallback.default_model().to_string();
+            }
+            tracing::info!(
+                "Compaction: trying fallback provider '{}' (model '{}')",
+                name,
+                fb_request.model
+            );
+
+            let err = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    tracing::info!("Compaction cancelled while walking fallback chain");
+                    return Err(AgentError::Cancelled);
+                }
+                r = fallback.complete(fb_request) => match r {
+                    Ok(response) => {
+                        tracing::info!("Compaction served by fallback '{}'", name);
+                        return Ok(response);
+                    }
+                    Err(e) => e,
+                },
+            };
+
+            if err.is_quota_exhausted() {
+                health::mark_exhausted(&name);
+            }
+            tried.push(format!(
+                "{}: {}",
+                name,
+                provider_error::short_error_reason(&err)
+            ));
+            last_err = err;
+        }
+
+        let summary = provider_error::chain_exhausted_summary(
+            &primary_name,
+            &provider_error::short_error_reason(&last_err),
+            &tried,
+            &skipped,
+        );
+        tracing::error!("Compaction: fallback chain exhausted: {summary}");
+        Err(AgentError::Provider(provider_error::with_chain_summary(
+            last_err, summary,
+        )))
+    }
+
     /// Compute a compaction summary from a snapshot of messages.
     ///
     /// This is the LLM-facing half of compaction. It does not touch any live
@@ -396,6 +515,7 @@ impl AgentService {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn compute_compaction_summary(
         provider: Arc<dyn Provider>,
+        fallbacks: Vec<Arc<dyn Provider>>,
         session_id: Uuid,
         snapshot_messages: Vec<Message>,
         snapshot_token_count: usize,
@@ -594,14 +714,8 @@ impl AgentService {
         // Non-streaming call so no compaction text leaks to the TUI in the
         // background-spawn case. `cancel` aborts the request mid-flight if the
         // caller signals (e.g. 90% hard-truncate firing on the same session).
-        let response = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {
-                tracing::info!("Compaction cancelled before completion");
-                return Err(AgentError::Cancelled);
-            }
-            r = provider.complete(request) => r.map_err(AgentError::Provider)?,
-        };
+        let response =
+            Self::complete_compaction_request(&provider, &fallbacks, request, &cancel).await?;
 
         let summary = Self::extract_text_from_response(&response);
 

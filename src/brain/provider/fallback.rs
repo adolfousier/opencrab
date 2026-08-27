@@ -186,32 +186,18 @@ impl FallbackProvider {
     /// Decide whether an error justifies trying the next provider in the
     /// chain. Beyond transient errors (rate-limit, 5xx, timeout), we also
     /// fall through on model/parameter mismatches — the fallback provider
-    /// may support the request after model remapping.
-    /// Auth errors (401/403) also trigger fallback — for OAuth providers
-    /// like Qwen, a 401 after refresh failure means the token is dead and
-    /// the provider is unusable until re-authenticated.
+    /// may support the request after model remapping. Auth errors (401/403)
+    /// also trigger fallback: for OAuth providers like Qwen, a 401 after a
+    /// failed refresh means the token is dead and the provider is unusable
+    /// until re-authenticated.
+    ///
+    /// Delegates to the shared policy in `provider::error` (#1247) so this
+    /// chain, the tool loop's walk and compaction cannot disagree about what
+    /// is fatal. Notably it now falls through on hard quota / 402 billing
+    /// errors, which this function used to treat as terminal because it gated
+    /// on `is_retryable` alone.
     fn should_try_next(err: &ProviderError) -> bool {
-        if err.is_retryable() {
-            return true;
-        }
-        match err {
-            // Model not supported by this provider — fallback may have it
-            ProviderError::ModelNotFound(_) => true,
-            // Invalid parameter / unsupported model returned as 400 —
-            // often means the model or parameter isn't valid for this
-            // specific provider but a fallback with remapping may work
-            ProviderError::ApiError { status: 400, .. } => true,
-            // Auth failure (401/403) — provider is dead (expired OAuth,
-            // revoked key, etc.). Fall to next provider rather than
-            // surfacing a cryptic auth error to the user.
-            ProviderError::ApiError {
-                status: 401 | 403, ..
-            }
-            | ProviderError::InvalidApiKey => true,
-            // InvalidRequest covers parsed model/param errors
-            ProviderError::InvalidRequest(_) => true,
-            _ => false,
-        }
+        super::error::should_try_next_provider(err)
     }
 
     /// Final error when every chain entry failed: log the ledger and attach

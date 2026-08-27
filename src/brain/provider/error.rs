@@ -315,6 +315,44 @@ impl ProviderError {
     }
 }
 
+/// Does this failure justify handing the request to the NEXT provider in a
+/// chain? The single policy shared by `FallbackProvider`, the tool loop's
+/// in-place walk, and compaction, so a request that would fail over during a
+/// chat turn fails over everywhere else too (#1247).
+///
+/// Note the deliberate split from [`ProviderError::is_retryable`]: the two
+/// answer different questions and a hard quota is exactly where they diverge.
+/// `is_retryable` says "retry the SAME provider", which for a monthly cap or
+/// an empty balance is pointless — so it returns false, as #952 intended.
+/// Chain traversal then read that false as "this error is fatal, stop" and
+/// aborted on the one class of error a chain exists to survive: the next
+/// provider bills a different account and would have answered fine.
+pub fn should_try_next_provider(err: &ProviderError) -> bool {
+    // Transient (rate limit, 5xx, timeout) — the next provider may be healthy.
+    if err.is_retryable() {
+        return true;
+    }
+    // Hard quota / billing cap. Never retried in place, always worth handing
+    // to a provider with its own budget.
+    if err.is_quota_exhausted() {
+        return true;
+    }
+    match err {
+        // Model not supported here — a fallback may carry it, and the caller
+        // remaps to the fallback's default model anyway.
+        ProviderError::ModelNotFound(_) => true,
+        // 400 invalid parameter/model, 401/403 dead credentials, 402 billing.
+        // All unrecoverable on THIS provider, all fine on the next one.
+        ProviderError::ApiError {
+            status: 400..=403, ..
+        }
+        | ProviderError::InvalidApiKey => true,
+        // Parsed model/param rejection.
+        ProviderError::InvalidRequest(_) => true,
+        _ => false,
+    }
+}
+
 /// One-line, user-facing classification of a provider failure for retry
 /// notices and fallback-chain summaries (#952): "quota exhausted",
 /// "rate limited", "auth error", "server error 502", "timeout", ...
