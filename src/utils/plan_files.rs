@@ -474,7 +474,60 @@ pub async fn is_pre_init_editing(session_id: Uuid) -> bool {
 /// Archive the session's plan artifacts (`.json` and `.md`) under
 /// `archive/` with a timestamp, returning the session to NoPlan.
 pub async fn archive_plan(session_id: Uuid) -> std::io::Result<()> {
-    archive_plan_files(&plan_json_read_path(session_id).await)
+    archive_plan_files(&plan_json_read_path(session_id).await)?;
+    // Explicit "completed THIS settle" stamp, durable in the archive dir so a
+    // flood-delayed settle (potentially minutes late) — or one that lands on
+    // a detached-resume path driving stream_loop instead of the handler's own
+    // settle gate — still observes that the completion happened now (#1231).
+    mark_plan_just_archived(session_id).await;
+    Ok(())
+}
+
+/// Path of the durable "just archived" sidecar for `session_id`.
+async fn plan_just_archived_path(session_id: Uuid) -> std::path::PathBuf {
+    archive_dir(session_id).await.join(format!("just_archived_{session_id}.flag"))
+}
+
+/// Stamp that this session's plan was archived on THIS settle.
+///
+/// Durable file, not an in-memory flag, so it survives a flood-throttled
+/// settle that lands minutes later AND a detached-resume settle that runs
+/// `stream_loop.rs`/`resume.rs` (which construct fresh state and drive
+/// `refresh_plan_card` directly, bypassing the handler settle gate). The old
+/// mtime recency guess (`recent_archived_plan`, 120s) could not handle that:
+/// a flood `retry_after` of 25–32s plus queued sends pushed completion
+/// settlement past the window, the gate missed, and the archived card was
+/// deleted instead of finalized.
+pub async fn mark_plan_just_archived(session_id: Uuid) {
+    let path = plan_just_archived_path(session_id).await;
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        tracing::warn!("plan just-archived flag mkdir failed: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(&path, "1") {
+        tracing::warn!("plan just-archived flag write failed: {e}");
+    }
+}
+
+/// Consume the "just archived" stamp for `session_id`, one-shot.
+///
+/// Returns `true` exactly once for the settle that archived the plan; every
+/// later call returns `false` (and removes the stale sidecar). The single
+/// consumer (the settle gate, or the `refresh_plan_card` no-live-plan re-stick
+/// on the resume path) is the one that finalizes — the one-shot guard stops
+/// both from finalizing the same completion into duplicate cards.
+pub async fn take_plan_just_archived(session_id: Uuid) -> bool {
+    let path = plan_just_archived_path(session_id).await;
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::debug!("plan just-archived flag remove failed: {e}");
+        }
+        true
+    } else {
+        false
+    }
 }
 
 /// True when the newest file under this session's `archive/` was written
