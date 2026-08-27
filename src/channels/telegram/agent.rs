@@ -1977,10 +1977,22 @@ async fn resolve_callback_session(
     // Try to get the session registered for this chat, scoped to the forum
     // topic the button was pressed in (#215) so a callback inside a topic
     // resolves that topic's session, not the base one.
+    //
+    // #1248: this MUST compose the topic id exactly like message ingress —
+    // through `session_topic_for_event`, which applies the #1220 General-topic
+    // normalization. Calling `topic_session_id` alone resolved General to
+    // `None` here while ingress bound the session under
+    // `Some(GENERAL_TOPIC_ID)`, so button presses in a forum's General topic
+    // acted on the stale base session instead of the live one.
     if let Some(msg) = &query.message {
         let chat_id = msg.chat().id.0;
+        let known_forum = state.is_known_forum(chat_id).await;
         let topic_id = msg.regular_message().and_then(|m| {
-            super::session_resolve::topic_session_id(m.is_topic_message, m.thread_id.map(|t| t.0.0))
+            super::session_resolve::session_topic_for_event(
+                m.is_topic_message,
+                m.thread_id.map(|t| t.0.0),
+                known_forum,
+            )
         });
         if let Some(session_id) = state.chat_session(chat_id, topic_id).await {
             return Some(session_id);

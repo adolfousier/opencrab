@@ -103,6 +103,25 @@ pub fn normalize_topic(raw: Option<i32>, known_forum: bool) -> Option<i32> {
     })
 }
 
+/// Session-scoping topic id for ANY Telegram event: an incoming message or an
+/// inline-button callback. Single entry point so the two paths cannot drift.
+///
+/// They did drift (#1248): ingress composed
+/// `normalize_topic(topic_session_id(..), known_forum)` while the callback
+/// resolver called `topic_session_id` alone. In a known forum the General
+/// topic then resolved `None` for button presses and `Some(GENERAL_TOPIC_ID)`
+/// for messages, so `/models` taps looked up `(chat, None)` — the pre-#1220
+/// base session — and wrote the provider/model pick into a row that serves no
+/// messages, while the chat kept answering on its real `(chat, Some(1))`
+/// session. The switch appeared to be silently ignored.
+pub fn session_topic_for_event(
+    is_topic_message: bool,
+    thread_id: Option<i32>,
+    known_forum: bool,
+) -> Option<i32> {
+    normalize_topic(topic_session_id(is_topic_message, thread_id), known_forum)
+}
+
 /// True when a session exceeded the configured idle window (same rule as handler suffix path).
 pub fn session_idle_expired(
     updated_at: chrono::DateTime<chrono::Utc>,

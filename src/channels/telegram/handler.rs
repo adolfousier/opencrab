@@ -445,8 +445,9 @@ pub(crate) async fn handle_message(
     // groups, plain reply-threads — and, since #1220, NOT the General topic
     // of a known forum: there it normalizes to Some(GENERAL_TOPIC_ID), giving
     // General its own session bucket so bg-task/subagent pushes route home.
-    let topic_id = session_resolve::normalize_topic(
-        session_resolve::topic_session_id(msg.is_topic_message, raw_thread),
+    let topic_id = session_resolve::session_topic_for_event(
+        msg.is_topic_message,
+        raw_thread,
         telegram_state.is_known_forum(msg.chat.id.0).await,
     );
 
