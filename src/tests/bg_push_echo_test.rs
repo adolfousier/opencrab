@@ -148,8 +148,14 @@ fn html_fallback_escapes_dynamic_title() {
 #[test]
 fn bubble_md_and_classic_stay_separate() {
     let (md, classic) = build_bg_echo_bubble("body", "T");
-    assert!(classic.contains("blockquote expandable"), "fallback stays classic-dialect");
-    assert!(!md.contains('<'), "markdown leg stays tag-free for the rich parser");
+    assert!(
+        classic.contains("blockquote expandable"),
+        "fallback stays classic-dialect"
+    );
+    assert!(
+        !md.contains('<'),
+        "markdown leg stays tag-free for the rich parser"
+    );
 }
 
 #[test]
@@ -167,13 +173,22 @@ fn md_leg_keeps_pipe_tables_native_for_rich_parser() {
     // the outbox's markdown dialect renders it as a real grid server-side.
     let table = "| host | up |\n|---|---|\n| vpn | 1 |";
     let md = build_bg_echo_bubble_md(table, "T");
-    assert!(md.contains("|---|---|"), "pipe table must reach the parser unconverted");
+    assert!(
+        md.contains("|---|---|"),
+        "pipe table must reach the parser unconverted"
+    );
 }
 
 #[test]
 fn classic_and_md_builders_stay_separate() {
     let (md, _) = build_bg_echo_bubble("body", "T");
     let only_md = build_bg_echo_bubble_md("body", "T");
-    assert!(!md.contains("<details"), "#1234 retires the details envelope");
-    assert_eq!(only_md, "**T**\n\nbody", "md leg is bolded title + raw body");
+    assert!(
+        !md.contains("<details"),
+        "#1234 retires the details envelope"
+    );
+    assert_eq!(
+        only_md, "**T**\n\nbody",
+        "md leg is bolded title + raw body"
+    );
 }

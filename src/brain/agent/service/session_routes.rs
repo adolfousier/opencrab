@@ -121,7 +121,9 @@ static TURN_PROBES: Mutex<Option<HashMap<Uuid, TurnProbe>>> = Mutex::new(None);
 pub fn register_turn_probe(session_id: Uuid, probe: TurnProbe) {
     match TURN_PROBES.lock() {
         Ok(mut guard) => {
-            guard.get_or_insert_with(HashMap::new).insert(session_id, probe);
+            guard
+                .get_or_insert_with(HashMap::new)
+                .insert(session_id, probe);
         }
         Err(e) => {
             tracing::error!(

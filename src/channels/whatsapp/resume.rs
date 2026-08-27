@@ -28,8 +28,7 @@ pub(crate) fn build_enqueue_callback(
             // and dropped the result. Acquire the client BEFORE running
             // anything; past the bound, park the untouched message for its
             // route claim.
-            let Some(client) =
-                bg_resume::wait_ready(|| state.client(), "whatsapp: client").await
+            let Some(client) = bg_resume::wait_ready(|| state.client(), "whatsapp: client").await
             else {
                 bg_resume::park_undeliverable(session_id, msg, "whatsapp");
                 return;

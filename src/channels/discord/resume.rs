@@ -27,9 +27,7 @@ pub(crate) fn build_enqueue_callback(
             // #1242: one-shot http fetch — a completion arriving while Discord
             // was still connecting was dropped outright. Bounded wait, then
             // park so the route-restore claim delivers it once connected.
-            let Some(http) =
-                bg_resume::wait_ready(|| state.http(), "discord: http").await
-            else {
+            let Some(http) = bg_resume::wait_ready(|| state.http(), "discord: http").await else {
                 bg_resume::park_undeliverable(session_id, msg, "discord");
                 return;
             };

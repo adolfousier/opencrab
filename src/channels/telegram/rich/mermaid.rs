@@ -309,7 +309,11 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
         // Chromium/ELK quality. Delivery never redraws locally.
         match png_dims(&body) {
             Some((w, h)) if !photo_fits(w, h) => {
-                tracing::warn!(w, h, "natural render exceeds the photo box; retrying at the width clamp");
+                tracing::warn!(
+                    w,
+                    h,
+                    "natural render exceeds the photo box; retrying at the width clamp"
+                );
                 let clamp_url = ink_url_params(source, MERMAID_INK_CLAMP_PARAMS);
                 let cresp = match client.get(&clamp_url).send().await {
                     Ok(r) => r,
@@ -343,12 +347,18 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
                         ));
                     }
                 }
-                tracing::info!(bytes = cbytes.len(), "mermaid.ink clamp render ok; delivering bytes");
+                tracing::info!(
+                    bytes = cbytes.len(),
+                    "mermaid.ink clamp render ok; delivering bytes"
+                );
                 return MermaidResult::ImageBytes(cbytes.to_vec());
             }
             _ => {}
         }
-        tracing::info!(bytes = body.len(), "mermaid.ink render ok; delivering bytes");
+        tracing::info!(
+            bytes = body.len(),
+            "mermaid.ink render ok; delivering bytes"
+        );
         return MermaidResult::ImageBytes(body.to_vec());
     }
 

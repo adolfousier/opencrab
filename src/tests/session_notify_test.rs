@@ -9,7 +9,9 @@ use uuid::Uuid;
 
 use crate::brain::agent::QueuedUserMessage;
 use crate::brain::agent::service::restart_recovery::{expect_channel_route, test_guard};
-use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session, register_turn_probe};
+use crate::brain::agent::service::session_routes::{
+    Delivery, deliver_to_session, register_turn_probe,
+};
 use crate::brain::tools::subagent::SessionNotifyTool;
 use crate::brain::tools::r#trait::Tool;
 
@@ -176,7 +178,10 @@ async fn test_tool_reports_refusal_with_remedy() {
         )
         .await;
     let result = outcome.expect("tool executes");
-    assert!(!result.success, "#13: refusal must read as failure to the sender");
+    assert!(
+        !result.success,
+        "#13: refusal must read as failure to the sender"
+    );
     let error = result.error.expect("#13: refusal carries an explanation");
     assert!(
         error.contains("interrupt=true"),
@@ -188,9 +193,8 @@ async fn test_tool_reports_refusal_with_remedy() {
 async fn test_tool_interrupt_param_reaches_delivery() {
     let _guard = test_guard();
     let session = Uuid::new_v4();
-    let captured: std::sync::Arc<
-        std::sync::Mutex<Option<QueuedUserMessage>>,
-    > = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let captured: std::sync::Arc<std::sync::Mutex<Option<QueuedUserMessage>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     let sink = captured.clone();
     crate::brain::agent::service::session_routes::register_session_route(
         session,
@@ -211,10 +215,15 @@ async fn test_tool_interrupt_param_reaches_delivery() {
             &context,
         )
         .await;
-    assert!(outcome.expect("tool executes").success, "interrupt=true must deliver");
+    assert!(
+        outcome.expect("tool executes").success,
+        "interrupt=true must deliver"
+    );
     let queued = captured.lock().unwrap().take().expect("message enqueued");
     assert!(
-        !queued.context_text.contains("queued while you were working"),
+        !queued
+            .context_text
+            .contains("queued while you were working"),
         "framing is added by the channel queue branch, not by the tool"
     );
 }

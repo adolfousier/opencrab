@@ -1215,10 +1215,7 @@ async fn cmd_chat_inner(
                     "Found {} interrupted request(s) — resuming on startup",
                     requests.len()
                 );
-                boot_found.store(
-                    requests.len(),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                boot_found.store(requests.len(), std::sync::atomic::Ordering::Relaxed);
                 // Clear the table so these don't resume again if THIS run also crashes
                 if let Err(e) = pending_repo.clear_all().await {
                     tracing::warn!(error = %e, "failed to clear pending items");
@@ -1330,10 +1327,8 @@ async fn cmd_chat_inner(
                                 )
                                 .await
                                 else {
-                                    boot_parked_tg.fetch_add(
-                                        1,
-                                        std::sync::atomic::Ordering::Relaxed,
-                                    );
+                                    boot_parked_tg
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                     crate::brain::agent::service::restart_recovery::deliver_or_park(
                                         session_id,
                                         crate::brain::agent::QueuedUserMessage {
@@ -1343,8 +1338,7 @@ async fn cmd_chat_inner(
                                                  claim (#1242): session {}",
                                                 &session_id.simple().to_string()[..8]
                                             ),
-                                            origin:
-                                                crate::brain::agent::PushOrigin::Recovery,
+                                            origin: crate::brain::agent::PushOrigin::Recovery,
                                         },
                                     );
                                     return;

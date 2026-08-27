@@ -41,9 +41,7 @@ pub(crate) fn build_enqueue_callback(
             // dropped with no retry and no record (2026-08-26/27 boot logs).
             // Wait the bounded window out first; past it, park so the #1224
             // route restore delivers when the channel claims the session.
-            let Some(bot) =
-                bg_resume::wait_ready(|| state.bot(), "telegram: bot").await
-            else {
+            let Some(bot) = bg_resume::wait_ready(|| state.bot(), "telegram: bot").await else {
                 bg_resume::park_undeliverable(session_id, msg, "telegram");
                 return;
             };
@@ -128,9 +126,7 @@ pub(crate) fn build_enqueue_callback(
                 {
                     Ok(_) => true,
                     Err(e) => {
-                        tracing::warn!(
-                            "[bg-resume] #1234 rich echo failed, using HTML: {e}"
-                        );
+                        tracing::warn!("[bg-resume] #1234 rich echo failed, using HTML: {e}");
                         false
                     }
                 };
@@ -945,17 +941,23 @@ pub async fn wake_recently_active(
 
     let mut scheduled = 0usize;
     for b in bindings {
-        let Ok(sid) = Uuid::parse_str(&b.session_id) else { continue };
+        let Ok(sid) = Uuid::parse_str(&b.session_id) else {
+            continue;
+        };
         if already_resumed.contains(&sid) {
             continue;
         }
-        let Ok(chat_id) = b.chat_id.parse::<i64>() else { continue };
+        let Ok(chat_id) = b.chat_id.parse::<i64>() else {
+            continue;
+        };
         let thread_id = b
             .thread_id
             .map(|t| teloxide::types::ThreadId(teloxide::types::MessageId(t)));
         let state = state.clone();
         tokio::spawn(async move {
-            let Some(bot) = wait_for_bot(&state).await else { return };
+            let Some(bot) = wait_for_bot(&state).await else {
+                return;
+            };
             // 429 discipline (#816): several wakes can land in the same chat
             // at once right after a resume stream, so wait the window out and
             // retry once with fresh content, matching delivery.rs / flow.rs.

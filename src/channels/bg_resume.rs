@@ -129,8 +129,8 @@ pub(crate) fn park_undeliverable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// First n polls miss, then the handle appears (late-connect race shape).
     #[tokio::test(start_paused = true)]
@@ -163,7 +163,10 @@ mod tests {
         )
         .await;
         assert_eq!(got, None);
-        assert_eq!(polls.load(Ordering::Relaxed) as usize, READY_WAIT_SECS as usize);
+        assert_eq!(
+            polls.load(Ordering::Relaxed) as usize,
+            READY_WAIT_SECS as usize
+        );
     }
 
     /// Already-ready handle → immediate delivery, single poll, no sleep.
@@ -187,8 +190,7 @@ mod tests {
     /// delivers it — no loss end-to-end (#1242 contract).
     #[test]
     fn park_undeliverable_reaches_claim() {
-        let _guard =
-            restart_recovery::test_guard();
+        let _guard = restart_recovery::test_guard();
         let sid = Uuid::new_v4();
         let msg = crate::brain::agent::QueuedUserMessage {
             context_text: "ctx".to_string(),
@@ -196,24 +198,16 @@ mod tests {
             origin: crate::brain::agent::PushOrigin::BackgroundTask,
         };
         park_undeliverable(sid, msg.clone(), "telegram");
-        assert_eq!(
-            restart_recovery::parked_count(),
-            1
-        );
+        assert_eq!(restart_recovery::parked_count(), 1);
         // A claim (what #1224 route restore does per binding) drains it.
         let seen: Arc<std::sync::Mutex<Vec<String>>> = Default::default();
         let sink = seen.clone();
-        let cb: crate::brain::agent::service::MessageEnqueueCallback = Arc::new(
-            move |_id, m| {
-                if let Ok(mut v) = sink.lock() {
-                    v.push(m.display_text);
-                }
-            },
-        );
-        let delivered =
-            restart_recovery::claim_session(
-                sid, &cb,
-            );
+        let cb: crate::brain::agent::service::MessageEnqueueCallback = Arc::new(move |_id, m| {
+            if let Ok(mut v) = sink.lock() {
+                v.push(m.display_text);
+            }
+        });
+        let delivered = restart_recovery::claim_session(sid, &cb);
         assert_eq!(delivered, 1);
         assert_eq!(seen.lock().unwrap().len(), 1);
     }
