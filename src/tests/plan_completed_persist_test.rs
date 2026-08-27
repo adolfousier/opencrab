@@ -38,6 +38,16 @@ fn archive_as(json_path: &std::path::Path, stamp: &str, title: &str) {
     .unwrap();
 }
 
+/// Archive beside `json_path` under THAT path's own stem, exactly as
+/// `archive_plan_files` renames (`{stem}-{ts}.json`) — needed by the
+/// multi-session test where readers are addressed by distinct plan names.
+fn archive_as_stemmed(json_path: &std::path::Path, stamp: &str, title: &str) {
+    let dir = json_path.parent().unwrap().join("archive");
+    std::fs::create_dir_all(&dir).unwrap();
+    let stem = json_path.file_stem().and_then(|s| s.to_str()).unwrap();
+    std::fs::write(dir.join(format!("{stem}-{stamp}.json")), finished_plan_json(title)).unwrap();
+}
+
 #[test]
 fn the_last_archived_plan_is_recovered() {
     let tmp = tempfile::tempdir().unwrap();
@@ -127,4 +137,29 @@ fn a_non_json_file_in_the_archive_is_ignored() {
 
     let found = latest_archived_plan_from_path(&live).expect("the .md must not shadow the .json");
     assert_eq!(found.title, "Ship the fix");
+}
+
+#[test]
+fn another_sessions_archive_never_wins() {
+    // Every session shares one flat `archive/` dir on the box (#1239). The
+    // reader must pick ITS OWN newest, not whichever session id sorts last:
+    // here the foreign session's id sorts greater AND its stamp is newer,
+    // which is exactly how session B's completion rendered session A's card.
+    let tmp = tempfile::tempdir().unwrap();
+    let live_mine = tmp
+        .path()
+        .join("opencrabs_plan_11111111-2222-3333-4444-555555555555.json");
+    let foreign = tmp
+        .path()
+        .join("opencrabs_plan_ffffffff-8888-7777-6666-555555555555.json");
+
+    archive_as_stemmed(&live_mine, "20260826-100000", "Mine");
+    archive_as_stemmed(&foreign, "20260826-230000", "Foreign sorts last");
+
+    assert_eq!(
+        latest_archived_plan_from_path(&live_mine)
+            .expect("own archive must stay readable")
+            .title,
+        "Mine"
+    );
 }
