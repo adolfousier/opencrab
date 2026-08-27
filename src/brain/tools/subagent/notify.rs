@@ -30,9 +30,11 @@ impl Tool for SessionNotifyTool {
     fn description(&self) -> &str {
         "Push a message to another session's queue in this process. The target \
          drains it at its next tool-loop boundary, or wakes immediately if idle. \
-         Every delivery carries a mechanical header [session-notify from=<sender \
-         session id>]; to reply, call session_notify with target_session set to \
-         that id. Discover target ids via session_search list/query."
+         Refuses while the target is mid-turn unless interrupt=true — do not \
+         derail a working session by default. Every delivery carries a \
+         mechanical header [session-notify from=<sender session id>]; to reply, \
+         call session_notify with target_session set to that id. Discover \
+         target ids via session_search list/query."
     }
 
     fn input_schema(&self) -> Value {
@@ -46,6 +48,10 @@ impl Tool for SessionNotifyTool {
                 "message": {
                     "type": "string",
                     "description": "Text to deliver to the target session"
+                },
+                "interrupt": {
+                    "type": "boolean",
+                    "description": "Deliver even if the target session is mid-turn. Default false: the tool REFUSES while the target is streaming, so a working session is never derailed. Set true only when the target must see this now; the message then queues for its next tool-loop boundary, framed as arrived-during-work."
                 }
             },
             "required": ["target_session", "message"]
@@ -87,9 +93,15 @@ impl Tool for SessionNotifyTool {
             origin: crate::brain::agent::PushOrigin::SessionNotify,
         };
 
+        // Failsafe default (fork #13): an unset interrupt must not derail a
+        // session that is mid-turn. The refusal names the remedy so the
+        // calling model learns the knob from the error itself — same pattern
+        // as the 429 RetryAfter help text.
+        let interrupt = input.get("interrupt").and_then(Value::as_bool).unwrap_or(false);
+
         use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
-        match deliver_to_session(target, msg) {
+        match deliver_to_session(target, msg, interrupt) {
             Delivery::Delivered => Ok(ToolResult::success(format!(
                 "Delivered to session {target}. It will process the message on its next turn."
             ))),
@@ -100,6 +112,12 @@ impl Tool for SessionNotifyTool {
                 "Queued for session {target}. Its channel has not claimed it since the last \
                  restart, so it will be delivered as soon as that channel next binds the \
                  session."
+            ))),
+            Delivery::RefusedInFlight => Ok(ToolResult::error(format!(
+                "Refused: session {target} is mid-turn (a turn is streaming) and interrupt \
+                 was not set — delivering now would derail its current task. Retry when the \
+                 session goes idle, or resend with interrupt=true to queue the message for \
+                 its in-flight turn's next tool-loop boundary."
             ))),
             Delivery::NoRoute => Ok(ToolResult::error(format!(
                 "No live route for session {target} in this process — it has not messaged \

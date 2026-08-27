@@ -190,6 +190,17 @@ pub(crate) fn build_enqueue_callback(
                 // nothing will drain this between rounds and the end-of-turn
                 // flush has to know it needs a real tool loop, not a single
                 // toolless round.
+                // Framing for mid-flight drains (fork #13): the queued push
+                // arrives in the receiver's context as a bare user turn,
+                // indistinguishable from a fresh instruction — the confusion
+                // the interrupt gate's true-branch knowingly accepts. One
+                // plain string tells the receiver to re-anchor after reading.
+                let mut msg = msg;
+                msg.context_text = format!(
+                    "[queued while you were working — re-anchor to your current task after \
+                     reading this]\n\n{}",
+                    msg.context_text
+                );
                 state.enqueue_detached_result(session_id, msg);
                 return;
             };

@@ -12,7 +12,7 @@
 //! unrelated concerns shared one file and one set of locks to reason about.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use uuid::Uuid;
 
@@ -105,6 +105,47 @@ pub fn register_local_route(enqueue: MessageEnqueueCallback) {
     }
 }
 
+/// Is `session_id` mid-turn right now?
+///
+/// Channels that expose turn state (telegram's #501/#845 gate) register a
+/// probe beside their delivery route; surfaces without one simply don't,
+/// which the gate below reads as "unknown" and fails open — a headless
+/// session must stay notifyable. The probe captures an `Arc` of the channel
+/// state, so it stays valid across route re-binds and reconnects.
+pub type TurnProbe = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// Per-session in-flight probes, keyed like [`SESSION_ROUTES`].
+static TURN_PROBES: Mutex<Option<HashMap<Uuid, TurnProbe>>> = Mutex::new(None);
+
+/// Register (or replace) the in-flight probe for `session_id`.
+pub fn register_turn_probe(session_id: Uuid, probe: TurnProbe) {
+    match TURN_PROBES.lock() {
+        Ok(mut guard) => {
+            guard.get_or_insert_with(HashMap::new).insert(session_id, probe);
+        }
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not register the in-flight probe for session {session_id}: {e}"
+            );
+        }
+    }
+}
+
+/// The session's in-flight probe, if its channel registered one.
+fn turn_probe(session_id: Uuid) -> Option<TurnProbe> {
+    match TURN_PROBES.lock() {
+        Ok(guard) => guard.as_ref()?.get(&session_id).cloned(),
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not read the in-flight probe for session {session_id}: {e}"
+            );
+            None
+        }
+    }
+}
+
 /// What happened to a message handed to [`deliver_to_session`].
 ///
 /// A bare bool used to be enough, because the only two outcomes were "went
@@ -120,11 +161,33 @@ pub enum Delivery {
     Parked,
     /// Nothing can receive it and nothing is holding it.
     NoRoute,
+    /// The target is mid-turn and the caller did not ask to interrupt
+    /// (fork #13). Nothing was delivered; the sender retries when the
+    /// target goes idle, or resends with `interrupt` set.
+    RefusedInFlight,
 }
 
 /// Deliver `msg` to whoever owns `session_id`, falling back to the booting
 /// surface, parking it when a channel owns the session but has not claimed it.
-pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> Delivery {
+///
+/// `interrupt` is the failsafe valve (fork #13): a push into a streaming turn
+/// arrives in the receiver's context as a bare user message — receivers
+/// task-switch or skim past it. Unless the sender explicitly asked to
+/// interrupt, delivery is refused while the target is mid-turn. Unknown turn
+/// state (no probe registered) delivers: the gate must never make a surface
+/// unnotifyable.
+pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage, interrupt: bool) -> Delivery {
+    if !interrupt {
+        if let Some(probe) = turn_probe(session_id) {
+            if probe() {
+                tracing::info!(
+                    target: "background_task",
+                    "Refusing delivery to session {session_id}: mid-turn and interrupt not set"
+                );
+                return Delivery::RefusedInFlight;
+            }
+        }
+    }
     if let Some(route) = session_route(session_id) {
         route(session_id, msg);
         return Delivery::Delivered;

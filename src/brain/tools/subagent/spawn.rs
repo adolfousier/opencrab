@@ -90,7 +90,10 @@ pub(crate) fn push_result(
     use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
     let msg = completion_message(label, agent_id, outcome);
-    match deliver_to_session(parent_session_id, msg) {
+    // interrupt=true (fork #13): a sub-agent completion is the parent's own
+    // awaited work — it must reach the parent even mid-turn, exactly as
+    // before the gate existed.
+    match deliver_to_session(parent_session_id, msg, true) {
         Delivery::Delivered => {
             tracing::info!(
                 "Sub-agent {agent_id} reported its result to session {parent_session_id}"
