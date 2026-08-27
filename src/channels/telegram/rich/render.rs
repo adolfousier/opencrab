@@ -23,7 +23,7 @@ const PHOTO_SCALE_LADDER: [f32; 5] = [2.0, 1.25, 0.75, 0.5, 0.25];
 /// combined cap binds first on large diagrams (#1238: a 44-node TD stack
 /// rasterized to ~27k sum and died with `PHOTO_INVALID_DIMENSIONS` despite
 /// rendering perfectly).
-const PHOTO_MAX_TOTAL_DIMS: u32 = 9_600;
+const PHOTO_MAX_TOTAL_DIMS: f32 = 9_600.0;
 
 /// Pick the sharpest ladder scale whose rasterized dims stay inside the
 /// photo box. Uniform scaling preserves aspect ratio, so extreme-aspect
@@ -34,7 +34,7 @@ pub(crate) fn fit_photo_scale(base_w: u32, base_h: u32) -> f32 {
     let fits = |s: f32| -> bool {
         let pw = ((base_w as f32) * s).ceil().max(1.0);
         let ph = ((base_h as f32) * s).ceil().max(1.0);
-        pw + ph <= f32::from(PHOTO_MAX_TOTAL_DIMS)
+        pw + ph <= PHOTO_MAX_TOTAL_DIMS
     };
     PHOTO_SCALE_LADDER
         .iter()
