@@ -1570,6 +1570,14 @@ async fn cmd_chat_inner(
                             );
                         }
                     }
+                    // #1249: the chain half of `[providers.fallback]` reloads
+                    // here too. Swapping only the primary above left a chain
+                    // frozen at process start, so a provider deleted from
+                    // `fallback_chain` kept receiving live traffic. Runs even
+                    // when the primary rebuild failed — the two are
+                    // independent, and a stale chain is exactly the state
+                    // being fixed.
+                    agent.reload_fallback_providers(&cfg).await;
                     // Fire AFTER the swap so the TUI refresh (commands, approval
                     // policy, and the context-budget footer) reads the new
                     // provider's context window, not the old one.

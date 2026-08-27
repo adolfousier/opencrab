@@ -482,7 +482,7 @@ impl AgentService {
         // a marker file in the profile home keeps it strictly one-shot.
         let user_message = super::fallback_suggest::maybe_inject(
             &crate::config::profile::resolve_profile_home(),
-            !self.fallback_providers.is_empty(),
+            self.has_fallback_provider(),
             user_message,
         );
 
@@ -2273,7 +2273,7 @@ impl AgentService {
                                 primary_from_name, model_name
                             )
                         };
-                        let message = if self.fallback_providers.is_empty() {
+                        let message = if !self.has_fallback_provider() {
                             // #1006: a bare status teaches nobody anything —
                             // point at the exact config block that fixes it.
                             format!(
@@ -2296,14 +2296,13 @@ impl AgentService {
                     // provider the breaker has marked exhausted. Skipped
                     // names are reported in the final summary so the user
                     // knows they exist but were not tried.
-                    let candidates: Vec<_> = self
-                        .fallback_providers
+                    let chain = self.fallback_chain_snapshot();
+                    let candidates: Vec<_> = chain
                         .iter()
                         .filter(|p| p.name() != active_name)
                         .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
                         .collect();
-                    let skipped: Vec<String> = self
-                        .fallback_providers
+                    let skipped: Vec<String> = chain
                         .iter()
                         .filter(|p| p.name() != active_name)
                         .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
@@ -2317,7 +2316,7 @@ impl AgentService {
                         // summarise, and "all providers in the chain failed"
                         // would be a lie — the alert above already carried
                         // the setup guidance, so skip the summary entirely.
-                        if !self.fallback_providers.is_empty()
+                        if self.has_fallback_provider()
                             && let Some(ref cb) = progress_callback
                         {
                             let reason = crate::brain::provider::error::short_error_reason(&e);
@@ -2757,14 +2756,13 @@ impl AgentService {
                             .ok()
                             .map(|p| p.name().to_string())
                             .unwrap_or_default();
-                        let stream_candidates: Vec<_> = self
-                            .fallback_providers
+                        let chain = self.fallback_chain_snapshot();
+                        let stream_candidates: Vec<_> = chain
                             .iter()
                             .filter(|p| p.name() != stream_active_name)
                             .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
                             .collect();
-                        let stream_skipped: Vec<String> = self
-                            .fallback_providers
+                        let stream_skipped: Vec<String> = chain
                             .iter()
                             .filter(|p| p.name() != stream_active_name)
                             .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
@@ -3146,14 +3144,13 @@ impl AgentService {
                             .unwrap_or_default();
                         // Quota circuit breaker (#952): skip providers the
                         // breaker has marked exhausted.
-                        let stream_candidates: Vec<_> = self
-                            .fallback_providers
+                        let chain = self.fallback_chain_snapshot();
+                        let stream_candidates: Vec<_> = chain
                             .iter()
                             .filter(|p| p.name() != stream_active_name)
                             .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
                             .collect();
-                        let stream_skipped: Vec<String> = self
-                            .fallback_providers
+                        let stream_skipped: Vec<String> = chain
                             .iter()
                             .filter(|p| p.name() != stream_active_name)
                             .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
@@ -3397,14 +3394,13 @@ impl AgentService {
 
                     // Quota circuit breaker (#952): skip providers the
                     // breaker has marked exhausted.
-                    let fallback_candidates: Vec<_> = self
-                        .fallback_providers
+                    let chain = self.fallback_chain_snapshot();
+                    let fallback_candidates: Vec<_> = chain
                         .iter()
                         .filter(|p| p.name() != active_name)
                         .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
                         .collect();
-                    let fallback_skipped: Vec<String> = self
-                        .fallback_providers
+                    let fallback_skipped: Vec<String> = chain
                         .iter()
                         .filter(|p| p.name() != active_name)
                         .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
@@ -5322,16 +5318,15 @@ impl AgentService {
                         EMPTY_REASONING_MAX_NUDGES,
                     );
                     let active_name = self.provider_name_for_session(session_id);
-                    let candidates: Vec<_> = self
-                        .fallback_providers
+                    let chain = self.fallback_chain_snapshot();
+                    let candidates: Vec<_> = chain
                         .iter()
                         .filter(|p| p.name() != active_name)
                         // Quota circuit breaker (#952): skip providers
                         // the breaker has marked exhausted.
                         .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
                         .collect();
-                    let skipped: Vec<String> = self
-                        .fallback_providers
+                    let skipped: Vec<String> = chain
                         .iter()
                         .filter(|p| p.name() != active_name)
                         .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
