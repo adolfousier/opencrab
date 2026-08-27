@@ -184,8 +184,22 @@ async fn run_auto_title_round_trip(
     None
 }
 
-#[tokio::test]
-async fn auto_title_end_to_end_covers_all_scenarios() {
+#[test]
+fn auto_title_end_to_end_covers_all_scenarios() {
+    // Runs on an explicitly-sized worker thread: macOS spawns test threads
+    // with a ~512KB stack by default (Rust std Darwin default), and this
+    // end-to-end flow (full AgentService + notify echo bubbles + config
+    // parsing) now legitimately needs more depth than that (#1237).
+    // 16MB makes the gate deterministic across contributor platforms;
+    // verified empirically: SIGABRT unset, pass at any RUST_MIN_STACK >= 8MB.
+    let handle = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(inner_auto_title_end_to_end)
+        .expect("spawn title e2e worker");
+    handle.join().expect("title e2e worker panicked");
+}
+
+async fn inner_auto_title_end_to_end() {
     // Three phases run inside a SINGLE #[tokio::test] because adding more
     // tokio tests to this file makes the first one fail with
     // `Database("Failed to create message")` — even when each test creates
