@@ -116,7 +116,7 @@ pub(crate) fn build_enqueue_callback(
                 // collapsible chrome for cron output.
                 let echo_md = build_bg_echo_bubble_md(&body, &title);
                 let sent_rich = match super::send::send_markdown_outbox(
-                    bot,
+                    &bot,
                     teloxide::types::ChatId(chat_id),
                     thread_id,
                     &echo_md,
