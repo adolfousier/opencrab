@@ -285,6 +285,16 @@ fn has_rich_structure_gates_native_rich_path() {
     assert!(has_rich_structure("- [ ] task"));
     assert!(has_rich_structure("```\ncode\n```"));
     assert!(has_rich_structure("$$\nx^2\n$$"));
+    // <details> collapse blocks — standalone, attributed, and the inline
+    // `<details><summary>` opener the #15 receipt cards emit on ONE line.
+    // Before the #15 fix the gate only matched a standalone `<details>`
+    // line, so the fence-less notify card fell to the HTML ladder and
+    // rendered as literal tag soup on screen (owner screenshot 2026-08-28).
+    assert!(has_rich_structure("<details>\nbody\n</details>"));
+    assert!(has_rich_structure("<details open>\nbody\n</details>"));
+    assert!(has_rich_structure(
+        "<details><summary>peek</summary>\n\nbody\n\n</details>"
+    ));
     // Plain prose — even with inline emphasis — stays on the existing path.
     assert!(!has_rich_structure("Just a normal reply."));
     assert!(!has_rich_structure(
@@ -292,6 +302,28 @@ fn has_rich_structure_gates_native_rich_path() {
     ));
     assert!(!has_rich_structure("Compute 5 * 3 = 15 and move on."));
     assert!(!has_rich_structure("A #hashtag is not a heading."));
+}
+
+#[test]
+fn receipt_card_md_is_rich_structured_issue_15() {
+    // Regression for the 2026-08-28 owner screenshot: the N4 notify card
+    // is fence-less by design ("a notify is a document, not a log"), so its
+    // rich verdict must come from the inline `<details><summary>` opener
+    // alone. When the gate missed it, the card fell to the HTML ladder and
+    // Telegram escaped the unknown tags to literal soup. Both receipt
+    // shapes must stay rich-eligible end-to-end.
+    let (notify_md, _notify_html) =
+        crate::channels::telegram::resume::build_notify_receipt_card("Compiler", "body text");
+    assert!(has_rich_structure(&notify_md));
+
+    let meta = crate::brain::agent::BgTaskMeta {
+        success: true,
+        label: "cmd".to_string(),
+        elapsed_secs: 1.0,
+        tail: "ok".to_string(),
+    };
+    let (bg_md, _bg_html) = crate::channels::telegram::resume::build_bg_receipt_card(&meta);
+    assert!(has_rich_structure(&bg_md));
 }
 
 #[test]
