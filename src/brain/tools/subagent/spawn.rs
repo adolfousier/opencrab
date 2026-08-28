@@ -111,24 +111,24 @@ pub(crate) fn push_result(
                  {parent_session_id}; the parent will not hear about it"
             );
         }
-        Delivery::RefusedInFlight => {
+        Delivery::RefusedInFlight { redirected_to } => {
             // Unreachable by construction: interrupt=true is passed above and
             // the fork #13 gate refuses only when interrupt is unset. Arm kept
             // explicit so a future call-site change cannot drop the outcome
             // silently (port seam: upstream's match has no catch-all).
             tracing::warn!(
                 "Sub-agent {agent_id}'s result was refused by the interrupt gate \
-                 for session {parent_session_id}; the parent will not hear about it"
+                 for session {parent_session_id} (redirected to {redirected_to:?}); the \
+                 parent will not hear about it"
             );
         }
-        Delivery::RefusedChannelOccupied { occupant } => {
+        Delivery::Redirected { to } => {
             // The parent was replaced on its channel while the sub-agent ran
-            // (fork #17). interrupt=true does not override that gate, so say
-            // out loud where the outcome went instead of dropping it quietly.
-            tracing::warn!(
-                "Sub-agent {agent_id}'s result was refused for session {parent_session_id}: \
-                 its channel is occupied by session {occupant}; the parent will not hear \
-                 about it"
+            // (fork #17), so the result was REDIRECTED to the session that
+            // owns the channel now (fork #19) — delivered, not dropped.
+            tracing::info!(
+                "Sub-agent {agent_id}'s result was redirected from session \
+                 {parent_session_id} to session {to}, which now owns its channel"
             );
         }
     }

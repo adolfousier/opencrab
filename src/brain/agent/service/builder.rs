@@ -769,11 +769,13 @@ impl AgentService {
         mut self,
         callback: Option<super::types::MessageEnqueueCallback>,
     ) -> Self {
-        // Spin up the background-task manager from the same producer so bash can
-        // resume the session when a long command finishes (#722).
+        // Spin up the background-task manager (fork #19: it no longer carries
+        // its own enqueue route — delivery goes through the one gated route,
+        // `deliver_to_session`, which resolves the session's registered route;
+        // this callback is still kept on self for #940 claiming).
         self.background_manager = callback
             .clone()
-            .map(|cb| std::sync::Arc::new(super::background_tasks::BackgroundTaskManager::new(cb)));
+            .map(|_cb| std::sync::Arc::new(super::background_tasks::BackgroundTaskManager::new()));
         self.message_enqueue_callback = callback;
         self
     }

@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use uuid::Uuid;
 
-use super::types::{MessageEnqueueCallback, PushOrigin, QueuedUserMessage};
+use super::types::{PushOrigin, QueuedUserMessage};
 
 /// Result of a finished background command.
 #[derive(Debug, Clone)]
@@ -33,7 +33,6 @@ pub struct RunningTask {
 
 /// Manages background commands and resumes their sessions on completion.
 pub struct BackgroundTaskManager {
-    enqueue: MessageEnqueueCallback,
     /// In-flight background tasks per session.
     ///
     /// Holds the label and start time, not just a count, because a surface has
@@ -46,9 +45,8 @@ pub struct BackgroundTaskManager {
 use super::detached_status::{self, DetachedFinish};
 
 impl BackgroundTaskManager {
-    pub fn new(enqueue: MessageEnqueueCallback) -> Self {
+    pub fn new() -> Self {
         Self {
-            enqueue,
             running: Mutex::new(HashMap::new()),
         }
     }
@@ -191,12 +189,54 @@ impl BackgroundTaskManager {
             // Only touches the in-memory map, so moving it earlier cannot
             // affect what gets delivered.
             this.mark_finished(session_id, &label);
-            // Deliver to the surface that OWNS the session, not to whichever
-            // one executed the command. A channel session driven from the TUI
-            // runs on the TUI's service, so `this.enqueue` would answer into
-            // the TUI and leave the channel that asked for the work waiting on
-            // a reply that never comes (#940).
-            super::session_routes::resolve_route(session_id, &this.enqueue)(session_id, msg);
+            // Deliver through the ONE gated route (fork #19): the same
+            // `deliver_to_session` that sub-agent completions and the
+            // session_notify tool use, so channel-ownership, mid-turn and
+            // redirect decisions live in exactly one place instead of being
+            // re-derived per surface. Resolves the owner by SESSION, never by
+            // whichever service executed the command — a channel session
+            // driven from the TUI runs on the TUI's service, and the old
+            // direct-resolve would answer into the TUI and leave the channel
+            // that asked for the work waiting on a reply that never comes
+            // (#940). interrupt=true: a completion is the origin's own
+            // awaited work, exactly like a sub-agent's; it must reach it even
+            // mid-turn (fork #13).
+            let outcome = super::session_routes::deliver_to_session(session_id, msg, true);
+            match outcome {
+                super::session_routes::Delivery::Redirected { to } => {
+                    tracing::info!(
+                        target: "background_task",
+                        "Background task '{label}' completion for session {session_id} was \
+                         redirected to session {to}, which now owns its channel"
+                    );
+                }
+                super::session_routes::Delivery::Parked => {
+                    tracing::info!(
+                        target: "background_task",
+                        "Background task '{label}' completion for session {session_id} is \
+                         parked until its channel claims the session"
+                    );
+                }
+                super::session_routes::Delivery::NoRoute => {
+                    tracing::warn!(
+                        target: "background_task",
+                        "Background task '{label}' completion for session {session_id} had \
+                         nowhere to go; the session will not hear about it"
+                    );
+                }
+                super::session_routes::Delivery::RefusedInFlight { .. } => {
+                    // Unreachable by construction: interrupt=true is passed
+                    // above, so the fork #13 gate cannot refuse. Kept explicit
+                    // so a future change to the flag cannot drop the outcome
+                    // silently (port seam: upstream's match has no catch-all).
+                    tracing::warn!(
+                        target: "background_task",
+                        "Background task '{label}' completion for session {session_id} was \
+                         refused by the mid-turn gate despite interrupt=true"
+                    );
+                }
+                super::session_routes::Delivery::Delivered => {}
+            }
         });
     }
 }

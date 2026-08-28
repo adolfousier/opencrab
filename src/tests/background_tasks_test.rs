@@ -6,6 +6,8 @@ use crate::brain::agent::service::QueuedUserMessage;
 use crate::brain::agent::service::background_tasks::{
     BackgroundTaskManager, CmdResult, completion_message, short_label, tail_lines,
 };
+use crate::brain::agent::service::restart_recovery;
+use crate::brain::agent::service::session_routes;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -57,7 +59,14 @@ fn short_label_takes_the_command_after_cd() {
 }
 
 #[tokio::test]
+// The test_guard serializes suites touching the process-global parked-queue
+// state; holding it across the polling `.await`s below is the entire point —
+// same shape as the session_notify suite (#22).
+#[allow(clippy::await_holding_lock)]
 async fn spawn_command_enqueues_on_completion() {
+    // register_session_route → claim_session touches the process-global
+    // parked-queue state, so serialize against other suites that do too.
+    let _guard = restart_recovery::test_guard();
     #[allow(clippy::type_complexity)]
     let recorded: Arc<Mutex<Vec<(Uuid, QueuedUserMessage)>>> = Arc::new(Mutex::new(Vec::new()));
     let rec = recorded.clone();
@@ -65,8 +74,13 @@ async fn spawn_command_enqueues_on_completion() {
         rec.lock().unwrap().push((sid, msg));
     });
 
-    let mgr = Arc::new(BackgroundTaskManager::new(enqueue));
+    let mgr = Arc::new(BackgroundTaskManager::new());
     let sid = Uuid::new_v4();
+    // The manager no longer carries its own route (fork #19 — delivery goes
+    // through the one gated route, which resolves the session's registered
+    // route), so claim the session the way a channel would: register the
+    // recording callback as its route.
+    session_routes::register_session_route(sid, enqueue);
     let cwd = std::env::temp_dir();
 
     mgr.clone().spawn_command(
