@@ -339,6 +339,26 @@ pub enum SessionCommands {
         #[arg(long)]
         all: bool,
     },
+    /// Send a notification to a session (#23)
+    Notify {
+        /// Target session UUID
+        id: String,
+        /// Message text
+        #[arg(long)]
+        text: String,
+        /// Optional title header
+        #[arg(long)]
+        title: Option<String>,
+        /// Sender label shown to the recipient (default: "CLI tooling")
+        #[arg(long)]
+        sender: Option<String>,
+        /// Deliver even if the session is mid-turn (#13 failsafe)
+        #[arg(long)]
+        interrupt: bool,
+        /// CLI output format
+        #[arg(short, long, default_value = "text")]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Subcommand, Debug)]
