@@ -3193,11 +3193,7 @@ impl OpenAIProvider {
             // generic "Provider returned error".
             let (inner_message, inner_type) = unwrap_proxy_error(&error_body.error);
             let message = if status == 429 {
-                if let Some(secs) = retry_after {
-                    format!("{} (retry after {} seconds)", inner_message, secs)
-                } else {
-                    format!("{} (rate limited, please retry later)", inner_message)
-                }
+                super::error::rate_limit_message(&inner_message, retry_after)
             } else {
                 inner_message
             };

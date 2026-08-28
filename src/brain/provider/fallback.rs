@@ -105,12 +105,23 @@ impl FallbackProvider {
         }
     }
 
+    /// The model `provider` will actually run for `requested`: its own
+    /// default when it does not carry the requested one. An empty
+    /// `supported_models()` means "unknown", so the request passes through.
+    fn model_for(provider: &dyn Provider, requested: &str) -> String {
+        let supported = provider.supported_models();
+        if !supported.is_empty() && !supported.iter().any(|m| m == requested) {
+            provider.default_model().to_string()
+        } else {
+            requested.to_string()
+        }
+    }
+
     /// Build a request for a fallback provider, remapping the model if needed.
     fn remap_request_for_fallback(fb: &dyn Provider, request: &LLMRequest) -> LLMRequest {
         let mut fb_request = request.clone();
-        let supported = fb.supported_models();
-        if !supported.is_empty() && !supported.iter().any(|m| m == &fb_request.model) {
-            let new_model = fb.default_model().to_string();
+        let new_model = Self::model_for(fb, &fb_request.model);
+        if new_model != fb_request.model {
             tracing::info!(
                 "Fallback '{}': model '{}' not supported — remapping to '{}'",
                 fb.name(),
@@ -428,6 +439,18 @@ impl Provider for FallbackProvider {
             format!("primary '{}'", self.primary.name())
         } else {
             format!("fallback #{} '{}'", idx, self.fallbacks[idx - 1].name())
+        }
+    }
+
+    /// Mirrors `remap_request_for_fallback`: the primary always runs the
+    /// model as requested (nothing remaps it), a fallback runs its own
+    /// default when it does not carry that model.
+    fn served_model(&self, requested: &str) -> String {
+        let idx = self.active.load(Ordering::Acquire);
+        if idx == 0 {
+            requested.to_string()
+        } else {
+            Self::model_for(self.fallbacks[idx - 1].as_ref(), requested)
         }
     }
 }

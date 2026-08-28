@@ -217,18 +217,7 @@ impl AnthropicProvider {
         );
         if let Ok(error_body) = serde_json::from_slice::<AnthropicError>(&body_bytes) {
             let message = if status == 429 {
-                // Enhance rate limit error message
-                if let Some(secs) = retry_after {
-                    format!(
-                        "{} (retry after {} seconds)",
-                        error_body.error.message, secs
-                    )
-                } else {
-                    format!(
-                        "{} (rate limited, please retry later)",
-                        error_body.error.message
-                    )
-                }
+                super::error::rate_limit_message(&error_body.error.message, retry_after)
             } else {
                 error_body.error.message
             };

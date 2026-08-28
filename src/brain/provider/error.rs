@@ -130,6 +130,35 @@ const QUOTA_EXHAUSTION_PHRASES: &[&str] = &[
     "try again next month",
 ];
 
+/// The user-facing text for a 429, with advice chosen from the upstream
+/// message rather than from the status code alone (#1254).
+///
+/// A 429 carrying `Insufficient balance … Please recharge` is a billing
+/// state, not a throttle: it will not clear on any retry timescale, so
+/// "please retry later" is advice that contradicts the sentence it is
+/// appended to. This text is not internal, the self-healing banner embeds
+/// it verbatim into the chat, so a whole group gets told to wait for
+/// something that only money or a different provider fixes.
+///
+/// An unrecognised 429 keeps the retry advice: the phrase list is
+/// deliberately conservative, and treating an unknown throttle as terminal
+/// is the more expensive mistake.
+pub fn rate_limit_message(upstream: &str, retry_after: Option<u64>) -> String {
+    if is_quota_exhausted_message(upstream) {
+        // A Retry-After header on a balance error is noise, so it is
+        // dropped here rather than offered as a countdown to nothing.
+        return format!(
+            "{} (quota or balance exhausted, not a temporary throttle: \
+             recharge the provider or use /models to switch)",
+            upstream
+        );
+    }
+    match retry_after {
+        Some(secs) => format!("{} (retry after {} seconds)", upstream, secs),
+        None => format!("{} (rate limited, please retry later)", upstream),
+    }
+}
+
 /// True when an error/message body describes a HARD quota or billing
 /// limit rather than a transient throttle (#952).
 pub fn is_quota_exhausted_message(msg: &str) -> bool {

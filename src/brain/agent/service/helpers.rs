@@ -341,7 +341,10 @@ impl AgentService {
                     "Streaming call served: session={} {} model='{}'",
                     session_id,
                     provider.provenance_label(),
-                    request_model,
+                    // The model that RAN, not the one asked for (#1254): a
+                    // chain entry without the requested model remapped to its
+                    // own default inside the call above.
+                    provider.served_model(&request_model),
                 );
                 s
             }

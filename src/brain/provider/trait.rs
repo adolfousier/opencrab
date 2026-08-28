@@ -158,6 +158,17 @@ pub trait Provider: Send + Sync {
         format!("'{}'", self.name())
     }
 
+    /// The model the currently-active entry actually ran for `requested`.
+    ///
+    /// A chain that advanced to an entry which does not carry the requested
+    /// model remaps to that entry's default, so the requested name is not
+    /// what executed. Logging that name produced a "served" line naming a
+    /// model that never ran, which is precisely the question an incident
+    /// asks the log (#1254). Diagnostics only, never routing.
+    fn served_model(&self, requested: &str) -> String {
+        requested.to_string()
+    }
+
     /// True when this provider is itself a chain wrapper (i.e.
     /// `FallbackProvider`). Callers that want to install a provider as
     /// the session's active backend use this to decide whether to wrap

@@ -423,6 +423,7 @@ pub mod hashline_test;
 pub mod image_util_test;
 pub mod incident_log_dedup_test;
 pub mod provider_never_ignored_test;
+pub mod rate_limit_reporting_test;
 pub mod stream_cancel_test;
 //pub mod integration_test;
 pub mod channel_route_expectation_test;
