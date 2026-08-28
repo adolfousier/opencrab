@@ -121,7 +121,9 @@ static TURN_PROBES: Mutex<Option<HashMap<Uuid, TurnProbe>>> = Mutex::new(None);
 pub fn register_turn_probe(session_id: Uuid, probe: TurnProbe) {
     match TURN_PROBES.lock() {
         Ok(mut guard) => {
-            guard.get_or_insert_with(HashMap::new).insert(session_id, probe);
+            guard
+                .get_or_insert_with(HashMap::new)
+                .insert(session_id, probe);
         }
         Err(e) => {
             tracing::error!(
@@ -177,16 +179,15 @@ pub enum Delivery {
 /// state (no probe registered) delivers: the gate must never make a surface
 /// unnotifyable.
 pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage, interrupt: bool) -> Delivery {
-    if !interrupt {
-        if let Some(probe) = turn_probe(session_id) {
-            if probe() {
-                tracing::info!(
-                    target: "background_task",
-                    "Refusing delivery to session {session_id}: mid-turn and interrupt not set"
-                );
-                return Delivery::RefusedInFlight;
-            }
-        }
+    if !interrupt
+        && let Some(probe) = turn_probe(session_id)
+        && probe()
+    {
+        tracing::info!(
+            target: "background_task",
+            "Refusing delivery to session {session_id}: mid-turn and interrupt not set"
+        );
+        return Delivery::RefusedInFlight;
     }
     if let Some(route) = session_route(session_id) {
         route(session_id, msg);

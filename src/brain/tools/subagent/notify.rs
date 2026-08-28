@@ -97,7 +97,10 @@ impl Tool for SessionNotifyTool {
         // session that is mid-turn. The refusal names the remedy so the
         // calling model learns the knob from the error itself — same pattern
         // as the 429 RetryAfter help text.
-        let interrupt = input.get("interrupt").and_then(Value::as_bool).unwrap_or(false);
+        let interrupt = input
+            .get("interrupt")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
