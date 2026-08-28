@@ -4,9 +4,10 @@
 //! HTML fallback), truncation discipline (raw text cut BEFORE conversion,
 //! wrapper tags stay intact).
 
+use crate::brain::agent::BgTaskMeta;
 use crate::channels::telegram::resume::{
-    background_task_title, build_bg_echo_bubble, build_bg_echo_bubble_md, split_bg_echo_parts,
-    split_notify_header, strip_system_framing,
+    background_task_title, build_bg_echo_bubble, build_bg_receipt_card, build_notify_receipt_card,
+    split_bg_echo_parts, split_notify_header, strip_system_framing,
 };
 use uuid::Uuid;
 
