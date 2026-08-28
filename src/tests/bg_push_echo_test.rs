@@ -228,10 +228,10 @@ fn notify_receipt_card_matches_the_locked_n4_shape() {
     let (md, classic) = build_notify_receipt_card("Compiler", body);
     assert!(
         md.starts_with(
-            "<details><summary><sub>📨 <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
+            "<details><summary><sub>📨 From <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
              verified, a…</sub></summary>"
         ),
-        "summary = 📨 + bold sender + colon + 45-char first-line preview, whole line subbed: {md}"
+        "summary = 📨 + From + bold sender + colon + 45-char first-line preview, whole line subbed: {md}"
     );
     assert!(
         md.contains("|---|---|"),

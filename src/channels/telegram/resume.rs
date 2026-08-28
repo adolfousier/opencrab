@@ -846,7 +846,7 @@ fn first_line_preview(body: &str) -> String {
 }
 
 /// Session-notify receipt card (#15 amendment, owner-locked shape N4): ONE
-/// collapsed `<details>`. Summary = `<sub>📨 <b>{sender}</b>: {preview}</sub>`
+/// collapsed `<details>`. Summary = `<sub>📨 From <b>{sender}</b>: {preview}</sub>`
 /// — fixed 📨 (notifies carry no success/failure semantics), sender label in
 /// bold, preview = truncated first line of the body. Body = the notify
 /// content as rendered markdown: prose and pipe tables stay native for the
@@ -866,10 +866,10 @@ pub(crate) fn build_notify_receipt_card(sender_label: &str, body: &str) -> (Stri
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
     let suffix = if truncated { " (truncated)" } else { "" };
     let markdown = format!(
-        "<details><summary><sub>📨 <b>{sender}</b>: {preview}</sub></summary>\n\n\
+        "<details><summary><sub>📨 From <b>{sender}</b>: {preview}</sub></summary>\n\n\
          {body}{suffix}\n\n</details>"
     );
-    let flat_title = format!("📨 {sender}: {preview}");
+    let flat_title = format!("📨 From {sender}: {preview}");
     let (_, classic_html) = build_bg_echo_bubble(&format!("{body}{suffix}"), &flat_title);
     (markdown, classic_html)
 }
@@ -890,9 +890,12 @@ pub(crate) fn background_task_title(display_text: &str) -> String {
 
 /// Human-readable sender label for a session_notify push (Alexey's rule):
 /// sender chat == recipient chat → the sender's topic name; a different
-/// non-forum chat → chat name; a different forum → chat + topic name.
-/// Best-effort: any lookup failure falls back to the short session id
-/// (the same prefix `session_search list` displays).
+/// non-forum chat → chat name; a different forum → chat + topic name;
+/// the card summary renders it as `From <name>:`. Topic names come from
+/// the local `channel_messages.topic_name` store (the Bot API has no method
+/// to query them), chat names from `getChat`. Best-effort: any lookup
+/// failure falls back to the short session id (the same prefix
+/// `session_search list` displays).
 async fn sender_label(
     state: &TelegramState,
     bot: &teloxide::Bot,
@@ -906,40 +909,39 @@ async fn sender_label(
     let label = match sender_chat {
         None => None,
         Some(sc) if sc == recipient_chat => match sender_topic {
-            Some(tid) => {
-                super::titles::topic_title(
-                    &api_url,
-                    &token,
-                    teloxide::types::ChatId(sc),
-                    teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
-                )
-                .await
-            }
+            Some(tid) => local_topic_name(sc, tid).await,
             None => None,
         },
         Some(sc) => {
             let chat =
                 super::titles::chat_title(&api_url, &token, teloxide::types::ChatId(sc)).await;
             match (chat, sender_topic) {
-                (Some(c), Some(tid)) => {
-                    match super::titles::topic_title(
-                        &api_url,
-                        &token,
-                        teloxide::types::ChatId(sc),
-                        teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
-                    )
-                    .await
-                    {
-                        Some(t) => Some(format!("{c} / {t}")),
-                        None => Some(c),
-                    }
-                }
+                (Some(c), Some(tid)) => match local_topic_name(sc, tid).await {
+                    Some(t) => Some(format!("{c} / {t}")),
+                    None => Some(c),
+                },
                 (Some(c), None) => Some(c),
                 (None, _) => None,
             }
         }
     };
     label.unwrap_or_else(|| short_session_id(sender))
+}
+
+/// Forum-topic display name, resolved LOCALLY: the Bot API has no method to
+/// query a topic's title (`getForumTopic` does not exist — bots can only
+/// learn names passively; telegram-bot-api issues #634/#356). The handler
+/// already stores every observed topic name in `channel_messages.topic_name`,
+/// so the card builder reads the newest one for (chat, thread). Any miss —
+/// DB unavailable, topic never observed, empty name — feeds the short-id
+/// fallback in `sender_label` like every other lookup failure.
+async fn local_topic_name(chat_id: i64, thread_id: i32) -> Option<String> {
+    let pool = crate::db::global_pool()?;
+    let repo = ChannelMessageRepository::new(pool.clone());
+    repo.latest_topic_name("telegram", &chat_id.to_string(), &thread_id.to_string())
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Short session id: first 8 hex chars of the uuid (matches `session_search`

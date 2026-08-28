@@ -1,14 +1,18 @@
 //! Best-effort Bot API title lookups for human-readable sender labels on
 //! session_notify echo bubbles (#1225). Raw HTTP, same wire style as
-//! `rich/api.rs`: teloxide 0.17 has no `getForumTopic` binding (docs.rs 404,
-//! verified) and a uniform raw call keeps `getChat` and `getForumTopic` on
-//! one tiny code path.
+//! `rich/api.rs`, kept on one tiny code path.
+//!
+//! Only `getChat` lives here: it is a real Bot API method and covers groups,
+//! channels and private chats. Forum-TOPIC names do NOT belong here — the
+//! Bot API has no method to query a topic's title (bots can only learn names
+//! passively; telegram-bot-api issues #634/#356), so `resume.rs` resolves
+//! those from the local `channel_messages.topic_name` store instead.
 //!
 //! Every lookup is best-effort — `None` on any failure feeds the short-id
 //! fallback in `resume.rs`, never an error bubble.
 
 use std::time::Duration;
-use teloxide::types::{ChatId, ThreadId};
+use teloxide::types::ChatId;
 
 fn api_base(api_url: &str) -> &str {
     api_url.trim_end_matches('/')
@@ -35,8 +39,8 @@ async fn post_api(
     }
 }
 
-/// Chat display name: `title` for groups/channels, `username` as fallback
-/// for private chats (getChat leaves `title` absent on Private).
+/// Chat display name: `title` for groups/channels; on private chats (no
+/// title) the account's `username`, else its first/last name.
 pub(crate) async fn chat_title(api_url: &str, token: &str, chat_id: ChatId) -> Option<String> {
     let result = post_api(
         api_url,
@@ -55,24 +59,15 @@ pub(crate) async fn chat_title(api_url: &str, token: &str, chat_id: ChatId) -> O
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
         })
-}
-
-/// Forum topic display name: getForumTopic → `result.name`.
-pub(crate) async fn topic_title(
-    api_url: &str,
-    token: &str,
-    chat_id: ChatId,
-    topic_id: ThreadId,
-) -> Option<String> {
-    let result = post_api(
-        api_url,
-        token,
-        "getForumTopic",
-        serde_json::json!({ "chat_id": chat_id.0, "message_thread_id": topic_id.0.0 }),
-    )
-    .await?;
-    result
-        .get("name")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
+        .or_else(|| {
+            // Private chats have no `title` and not every account has a
+            // username — fall back to the account's display name.
+            let first = result.get("first_name").and_then(serde_json::Value::as_str);
+            let last = result.get("last_name").and_then(serde_json::Value::as_str);
+            match (first, last) {
+                (Some(f), Some(l)) => Some(format!("{f} {l}")),
+                (Some(f), None) => Some(f.to_owned()),
+                _ => None,
+            }
+        })
 }
