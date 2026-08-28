@@ -645,9 +645,7 @@ async fn finalize_plan_card_locked(
     // FIRST, so a post failure can fall back to the card already present — the
     // completed form is never lost.
     let mut posted: Option<MessageId> = None;
-    if use_rich
-        && let Some(rich) = &rich
-    {
+    if use_rich && let Some(rich) = &rich {
         // G3 send pacing (#1211): a fresh card is a full message post.
         super::governor::pace_send(chat).await;
         match super::rich::api::send_rich_html_id(
@@ -695,9 +693,7 @@ async fn finalize_plan_card_locked(
                 return;
             };
             let mut edited = false;
-            if use_rich
-                && let Some(rich) = &rich
-            {
+            if use_rich && let Some(rich) = &rich {
                 match super::rich::api::edit_rich_html(
                     bot.api_url().as_str(),
                     bot.token(),
@@ -711,7 +707,9 @@ async fn finalize_plan_card_locked(
                 .await
                 {
                     Ok(()) => edited = true,
-                    Err(e) => tracing::debug!("Telegram plan card rich finalize failed ({mid:?}): {e}"),
+                    Err(e) => {
+                        tracing::debug!("Telegram plan card rich finalize failed ({mid:?}): {e}")
+                    }
                 }
             }
             if !edited

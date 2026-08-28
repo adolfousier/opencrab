@@ -485,7 +485,9 @@ pub async fn archive_plan(session_id: Uuid) -> std::io::Result<()> {
 
 /// Path of the durable "just archived" sidecar for `session_id`.
 async fn plan_just_archived_path(session_id: Uuid) -> std::path::PathBuf {
-    archive_dir(session_id).await.join(format!("just_archived_{session_id}.flag"))
+    archive_dir(session_id)
+        .await
+        .join(format!("just_archived_{session_id}.flag"))
 }
 
 /// Stamp that this session's plan was archived on THIS settle.
