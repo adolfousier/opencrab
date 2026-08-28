@@ -61,7 +61,10 @@ pub fn register_session_route(session_id: Uuid, enqueue: MessageEnqueueCallback)
 /// session, falling back to `executing` when nothing did.
 ///
 /// The whole fix in one line — pick by session, never by who ran the command —
-/// so it is a pure function and directly testable.
+/// so it is a pure function and directly testable. Test-only since fork #19:
+/// production delivery now flows through [`deliver_to_session`], but the
+/// pre-#19 routing suites still exercise these semantics directly (#22).
+#[cfg(test)]
 pub fn resolve_route(
     session_id: Uuid,
     executing: &MessageEnqueueCallback,
@@ -269,40 +272,40 @@ pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage, interrupt: b
     let mut hops: usize = 0;
     let mut msg = msg;
     loop {
-        if let Some(probe) = channel_owner_probe(target) {
-            if let ChannelOwnership::Occupied { occupant } = probe() {
-                if hops >= REDIRECT_HOP_CAP {
-                    // Cycle insurance exhausted: park rather than loop. The
-                    // message is safe and leaves when a channel claims it.
-                    tracing::warn!(
-                        target: "background_task",
-                        "Redirect cap hit for session {session_id}: its channel-owner chain \
-                         (ending at session {occupant}) did not stabilise after {hops} hops; \
-                         parking instead of delivering"
-                    );
-                    super::restart_recovery::parking_route()(target, msg);
-                    return Delivery::Parked;
-                }
-                hops += 1;
-                tracing::info!(
+        if let Some(probe) = channel_owner_probe(target)
+            && let ChannelOwnership::Occupied { occupant } = probe()
+        {
+            if hops >= REDIRECT_HOP_CAP {
+                // Cycle insurance exhausted: park rather than loop. The
+                // message is safe and leaves when a channel claims it.
+                tracing::warn!(
                     target: "background_task",
-                    "Redirecting delivery for session {target}: its channel is occupied by \
-                     session {occupant} (hop {hops}); delivering to the new owner"
+                    "Redirect cap hit for session {session_id}: its channel-owner chain \
+                     (ending at session {occupant}) did not stabilise after {hops} hops; \
+                     parking instead of delivering"
                 );
-                if hops == 1 {
-                    // Provenance framing (#19): the successor must know this
-                    // message was written for the session that lost the
-                    // channel, not for itself. Framed once, against the ORIGINAL
-                    // target, so a multi-hop chain does not stack frames.
-                    msg.context_text = format!(
-                        "[redirected — originally for session {session_id}, which no longer \
-                         owns this channel] {}",
-                        msg.context_text
-                    );
-                }
-                target = occupant;
-                continue;
+                super::restart_recovery::parking_route()(target, msg);
+                return Delivery::Parked;
             }
+            hops += 1;
+            tracing::info!(
+                target: "background_task",
+                "Redirecting delivery for session {target}: its channel is occupied by \
+                 session {occupant} (hop {hops}); delivering to the new owner"
+            );
+            if hops == 1 {
+                // Provenance framing (#19): the successor must know this
+                // message was written for the session that lost the
+                // channel, not for itself. Framed once, against the ORIGINAL
+                // target, so a multi-hop chain does not stack frames.
+                msg.context_text = format!(
+                    "[redirected — originally for session {session_id}, which no longer \
+                     owns this channel] {}",
+                    msg.context_text
+                );
+            }
+            target = occupant;
+            continue;
         }
         break;
     }
@@ -316,7 +319,7 @@ pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage, interrupt: b
             "Refusing delivery to session {target}: mid-turn and interrupt not set"
         );
         return Delivery::RefusedInFlight {
-            redirected_to: (hops > 0).then(|| target),
+            redirected_to: (hops > 0).then_some(target),
         };
     }
     if let Some(route) = session_route(target) {

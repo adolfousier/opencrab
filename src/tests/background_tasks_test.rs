@@ -80,6 +80,10 @@ fn short_label_takes_the_command_after_cd() {
 }
 
 #[tokio::test]
+// The test_guard serializes suites touching the process-global parked-queue
+// state; holding it across the polling `.await`s below is the entire point —
+// same shape as the session_notify suite (#22).
+#[allow(clippy::await_holding_lock)]
 async fn spawn_command_enqueues_on_completion() {
     // register_session_route → claim_session touches the process-global
     // parked-queue state, so serialize against other suites that do too.
