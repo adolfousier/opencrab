@@ -45,6 +45,10 @@ pub(crate) fn upgrade(holder: &AgentHolder) -> Option<Arc<AgentService>> {
 /// as the prompt on `channel`/`target`. Returns the response content, or `None`
 /// when the turn errored or produced nothing to deliver. Delivery to the
 /// channel's SDK is the caller's job (it differs per surface).
+///
+/// Tracked with origin `system` (#12): a completion turn killed mid-tool must
+/// be visible to boot recovery, which re-delivers the push instead of
+/// replaying the LLM turn.
 pub(crate) async fn run_resume_turn(
     agent: Arc<AgentService>,
     session_id: Uuid,
@@ -53,7 +57,7 @@ pub(crate) async fn run_resume_turn(
     target: &str,
 ) -> Option<String> {
     match agent
-        .send_message_with_tools_and_callback(
+        .send_push_turn(
             session_id,
             context_text,
             None,

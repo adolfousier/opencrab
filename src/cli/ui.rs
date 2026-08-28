@@ -1207,6 +1207,8 @@ async fn cmd_chat_inner(
     // been executed yet.
     let boot_found = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let boot_parked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    // #12 AC3: system-origin rows counted separately for the boot summary.
+    let boot_found_system = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     {
         let pending_repo = crate::db::PendingRequestRepository::new(db.pool().clone());
         match pending_repo.get_interrupted().await {
@@ -1225,11 +1227,43 @@ async fn cmd_chat_inner(
                 // Dedup by session_id — only resume each session once
                 let mut seen = std::collections::HashSet::new();
                 for req in requests {
+                    // #12 AC3: account system-origin rows at ROW level (found
+                    // counts rows; the dedup below may skip duplicates, so the
+                    // user/system split is taken before it).
+                    if req.origin == "system" {
+                        boot_found_system.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     if let Ok(session_id) = uuid::Uuid::parse_str(&req.session_id) {
                         if !seen.insert(session_id) {
                             continue;
                         }
                         resumed_session_ids.insert(session_id);
+                        // #12: a system-origin row is a PUSH-initiated turn
+                        // (session_notify / background-task completion) killed
+                        // mid-tool. Boot must NOT replay the LLM turn here —
+                        // re-running the interrupted tool call could
+                        // double-execute side effects (installs, binary swaps,
+                        // sends). Re-deliver the ORIGINAL push text through the
+                        // normal wake path instead: deliver_or_park → the #1224
+                        // route claim → the enqueue callback → a fresh tracked
+                        // push turn, deleted at exit and re-captured if killed
+                        // again — no perpetual rows (#729 holds).
+                        if req.origin == "system" {
+                            crate::brain::agent::service::restart_recovery::deliver_or_park(
+                                session_id,
+                                crate::brain::agent::QueuedUserMessage {
+                                    context_text: req.user_message.clone(),
+                                    display_text: format!(
+                                        "⚠️ A push-initiated turn was interrupted by a \
+                                         restart — re-delivering the push (session {})",
+                                        &session_id.simple().to_string()[..8]
+                                    ),
+                                    origin: crate::brain::agent::PushOrigin::Recovery,
+                                    bg_meta: None,
+                                },
+                            );
+                            continue;
+                        }
                         // Restore the session's saved working directory before
                         // resuming so the agent runs tools in the right CWD.
                         // Note: agent_service shares one global WD lock across
@@ -1369,6 +1403,7 @@ async fn cmd_chat_inner(
                                 };
                                 if let Err(e) = crate::channels::telegram::handler::resume_session(
                                     bot, chat, thread_id, session_id, prompt, agent, tg,
+                                    false, // boot replay of an EXISTING row: resume-of-resume must stay untracked (#729/#12)
                                 )
                                 .await
                                 {
@@ -1513,6 +1548,7 @@ async fn cmd_chat_inner(
     {
         let found = boot_found.clone();
         let parked = boot_parked.clone();
+        let found_system = boot_found_system.clone();
         let resumed: Vec<String> = resumed_session_ids
             .iter()
             .map(|id| id.simple().to_string()[..8].to_string())
@@ -1524,8 +1560,11 @@ async fn cmd_chat_inner(
             .await;
             tracing::info!(
                 target: "boot-resume",
-                "Boot resume summary (#1242): interrupted={} resumed={} [{}] parked_awaiting_route={}",
+                "Boot resume summary (#1242/#12): interrupted={} (user={} system={}) resumed={} [{}] parked_awaiting_route={}",
                 found.load(std::sync::atomic::Ordering::Relaxed),
+                found.load(std::sync::atomic::Ordering::Relaxed)
+                    - found_system.load(std::sync::atomic::Ordering::Relaxed),
+                found_system.load(std::sync::atomic::Ordering::Relaxed),
                 resumed.len(),
                 resumed.join(","),
                 parked.load(std::sync::atomic::Ordering::Relaxed)

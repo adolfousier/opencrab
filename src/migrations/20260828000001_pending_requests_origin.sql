@@ -1,0 +1,14 @@
+-- Origin marker for restart recovery (#12).
+--
+-- Rows with origin='user' are user-initiated turns: boot replays them with
+-- the continuation prompt, exactly as before this column existed.
+-- Rows with origin='system' are push-initiated turns (session_notify /
+-- background-task completions): boot must NOT replay the LLM turn there --
+-- re-running an interrupted tool call can double-execute side effects such
+-- as installs or binary swaps. Boot re-delivers the original push text to
+-- the owning surface instead, which re-drives the intent through the
+-- normal wake path.
+--
+-- Legacy rows (created before this migration) default to 'user', which
+-- preserves the historical replay behavior for them.
+ALTER TABLE pending_requests ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';

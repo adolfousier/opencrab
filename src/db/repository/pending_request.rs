@@ -19,6 +19,13 @@ pub struct PendingRequest {
     pub user_message: String,
     pub channel: String,
     pub channel_chat_id: Option<String>,
+    /// Who started the turn this row tracks: `"user"` or `"system"` (a push
+    /// — session_notify / background-task completion). Boot recovery treats
+    /// them differently (#12): user rows replay with the continuation prompt;
+    /// system rows re-deliver the original push text instead of replaying the
+    /// LLM turn, because re-running an interrupted tool call can double-execute
+    /// side effects.
+    pub origin: String,
 }
 
 /// Repository for pending request operations
@@ -40,21 +47,23 @@ impl PendingRequestRepository {
         user_message: &str,
         channel: &str,
         channel_chat_id: Option<&str>,
+        origin: &str,
     ) -> Result<()> {
         let id_s = id.to_string();
         let sid = session_id.to_string();
         let msg = user_message.to_string();
         let ch = channel.to_string();
         let cid = channel_chat_id.map(|s| s.to_string());
+        let orig = origin.to_string();
         self.pool
             .get()
             .await
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.execute(
-                    "INSERT INTO pending_requests (id, session_id, user_message, channel, channel_chat_id, status) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, 'PROCESSING')",
-                    params![id_s, sid, msg, ch, cid],
+                    "INSERT INTO pending_requests (id, session_id, user_message, channel, channel_chat_id, origin, status) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'PROCESSING')",
+                    params![id_s, sid, msg, ch, cid, orig],
                 )
             })
             .await
@@ -78,7 +87,7 @@ impl PendingRequestRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.prepare(
-                    "SELECT id, session_id, user_message, channel, channel_chat_id \
+                    "SELECT id, session_id, user_message, channel, channel_chat_id, origin \
                      FROM pending_requests WHERE session_id = ?1 \
                      ORDER BY created_at DESC LIMIT 1",
                 )?
@@ -89,6 +98,7 @@ impl PendingRequestRepository {
                         user_message: row.get("user_message")?,
                         channel: row.get("channel")?,
                         channel_chat_id: row.get("channel_chat_id")?,
+                        origin: row.get("origin")?,
                     })
                 })
                 .map(Some)
@@ -184,7 +194,7 @@ impl PendingRequestRepository {
                     [],
                 );
                 let mut stmt = conn.prepare(
-                    "SELECT id, session_id, user_message, channel, channel_chat_id \
+                    "SELECT id, session_id, user_message, channel, channel_chat_id, origin \
                      FROM pending_requests \
                      ORDER BY created_at ASC",
                 )?;
@@ -195,6 +205,7 @@ impl PendingRequestRepository {
                         user_message: row.get("user_message")?,
                         channel: row.get("channel")?,
                         channel_chat_id: row.get("channel_chat_id")?,
+                        origin: row.get("origin")?,
                     })
                 })?;
                 rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -221,7 +232,7 @@ impl PendingRequestRepository {
                     params![ch],
                 );
                 let mut stmt = conn.prepare(
-                    "SELECT id, session_id, user_message, channel, channel_chat_id \
+                    "SELECT id, session_id, user_message, channel, channel_chat_id, origin \
                      FROM pending_requests WHERE channel = ?1 \
                      ORDER BY created_at ASC",
                 )?;
@@ -232,6 +243,7 @@ impl PendingRequestRepository {
                         user_message: row.get("user_message")?,
                         channel: row.get("channel")?,
                         channel_chat_id: row.get("channel_chat_id")?,
+                        origin: row.get("origin")?,
                     })
                 })?;
                 rows.collect::<std::result::Result<Vec<_>, _>>()

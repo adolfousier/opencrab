@@ -335,7 +335,7 @@ async fn pending_requests_created_and_cleared() {
     let session_id = uuid::Uuid::new_v4();
 
     // Create a pending request (simulates agent start)
-    repo.insert(id, session_id, "test message", "tui", None)
+    repo.insert(id, session_id, "test message", "tui", None, "user")
         .await
         .unwrap();
 
@@ -363,12 +363,26 @@ async fn pending_requests_deduplicate_by_session() {
     let session_id = uuid::Uuid::new_v4();
 
     // Insert same session twice with different request IDs
-    repo.insert(uuid::Uuid::new_v4(), session_id, "msg1", "tui", None)
-        .await
-        .unwrap();
-    repo.insert(uuid::Uuid::new_v4(), session_id, "msg2", "tui", None)
-        .await
-        .unwrap();
+    repo.insert(
+        uuid::Uuid::new_v4(),
+        session_id,
+        "msg1",
+        "tui",
+        None,
+        "user",
+    )
+    .await
+    .unwrap();
+    repo.insert(
+        uuid::Uuid::new_v4(),
+        session_id,
+        "msg2",
+        "tui",
+        None,
+        "user",
+    )
+    .await
+    .unwrap();
 
     // Should still only recover once per session
     let interrupted = repo.get_interrupted().await.unwrap();
@@ -391,9 +405,16 @@ async fn pending_request_stores_channel_and_chat_id() {
     let id = uuid::Uuid::new_v4();
     let session_id = uuid::Uuid::new_v4();
 
-    repo.insert(id, session_id, "hello", "telegram", Some("-100123456"))
-        .await
-        .unwrap();
+    repo.insert(
+        id,
+        session_id,
+        "hello",
+        "telegram",
+        Some("-100123456"),
+        "user",
+    )
+    .await
+    .unwrap();
 
     let interrupted = repo.get_interrupted().await.unwrap();
     assert_eq!(interrupted.len(), 1);
@@ -419,6 +440,7 @@ async fn pending_request_channel_chat_id_is_optional() {
         "msg",
         "tui",
         None,
+        "user",
     )
     .await
     .unwrap();
@@ -443,15 +465,23 @@ async fn pending_requests_multi_channel_coexistence() {
     let dc_sid = uuid::Uuid::new_v4();
     let slack_sid = uuid::Uuid::new_v4();
 
-    repo.insert(uuid::Uuid::new_v4(), tui_sid, "tui msg", "tui", None)
-        .await
-        .unwrap();
+    repo.insert(
+        uuid::Uuid::new_v4(),
+        tui_sid,
+        "tui msg",
+        "tui",
+        None,
+        "user",
+    )
+    .await
+    .unwrap();
     repo.insert(
         uuid::Uuid::new_v4(),
         tg_sid,
         "telegram msg",
         "telegram",
         Some("-100999"),
+        "user",
     )
     .await
     .unwrap();
@@ -461,6 +491,7 @@ async fn pending_requests_multi_channel_coexistence() {
         "discord msg",
         "discord",
         Some("123456789"),
+        "user",
     )
     .await
     .unwrap();
@@ -470,6 +501,7 @@ async fn pending_requests_multi_channel_coexistence() {
         "slack msg",
         "slack",
         Some("C01ABC"),
+        "user",
     )
     .await
     .unwrap();
@@ -510,15 +542,29 @@ async fn pending_requests_delete_ids() {
     let id2 = uuid::Uuid::new_v4();
     let id3 = uuid::Uuid::new_v4();
 
-    repo.insert(id1, uuid::Uuid::new_v4(), "msg1", "tui", None)
+    repo.insert(id1, uuid::Uuid::new_v4(), "msg1", "tui", None, "user")
         .await
         .unwrap();
-    repo.insert(id2, uuid::Uuid::new_v4(), "msg2", "telegram", Some("123"))
-        .await
-        .unwrap();
-    repo.insert(id3, uuid::Uuid::new_v4(), "msg3", "discord", Some("456"))
-        .await
-        .unwrap();
+    repo.insert(
+        id2,
+        uuid::Uuid::new_v4(),
+        "msg2",
+        "telegram",
+        Some("123"),
+        "user",
+    )
+    .await
+    .unwrap();
+    repo.insert(
+        id3,
+        uuid::Uuid::new_v4(),
+        "msg3",
+        "discord",
+        Some("456"),
+        "user",
+    )
+    .await
+    .unwrap();
 
     // Delete only first two
     repo.delete_ids(vec![id1.to_string(), id2.to_string()])
@@ -544,6 +590,7 @@ async fn pending_requests_delete_ids_empty_is_noop() {
         "msg",
         "tui",
         None,
+        "user",
     )
     .await
     .unwrap();
@@ -566,12 +613,26 @@ async fn pending_request_delete_removes_single_request() {
     let id1 = uuid::Uuid::new_v4();
     let id2 = uuid::Uuid::new_v4();
 
-    repo.insert(id1, uuid::Uuid::new_v4(), "msg1", "telegram", Some("111"))
-        .await
-        .unwrap();
-    repo.insert(id2, uuid::Uuid::new_v4(), "msg2", "telegram", Some("222"))
-        .await
-        .unwrap();
+    repo.insert(
+        id1,
+        uuid::Uuid::new_v4(),
+        "msg1",
+        "telegram",
+        Some("111"),
+        "user",
+    )
+    .await
+    .unwrap();
+    repo.insert(
+        id2,
+        uuid::Uuid::new_v4(),
+        "msg2",
+        "telegram",
+        Some("222"),
+        "user",
+    )
+    .await
+    .unwrap();
 
     // Delete only the first
     repo.delete(id1).await.unwrap();

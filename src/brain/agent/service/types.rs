@@ -230,6 +230,46 @@ pub struct BgTaskMeta {
     pub tail: String,
 }
 
+/// Origin recorded on a `pending_requests` row for restart recovery (#12).
+///
+/// Distinct from [`PushOrigin`]: that one decides echo-bubble rendering for a
+/// queued message; this one decides what BOOT does with a turn that was
+/// killed mid-tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingOrigin {
+    /// A user-initiated turn (channel ingress / TUI / button tap). Boot
+    /// replays it with the continuation prompt — the behavior that predates
+    /// #12, unchanged.
+    User,
+    /// A push-initiated turn (session_notify / background-task completion).
+    /// Boot must NOT replay the LLM turn: re-running an interrupted tool
+    /// call can double-execute side effects such as installs or binary
+    /// swaps. Boot re-delivers the original push text to the owning
+    /// surface instead, which re-drives the intent through the normal wake
+    /// path.
+    System,
+}
+
+impl PendingOrigin {
+    /// The value persisted in `pending_requests.origin`.
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            PendingOrigin::User => "user",
+            PendingOrigin::System => "system",
+        }
+    }
+
+    /// Parse a persisted `pending_requests.origin` value. Unknown or legacy
+    /// values map to [`PendingOrigin::User`] so pre-#12 rows keep their
+    /// historical replay behavior.
+    pub fn from_db_str(value: &str) -> Self {
+        match value {
+            "system" => PendingOrigin::System,
+            _ => PendingOrigin::User,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct QueuedUserMessage {
     /// Full text injected into the LLM context for the live turn.

@@ -634,6 +634,7 @@ fn pending_request_struct_fields() {
         user_message: "hello".to_string(),
         channel: "telegram".to_string(),
         channel_chat_id: Some("-12345".to_string()),
+        origin: "user".to_string(),
     };
     assert_eq!(pr.channel, "telegram");
     assert_eq!(pr.channel_chat_id, Some("-12345".to_string()));
@@ -648,6 +649,7 @@ fn pending_request_tui_channel_no_chat_id() {
         user_message: "test".to_string(),
         channel: "tui".to_string(),
         channel_chat_id: None,
+        origin: "user".to_string(),
     };
     assert_eq!(pr.channel, "tui");
     assert!(pr.channel_chat_id.is_none());

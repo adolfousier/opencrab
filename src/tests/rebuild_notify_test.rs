@@ -54,6 +54,7 @@ async fn find_latest_for_session_returns_the_current_turn_row() {
         "please rebuild yourself",
         "telegram",
         Some("123456789"),
+        "user",
     )
     .await
     .unwrap();

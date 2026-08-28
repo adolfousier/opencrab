@@ -193,7 +193,7 @@ impl AgentService {
             None,
             "tui",
             None,
-            true,
+            Some(PendingOrigin::User),
         )
         .await
     }
@@ -231,7 +231,7 @@ impl AgentService {
             override_progress_callback,
             channel,
             channel_chat_id,
-            true,
+            Some(PendingOrigin::User),
         )
         .await
     }
@@ -265,7 +265,45 @@ impl AgentService {
             override_progress_callback,
             channel,
             channel_chat_id,
-            false,
+            None,
+        )
+        .await
+    }
+
+    /// Send a push-initiated turn (session_notify / background-task
+    /// completion), tracked for restart recovery with origin `system` (#12).
+    ///
+    /// Unlike [`Self::resume_interrupted_turn`] this INSERTS a pending row:
+    /// a push turn killed mid-tool must be visible to boot recovery, which
+    /// re-delivers the original push text instead of replaying the LLM turn
+    /// (re-running the interrupted tool call could double-execute side
+    /// effects such as installs or binary swaps). The delete-at-exit
+    /// invariant is unchanged, and a re-delivery at boot rides
+    /// [`Self::resume_interrupted_turn`], so the #729 no-perpetual-rows
+    /// guarantee still holds.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_push_turn(
+        &self,
+        session_id: Uuid,
+        user_message: String,
+        model: Option<String>,
+        cancel_token: Option<CancellationToken>,
+        override_approval_callback: Option<ApprovalCallback>,
+        override_progress_callback: Option<ProgressCallback>,
+        channel: &str,
+        channel_chat_id: Option<&str>,
+    ) -> Result<AgentResponse> {
+        self.run_tool_loop(
+            session_id,
+            user_message,
+            None,
+            model,
+            cancel_token,
+            override_approval_callback,
+            override_progress_callback,
+            channel,
+            channel_chat_id,
+            Some(PendingOrigin::System),
         )
         .await
     }
@@ -304,7 +342,7 @@ impl AgentService {
             override_progress_callback,
             channel,
             channel_chat_id,
-            true,
+            Some(PendingOrigin::User),
         )
         .await
     }

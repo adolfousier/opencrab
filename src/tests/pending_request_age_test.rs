@@ -38,7 +38,7 @@ async fn thirty_minute_old_turn_is_still_resumed() {
 
     let id = uuid::Uuid::new_v4();
     let session_id = uuid::Uuid::new_v4();
-    repo.insert(id, session_id, "long agentic turn", "tui", None)
+    repo.insert(id, session_id, "long agentic turn", "tui", None, "user")
         .await
         .unwrap();
     // 30 minutes into the turn: well past the old 10-minute cutoff.
@@ -60,9 +60,16 @@ async fn day_old_debris_is_purged() {
     let repo = PendingRequestRepository::new(db.pool().clone());
 
     let id = uuid::Uuid::new_v4();
-    repo.insert(id, uuid::Uuid::new_v4(), "crash debris", "tui", None)
-        .await
-        .unwrap();
+    repo.insert(
+        id,
+        uuid::Uuid::new_v4(),
+        "crash debris",
+        "tui",
+        None,
+        "user",
+    )
+    .await
+    .unwrap();
     // Last interaction over a day ago.
     backdate(&db, id, 100_000, 100_000).await;
 
@@ -80,9 +87,16 @@ async fn touch_keeps_a_very_long_turn_alive() {
     let repo = PendingRequestRepository::new(db.pool().clone());
 
     let id = uuid::Uuid::new_v4();
-    repo.insert(id, uuid::Uuid::new_v4(), "multi-hour turn", "tui", None)
-        .await
-        .unwrap();
+    repo.insert(
+        id,
+        uuid::Uuid::new_v4(),
+        "multi-hour turn",
+        "tui",
+        None,
+        "user",
+    )
+    .await
+    .unwrap();
     // Turn STARTED two days ago but progress persisted recently.
     backdate(&db, id, 200_000, 200_000).await;
     repo.touch(id).await.unwrap();
@@ -108,6 +122,7 @@ async fn channel_scoped_query_has_same_age_semantics() {
         "old telegram turn",
         "telegram",
         Some("123"),
+        "user",
     )
     .await
     .unwrap();
@@ -120,6 +135,7 @@ async fn channel_scoped_query_has_same_age_semantics() {
         "telegram debris",
         "telegram",
         Some("123"),
+        "user",
     )
     .await
     .unwrap();

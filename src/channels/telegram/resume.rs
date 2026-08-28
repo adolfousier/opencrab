@@ -242,6 +242,7 @@ pub(crate) fn build_enqueue_callback(
                 msg.context_text,
                 agent,
                 state,
+                true, // push-initiated wake (#12): track for restart recovery
             )
             .await
             {
@@ -260,6 +261,7 @@ pub(crate) fn build_enqueue_callback(
 /// directly so the slot is not double-claimed.
 ///
 /// Called from ui.rs on startup when pending Telegram requests are detected.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn resume_session(
     bot: Bot,
     chat_id: ChatId,
@@ -268,6 +270,7 @@ pub(crate) async fn resume_session(
     prompt: String,
     agent: Arc<AgentService>,
     telegram_state: Arc<TelegramState>,
+    track_push_turn: bool,
 ) -> anyhow::Result<()> {
     // Claim the session's turn slot for the whole replay (#1222). A recovery
     // replay drives the SAME edit loop as an ingress turn but used to run
@@ -296,6 +299,7 @@ pub(crate) async fn resume_session(
         prompt,
         agent,
         telegram_state,
+        track_push_turn,
     )
     .await
 }
@@ -303,6 +307,7 @@ pub(crate) async fn resume_session(
 /// Unguarded core of `resume_session`. The turn-slot contract lives in the
 /// caller: either hold an `ActiveTurnGuard` across the await, or go through
 /// the public wrapper.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn resume_session_inner(
     bot: Bot,
     chat_id: ChatId,
@@ -311,6 +316,7 @@ pub(crate) async fn resume_session_inner(
     prompt: String,
     agent: Arc<AgentService>,
     telegram_state: Arc<TelegramState>,
+    track_push_turn: bool,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "Telegram: resume_session {} with full streaming pipeline",
@@ -535,18 +541,37 @@ pub(crate) async fn resume_session_inner(
         .await;
 
     let chat_id_str = chat_id.0.to_string();
-    let result = agent
-        .resume_interrupted_turn(
-            session_id,
-            prompt,
-            None,
-            Some(cancel_token.clone()),
-            None, // no approval callback for resume
-            Some(progress_cb),
-            "telegram",
-            Some(&chat_id_str),
-        )
-        .await;
+    let result = if track_push_turn {
+        // Push-initiated wake (bg-resume completion, stranded flush, boot
+        // re-delivery): tracked with origin `system` so a kill mid-tool
+        // leaves a boot-visible row (#12). The prompt IS the original push
+        // text for push wakes, so it persists correctly.
+        agent
+            .send_push_turn(
+                session_id,
+                prompt,
+                None,
+                Some(cancel_token.clone()),
+                None, // no approval callback for resume
+                Some(progress_cb),
+                "telegram",
+                Some(&chat_id_str),
+            )
+            .await
+    } else {
+        agent
+            .resume_interrupted_turn(
+                session_id,
+                prompt,
+                None,
+                Some(cancel_token.clone()),
+                None, // no approval callback for resume
+                Some(progress_cb),
+                "telegram",
+                Some(&chat_id_str),
+            )
+            .await
+    };
 
     telegram_state.remove_cancel_token(session_id).await;
     edit_cancel.cancel();
