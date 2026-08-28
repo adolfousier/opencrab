@@ -1856,6 +1856,30 @@ pub(crate) async fn handle_message(
         agent.message_enqueue_callback(),
     );
 
+    // Expose this session's turn state to the delivery gate (fork #13): a
+    // session_notify without interrupt=true must refuse while a turn is
+    // streaming instead of dropping a bare user message into it. The probe
+    // captures this state Arc, so it stays valid across route re-binds.
+    {
+        let probe_state = telegram_state.clone();
+        crate::brain::agent::service::session_routes::register_turn_probe(
+            session_id,
+            std::sync::Arc::new(move || probe_state.is_turn_active(session_id)),
+        );
+    }
+
+    // Expose this session's channel ownership to the delivery gate (fork
+    // #17): when this session gets REPLACED on its chat/topic (idle-timeout
+    // reset creates a successor), pushes must refuse to wake it into the
+    // successor's conversation instead of two sessions writing the same
+    // channel. Sync mirror read — TelegramState::channel_ownership_of.
+    {
+        let probe_state = telegram_state.clone();
+        crate::brain::agent::service::session_routes::register_channel_owner_probe(
+            session_id,
+            std::sync::Arc::new(move || probe_state.channel_ownership_of(session_id)),
+        );
+    }
     // Archive any shared images under the session's project files dir (when the
     // session is assigned to a project) so a project's media lives together and
     // survives the tmp purge. Rewrites the <<IMG:tmp>> marker to the archived
