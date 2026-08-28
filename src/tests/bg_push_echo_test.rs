@@ -229,9 +229,9 @@ fn notify_receipt_card_matches_the_locked_n4_shape() {
     assert!(
         md.starts_with(
             "<details><summary><sub>📨 <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
-             verified, all…</sub></summary>"
+             verified, a…</sub></summary>"
         ),
-        "summary = 📨 + bold sender + colon + first-line preview, whole line subbed: {md}"
+        "summary = 📨 + bold sender + colon + 45-char first-line preview, whole line subbed: {md}"
     );
     assert!(
         md.contains("|---|---|"),
