@@ -1,10 +1,12 @@
 //! JSON-RPC 2.0 handler for A2A protocol operations.
 //!
 //! Dispatches JSON-RPC methods:
-//! - `message/send` → create task + process message via AgentService
-//! - `tasks/get`    → retrieve task by ID
-//! - `tasks/cancel` → cancel a running task
+//! - `message/send`   → create task + process message via AgentService
+//! - `session/notify` → post a notification into a live session's queue (#23)
+//! - `tasks/get`      → retrieve task by ID
+//! - `tasks/cancel`   → cancel a running task
 
+pub(crate) mod notify;
 mod send;
 pub mod stream;
 pub(crate) mod tasks;
@@ -52,6 +54,9 @@ pub async fn dispatch(
                 service_context,
             )
             .await
+        }
+        "session/notify" => {
+            notify::handle_session_notify(req.id, req.params, service_context).await
         }
         "tasks/get" => tasks::handle_get_task(req.id, req.params, store).await,
         "tasks/cancel" => {

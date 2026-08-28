@@ -8,6 +8,7 @@ use super::TelegramState;
 #[allow(unused_imports)]
 use super::handler::*;
 use super::send::{best_effort_delete, fire_chat_action};
+use crate::a2a::handler::notify::CLI_SENDER_PREFIX;
 use crate::brain::agent::service::background_tasks;
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
 use crate::channels::bg_resume;
@@ -93,15 +94,24 @@ pub(crate) fn build_enqueue_callback(
                 // `[session-notify from=<uuid>]` header — the raw id is
                 // replaced with a human label (topic name for same-chat
                 // pushes, chat name / chat+topic for cross-chat, per
-                // Alexey's rule).
+                // Alexey's rule). CLI notifications (#23) stamp
+                // `from=cli:<label>` instead — no sender session exists,
+                // so the carried label renders verbatim.
                 let (echo_md, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
                     build_bg_receipt_card(&meta)
                 } else {
                     let (sender, body) = split_bg_echo_parts(&msg.context_text);
                     match sender {
-                        Some(s) => {
+                        Some(NotifySender::Session(s)) => {
                             let label = sender_label(&state, &bot, s, chat_id).await;
                             build_notify_receipt_card(&label, &body)
+                        }
+                        // CLI lane (#23): no sender session to humanize —
+                        // the carried label renders verbatim, zero API
+                        // lookups. build_notify_receipt_card neutralizes
+                        // angle brackets in the label itself.
+                        Some(NotifySender::CliTooling(label)) => {
+                            build_notify_receipt_card(label, &body)
                         }
                         // Defensive: a BackgroundTask push without meta
                         // (parked by an older binary, #1242 redelivery) keeps
@@ -735,9 +745,27 @@ pub(crate) async fn resume_session_inner(
 /// chars; header, tags and Telegram's own margin eat the rest of the budget.
 const BG_ECHO_BODY_CAP_CHARS: usize = 3200;
 
+/// Producer stamped into a `[session-notify from=…]` header.
+///
+/// Cross-session pushes name the real sender session uuid (the agent tool,
+/// #1203) — the echo humanizes it via [`sender_label`]. The CLI lane (#23)
+/// has NO sender session (the verb runs as a separate process), so it
+/// stamps `cli:<label>` ([`CLI_SENDER_PREFIX`]); the echo renders the
+/// carried label verbatim instead of a session lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotifySender<'a> {
+    /// A real sender session (`from=<uuid>`).
+    Session(Uuid),
+    /// The CLI lane (`from=cli:<label>`, #23): the label renders verbatim.
+    CliTooling(&'a str),
+}
+
 /// Split the mechanical `[session-notify from=<uuid>]` header (#1203) off a
 /// push's context text. Absent or malformed header → `(None, whole text)`.
-pub(crate) fn split_notify_header(context_text: &str) -> (Option<Uuid>, &str) {
+/// A `cli:`-prefixed sender (#23) yields [`NotifySender::CliTooling`]
+/// carrying the label after the prefix; an EMPTY label is malformed and
+/// falls through to `(None, whole text)`.
+pub(crate) fn split_notify_header(context_text: &str) -> (Option<NotifySender<'_>>, &str) {
     let trimmed = context_text.trim_start();
     let Some(after_open) = trimmed.strip_prefix("[session-notify from=") else {
         return (None, trimmed);
@@ -746,8 +774,15 @@ pub(crate) fn split_notify_header(context_text: &str) -> (Option<Uuid>, &str) {
         return (None, trimmed);
     };
     let rest = after_open[close + 1..].trim_start();
-    match Uuid::parse_str(&after_open[..close]) {
-        Ok(sender) => (Some(sender), rest),
+    let candidate = &after_open[..close];
+    if let Some(label) = candidate.strip_prefix(CLI_SENDER_PREFIX) {
+        let label = label.trim();
+        if !label.is_empty() {
+            return (Some(NotifySender::CliTooling(label)), rest);
+        }
+    }
+    match Uuid::parse_str(candidate) {
+        Ok(sender) => (Some(NotifySender::Session(sender)), rest),
         Err(_) => (None, trimmed),
     }
 }
@@ -774,7 +809,7 @@ pub(crate) fn strip_system_framing(text: &str) -> &str {
 /// is the real payload. Strip the wrapper, keep inner content + tail (#1225
 /// leftover: the squash shipped tests asserting this shape but the old
 /// whole-string-only strip could never satisfy them).
-pub(crate) fn split_bg_echo_parts(context_text: &str) -> (Option<Uuid>, String) {
+pub(crate) fn split_bg_echo_parts(context_text: &str) -> (Option<NotifySender<'_>>, String) {
     let (sender, rest) = split_notify_header(context_text);
     (sender, strip_push_scaffolding(rest))
 }
