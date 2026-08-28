@@ -262,6 +262,11 @@ mod tests {
     }
 
     #[tokio::test]
+    // test_guard serializes suites touching the process-global route table;
+    // holding it across the delivery `.await`s below is the entire point —
+    // this suite's registered route must not interleave with another test's
+    // (#22 shape, session_notify_test precedent).
+    #[allow(clippy::await_holding_lock)]
     async fn live_uuid_delivers_through_the_claimed_route() {
         // #23 acceptance: live uuid → delivered via the same
         // deliver_to_session path the agent tool uses.
@@ -295,6 +300,9 @@ mod tests {
     }
 
     #[tokio::test]
+    // test_guard: same serialization rationale as the suite above — the
+    // registered route must survive the delivery `.await`s untouched.
+    #[allow(clippy::await_holding_lock)]
     async fn sender_override_rides_the_header() {
         // #23 owner amendment ("Overridable"): the sender label is
         // overridable via the `sender` param (CLI: `--sender`), and the
@@ -373,6 +381,10 @@ mod tests {
     }
 
     #[tokio::test]
+    // test_guard: this suite touches the route table AND the channel-owner
+    // registry across `.await`s (create → archive → occupy → notify); the
+    // guard keeps the whole sequence atomic against other suites.
+    #[allow(clippy::await_holding_lock)]
     async fn archived_session_auto_routes_to_its_successor() {
         // Owner directive 2026-08-28: archived ≠ dead. An archived session
         // whose channel a successor occupies must auto-route exactly like
