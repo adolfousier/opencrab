@@ -158,37 +158,111 @@ fn bubble_md_and_classic_stay_separate() {
     );
 }
 
+// ---- #15 receipt cards (owner-locked shapes P3f / N4) ----
+
+fn meta(success: bool, label: &str, secs: f32, tail: &str) -> BgTaskMeta {
+    BgTaskMeta {
+        success,
+        label: label.to_string(),
+        elapsed_secs: secs,
+        tail: tail.to_string(),
+    }
+}
+
 #[test]
-fn md_leg_passes_title_verbatim_into_markdown() {
-    let md = build_bg_echo_bubble_md("body", "📨 Ops <script> / Push");
+fn bg_receipt_card_matches_the_locked_p3f_shape() {
+    let (md, classic) = build_bg_receipt_card(&meta(
+        true,
+        "gh run watch 33117665576",
+        1646.0,
+        "line one\nline two",
+    ));
     assert!(
-        md.contains("📨 Ops <script> / Push"),
-        "markdown leg is not HTML — title passes through verbatim"
+        md.starts_with(
+            "<details><summary><sub>✅ `gh run watch 33117665576` 🕒 27m 26s</sub></summary>"
+        ),
+        "summary = icon + monospace roster label + clock + duration, whole line subbed: {md}"
+    );
+    assert!(
+        md.contains("```\nline one\nline two\n```"),
+        "body is ONE fenced block with the tail verbatim"
+    );
+    assert!(md.ends_with("</details>"));
+    assert!(!md.contains("exit"), "no exit code / wording in the bubble");
+    // Degraded path stays a classic blockquote carrying the same content.
+    assert!(classic.starts_with("<blockquote expandable>"));
+    assert!(classic.contains("gh run watch 33117665576"));
+    assert!(classic.contains("line one"));
+}
+
+#[test]
+fn bg_receipt_card_failure_uses_the_cross_icon() {
+    let (md, _) = build_bg_receipt_card(&meta(false, "cargo test", 3.0, "boom"));
+    assert!(md.starts_with("<details><summary><sub>❌ `cargo test` 🕒 3s</sub></summary>"));
+}
+
+#[test]
+fn bg_receipt_card_strips_backticks_from_the_label() {
+    let (md, _) = build_bg_receipt_card(&meta(true, "cat `file`.md", 1.0, "ok"));
+    assert!(
+        md.contains("`cat file.md`"),
+        "label backticks stripped so the code span stays intact: {md}"
     );
 }
 
 #[test]
-fn md_leg_keeps_pipe_tables_native_for_rich_parser() {
-    // The whole point of #1234: raw pipe-table source survives the leg, so
-    // the outbox's markdown dialect renders it as a real grid server-side.
-    let table = "| host | up |\n|---|---|\n| vpn | 1 |";
-    let md = build_bg_echo_bubble_md(table, "T");
+fn bg_receipt_card_fence_outgrows_backtick_runs_in_the_tail() {
+    let tail = "look:\n```\nnested fence\n```\ndone";
+    let (md, _) = build_bg_receipt_card(&meta(true, "cat README.md", 2.0, tail));
+    assert!(
+        md.contains("````\nlook:"),
+        "fence grows past the tail's longest backtick run"
+    );
+}
+
+#[test]
+fn notify_receipt_card_matches_the_locked_n4_shape() {
+    let body = "RECEIPT CONTRACT DELIVERED — swap verified, all three clauses journal-anchored.\n\n\
+                | Clause | Anchor |\n|---|---|\n| Build | run 1 |";
+    let (md, classic) = build_notify_receipt_card("Compiler", body);
+    assert!(
+        md.starts_with(
+            "<details><summary><sub>📨 <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
+             verified, all…</sub></summary>"
+        ),
+        "summary = 📨 + bold sender + colon + first-line preview, whole line subbed: {md}"
+    );
     assert!(
         md.contains("|---|---|"),
-        "pipe table must reach the parser unconverted"
+        "markdown body keeps pipe tables native for the rich parser"
     );
+    assert!(!md.contains("```"), "notify body is never fenced");
+    assert!(md.ends_with("</details>"));
+    assert!(classic.starts_with("<blockquote expandable>"));
+    assert!(classic.contains("Compiler"));
 }
 
 #[test]
-fn classic_and_md_builders_stay_separate() {
-    let (md, _) = build_bg_echo_bubble("body", "T");
-    let only_md = build_bg_echo_bubble_md("body", "T");
+fn notify_receipt_card_sanitizes_angle_brackets_in_sender() {
+    let (md, _) = build_notify_receipt_card("Ops <script>", "body line");
     assert!(
-        !md.contains("<details"),
-        "#1234 retires the details envelope"
+        md.contains("<b>Ops ‹script›</b>: body line"),
+        "angle brackets neutralized so the sender can't open a tag: {md}"
     );
-    assert_eq!(
-        only_md, "**T**\n\nbody",
-        "md leg is bolded title + raw body"
+    assert!(!md.contains("<script>"));
+}
+
+#[test]
+fn notify_preview_truncates_the_first_line_only() {
+    let body = format!("{}\nsecond line stays in the body", "x".repeat(80));
+    let (md, _) = build_notify_receipt_card("Worker", &body);
+    let preview = format!("{}…", "x".repeat(45));
+    assert!(
+        md.contains(&format!(": {preview}</sub>")),
+        "preview = first line truncated to 45 chars + ellipsis: {md}"
+    );
+    assert!(
+        md.contains("second line stays in the body"),
+        "the full body survives inside the fold"
     );
 }

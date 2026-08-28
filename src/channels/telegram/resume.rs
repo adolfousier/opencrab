@@ -8,6 +8,7 @@ use super::TelegramState;
 #[allow(unused_imports)]
 use super::handler::*;
 use super::send::{best_effort_delete, fire_chat_action};
+use crate::brain::agent::service::background_tasks;
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
 use crate::channels::bg_resume;
 use crate::config::Config;
@@ -83,36 +84,42 @@ pub(crate) fn build_enqueue_callback(
                 crate::brain::agent::PushOrigin::BackgroundTask
                     | crate::brain::agent::PushOrigin::SessionNotify
             ) {
+                // #15: receipt cards. A bg completion carries the typed
+                // payload (icon/label/duration/tail) in `bg_meta` — the card
+                // renders from it, never by parsing the `[System: ...]`
+                // context text. Notify pushes carry no meta: the card is
+                // built from the sender label + markdown body (N4 shape).
                 // #1225: session_notify pushes carry a mechanical
-                // `[session-notify from=<uuid>]` header — replace the raw id
-                // with a human label (topic name for same-chat pushes, chat
-                // name / chat+topic for cross-chat, per Alexey's rule), so the
-                // bubble reads "📨 From: Ops / Push to session", not a UUID
-                // spray. Background-task pushes have no sender: the title
-                // names the task from the producer's display line instead of
-                // the generic "⚙️ background task result" (Alexey 2026-08-26).
-                let (sender, body) = split_bg_echo_parts(&msg.context_text);
-                let title = if let Some(s) = sender {
-                    format!("📨 {}", sender_label(&state, &bot, s, chat_id).await)
-                } else if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask {
-                    // Borrow: `msg` is moved wholesale later in this callback.
-                    background_task_title(&msg.display_text)
+                // `[session-notify from=<uuid>]` header — the raw id is
+                // replaced with a human label (topic name for same-chat
+                // pushes, chat name / chat+topic for cross-chat, per
+                // Alexey's rule).
+                let (echo_md, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
+                    build_bg_receipt_card(&meta)
                 } else {
-                    "⚙️ background task result".to_owned()
+                    let (sender, body) = split_bg_echo_parts(&msg.context_text);
+                    match sender {
+                        Some(s) => {
+                            let label = sender_label(&state, &bot, s, chat_id).await;
+                            build_notify_receipt_card(&label, &body)
+                        }
+                        // Defensive: a BackgroundTask push without meta
+                        // (parked by an older binary, #1242 redelivery) keeps
+                        // the #1234 flat bold-title shape. Borrow note:
+                        // `msg` is moved wholesale later in this callback.
+                        None if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask => {
+                            let title = background_task_title(&msg.display_text);
+                            build_bg_echo_bubble(&body, &title)
+                        }
+                        None => build_bg_echo_bubble(&body, "⚙️ background task result"),
+                    }
                 };
-                // Classic blockquote stays as the degraded-path source (#1234):
-                // computed up front; only touched if the outbox send fails.
-                let (_, classic_html) = build_bg_echo_bubble(&body, &title);
-                // #1234: the body rides the CANONICAL markdown→rich outbox
-                // (the same pipeline as every cron/kanal message) so pipe
-                // tables reach Telegram's rich parser as native markdown
-                // source and render as real grids. The #1225 details card
-                // pre-flattened bodies through the fallback HTML converter
-                // first — tables died before the server ever saw them.
-                // Markdown mode cannot express a <details> collapse (#421
-                // tried, shipped flat) — accepted trade: real grids beat
-                // collapsible chrome for cron output.
-                let echo_md = build_bg_echo_bubble_md(&body, &title);
+                // #1234/#15: the card rides the CANONICAL markdown→rich
+                // outbox (the same pipeline as every cron/kanal message);
+                // the native-rich route renders the <details> collapse, the
+                // fenced tail and pipe tables server-side. The classic
+                // blockquote above is the degraded-path source: computed up
+                // front, only touched if the outbox send fails.
                 let sent_rich = match super::send::send_markdown_outbox(
                     &bot,
                     teloxide::types::ChatId(chat_id),
@@ -792,16 +799,96 @@ pub(crate) fn build_bg_echo_bubble(body: &str, title: &str) -> (String, String) 
     (markdown, html)
 }
 
-/// Markdown leg for the echo bubble (#1234): bolded title line + the capped
-/// RAW markdown body. Feeds [`super::send::send_markdown_outbox`] — pipe
-/// tables reach the server's markdown parser as native source and render as
-/// real grids. Truncation happens before composition so payloads stay capped;
-/// no HTML escaping here — this is markdown, tags-in-titles pass verbatim.
-pub(crate) fn build_bg_echo_bubble_md(body: &str, title: &str) -> String {
+/// The bg-receipt tail fence (#15): three backticks normally, but ONE MORE
+/// than the longest backtick run when the tail itself carries a ``` run, so
+/// raw output can never escape the code block and corrupt the card.
+fn receipt_fence(tail: &str) -> String {
+    let (mut longest, mut run) = (0usize, 0usize);
+    for ch in tail.chars() {
+        if ch == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    "`".repeat(if longest >= 3 { longest + 1 } else { 3 })
+}
+
+/// Background-task receipt card (#15, owner-locked shape P3f): ONE collapsed
+/// `<details>`. Summary = `<sub>{✅|❌} `{label}` 🕒 {duration}</sub>` — icon
+/// by exit 0 / non-zero as the sole outcome signal (no exit code, no
+/// wording), label = the roster `short_label` form in inline code. Body =
+/// ONE fenced code block with the output tail verbatim. Returns (rich
+/// markdown, classic HTML fallback). The markdown leg feeds
+/// [`super::send::send_markdown_outbox`], whose native-rich route renders
+/// the collapsible + code block server-side — the shape the owner-approved
+/// prototypes proved on screen (topic 31847).
+pub(crate) fn build_bg_receipt_card(meta: &crate::brain::agent::BgTaskMeta) -> (String, String) {
+    let icon = if meta.success { "✅" } else { "❌" };
+    // The label sits inside an inline-code span: backticks would escape the
+    // span and break the summary, so they are stripped.
+    let stripped = meta.label.replace('`', "");
+    let label = stripped.trim();
+    let label = if label.is_empty() {
+        "background task"
+    } else {
+        label
+    };
+    let duration = background_tasks::format_elapsed(meta.elapsed_secs);
+    let fence = receipt_fence(&meta.tail);
+    let markdown = format!(
+        "<details><summary><sub>{icon} `{label}` 🕒 {duration}</sub></summary>\n\n\
+         {fence}\n{tail}\n{fence}\n\n</details>",
+        tail = meta.tail
+    );
+    // Degraded path: same content as a classic blockquote (non-collapsible
+    // on this wire), computed up front and only touched if the outbox send
+    // fails (#1234 fallback discipline).
+    let flat_title = format!("{icon} {label} 🕒 {duration}");
+    let fenced_body = format!("{fence}\n{tail}\n{fence}", tail = meta.tail);
+    let (_, classic_html) = build_bg_echo_bubble(&fenced_body, &flat_title);
+    (markdown, classic_html)
+}
+
+/// The notify-card peek (#15 amendment): the body's first line, truncated
+/// ~45 chars + ellipsis. Deterministic at compose time — no new metadata.
+fn first_line_preview(body: &str) -> String {
+    let line = body.lines().next().unwrap_or("").trim();
+    if line.chars().count() > 45 {
+        format!("{}…", crate::utils::string::truncate_chars(line, 45))
+    } else {
+        line.to_string()
+    }
+}
+
+/// Session-notify receipt card (#15 amendment, owner-locked shape N4): ONE
+/// collapsed `<details>`. Summary = `<sub>📨 <b>{sender}</b>: {preview}</sub>`
+/// — fixed 📨 (notifies carry no success/failure semantics), sender label in
+/// bold, preview = truncated first line of the body. Body = the notify
+/// content as rendered markdown: prose and pipe tables stay native for the
+/// rich parser — no code fence, a notify is a document, not a log.
+pub(crate) fn build_notify_receipt_card(sender_label: &str, body: &str) -> (String, String) {
+    // The sender sits inside a <b> tag: angle brackets are neutralized so a
+    // label containing '<' cannot open a tag and corrupt the summary.
+    let sanitized = sender_label.replace('<', "‹").replace('>', "›");
+    let sender = sanitized.trim();
+    let sender = if sender.is_empty() {
+        "session notify"
+    } else {
+        sender
+    };
+    let preview = first_line_preview(body);
     let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
     let suffix = if truncated { " (truncated)" } else { "" };
-    format!("**{title}{suffix}**\n\n{body}")
+    let markdown = format!(
+        "<details><summary><sub>📨 <b>{sender}</b>: {preview}</sub></summary>\n\n\
+         {body}{suffix}\n\n</details>"
+    );
+    let flat_title = format!("📨 {sender}: {preview}");
+    let (_, classic_html) = build_bg_echo_bubble(&format!("{body}{suffix}"), &flat_title);
+    (markdown, classic_html)
 }
 
 /// Bubble header for a background-task echo: reuse the producer's display
