@@ -2730,11 +2730,14 @@ pub(crate) async fn handle_message(
         // flood control and produced duplicate cards. Skipping the re-stick
         // still refreshes in place below, so the card stays correct; it just
         // stays where it is until the next re-stick is due.
-        if crate::utils::plan_files::take_plan_just_archived(session_id).await {
+        if crate::utils::plan_files::peek_plan_just_archived(session_id).await {
             // Plan completed THIS settle (#1158, #1231): finalize the tracked
             // card (✅ header, keyboard stripped, one-shot untrack) and re-stick
             // the completed card to the bottom of the thread instead of
-            // re-sticking or refreshing a now-archived plan.
+            // re-sticking or refreshing a now-archived plan. Finalize consumes
+            // the flag only after the notice LANDED (#16): a flood-aborted
+            // finalize leaves it in place, so the next settle retries instead
+            // of losing the completion notice forever.
             super::plan_card::finalize_plan_card(
                 &bot,
                 msg.chat.id,

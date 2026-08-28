@@ -477,7 +477,9 @@ pub(crate) async fn refresh_plan_card(
         // directly). Finalize the completed card and re-stick it to the bottom
         // instead of silently deleting it (#1231). Otherwise it's a genuine
         // plan-gone/discard removal.
-        if crate::utils::plan_files::take_plan_just_archived(session_id).await {
+        if crate::utils::plan_files::peek_plan_just_archived(session_id).await {
+            // Finalize consumes the flag itself once the notice lands (#16);
+            // a failed finalize leaves it in place for the next settle's retry.
             finalize_plan_card_locked(bot, chat, thread_id, state, session_id).await;
         } else {
             remove_plan_card_locked(bot, chat, state, session_id).await;
@@ -580,20 +582,54 @@ pub(crate) async fn refresh_plan_card(
 ///
 /// One-shot (#809 lesson): success UNTRACKS the card, so no later refresh or
 /// restart ever re-renders an archived plan as live. The "just archived THIS
-/// settle" gate (`take_plan_just_archived`) lives in the caller; tool_loop
-/// archives at EVERY settling plan-turn, so without that one-shot stamp a
-/// later settle would wrongly finalize an unrelated archive forever.
+/// settle" stamp is a durable flag; tool_loop archives at EVERY settling
+/// plan-turn, so without that stamp a later settle would wrongly finalize an
+/// unrelated archive forever.
+///
+/// Outcome-gated consumption (#16): finalize itself consumes the flag — but
+/// only AFTER the completed card's post/edit is confirmed landed (or is
+/// terminally impossible). A failed finalize leaves the flag in place, so
+/// the NEXT settle retries instead of losing the completion notice forever.
+/// Pre-#16 the gate site consumed the flag BEFORE calling finalize; when a
+/// G3 pacing hold aborted the settle mid-await, finalize died before any API
+/// call and any failure branch — zero logs, flag gone, notice lost. Returns
+/// `true` when the notice landed or was terminally settled, `false` when the
+/// flag was kept for retry.
 pub(crate) async fn finalize_plan_card(
     bot: &Bot,
     chat: ChatId,
     thread_id: Option<ThreadId>,
     state: &Arc<TelegramState>,
     session_id: Uuid,
-) {
+) -> bool {
     // Same lock discipline as refresh/remove (#822): held across API calls.
     let card_lock = state.plan_card_lock(session_id).await;
     let _guard = card_lock.lock().await;
-    finalize_plan_card_locked(bot, chat, thread_id, state, session_id).await;
+    finalize_plan_card_locked(bot, chat, thread_id, state, session_id).await
+}
+
+/// Drop-guard WARN for a mid-flight finalize abort (#16): when the settle
+/// task is cancelled while finalize awaits (the G3 pacing hold never
+/// resolving before the settle context drops was the 2026-08-28 incident),
+/// the future is dropped and NO code below the await runs — the abort was
+/// forensic-silent. Drop is the one hook that still fires; a normal exit
+/// disarms the guard first.
+struct FinalizeAbortGuard {
+    session_id: Uuid,
+    armed: bool,
+}
+
+impl Drop for FinalizeAbortGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            tracing::warn!(
+                "Telegram plan card finalize aborted mid-flight for session {} \
+                 (task cancelled while awaiting — e.g. unresolved G3 pacing hold); \
+                 just-archived flag retained, next settle retries",
+                self.session_id
+            );
+        }
+    }
 }
 
 /// Finalization body, for callers already holding the per-session card lock.
@@ -609,14 +645,25 @@ async fn finalize_plan_card_locked(
     thread_id: Option<ThreadId>,
     state: &Arc<TelegramState>,
     session_id: Uuid,
-) {
+) -> bool {
     let Some((mid, _sig)) = state.plan_card(session_id).await else {
         // Nothing tracked: finalized once already, or never posted. Either
-        // way deliberately NOT reposting is what kills resurrection.
-        return;
+        // way deliberately NOT reposting is what kills resurrection. Consume
+        // the flag (#16) so a stale stamp cannot gate every later settle.
+        crate::utils::plan_files::take_plan_just_archived(session_id).await;
+        return true;
     };
     let Some(doc) = crate::utils::plan_files::latest_archived_plan(session_id).await else {
-        return;
+        // No archived document to render from: terminal, consume (#16).
+        crate::utils::plan_files::take_plan_just_archived(session_id).await;
+        return true;
+    };
+    // #16: armed across every await below; a normal exit disarms it. If the
+    // enclosing task is cancelled mid-await instead, its Drop logs the abort
+    // the old code never could.
+    let mut abort_guard = FinalizeAbortGuard {
+        session_id,
+        armed: true,
     };
     let (title, checklist) = super::flow_chrome::plan_document_sections(&doc);
     let empty_kb = serde_json::json!({ "inline_keyboard": [] });
@@ -661,7 +708,7 @@ async fn finalize_plan_card_locked(
         .await
         {
             Ok(mid) => posted = Some(MessageId(mid)),
-            Err(e) => tracing::debug!("Telegram plan card rich restick failed: {e}"),
+            Err(e) => tracing::warn!("Telegram plan card rich restick failed: {e}"),
         }
     }
     if posted.is_none() {
@@ -670,27 +717,48 @@ async fn finalize_plan_card_locked(
         let req = message_in_thread(bot, chat, thread_id, html.clone()).parse_mode(ParseMode::Html);
         match req.await {
             Ok(m) => posted = Some(m.id),
-            Err(e) => tracing::debug!("Telegram plan card restick post failed ({mid:?}): {e}"),
+            Err(e) => tracing::warn!("Telegram plan card restick post failed ({mid:?}): {e}"),
         }
     }
 
     match posted {
         Some(new_mid) => {
-            // Fresh completed card is at the bottom. Delete the buried tracked
-            // card best-effort; a delete failure leaves a stale card visible,
-            // never a duplicate.
+            // The fresh completed card is at the bottom: the completion
+            // notice has LANDED — consume the flag now, not before (#16).
+            crate::utils::plan_files::take_plan_just_archived(session_id).await;
+            tracing::info!(
+                "Telegram plan card finalized for session {session_id}: \
+                 completed card posted ({new_mid:?})"
+            );
+            // Delete the buried tracked card best-effort; a delete failure
+            // leaves a stale card visible, never a duplicate. Both outcomes
+            // are logged — a vanished card must stay forensic (#16).
             if let Some((mid, _)) = state.plan_card(session_id).await
                 && new_mid != mid
-                && let Err(e) = bot.delete_message(chat, mid).await
             {
-                tracing::debug!("Telegram plan card restick delete failed ({mid:?}): {e}");
+                match bot.delete_message(chat, mid).await {
+                    Ok(_) => {
+                        tracing::info!("Telegram plan card restick deleted stale card ({mid:?})")
+                    }
+                    Err(e) => {
+                        tracing::warn!("Telegram plan card restick delete failed ({mid:?}): {e}")
+                    }
+                }
             }
+            state.take_plan_card(session_id).await;
+            abort_guard.armed = false;
+            true
         }
         None => {
-            // Post failed (flood/API): fall back to editing the tracked card in
-            // place so the completed form is still shown.
+            // Post failed (flood/API): fall back to editing the tracked card
+            // in place so the completed form is still shown.
             let Some((mid, _)) = state.plan_card(session_id).await else {
-                return;
+                // Tracked card vanished mid-finalize: nothing left to edit,
+                // and reposting from here would resurrect a deliberately
+                // removed card. Terminal — consume the flag (#16).
+                crate::utils::plan_files::take_plan_just_archived(session_id).await;
+                abort_guard.armed = false;
+                return true;
             };
             let mut edited = false;
             if use_rich && let Some(rich) = &rich {
@@ -707,13 +775,13 @@ async fn finalize_plan_card_locked(
                 .await
                 {
                     Ok(()) => edited = true,
-                    Err(e) => {
-                        tracing::debug!("Telegram plan card rich finalize failed ({mid:?}): {e}")
-                    }
+                    Err(e) => tracing::warn!(
+                        "Telegram plan card rich finalize edit failed ({mid:?}): {e}"
+                    ),
                 }
             }
-            if !edited
-                && let Err(e) = bot
+            if !edited {
+                match bot
                     .edit_message_text(chat, mid, html.clone())
                     .parse_mode(teloxide::types::ParseMode::Html)
                     .reply_markup(teloxide::types::InlineKeyboardMarkup::new(Vec::<
@@ -721,14 +789,37 @@ async fn finalize_plan_card_locked(
                     >::new(
                     )))
                     .await
-            {
-                tracing::debug!("Telegram plan card finalize edit failed ({mid:?}): {e}");
+                {
+                    Ok(_) => edited = true,
+                    Err(e) => {
+                        tracing::warn!("Telegram plan card finalize edit failed ({mid:?}): {e}")
+                    }
+                }
+            }
+            abort_guard.armed = false;
+            if edited {
+                // In-place edit LANDED: the completion notice is visible —
+                // consume the flag and untrack (#16).
+                crate::utils::plan_files::take_plan_just_archived(session_id).await;
+                tracing::info!(
+                    "Telegram plan card finalized in place ({mid:?}) for session \
+                     {session_id} after post failure"
+                );
+                state.take_plan_card(session_id).await;
+                true
+            } else {
+                // Post AND edit failed: keep the flag so the NEXT settle
+                // retries finalize (#16). The stamp is durable; this WARN is
+                // the visible retry trail until one lands.
+                tracing::warn!(
+                    "Telegram plan card finalize FAILED for session {session_id} \
+                     (post + edit both failed) — just-archived flag retained, \
+                     next settle retries"
+                );
+                false
             }
         }
     }
-    // One-shot regardless of outcome: a card deleted by the user must not come
-    // back as a live card rendered from the archive either.
-    state.take_plan_card(session_id).await;
 }
 
 pub(crate) async fn remove_plan_card(
@@ -759,9 +850,15 @@ async fn remove_plan_card_locked(
     state: &Arc<TelegramState>,
     session_id: Uuid,
 ) {
-    if let Some(mid) = state.take_plan_card(session_id).await
-        && let Err(e) = bot.delete_message(chat, mid).await
-    {
-        tracing::debug!("Telegram plan card delete failed ({mid:?}): {e}");
+    if let Some(mid) = state.take_plan_card(session_id).await {
+        // #16: deleteMessage success used to be silent — a vanished card was
+        // undetectable without cross-referencing a user report. Log both
+        // outcomes so a removal is always forensic.
+        match bot.delete_message(chat, mid).await {
+            Ok(_) => {
+                tracing::info!("Telegram plan card deleted ({mid:?}) for session {session_id}")
+            }
+            Err(e) => tracing::warn!("Telegram plan card delete failed ({mid:?}): {e}"),
+        }
     }
 }
