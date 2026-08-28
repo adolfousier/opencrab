@@ -380,23 +380,15 @@ pub fn short_error_reason(err: &ProviderError) -> String {
 
 /// User-facing summary for "every provider in the chain failed" (#952).
 /// Names the primary and each fallback attempted with its failure reason,
-/// plus providers skipped by the quota circuit breaker, and ends with an
+/// and ends with an
 /// actionable hint — instead of leaking the bare error string of whichever
 /// provider happened to die last.
-pub fn chain_exhausted_summary(
-    primary: &str,
-    primary_reason: &str,
-    tried: &[String],
-    skipped: &[String],
-) -> String {
+pub fn chain_exhausted_summary(primary: &str, primary_reason: &str, tried: &[String]) -> String {
     let mut lines = vec![format!(
         "All providers in the fallback chain failed. {primary}: {primary_reason}."
     )];
     for t in tried {
         lines.push(format!("Fallback {t}"));
-    }
-    if !skipped.is_empty() {
-        lines.push(format!("Skipped (quota-exhausted): {}", skipped.join(", ")));
     }
     lines.push(
         "Switch to a working provider via /models, or wait for the quota window to reset."

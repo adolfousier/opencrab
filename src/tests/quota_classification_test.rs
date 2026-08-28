@@ -1,18 +1,19 @@
-//! Regression tests for the quota-aware retry circuit breaker (#952).
+//! Quota classification and the user-facing chain summary.
 //!
-//! Covers three layers:
-//! 1. quota-phrase detection in `ProviderError` (so a hard monthly limit is
-//!    never confused with a transient throttle),
-//! 2. the TTL breaker in `provider::health` (mark / is_exhausted / clear /
-//!    TTL expiry),
-//! 3. the user-facing `chain_exhausted_summary` and `short_error_reason`.
+//! Classification exists so a hard monthly limit is not retried in place like
+//! a transient throttle: the chain advances immediately instead of burning
+//! three retries. It informs the human and shapes the error text. It must
+//! never route — the TTL quarantine registry this file was originally written
+//! for (`provider::health`, #952) was deleted in #1251 because it removed
+//! providers from consideration behind the user's back.
+//!
+//! Covers:
+//! 1. quota-phrase detection in `ProviderError`,
+//! 2. the user-facing `chain_exhausted_summary` and `short_error_reason`.
 
 use crate::brain::provider::error::{
     ProviderError, chain_exhausted_summary, is_quota_exhausted_message, short_error_reason,
 };
-use crate::brain::provider::health;
-use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // 1. Quota detection
@@ -131,123 +132,6 @@ fn transient_429_without_quota_phrase_still_retries() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Circuit breaker (provider::health)
-// ---------------------------------------------------------------------------
-
-/// Serialize all breaker tests behind one lock AND start from a clean
-/// registry. The breaker is process-global and cargo runs tests on parallel
-/// threads, so without the lock one test's `mark_exhausted` / `clear_all`
-/// races another test's assertions. Bind the returned guard for the whole
-/// test body.
-static BREAKER_LOCK: Mutex<()> = Mutex::new(());
-
-fn breaker_isolation() -> MutexGuard<'static, ()> {
-    let guard = BREAKER_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    health::clear_all();
-    guard
-}
-
-#[test]
-fn breaker_marks_and_reports_exhaustion() {
-    let _guard = breaker_isolation();
-    assert!(!health::is_exhausted("ModelScope"));
-    health::mark_exhausted("ModelScope");
-    assert!(
-        health::is_exhausted("ModelScope"),
-        "marked provider must be reported exhausted"
-    );
-    assert!(
-        health::is_exhausted("modelscope"),
-        "breaker key is case-insensitive"
-    );
-    assert!(health::exhausted_snapshot().contains(&"modelscope".to_string()));
-    health::clear_all();
-}
-
-#[test]
-fn breaker_clear_restores_provider() {
-    let _guard = breaker_isolation();
-    health::mark_exhausted("Qwen");
-    assert!(health::is_exhausted("Qwen"));
-    health::clear("Qwen");
-    assert!(!health::is_exhausted("Qwen"));
-    health::clear_all();
-}
-
-#[test]
-fn breaker_clear_all_empties_registry() {
-    let _guard = breaker_isolation();
-    health::mark_exhausted("Qwen");
-    health::mark_exhausted("Xiaomi");
-    assert_eq!(health::exhausted_snapshot().len(), 2);
-    health::clear_all();
-    assert!(health::exhausted_snapshot().is_empty());
-}
-
-#[test]
-fn breaker_short_ttl_expires() {
-    let _guard = breaker_isolation();
-    // A 1ms TTL must expire; poll a little to let it lapse without a flaky
-    // fixed sleep. `is_exhausted` prunes expired entries on read.
-    health::mark_exhausted_for("Ephemeral", Duration::from_millis(1));
-    assert!(health::is_exhausted("Ephemeral"));
-    // Busy-wait up to ~200ms for the 1ms TTL to lapse.
-    let mut waited = 0;
-    while health::is_exhausted("Ephemeral") && waited < 200 {
-        std::thread::sleep(Duration::from_millis(5));
-        waited += 5;
-    }
-    assert!(
-        !health::is_exhausted("Ephemeral"),
-        "short-TTL mark must expire and be pruned on read"
-    );
-    health::clear_all();
-}
-
-#[test]
-fn breaker_ignores_empty_provider_name() {
-    let _guard = breaker_isolation();
-    health::mark_exhausted("");
-    assert!(!health::is_exhausted(""));
-    assert!(health::exhausted_snapshot().is_empty());
-    health::clear_all();
-}
-
-// ---------------------------------------------------------------------------
-// 3a. Per-turn breaker skip (#1084)
-// ---------------------------------------------------------------------------
-
-/// Proves that a provider marked mid-turn is immediately invisible to
-/// the fallback walk — the breaker does NOT wait for startup or a new
-/// session.  When a modelscope quota error fires during a turn, the
-/// tool loop calls `mark_exhausted`; the very next `is_exhausted`
-/// check (same turn, same millisecond) must skip that provider.
-#[test]
-fn breaker_mark_skips_provider_per_turn() {
-    let _guard = breaker_isolation();
-    // Provider starts healthy — would participate in the fallback walk.
-    assert!(
-        !health::is_exhausted("ModelScope"),
-        "provider starts clean (not exhausted)"
-    );
-    // Simulate mid-turn: a modelscope quota error triggers the breaker.
-    health::mark_exhausted("ModelScope");
-    // The very next fallback-filter call (same turn) must skip it.
-    assert!(
-        health::is_exhausted("ModelScope"),
-        "provider marked mid-turn must be skipped immediately — no startup gate"
-    );
-    // Another provider is unaffected.
-    assert!(
-        !health::is_exhausted("OpenAI"),
-        "unrelated provider must not be skipped"
-    );
-    health::clear_all();
-}
-
-// ---------------------------------------------------------------------------
 // 3. User-facing feedback
 // ---------------------------------------------------------------------------
 
@@ -264,14 +148,12 @@ fn short_reason_distinguishes_quota_from_throttle() {
 }
 
 #[test]
-fn chain_summary_names_tried_and_skipped_with_hint() {
-    let _guard = breaker_isolation();
+fn chain_summary_names_every_provider_tried_with_a_hint() {
     let tried = vec![
         "OpenAI/gpt-4o: quota exhausted".to_string(),
         "Anthropic/claude: timeout".to_string(),
     ];
-    let skipped = vec!["Qwen".to_string(), "Xiaomi".to_string()];
-    let summary = chain_exhausted_summary("ModelScope", "quota exhausted", &tried, &skipped);
+    let summary = chain_exhausted_summary("ModelScope", "quota exhausted", &tried);
 
     assert!(
         summary.contains("ModelScope: quota exhausted"),
@@ -282,27 +164,25 @@ fn chain_summary_names_tried_and_skipped_with_hint() {
         "lists a tried fallback"
     );
     assert!(summary.contains("Anthropic/claude: timeout"));
-    assert!(
-        summary.contains("Skipped (quota-exhausted): Qwen, Xiaomi"),
-        "lists skipped providers"
-    );
     assert!(summary.contains("/models"), "ends with an actionable hint");
-    health::clear_all();
 }
 
 #[test]
-fn chain_summary_without_skipped_omits_section() {
+fn chain_summary_never_reports_a_skipped_provider() {
+    // #1251: nothing is ever skipped, so the summary must not carry the
+    // concept. A "Skipped" line would mean a provider was silently dropped
+    // from the walk — exactly the behaviour that was removed.
     let tried = vec!["OpenAI/gpt-4o: timeout".to_string()];
-    let summary = chain_exhausted_summary("ModelScope", "timeout", &tried, &[]);
+    let summary = chain_exhausted_summary("ModelScope", "timeout", &tried);
     assert!(
         !summary.contains("Skipped"),
-        "no skipped section when none skipped"
+        "no provider is ever skipped, so no skipped section can exist"
     );
     assert!(summary.contains("/models"));
 }
 
 // ---------------------------------------------------------------------------
-// 4. No-chain setup guidance (#1006) and chain-summary attachment (#1007)
+// 3. No-chain setup guidance (#1006) and chain-summary attachment (#1007)
 // ---------------------------------------------------------------------------
 
 #[test]

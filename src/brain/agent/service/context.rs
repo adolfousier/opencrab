@@ -396,9 +396,10 @@ impl AgentService {
     /// recover at all.
     ///
     /// Mirrors the tool loop's walk deliberately: skip the primary's own name,
-    /// skip providers the #952 quota breaker has marked exhausted, remap the
-    /// model to each fallback's default when it doesn't carry the requested
-    /// one, and report the whole ledger if everything dies.
+    /// try every remaining entry in configured order (#1251 — no provider is
+    /// ever dropped from the walk for having failed before), remap the model
+    /// to each fallback's default when it doesn't carry the requested one,
+    /// and report the whole ledger if everything dies.
     /// `pub(crate)` for the regression tests in `src/tests` — no caller outside
     /// compaction should send a summariser request.
     pub(crate) async fn complete_compaction_request(
@@ -407,7 +408,7 @@ impl AgentService {
         request: LLMRequest,
         cancel: &CancellationToken,
     ) -> Result<crate::brain::provider::LLMResponse> {
-        use crate::brain::provider::{error as provider_error, health};
+        use crate::brain::provider::error as provider_error;
 
         let primary_name = primary.name().to_string();
         let first_err = tokio::select! {
@@ -422,12 +423,6 @@ impl AgentService {
             },
         };
 
-        // #952 breaker: a hard quota won't lift, so later turns skip this
-        // provider instead of paying the round trip to learn that again.
-        if first_err.is_quota_exhausted() {
-            health::mark_exhausted(&primary_name);
-        }
-
         if fallbacks.is_empty() || !provider_error::should_try_next_provider(&first_err) {
             return Err(AgentError::Provider(first_err));
         }
@@ -439,7 +434,6 @@ impl AgentService {
         );
 
         let mut tried: Vec<String> = Vec::new();
-        let mut skipped: Vec<String> = Vec::new();
         let mut last_err = first_err;
 
         for fallback in fallbacks {
@@ -447,11 +441,6 @@ impl AgentService {
             if name == primary_name {
                 continue;
             }
-            if health::is_exhausted(&name) {
-                skipped.push(name);
-                continue;
-            }
-
             // Never send a provider a model it doesn't publish — same
             // invariant the chat path and `FallbackProvider` enforce.
             let mut fb_request = request.clone();
@@ -480,9 +469,6 @@ impl AgentService {
                 },
             };
 
-            if err.is_quota_exhausted() {
-                health::mark_exhausted(&name);
-            }
             tried.push(format!(
                 "{}: {}",
                 name,
@@ -495,7 +481,6 @@ impl AgentService {
             &primary_name,
             &provider_error::short_error_reason(&last_err),
             &tried,
-            &skipped,
         );
         tracing::error!("Compaction: fallback chain exhausted: {summary}");
         Err(AgentError::Provider(provider_error::with_chain_summary(
