@@ -111,12 +111,17 @@ where
     None
 }
 
-/// Park a wake whose surface SDK never became ready, instead of dropping it.
+/// Park a wake whose surface cannot deliver right now, instead of dropping it.
 ///
 /// The parked message is delivered when the owning channel claims the session
 /// (route registration drains the parked queue), so a completion produced
 /// around a restart arrives late rather than never (#1242). Callers park only
 /// messages whose turn has NOT run yet — nothing re-executes on claim.
+///
+/// Parking is UNCONDITIONAL (#21): this never goes back through
+/// [`restart_recovery::deliver_or_park`], which would hand the message to the
+/// very route whose surface just refused it — the zero-sleep bounce that spun
+/// a core on 2026-08-28.
 pub(crate) fn park_undeliverable(
     session_id: Uuid,
     msg: crate::brain::agent::service::QueuedUserMessage,
@@ -124,10 +129,10 @@ pub(crate) fn park_undeliverable(
 ) {
     tracing::warn!(
         target: "bg-resume",
-        "[bg-resume] {surface}: sdk unavailable after {READY_WAIT_SECS}s for \
-         session {session_id} — parking until its route claim (#1242)"
+        "[bg-resume] {surface}: cannot deliver for session {session_id} right now — \
+         parking until a fresh route claim (#21)"
     );
-    restart_recovery::deliver_or_park(session_id, msg);
+    restart_recovery::park_unconditional(session_id, msg);
 }
 
 #[cfg(test)]

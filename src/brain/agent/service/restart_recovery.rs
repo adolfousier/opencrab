@@ -125,6 +125,35 @@ pub fn deliver_or_park(session_id: Uuid, msg: QueuedUserMessage) -> bool {
     false
 }
 
+/// Park `msg` without consulting the route table at all (#21).
+///
+/// The caller already knows the session's own surface cannot take the
+/// message right now — that is what parking means. Going back through
+/// [`deliver_or_park`] would re-consult the very route whose surface just
+/// refused the message, and if the refusal is stable (insert-only routes,
+/// channel owned by a successor) the two functions bounce the message in a
+/// zero-sleep hot loop: two WARN lines per cycle, ~80% of a core and
+/// ~13 MB/s of log observed live on 2026-08-28, re-arming after every
+/// restart until the guard that caused it was deleted (#19).
+///
+/// A message parked here leaves only on a fresh [`claim_session`] for that
+/// session — re-run on every inbound message, so a live session still
+/// drains promptly — or on [`flush_parked`] when the grace period ends.
+pub fn park_unconditional(session_id: Uuid, msg: QueuedUserMessage) {
+    match PARKED.lock() {
+        Ok(mut parked) => parked.push((session_id, msg)),
+        Err(e) => {
+            // Same shape as the park arm of deliver_or_park: the message is
+            // about to vanish, which is the exact failure this module
+            // exists to prevent.
+            tracing::error!(
+                target: "background_task",
+                "Could not park message for session {session_id}, it is lost: {e}"
+            );
+        }
+    }
+}
+
 /// Hand a newly routed session everything parked for it.
 ///
 /// Called when a surface registers a route, so a channel that connects after
