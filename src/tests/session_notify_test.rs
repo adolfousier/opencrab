@@ -309,9 +309,8 @@ async fn test_tool_reports_redirect_to_occupant() {
         .await;
     let result = outcome.expect("tool executes");
     assert!(result.success, "#19: a redirect is delivery, not failure");
-    let message = result
-        .message
-        .expect("#19: the outcome names where it went");
+    let message = result.output;
+    assert!(!message.is_empty(), "#19: the outcome names where it went");
     assert!(
         message.contains(&occupant.to_string()),
         "#19: must name the session that owns the channel now: {message}"
