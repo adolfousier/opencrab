@@ -91,7 +91,7 @@ async fn edit_rich_html_uses_custom_api_url() {
 }
 
 #[tokio::test]
-async fn send_rich_markdown_media_id_uses_custom_api_url() {
+async fn send_rich_markdown_media_target_id_uses_custom_api_url() {
     let mut server = mockito::Server::new_async().await;
     let mock = server
         .mock("POST", "/botTESTTOKEN/sendRichMessage")
@@ -101,17 +101,18 @@ async fn send_rich_markdown_media_id_uses_custom_api_url() {
         .create_async()
         .await;
 
-    let result = api::send_rich_markdown_media_id(
+    let result = api::send_rich_markdown_media_target_id(
         &server.url(),
         "TESTTOKEN",
         11111,
         None,
+        None,
         "![img](tg://photo?id=1)",
         &[crate::channels::telegram::rich::mermaid::MediaEntry {
             id: "1".to_string(),
-            url: "https://example.com/img.png".to_string(),
+            url: Some("https://example.com/img.png".to_string()),
+            bytes: None,
         }],
-        None,
         "test",
         "-",
     )

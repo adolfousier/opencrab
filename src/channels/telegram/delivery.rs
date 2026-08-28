@@ -41,7 +41,7 @@ pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
 /// True when a rich-send failure means Telegram could not fetch the embedded
 /// media (the mermaid.ink diagram) — a transient renderer or network window
 /// that a single re-send can sail (#tg-mermaid-delivery-hardening). Our
-/// prevalidate runs seconds before Telegram's own server-side refetch, so
+/// resolve runs seconds before Telegram's own server-side refetch, so
 /// `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND` is a race with a flaky renderer, not a
 /// structural rejection. Structural 400s (schema, content) are never retried.
 pub(crate) fn is_no_media_found(e: &anyhow::Error) -> bool {
@@ -679,7 +679,7 @@ pub(crate) async fn deliver_final_response(
                             // #tg-mermaid-delivery-hardening: retry once when
                             // Telegram's server-side refetch of the embedded media
                             // (mermaid.ink) died — `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`
-                            // is a race against a flaky renderer (our prevalidate ran
+                            // is a race against a flaky renderer (our resolve ran
                             // seconds earlier), not a structural rejection. The sender
                             // re-resolves media on every call, so the retry naturally
                             // re-fetches from the renderer. Structural 400s are never
@@ -883,9 +883,10 @@ pub(crate) async fn deliver_final_response(
                                     "Telegram: edit final failed ({e}), falling back to delete+send"
                                 );
                                 best_effort_delete(bot, chat_id, mid, "edit-final fallback").await;
-                                if let Ok(sent) =
-                                    send_html_or_plain(bot, chat_id, thread_id, &chunks[0], "turn", None)
-                                        .await
+                                if let Ok(sent) = send_html_or_plain(
+                                    bot, chat_id, thread_id, &chunks[0], "turn", None,
+                                )
+                                .await
                                 {
                                     sent_reply_id = Some(sent.0);
                                     final_bubble = Some(super::state::MergeBubble {
@@ -903,7 +904,8 @@ pub(crate) async fn deliver_final_response(
                         for chunk in &chunks {
                             // Last chunk wins — that's the bubble a user replies to.
                             if let Ok(sent) =
-                                send_html_or_plain(bot, chat_id, thread_id, chunk, "turn", None).await
+                                send_html_or_plain(bot, chat_id, thread_id, chunk, "turn", None)
+                                    .await
                             {
                                 sent_reply_id = Some(sent.0);
                                 final_bubble = Some(super::state::MergeBubble {

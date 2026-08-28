@@ -52,6 +52,9 @@ pub enum Block {
 pub enum MermaidResult {
     /// The renderer accepted the diagram; carries the image URL to embed.
     Image(String),
+    /// Local (in-process) rendering produced PNG bytes ready for multipart
+    /// upload to Telegram. Carries the raw encoded PNG.
+    ImageBytes(Vec<u8>),
     /// The renderer rejected the diagram or was unreachable; carries a
     /// legible error note for the failure block.
     Failed(String),
