@@ -2,11 +2,15 @@
 //! session_notify echo bubbles (#1225). Raw HTTP, same wire style as
 //! `rich/api.rs`, kept on one tiny code path.
 //!
-//! Only `getChat` lives here: it is a real Bot API method and covers groups,
-//! channels and private chats. Forum-TOPIC names do NOT belong here — the
-//! Bot API has no method to query a topic's title (bots can only learn names
-//! passively; telegram-bot-api issues #634/#356), so `resume.rs` resolves
-//! those from the local `channel_messages.topic_name` store instead.
+//! Only `getChat` lives here: it is a real Bot API method and covers groups
+//! and channels. Forum-TOPIC names do NOT belong here — the Bot API has no
+//! method to query a topic's title (bots can only learn names passively;
+//! telegram-bot-api issues #634/#356), so `resume.rs` resolves those from
+//! the local `channel_messages.topic_name` store instead. Private chats
+//! (DM sessions) never reach here either: the reader IS the chat's human
+//! side, so their own name back as the sender is useless — `sender_label`
+//! labels the BOT itself from the startup `get_me` cache (owner ruling
+//! 2026-08-28).
 //!
 //! Every lookup is best-effort — `None` on any failure feeds the short-id
 //! fallback in `resume.rs`, never an error bubble.
@@ -39,8 +43,9 @@ async fn post_api(
     }
 }
 
-/// Chat display name: `title` for groups/channels; on private chats (no
-/// title) the account's `username`, else its first/last name.
+/// Chat display name: `title` for groups/channels, else the account's
+/// `username`. Private chats never reach this function — DM sessions are
+/// labelled with the bot's own username in `resume.rs::sender_label`.
 pub(crate) async fn chat_title(api_url: &str, token: &str, chat_id: ChatId) -> Option<String> {
     let result = post_api(
         api_url,
@@ -58,16 +63,5 @@ pub(crate) async fn chat_title(api_url: &str, token: &str, chat_id: ChatId) -> O
                 .get("username")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
-        })
-        .or_else(|| {
-            // Private chats have no `title` and not every account has a
-            // username — fall back to the account's display name.
-            let first = result.get("first_name").and_then(serde_json::Value::as_str);
-            let last = result.get("last_name").and_then(serde_json::Value::as_str);
-            match (first, last) {
-                (Some(f), Some(l)) => Some(format!("{f} {l}")),
-                (Some(f), None) => Some(f.to_owned()),
-                _ => None,
-            }
         })
 }
