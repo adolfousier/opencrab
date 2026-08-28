@@ -39,8 +39,13 @@ pub(crate) struct ToolMsg {
 pub(crate) enum DisplayItem {
     /// New tool at this index in tool_msgs (needs send_message)
     NewTool(usize),
-    /// Intermediate text between tool rounds
+    /// Intermediate text between tool rounds, authored by the MODEL.
     Intermediate(String),
+    /// Chrome authored HERE, not by the model: self-healing alerts, retry
+    /// counters, provider switches. Renders identically to `Intermediate`
+    /// and is kept apart only so it can never be mistaken for the turn's
+    /// answer (#1253).
+    System(String),
 }
 
 /// One entry in the in-place processing log (the growing `<blockquote
@@ -53,8 +58,13 @@ pub(crate) enum DisplayItem {
 pub(crate) enum FlowEntry {
     /// A tool call at this index in `tool_msgs`.
     Tool(usize),
-    /// Sanitized intermediate text (plain; escaped when rendered).
+    /// Sanitized intermediate text authored by the MODEL (plain; escaped
+    /// when rendered).
     Text(String),
+    /// System chrome: self-healing alerts, retry counters, provider
+    /// switches. Rendered exactly like `Text`, but never reclaimed as the
+    /// turn's answer (#1253) — it is scaffolding, not a completion.
+    System(String),
 }
 
 pub(crate) struct StreamingState {
@@ -920,7 +930,7 @@ pub(crate) fn flow_lines(s: &StreamingState) -> Vec<FlowLine> {
                 context: t.context.clone(),
                 raw_context: t.raw_context.clone(),
             }),
-            FlowEntry::Text(text) => Some(FlowLine::Text(text.clone())),
+            FlowEntry::Text(text) | FlowEntry::System(text) => Some(FlowLine::Text(text.clone())),
         })
         .collect()
 }
@@ -1431,11 +1441,6 @@ pub(crate) async fn append_tool_group(
     }
 }
 
-/// Append sanitized intermediate text to the open processing-log flow, editing
-/// that one message in place (or opening it if none is live yet). The text is
-/// folded into the collapsed block instead of landing as its own message, so
-/// only the final response stays clean at the bottom. Empty text (e.g. a
-/// react-only intermediate) is ignored.
 /// Stable key for a line that is *progress on one condition* rather than a new
 /// event (#982).
 ///
@@ -1457,6 +1462,11 @@ pub(crate) fn progress_key(text: &str) -> Option<&'static str> {
     }
 }
 
+/// Append sanitized MODEL text to the open processing-log flow, editing that
+/// one message in place (or opening it if none is live yet). The text is
+/// folded into the collapsed block instead of landing as its own message, so
+/// only the final response stays clean at the bottom. Empty text (e.g. a
+/// react-only intermediate) is ignored.
 pub(crate) async fn append_intermediate_to_flow(
     bot: &Bot,
     chat: ChatId,
@@ -1464,25 +1474,42 @@ pub(crate) async fn append_intermediate_to_flow(
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
     text: &str,
 ) {
+    append_to_flow(bot, chat, thread_id, streaming, text, false).await;
+}
+
+/// Fold SYSTEM chrome into the same block: self-healing alerts, retry
+/// counters, provider switches.
+///
+/// Renders identically to narration, differs only in provenance. Chrome is
+/// authored here, so it is not a candidate answer and must never be
+/// reclaimed as one (#1253): a react-only completion behind a provider
+/// switch used to ship "🔧 Switched to …" as the reply, and swallow the
+/// reaction with it, because the empty final looked non-empty once the
+/// banner had been promoted.
+pub(crate) async fn append_system_to_flow(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    text: &str,
+) {
+    append_to_flow(bot, chat, thread_id, streaming, text, true).await;
+}
+
+async fn append_to_flow(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    text: &str,
+    system: bool,
+) {
     if text.trim().is_empty() {
         return;
     }
     let open = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        // Supersede the previous line when this is progress on the same
-        // condition, so a counter advances in place instead of stacking (#982).
-        // Only ever the IMMEDIATELY preceding entry: anything in between means
-        // the context moved on and the new line is genuinely new.
-        let supersede = progress_key(text).is_some_and(|k| {
-            matches!(s.flow_entries.last(), Some(FlowEntry::Text(prev)) if progress_key(prev) == Some(k))
-        });
-        if supersede {
-            if let Some(FlowEntry::Text(slot)) = s.flow_entries.last_mut() {
-                *slot = text.to_string();
-            }
-        } else {
-            s.flow_entries.push(FlowEntry::Text(text.to_string()));
-        }
+        push_or_supersede(&mut s.flow_entries, text, system);
         s.open_group_msg_id
     };
     if open.is_some() {
@@ -1495,6 +1522,34 @@ pub(crate) async fn append_intermediate_to_flow(
         .await;
     } else {
         open_flow(bot, chat, thread_id, streaming).await;
+    }
+}
+
+/// Append `text`, or overwrite the previous line when it is progress on the
+/// same condition, so a counter advances in place instead of stacking (#982).
+///
+/// Only ever the IMMEDIATELY preceding entry: anything in between means the
+/// context moved on and the new line is genuinely new. Supersession is
+/// same-kind only, so chrome never overwrites narration or vice versa.
+pub(crate) fn push_or_supersede(entries: &mut Vec<FlowEntry>, text: &str, system: bool) {
+    let key = progress_key(text);
+    let superseded = key.is_some_and(|k| match entries.last_mut() {
+        Some(FlowEntry::System(prev)) if system && progress_key(prev) == Some(k) => {
+            *prev = text.to_string();
+            true
+        }
+        Some(FlowEntry::Text(prev)) if !system && progress_key(prev) == Some(k) => {
+            *prev = text.to_string();
+            true
+        }
+        _ => false,
+    });
+    if !superseded {
+        entries.push(if system {
+            FlowEntry::System(text.to_string())
+        } else {
+            FlowEntry::Text(text.to_string())
+        });
     }
 }
 
@@ -1651,30 +1706,56 @@ pub(crate) async fn take_folded_final(
     text
 }
 
-/// Pop the whole trailing run of folded `Text` entries and join them
+/// Pop the trailing run of folded model `Text` entries and join them
 /// (#478). Mid-turn narration is always followed by more tool calls, so
 /// the trailing text run after the last tool IS the final answer — and
 /// since #475 keeps ONE block across queued follow-ups, that answer can
 /// be multi-part. Popping only the last entry left earlier parts
 /// imprisoned in the block.
+///
+/// `System` chrome inside that run stays where it is (#1253). The run is
+/// the final answer only when the model wrote it; a self-healing banner or
+/// a provider-switch line is ours, and promoting it to the final bubble
+/// ships scaffolding as the reply. That is exactly what a react-only turn
+/// behind a provider switch produced: the banner became the answer, and
+/// because the answer then read as non-empty, the react-only path never
+/// ran and the reaction was never sent either.
 pub(crate) fn pop_trailing_folded_texts(entries: &mut Vec<FlowEntry>) -> Option<String> {
+    // The candidate run is everything after the last tool call.
+    let run_start = entries
+        .iter()
+        .rposition(|e| matches!(e, FlowEntry::Tool(_)))
+        .map_or(0, |i| i + 1);
     let mut parts: Vec<String> = Vec::new();
-    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
-        match entries.pop() {
-            Some(FlowEntry::Text(t)) => parts.push(t),
-            other => {
-                if let Some(e) = other {
-                    entries.push(e);
-                }
-                break;
-            }
+    let mut chrome: Vec<FlowEntry> = Vec::new();
+    for entry in entries.drain(run_start..) {
+        match entry {
+            FlowEntry::Text(t) => parts.push(t),
+            other => chrome.push(other),
         }
     }
+    entries.extend(chrome);
     if parts.is_empty() {
         return None;
     }
-    parts.reverse();
     Some(parts.join("\n\n"))
+}
+
+/// The last model-authored folded text, looking past any system chrome
+/// appended after it and stopping at the last tool call (#1253).
+///
+/// The duplicate check at delivery asks what the MODEL left in the block; a
+/// banner landing after the answer must not hide it and make the answer
+/// render twice.
+pub(crate) fn last_folded_text(entries: &[FlowEntry]) -> Option<&String> {
+    for entry in entries.iter().rev() {
+        match entry {
+            FlowEntry::Text(t) => return Some(t),
+            FlowEntry::System(_) => continue,
+            FlowEntry::Tool(_) => return None,
+        }
+    }
+    None
 }
 
 /// Whether a folded intermediate is a duplicate of the final answer.

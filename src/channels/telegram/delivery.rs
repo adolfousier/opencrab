@@ -5,8 +5,8 @@
 
 use super::TelegramState;
 use super::flow::{
-    DisplayItem, FlowEntry, StreamingState, append_intermediate_to_flow, append_tool_group,
-    folded_duplicates_final, take_folded_final,
+    DisplayItem, StreamingState, append_intermediate_to_flow, append_system_to_flow,
+    append_tool_group, folded_duplicates_final, last_folded_text, take_folded_final,
 };
 use super::handler::{fire_reaction, map_to_allowed_reaction};
 use super::intermediates::send_html_or_plain;
@@ -544,11 +544,12 @@ pub(crate) async fn deliver_final_response(
                 let mut final_text = text_only;
                 let trailing_matches = {
                     let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    match s.flow_entries.last() {
-                        Some(FlowEntry::Text(folded)) => {
-                            folded_duplicates_final(folded, &final_text)
-                        }
-                        _ => false,
+                    // Past any chrome appended after the answer (#1253): a
+                    // provider switch landing late must not hide the folded
+                    // copy and let it render twice.
+                    match last_folded_text(&s.flow_entries) {
+                        Some(folded) => folded_duplicates_final(folded, &final_text),
+                        None => false,
                     }
                 };
                 if trailing_matches {
@@ -1085,6 +1086,17 @@ pub(crate) async fn drain_remaining_display(
                     fire_reaction(bot, chat, target, emoji).await;
                 }
                 append_intermediate_to_flow(bot, chat, thread_id, streaming, &text).await;
+            }
+            DisplayItem::System(text) => {
+                // Chrome folds into the same block, in order, but skips the
+                // model pipeline: it is our own text, so there is no artifact
+                // to strip, no image marker, and no react directive to fire.
+                // Secrets are still scrubbed — a self-healing alert embeds a
+                // raw upstream error string (#1253).
+                append_tool_group(bot, chat, thread_id, streaming, &tool_buffer).await;
+                tool_buffer.clear();
+                let text = redact_secrets(&text);
+                append_system_to_flow(bot, chat, thread_id, streaming, &text).await;
             }
         }
     }

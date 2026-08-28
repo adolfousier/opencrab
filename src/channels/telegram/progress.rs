@@ -133,7 +133,7 @@ pub(crate) fn build_progress_cb(
             ProgressEvent::SelfHealingAlert { message } => {
                 if let Ok(mut s) = st.lock() {
                     s.display_queue
-                        .push(DisplayItem::Intermediate(format!("🔧 {}", message)));
+                        .push(DisplayItem::System(format!("🔧 {}", message)));
                 }
             }
             ProgressEvent::RetryAttempt {
@@ -142,7 +142,7 @@ pub(crate) fn build_progress_cb(
                 reason,
             } => {
                 if let Ok(mut s) = st.lock() {
-                    s.display_queue.push(DisplayItem::Intermediate(format!(
+                    s.display_queue.push(DisplayItem::System(format!(
                         "⏳ Retry {}/{} — {}",
                         attempt, max, reason
                     )));
@@ -152,7 +152,7 @@ pub(crate) fn build_progress_cb(
                 to_name, to_model, ..
             } => {
                 if let Ok(mut s) = st.lock() {
-                    s.display_queue.push(DisplayItem::Intermediate(format!(
+                    s.display_queue.push(DisplayItem::System(format!(
                         "🔄 Now using {}/{}",
                         to_name, to_model
                     )));
