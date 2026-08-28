@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use uuid::Uuid;
 
-use super::types::{MessageEnqueueCallback, PushOrigin, QueuedUserMessage};
+use super::types::{BgTaskMeta, MessageEnqueueCallback, PushOrigin, QueuedUserMessage};
 
 /// Result of a finished background command.
 #[derive(Debug, Clone)]
@@ -143,6 +143,9 @@ impl BackgroundTaskManager {
             }
             let started = std::time::Instant::now();
             let result = run_detached(&command, &cwd).await;
+            // Capture ONCE: the log line, the status file and the receipt
+            // payload (#15) must all report the same runtime.
+            let elapsed_secs = started.elapsed().as_secs_f32();
             // Exit code and elapsed time, not just a boolean: how long a task
             // actually took is the only way to tell a correct detach from a
             // wasteful one, and it was nowhere in the log.
@@ -152,7 +155,7 @@ impl BackgroundTaskManager {
                  (success={}, exit={}, elapsed={:.1}s)",
                 result.success,
                 result.code,
-                started.elapsed().as_secs_f32()
+                elapsed_secs
             );
             // Gap 2 (#1160): rewrite the status file with exit info, so any
             // reader between process-exit and session-resume sees the
@@ -165,11 +168,11 @@ impl BackgroundTaskManager {
                 DetachedFinish {
                     success: result.success,
                     code: result.code,
-                    elapsed_secs: started.elapsed().as_secs_f32(),
+                    elapsed_secs,
                     output_bytes: result.output.len(),
                 },
             );
-            let msg = completion_message(&label, &command, &result);
+            let msg = completion_message(&label, &command, &result, elapsed_secs);
             if let Some(repo) = task_repo()
                 && let Err(e) = repo.clear(task_id).await
             {
@@ -273,11 +276,15 @@ pub(crate) fn tail_lines(text: &str, n: usize) -> String {
 }
 
 /// Build the resume message from a finished background command (#722). Pure so
-/// the framing is unit-testable without spawning anything.
+/// the framing is unit-testable without spawning anything. `elapsed_secs` is
+/// the detached command's wall-clock runtime; it rides along in the typed
+/// `BgTaskMeta` payload (#15) so the receipt card renders a duration without
+/// parsing the context text.
 pub(crate) fn completion_message(
     label: &str,
     command: &str,
     result: &CmdResult,
+    elapsed_secs: f32,
 ) -> QueuedUserMessage {
     let status = if result.success {
         "exit 0 (success)".to_string()
@@ -301,5 +308,26 @@ pub(crate) fn completion_message(
     let mut msg = QueuedUserMessage::system(context, display);
     // #1221: marks this delivery for the Telegram collapsible echo bubble.
     msg.origin = PushOrigin::BackgroundTask;
+    // #15: typed receipt payload — the echo renders the card from this,
+    // never from the `[System: ...]` context text.
+    msg.bg_meta = Some(BgTaskMeta {
+        success: result.success,
+        label: label.to_string(),
+        elapsed_secs,
+        tail,
+    });
     msg
+}
+
+/// Human duration for the receipt card (#15): `42s`, `3m 5s`, `1h 12m`.
+/// Rounds to whole seconds; sub-second tasks show `0s`.
+pub(crate) fn format_elapsed(secs: f32) -> String {
+    let total = secs.max(0.0).round() as u64;
+    if total < 60 {
+        format!("{total}s")
+    } else if total < 3600 {
+        format!("{}m {}s", total / 60, total % 60)
+    } else {
+        format!("{}h {}m", total / 3600, (total % 3600) / 60)
+    }
 }

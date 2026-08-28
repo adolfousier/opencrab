@@ -43,7 +43,7 @@ pub use phantom::{
     is_delivery_intent, is_stuck_in_intent_loop, looks_truncated_mid_sentence,
 };
 pub use types::{
-    AgentResponse, AgentStreamResponse, ApprovalCallback, ChannelSessionEvent,
+    AgentResponse, AgentStreamResponse, ApprovalCallback, BgTaskMeta, ChannelSessionEvent,
     MessageEnqueueCallback, MessageQueueCallback, ProgressCallback, ProgressEvent, PushOrigin,
     QueuedUserMessage, SshPasswordCallback, SudoCallback, ToolApprovalInfo,
 };
