@@ -337,6 +337,7 @@ fn interrupted_message(row: &crate::db::BackgroundTaskRow) -> QueuedUserMessage 
         context_text,
         display_text: format!("⚠️ Background task interrupted by restart: {}", row.label),
         origin: PushOrigin::Recovery,
+        bg_meta: None,
     }
 }
 
@@ -421,5 +422,6 @@ fn subagent_interrupted_message(
         context_text,
         display_text: format!("⚠️ Sub-agent interrupted by restart: {}", status.label),
         origin: PushOrigin::Recovery,
+        bg_meta: None,
     }
 }

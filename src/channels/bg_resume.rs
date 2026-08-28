@@ -193,6 +193,7 @@ mod tests {
             context_text: "ctx".to_string(),
             display_text: "#1242 park test".to_string(),
             origin: crate::brain::agent::PushOrigin::BackgroundTask,
+            bg_meta: None,
         };
         park_undeliverable(sid, msg.clone(), "telegram");
         assert_eq!(restart_recovery::parked_count(), 1);

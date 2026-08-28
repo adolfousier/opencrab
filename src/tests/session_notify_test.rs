@@ -20,6 +20,7 @@ fn msg() -> QueuedUserMessage {
         context_text: "[session-notify from=x]\n\nbody".to_string(),
         display_text: "notify".to_string(),
         origin: crate::brain::agent::PushOrigin::Other,
+        bg_meta: None,
     }
 }
 

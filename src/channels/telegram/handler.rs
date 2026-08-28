@@ -3047,6 +3047,7 @@ pub(crate) async fn handle_reaction(
                     context_text: midturn,
                     display_text: format!("[System: {user_name} reacted with {emoji} mid-turn]"),
                     origin: crate::brain::agent::PushOrigin::Ingress,
+                    bg_meta: None,
                 },
             );
             tracing::info!(
@@ -3292,6 +3293,7 @@ pub(crate) fn build_midturn_queued_message(
             ),
             display_text: invocation.to_string(),
             origin: crate::brain::agent::PushOrigin::Ingress,
+            bg_meta: None,
         },
         None => crate::brain::agent::QueuedUserMessage {
             context_text: format!(
@@ -3301,6 +3303,7 @@ pub(crate) fn build_midturn_queued_message(
             ),
             display_text: display_text.to_string(),
             origin: crate::brain::agent::PushOrigin::Ingress,
+            bg_meta: None,
         },
     }
 }

@@ -1339,6 +1339,7 @@ async fn cmd_chat_inner(
                                                 &session_id.simple().to_string()[..8]
                                             ),
                                             origin: crate::brain::agent::PushOrigin::Recovery,
+                                            bg_meta: None,
                                         },
                                     );
                                     return;
