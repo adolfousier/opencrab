@@ -1868,6 +1868,19 @@ pub(crate) async fn handle_message(
         );
     }
 
+    // Expose this session's channel ownership to the delivery gate (fork
+    // #17): when this session gets REPLACED on its chat/topic (idle-timeout
+    // reset creates a successor), pushes must refuse to wake it into the
+    // successor's conversation instead of two sessions writing the same
+    // channel. Sync mirror read — TelegramState::channel_ownership_of.
+    {
+        let probe_state = telegram_state.clone();
+        crate::brain::agent::service::session_routes::register_channel_owner_probe(
+            session_id,
+            std::sync::Arc::new(move || probe_state.channel_ownership_of(session_id)),
+        );
+    }
+
     // Archive any shared images under the session's project files dir (when the
     // session is assigned to a project) so a project's media lives together and
     // survives the tmp purge. Rewrites the <<IMG:tmp>> marker to the archived

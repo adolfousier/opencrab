@@ -125,6 +125,16 @@ pub(crate) fn push_result(
                  for session {parent_session_id}; the parent will not hear about it"
             );
         }
+        Delivery::RefusedChannelOccupied { occupant } => {
+            // The parent was replaced on its channel while the sub-agent ran
+            // (fork #17). interrupt=true does not override that gate, so say
+            // out loud where the outcome went instead of dropping it quietly.
+            tracing::warn!(
+                "Sub-agent {agent_id}'s result was refused for session {parent_session_id}: \
+                 its channel is occupied by session {occupant}; the parent will not hear \
+                 about it"
+            );
+        }
     }
 }
 

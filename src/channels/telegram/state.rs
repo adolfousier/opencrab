@@ -91,6 +91,18 @@ pub(crate) struct QueuedItem {
     pub(crate) msg: crate::brain::agent::QueuedUserMessage,
 }
 
+/// Sync mirror behind the channel-ownership gate (fork #17). Maintained ONLY
+/// by `TelegramState::register_session_chat` — the single write site for the
+/// ownership maps — so it cannot drift from them locally. See the
+/// `channel_ownership` field doc for why a sync copy exists at all.
+#[derive(Default)]
+struct ChannelOwnershipMirror {
+    /// session → the `(chat_id, topic_id)` it was bound to.
+    session_channel: HashMap<Uuid, (i64, Option<i32>)>,
+    /// `(chat_id, topic_id)` → the session currently bound to it.
+    channel_owner: HashMap<(i64, Option<i32>), Uuid>,
+}
+
 /// Shared Telegram state for proactive messaging.
 ///
 /// Set when the bot connects (agent stores Bot) and when the owner
@@ -119,6 +131,13 @@ pub struct TelegramState {
     /// pre-topic behaviour. Each forum topic therefore binds its own session.
     chat_sessions: Mutex<HashMap<(i64, Option<i32>), Uuid>>,
     session_topic: Mutex<HashMap<Uuid, Option<i32>>>,
+    /// Sync mirror of the ownership triangle for the channel-ownership gate
+    /// (fork #17): session → its `(chat, topic)` and `(chat, topic)` → current
+    /// occupant. Written ONLY in `register_session_chat`, beside the async
+    /// maps above — the delivery gate's probe is a sync closure and cannot
+    /// take tokio mutexes. Never used for routing; the async maps stay the
+    /// source of truth for everything else.
+    channel_ownership: std::sync::Mutex<ChannelOwnershipMirror>,
     /// Evidence-based forum detection (#1220): chat_id → true once ANY
     /// thread-scoped message was seen from that chat. A bare thread id can
     /// only exist on forum topics (governor.rs reached the same rule), so
@@ -295,6 +314,7 @@ impl TelegramState {
             session_chats: Mutex::new(HashMap::new()),
             chat_sessions: Mutex::new(HashMap::new()),
             session_topic: Mutex::new(HashMap::new()),
+            channel_ownership: std::sync::Mutex::new(ChannelOwnershipMirror::default()),
             chat_forums: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
             pending_followups: Mutex::new(HashMap::new()),
@@ -546,6 +566,17 @@ impl TelegramState {
             .lock()
             .await
             .insert((chat_id, topic_id), session_id);
+        // Keep the sync ownership mirror in lockstep (fork #17). This is the
+        // ONLY write site for the maps above, so one extra lock keeps the
+        // mirror exact; the delivery gate's probe reads it synchronously.
+        if let Ok(mut mirror) = self.channel_ownership.lock() {
+            mirror
+                .session_channel
+                .insert(session_id, (chat_id, topic_id));
+            mirror
+                .channel_owner
+                .insert((chat_id, topic_id), session_id);
+        }
     }
 
     /// Look up the chat_id for a given session_id.
@@ -565,6 +596,31 @@ impl TelegramState {
             .get(&session_id)
             .copied()
             .flatten()
+    }
+
+    /// Does `session_id` still own the channel it was bound to (fork #17)?
+    /// Reads the sync ownership mirror (see field doc): `Owned` when the bound
+    /// chat/topic still resolves back to this session, `Occupied` naming the
+    /// session that took it over, `Unknown` when no binding was ever recorded
+    /// (fresh boot, or the session never claimed since one). Callers: the
+    /// delivery gate's probe (session_routes.rs) and the bg-resume
+    /// choke-point guard (resume.rs).
+    pub(crate) fn channel_ownership_of(
+        &self,
+        session_id: Uuid,
+    ) -> crate::brain::agent::service::session_routes::ChannelOwnership {
+        use crate::brain::agent::service::session_routes::ChannelOwnership;
+        let Ok(mirror) = self.channel_ownership.lock() else {
+            return ChannelOwnership::Unknown;
+        };
+        let Some(channel) = mirror.session_channel.get(&session_id).copied() else {
+            return ChannelOwnership::Unknown;
+        };
+        match mirror.channel_owner.get(&channel).copied() {
+            Some(owner) if owner != session_id => ChannelOwnership::Occupied { occupant: owner },
+            Some(_) => ChannelOwnership::Owned,
+            None => ChannelOwnership::Unknown,
+        }
     }
 
     /// Reverse lookup: find the session_id for a given chat_id, scoped to the

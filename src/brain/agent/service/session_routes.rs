@@ -148,6 +148,63 @@ fn turn_probe(session_id: Uuid) -> Option<TurnProbe> {
     }
 }
 
+/// Does the session still own the channel it was bound to?
+///
+/// A channel session can be REPLACED on its chat/topic — the idle-timeout
+/// reset archives the old session and creates a successor for the same
+/// topic — while its delivery route stays registered (routes are keyed by
+/// session UUID and never evicted). Without a gate, any push then wakes the
+/// replaced session and it posts into a conversation a different session now
+/// owns (fork #17). Channels that track ownership register a probe beside
+/// their delivery route; surfaces without one simply don't, which the gate
+/// below reads as "unknown" and fails open — same posture as the in-flight
+/// probe: the gate must never make a surface unnotifyable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelOwnership {
+    /// The session's bound chat/topic still resolves back to it.
+    Owned,
+    /// A DIFFERENT session now occupies the bound chat/topic.
+    Occupied { occupant: Uuid },
+    /// No binding recorded (or the channel does not track ownership).
+    Unknown,
+}
+
+pub type ChannelOwnerProbe = Arc<dyn Fn() -> ChannelOwnership + Send + Sync>;
+
+/// Per-session channel-ownership probes, keyed like [`SESSION_ROUTES`].
+static CHANNEL_OWNER_PROBES: Mutex<Option<HashMap<Uuid, ChannelOwnerProbe>>> = Mutex::new(None);
+
+/// Register (or replace) the channel-ownership probe for `session_id`.
+pub fn register_channel_owner_probe(session_id: Uuid, probe: ChannelOwnerProbe) {
+    match CHANNEL_OWNER_PROBES.lock() {
+        Ok(mut guard) => {
+            guard
+                .get_or_insert_with(HashMap::new)
+                .insert(session_id, probe);
+        }
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not register the channel-ownership probe for session {session_id}: {e}"
+            );
+        }
+    }
+}
+
+/// The session's channel-ownership probe, if its channel registered one.
+fn channel_owner_probe(session_id: Uuid) -> Option<ChannelOwnerProbe> {
+    match CHANNEL_OWNER_PROBES.lock() {
+        Ok(guard) => guard.as_ref()?.get(&session_id).cloned(),
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not read the channel-ownership probe for session {session_id}: {e}"
+            );
+            None
+        }
+    }
+}
+
 /// What happened to a message handed to [`deliver_to_session`].
 ///
 /// A bare bool used to be enough, because the only two outcomes were "went
@@ -167,6 +224,12 @@ pub enum Delivery {
     /// (fork #13). Nothing was delivered; the sender retries when the
     /// target goes idle, or resends with `interrupt` set.
     RefusedInFlight,
+    /// The target no longer owns its channel — a different session now
+    /// occupies the chat/topic it was bound to (fork #17). `interrupt`
+    /// does NOT override this gate: a replaced session must never be
+    /// woken into its successor's conversation. The refusal names the
+    /// `occupant` so the sender can redirect the message.
+    RefusedChannelOccupied { occupant: Uuid },
 }
 
 /// Deliver `msg` to whoever owns `session_id`, falling back to the booting
@@ -178,7 +241,22 @@ pub enum Delivery {
 /// interrupt, delivery is refused while the target is mid-turn. Unknown turn
 /// state (no probe registered) delivers: the gate must never make a surface
 /// unnotifyable.
+///
+/// The channel-ownership gate runs OUTERMOST (fork #17): it guards WHO owns
+/// the conversation, not the target's turn state, so `interrupt` does not
+/// override it. Unknown ownership (no probe, or no binding recorded) fails
+/// open, same posture as the turn gate.
 pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage, interrupt: bool) -> Delivery {
+    if let Some(probe) = channel_owner_probe(session_id) {
+        if let ChannelOwnership::Occupied { occupant } = probe() {
+            tracing::info!(
+                target: "background_task",
+                "Refusing delivery to session {session_id}: its channel is occupied by session \
+                 {occupant}"
+            );
+            return Delivery::RefusedChannelOccupied { occupant };
+        }
+    }
     if !interrupt && turn_probe(session_id).is_some_and(|probe| probe()) {
         tracing::info!(
             target: "background_task",

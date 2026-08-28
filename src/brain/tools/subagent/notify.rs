@@ -21,6 +21,19 @@ fn short_id(id: uuid::Uuid) -> String {
     id.simple().to_string()[..8].to_string()
 }
 
+/// Refusal text for a delivery blocked by the channel-ownership gate (fork
+/// #17). Pure so tests can pin the remedy wording: the sender must be able to
+/// redirect to the occupant without a second discovery round.
+fn channel_occupied_message(target: uuid::Uuid, occupant: uuid::Uuid) -> String {
+    format!(
+        "Refused: session {target} no longer owns its channel — the chat/topic it was bound \
+         to is now occupied by session {occupant} (a newer session replaced it, e.g. an \
+         idle-timeout reset took over the topic). Waking it would post into {occupant}'s \
+         conversation. Notify {occupant} instead if your message belongs to that channel, \
+         or pick another target."
+    )
+}
+
 #[async_trait]
 impl Tool for SessionNotifyTool {
     fn name(&self) -> &str {
@@ -31,7 +44,10 @@ impl Tool for SessionNotifyTool {
         "Push a message to another session's queue in this process. The target \
          drains it at its next tool-loop boundary, or wakes immediately if idle. \
          Refuses while the target is mid-turn unless interrupt=true — do not \
-         derail a working session by default. Every delivery carries a \
+         derail a working session by default. Also refuses when the target no \
+         longer owns its channel (a newer session replaced it on its \
+         chat/topic) — the refusal names the occupying session, and \
+         interrupt does NOT override that gate. Every delivery carries a \
          mechanical header [session-notify from=<sender session id>]; to reply, \
          call session_notify with target_session set to that id. Discover \
          target ids via session_search list/query."
@@ -128,6 +144,11 @@ impl Tool for SessionNotifyTool {
                  since boot, or belongs to another instance/profile. Use a2a_send for \
                  cross-instance targets."
             ))),
+            // The target was replaced on its channel (fork #17): name the
+            // occupant so the sender can redirect instead of guessing.
+            Delivery::RefusedChannelOccupied { occupant } => {
+                Ok(ToolResult::error(channel_occupied_message(target, occupant)))
+            }
         }
     }
 }
