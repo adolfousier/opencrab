@@ -573,9 +573,7 @@ impl TelegramState {
             mirror
                 .session_channel
                 .insert(session_id, (chat_id, topic_id));
-            mirror
-                .channel_owner
-                .insert((chat_id, topic_id), session_id);
+            mirror.channel_owner.insert((chat_id, topic_id), session_id);
         }
     }
 
