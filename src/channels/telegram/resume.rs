@@ -966,13 +966,16 @@ pub(crate) fn background_task_title(display_text: &str) -> String {
 }
 
 /// Human-readable sender label for a session_notify push (Alexey's rule):
-/// sender chat == recipient chat → the sender's topic name; a different
-/// non-forum chat → chat name; a different forum → chat + topic name;
-/// the card summary renders it as `From <name>:`. Topic names come from
-/// the local `channel_messages.topic_name` store (the Bot API has no method
-/// to query them), chat names from `getChat`. Best-effort: any lookup
-/// failure falls back to the short session id (the same prefix
-/// `session_search list` displays).
+/// sender chat == recipient chat → the sender's topic name; a DM session
+/// (positive chat id) → the BOT's username from the startup get_me cache
+/// (the reader IS the chat's human side — handing their own name back as
+/// the sender is useless); a different non-forum chat → chat name; a
+/// different forum → chat + topic name. The card summary renders it as
+/// `From <name>:`. Topic names come from the local
+/// `channel_messages.topic_name` store (the Bot API has no method to query
+/// them), chat names from `getChat`. Best-effort: any lookup failure falls
+/// back to the short session id (the same prefix `session_search list`
+/// displays).
 async fn sender_label(
     state: &TelegramState,
     bot: &teloxide::Bot,
@@ -989,6 +992,11 @@ async fn sender_label(
             Some(tid) => local_topic_name(sc, tid).await,
             None => None,
         },
+        // DM with the bot (positive chat id = private chat): label the bot
+        // itself from the startup get_me cache — zero network. An empty
+        // cache (shouldn't happen post-boot) falls through to the short-id
+        // fallback below.
+        Some(sc) if sc > 0 => state.bot_username().await,
         Some(sc) => {
             let chat =
                 super::titles::chat_title(&api_url, &token, teloxide::types::ChatId(sc)).await;
@@ -1148,4 +1156,41 @@ pub async fn wake_recently_active(
         );
     }
     scheduled
+}
+
+#[cfg(test)]
+mod sender_label_dm_tests {
+    use super::*;
+
+    /// Owner ruling 2026-08-28: a session sitting in a DM with the bot must
+    /// be labelled with the BOT's username, never the reader's own name —
+    /// the reader IS the chat's human side, so handing it back as the
+    /// sender is useless.
+    #[tokio::test]
+    async fn dm_session_labels_the_bot_not_the_reader() {
+        let state = TelegramState::new();
+        state.set_bot_username("test_bot".to_owned()).await;
+        let sender = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        state.register_session_chat(sender, 12345, None).await;
+        let bot = teloxide::Bot::new("42:TEST");
+        assert_eq!(
+            sender_label(&state, &bot, sender, -100_999).await,
+            "test_bot"
+        );
+    }
+
+    /// Empty get_me cache (shouldn't happen post-boot): the DM arm must
+    /// degrade to the short session id, never to a getChat lookup that
+    /// would return the reader's own profile.
+    #[tokio::test]
+    async fn dm_session_without_cached_bot_username_falls_back_to_short_id() {
+        let state = TelegramState::new();
+        let sender = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        state.register_session_chat(sender, 12345, None).await;
+        let bot = teloxide::Bot::new("42:TEST");
+        assert_eq!(
+            sender_label(&state, &bot, sender, -100_999).await,
+            short_session_id(sender)
+        );
+    }
 }
