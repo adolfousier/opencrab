@@ -162,17 +162,6 @@ tiktoken-rs = "0.9.1"
 flate2 = "1"
 tar = "0.4"
 
-# PENDING REMOVAL (owner directive 2026-08-27: no local mermaid in the tree).
-# The `local-mermaid` feature and rich/render.rs are gone; these optional
-# declarations are unreferenced and compile to nothing. They stay only because
-# carrier builds run `--locked` and Cargo.lock regeneration needs cargo
-# (Compiler-owned). Prune these four lines + their lock entries on the next
-# Compiler-side lock regen.
-mermaid-render = { version = "0.10", optional = true }
-resvg = { version = "0.48", optional = true }
-usvg = { version = "0.48", optional = true }
-tiny-skia = { version = "0.12", optional = true }
-
 # Memory Search (FTS5 + vector search — store owned in src/memory, #1028)
 llama-cpp-2 = "0.1.137"
 emojis = "0.8.0"
