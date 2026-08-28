@@ -11,7 +11,7 @@ use crate::brain::agent::QueuedUserMessage;
 use crate::brain::agent::service::restart_recovery::{expect_channel_route, test_guard};
 use crate::brain::agent::service::session_routes::{
     ChannelOwnership, Delivery, deliver_to_session, register_channel_owner_probe,
-    register_turn_probe,
+    register_session_route, register_turn_probe,
 };
 use crate::brain::tools::subagent::SessionNotifyTool;
 use crate::brain::tools::r#trait::Tool;
@@ -232,7 +232,7 @@ async fn test_tool_interrupt_param_reaches_delivery() {
     );
 }
 
-// ── Channel-ownership gate (fork #17) ────────────────────────────────────
+// ── Channel-ownership gate (fork #17) + redirect (fork #19) ─────────────
 //
 // A session REPLACED on its chat/topic (idle-timeout reset creates a
 // successor) keeps its delivery route — routes are UUID-keyed and never
@@ -240,25 +240,54 @@ async fn test_tool_interrupt_param_reaches_delivery() {
 // successor's conversation. The gate is the OUTERMOST check: it guards who
 // owns the channel, not the target's turn state, so `interrupt` does not
 // override it. Unknown ownership fails open, same posture as the turn gate.
+//
+// Occupied no longer REFUSES (#19): the message is REDIRECTED to the
+// occupant — the session that owns the channel now — with a provenance
+// frame on its context text, up to a 3-hop cap (cycle insurance), then
+// parked. The original `interrupt` flag is honored against the FINAL
+// target after redirecting.
 
 #[test]
-fn test_occupied_channel_refuses_delivery() {
+fn test_occupied_channel_redirects_delivery_to_occupant() {
     let _guard = test_guard();
     let session = Uuid::new_v4();
     let occupant = Uuid::new_v4();
+    let captured: std::sync::Arc<std::sync::Mutex<Option<QueuedUserMessage>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sink = captured.clone();
     register_channel_owner_probe(
         session,
         std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
     );
+    register_session_route(
+        occupant,
+        std::sync::Arc::new(move |_id, queued| {
+            *sink.lock().unwrap() = Some(queued);
+        }),
+    );
+    let outcome = deliver_to_session(session, msg(), false);
     assert_eq!(
-        deliver_to_session(session, msg(), false),
-        Delivery::RefusedChannelOccupied { occupant },
-        "#17: a replaced session must not be woken into its successor's channel"
+        outcome,
+        Delivery::Redirected { to: occupant },
+        "#19: an occupied channel redirects to the occupant — delivered, never refused"
+    );
+    let queued = captured
+        .lock()
+        .unwrap()
+        .take()
+        .expect("occupant got the message");
+    let frame = format!(
+        "[redirected — originally for session {session}, which no longer owns this channel]"
+    );
+    assert!(
+        queued.context_text.starts_with(&frame),
+        "#19: the successor must see the provenance frame: {}",
+        queued.context_text
     );
 }
 
 #[test]
-fn test_occupied_channel_refuses_even_with_interrupt() {
+fn test_occupied_channel_redirects_even_with_interrupt() {
     let _guard = test_guard();
     let session = Uuid::new_v4();
     let occupant = Uuid::new_v4();
@@ -266,10 +295,12 @@ fn test_occupied_channel_refuses_even_with_interrupt() {
         session,
         std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
     );
+    register_session_route(occupant, std::sync::Arc::new(|_id, _queued| {}));
     assert_eq!(
         deliver_to_session(session, msg(), true),
-        Delivery::RefusedChannelOccupied { occupant },
-        "#17: interrupt overrides the TURN gate only — never channel ownership"
+        Delivery::Redirected { to: occupant },
+        "#19: interrupt overrides the TURN gate only — never channel ownership; \
+         the redirect still happens"
     );
 }
 
@@ -283,12 +314,74 @@ fn test_ownership_gate_outranks_turn_gate() {
         session,
         std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
     );
-    // Mid-turn AND replaced: the refusal must name the occupant, not the
-    // turn state — redirecting to the occupant is the actionable remedy.
+    register_session_route(occupant, std::sync::Arc::new(|_id, _queued| {}));
+    // Mid-turn AND replaced: the redirect wins — the message goes to the
+    // occupant, whose own turn state (not the dead session's) gates it.
     assert_eq!(
         deliver_to_session(session, msg(), false),
-        Delivery::RefusedChannelOccupied { occupant },
-        "#17: the ownership gate runs outside the turn gate"
+        Delivery::Redirected { to: occupant },
+        "#19: the ownership gate runs outside the turn gate"
+    );
+}
+
+#[test]
+fn test_redirect_honors_interrupt_against_occupant() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let occupant = Uuid::new_v4();
+    register_channel_owner_probe(
+        session,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
+    );
+    // The FINAL target (the occupant) is mid-turn: the sender's original
+    // `interrupt` flag gates IT, not the replaced session.
+    register_turn_probe(occupant, std::sync::Arc::new(|| true));
+    register_session_route(occupant, std::sync::Arc::new(|_id, _queued| {}));
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::RefusedInFlight {
+            redirected_to: Some(occupant)
+        },
+        "#19: a redirect landing on a mid-turn occupant is refused with the \
+         redirect context — the sender hears where the message WOULD have gone"
+    );
+    assert_eq!(
+        deliver_to_session(session, msg(), true),
+        Delivery::Redirected { to: occupant },
+        "#19: interrupt=true still delivers through the redirect"
+    );
+}
+
+#[test]
+fn test_redirect_hop_cap_parks_beyond_three() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let occ1 = Uuid::new_v4();
+    let occ2 = Uuid::new_v4();
+    let occ3 = Uuid::new_v4();
+    let occ4 = Uuid::new_v4();
+    // A replacing chain: each session's channel is occupied by the next.
+    register_channel_owner_probe(
+        session,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant: occ1 }),
+    );
+    register_channel_owner_probe(
+        occ1,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant: occ2 }),
+    );
+    register_channel_owner_probe(
+        occ2,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant: occ3 }),
+    );
+    register_channel_owner_probe(
+        occ3,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant: occ4 }),
+    );
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::Parked,
+        "#19: hop cap 3 is cycle insurance — past it the message is parked, \
+         never looped and never dropped"
     );
 }
 
@@ -321,7 +414,7 @@ fn test_unknown_ownership_fails_open() {
 
 #[tokio::test]
 #[expect(clippy::await_holding_lock)]
-async fn test_tool_reports_channel_occupied_with_occupant() {
+async fn test_tool_reports_redirect_to_occupant() {
     let _guard = test_guard();
     let session = Uuid::new_v4();
     let occupant = Uuid::new_v4();
@@ -329,6 +422,7 @@ async fn test_tool_reports_channel_occupied_with_occupant() {
         session,
         std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
     );
+    register_session_route(occupant, std::sync::Arc::new(|_id, _queued| {}));
 
     let context = crate::brain::tools::r#trait::ToolExecutionContext::new(Uuid::new_v4());
     let outcome = SessionNotifyTool
@@ -338,16 +432,17 @@ async fn test_tool_reports_channel_occupied_with_occupant() {
         )
         .await;
     let result = outcome.expect("tool executes");
-    assert!(!result.success, "#17: refusal must read as failure to the sender");
-    let error = result.error.expect("#17: refusal carries an explanation");
+    assert!(result.success, "#19: a redirect is delivery, not failure");
+    let message = result
+        .message
+        .expect("#19: the outcome names where it went");
     assert!(
-        error.contains(&occupant.to_string()),
-        "#17: the refusal must name the occupying session so the sender can \
-         redirect without a discovery round: {error}"
+        message.contains(&occupant.to_string()),
+        "#19: must name the session that owns the channel now: {message}"
     );
     assert!(
-        error.contains("no longer owns its channel"),
-        "#17: the refusal must say WHY: {error}"
+        message.contains("Redirected"),
+        "#19: must say it was redirected: {message}"
     );
 }
 

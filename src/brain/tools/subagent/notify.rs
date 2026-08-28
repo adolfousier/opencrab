@@ -21,16 +21,16 @@ fn short_id(id: uuid::Uuid) -> String {
     id.simple().to_string()[..8].to_string()
 }
 
-/// Refusal text for a delivery blocked by the channel-ownership gate (fork
-/// #17). Pure so tests can pin the remedy wording: the sender must be able to
-/// redirect to the occupant without a second discovery round.
-fn channel_occupied_message(target: uuid::Uuid, occupant: uuid::Uuid) -> String {
+/// Redirect-acknowledgement text for a delivery steered to the channel's
+/// current owner (fork #19). Pure so tests can pin the wording: the sender
+/// must hear WHERE the message went without a second discovery round.
+fn redirect_message(target: uuid::Uuid, occupant: uuid::Uuid) -> String {
     format!(
-        "Refused: session {target} no longer owns its channel — the chat/topic it was bound \
-         to is now occupied by session {occupant} (a newer session replaced it, e.g. an \
-         idle-timeout reset took over the topic). Waking it would post into {occupant}'s \
-         conversation. Notify {occupant} instead if your message belongs to that channel, \
-         or pick another target."
+        "Redirected: session {target} no longer owns its channel — the chat/topic it was \
+         bound to is now occupied by session {occupant} (a newer session replaced it, e.g. \
+         an idle-timeout reset took over the topic). The message was delivered to {occupant} \
+         instead, with provenance framing so the new owner can tell it apart from its own \
+         work."
     )
 }
 
@@ -44,9 +44,10 @@ impl Tool for SessionNotifyTool {
         "Push a message to another session's queue in this process. The target \
          drains it at its next tool-loop boundary, or wakes immediately if idle. \
          Refuses while the target is mid-turn unless interrupt=true — do not \
-         derail a working session by default. Also refuses when the target no \
-         longer owns its channel (a newer session replaced it on its \
-         chat/topic) — the refusal names the occupying session, and \
+         derail a working session by default. When the target no longer \
+         owns its channel (a newer session replaced it on its \
+         chat/topic), the message is REDIRECTED to the occupying session \
+         with provenance framing, and delivery reports the redirect; \
          interrupt does NOT override that gate. Every delivery carries a \
          mechanical header [session-notify from=<sender session id>]; to reply, \
          call session_notify with target_session set to that id. Discover \
@@ -133,22 +134,30 @@ impl Tool for SessionNotifyTool {
                  restart, so it will be delivered as soon as that channel next binds the \
                  session."
             ))),
-            Delivery::RefusedInFlight => Ok(ToolResult::error(format!(
-                "Refused: session {target} is mid-turn (a turn is streaming) and interrupt \
-                 was not set — delivering now would derail its current task. Retry when the \
-                 session goes idle, or resend with interrupt=true to queue the message for \
-                 its in-flight turn's next tool-loop boundary."
-            ))),
+            Delivery::RefusedInFlight { redirected_to } => {
+                let who = match redirected_to {
+                    Some(to) => format!(
+                        "{to} (mid-turn — the message was redirected there because \
+                         {target} no longer owns its channel)"
+                    ),
+                    None => target.to_string(),
+                };
+                Ok(ToolResult::error(format!(
+                    "Refused: session {who} is mid-turn (a turn is streaming) and interrupt \
+                     was not set — delivering now would derail its current task. Retry when \
+                     the session goes idle, or resend with interrupt=true to queue the \
+                     message for its in-flight turn's next tool-loop boundary."
+                )))
+            }
             Delivery::NoRoute => Ok(ToolResult::error(format!(
                 "No live route for session {target} in this process — it has not messaged \
                  since boot, or belongs to another instance/profile. Use a2a_send for \
                  cross-instance targets."
             ))),
-            // The target was replaced on its channel (fork #17): name the
-            // occupant so the sender can redirect instead of guessing.
-            Delivery::RefusedChannelOccupied { occupant } => {
-                Ok(ToolResult::error(channel_occupied_message(target, occupant)))
-            }
+            // The target no longer owns its channel (fork #17): the message
+            // was redirected to the session that owns it NOW (fork #19) — a
+            // success, not a refusal, and the reply names where it went.
+            Delivery::Redirected { to } => Ok(ToolResult::success(redirect_message(target, to))),
         }
     }
 }

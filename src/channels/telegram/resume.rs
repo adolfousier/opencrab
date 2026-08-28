@@ -37,23 +37,6 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: no chat for session {session_id}; dropping");
                 return;
             };
-            // Channel-ownership guard (fork #17): this callback is ALSO
-            // reached by paths that bypass deliver_to_session's gate —
-            // background-task completions resolve their route directly
-            // (background_tasks.rs) — so the choke point checks too. A
-            // session replaced on its chat/topic must not wake into the
-            // successor's conversation; park instead, the message is safe.
-            if let crate::brain::agent::service::session_routes::ChannelOwnership::Occupied {
-                occupant,
-            } = state.channel_ownership_of(session_id)
-            {
-                tracing::warn!(
-                    "[bg-resume] telegram: session {session_id} no longer owns chat {chat_id} — \
-                     occupied by session {occupant}; parking instead of waking into it"
-                );
-                bg_resume::park_undeliverable(session_id, msg, "telegram");
-                return;
-            }
             // #1242: this used to be a one-shot fetch — a completion arriving
             // while the bot was still authenticating after a restart was
             // dropped with no retry and no record (2026-08-26/27 boot logs).
