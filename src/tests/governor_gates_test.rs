@@ -269,7 +269,18 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
         .with_body(
             r#"{"ok":true,"result":{"message_id":11,"date":1756166400,"chat":{"id":-100333,"title":"gates","type":"supergroup"},"text":"settled"}}"#,
         )
-        .expect(1)
+        // Retry-budget tolerance (#28, mode 2): a transient Err on the FIRST
+        // attempt — the wire hit counted, the 200 served, yet reqwest
+        // surfaced an error under paused-clock skew — makes the drainer
+        // requeue and retry, as designed. `.expect(1)` stopped the mock
+        // matching after one hit (mockito's is_missing_hits gate), so every
+        // retry got an unmatched 501 and the test died in a retry storm:
+        // one wire hit, delivered_finals stuck at 0, twice red on 39857b16.
+        // Serve the real response for the drainer's full retry budget
+        // instead; exactly-once is enforced where it lives — the
+        // delivered_finals counter asserted below.
+        .expect_at_least(1)
+        .expect_at_most(8) // governor's FINAL_MAX_ATTEMPTS
         .create_async()
         .await;
 
@@ -311,13 +322,29 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
             }
         }
     };
-    tokio::time::timeout(Duration::from_secs(120), converge)
-        .await
-        .expect("queued final never drained");
+    match tokio::time::timeout(Duration::from_secs(120), converge).await {
+        Ok(()) => {}
+        Err(_) => {
+            // Self-reporting failure (#28): the counters say WHICH half of
+            // the drainer stalled — wire verdict vs bookkeeping.
+            match ts::snapshot(CHAT) {
+                Some(s) => panic!(
+                    "queued final never drained: delivered={} failed={} pending={}",
+                    s.delivered_finals, s.failed_finals, s.finals_pending
+                ),
+                None => panic!("queued final never drained: peer snapshot vanished"),
+            }
+        }
+    }
 
-    delivered.assert(); // exactly one wire hit, body matched above
+    delivered.assert(); // wire hits within the retry budget, body matched above
     let snap = ts::snapshot(CHAT).unwrap();
-    assert_eq!(snap.delivered_finals, 1);
+    // The exactly-once invariant lives in the governor's own counter: a
+    // double-delivered final lands at 2, a lost delivery at 0.
+    assert_eq!(
+        snap.delivered_finals, 1,
+        "one delivered final must be accounted exactly once"
+    );
     assert_eq!(snap.failed_finals, 0);
     assert_eq!(snap.finals_pending, 0);
 }
