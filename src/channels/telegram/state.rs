@@ -655,6 +655,20 @@ impl TelegramState {
         }
     }
 
+    /// Peek at the merged host WITHOUT consuming the stash (#31): the
+    /// trailer-send decision in render_suggestions needs to know whether the
+    /// RICH merge actually landed (the embedded trailer shipped with it) or
+    /// the placement fell back to standalone (no embed ever hit the wire).
+    /// `attach_followup_host` fires only on merge success, so Some(host) ==
+    /// "the merge path landed".
+    pub(crate) async fn peek_followup_host(&self, token: &str) -> Option<MergedHost> {
+        self.pending_followups
+            .lock()
+            .await
+            .get(token)
+            .and_then(|e| e.host.clone())
+    }
+
     /// Forget an unused registration (buttons never landed).
     pub(crate) async fn drop_pending_followup(&self, token: &str) {
         self.pending_followups.lock().await.remove(token);

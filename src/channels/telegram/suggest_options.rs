@@ -185,10 +185,22 @@ pub(crate) async fn render_suggestions(
     // instead of two, no "Suggested next" header. None or failed edit =
     // standalone fallback below.
     merge_host: Option<super::state::MergeBubble>,
+    // #31: the post-halt sign-off run reclaimed from the flow (after the
+    // suggest_options Tool entry). Rich merge: embedded as a paragraph AFTER
+    // the in-body button rows (one message, never removed). Every other
+    // shape: its own bubble after placement — content, not chrome, so it
+    // ships even when the buttons die.
+    trailer: Option<String>,
 ) {
     use teloxide::prelude::Requester;
 
     if options.is_empty() {
+        // Stash cleared between delivery and render (mid-turn tap, newer
+        // turn) — the trailer still ships (#31); there is nothing to
+        // register and no keyboard to place.
+        if let Some(t) = &trailer {
+            send_trailer_bubble(bot, chat_id, thread_id, t).await;
+        }
         return;
     }
 
@@ -265,6 +277,12 @@ pub(crate) async fn render_suggestions(
         if rich {
             new_html.push('\n');
             new_html.push_str(&suggestion_rows_rich_html(&options, &token));
+            // #31: the sign-off paragraph rides AFTER the button rows — one
+            // message carries answer + controls + trailer, in that order.
+            if let Some(t) = &trailer {
+                new_html.push('\n');
+                new_html.push_str(&super::rich::markdown_to_html_p(t));
+            }
         }
         let outcome: Result<(), String> = if rich {
             super::rich::api::edit_rich_html(
@@ -301,6 +319,22 @@ pub(crate) async fn render_suggestions(
                         },
                     )
                     .await;
+                // #31: did the trailer actually ride inside the merged panel?
+                // Only when the RICH merge landed — the standalone body never
+                // carries the embed. The followup host is attached ONLY on
+                // merge success, so it doubles as the landed-path probe; no
+                // host = standalone landed = the trailer still owes its
+                // bubble.
+                let embedded = state
+                    .peek_followup_host(&token)
+                    .await
+                    .map(|h| h.rich && trailer.is_some())
+                    .unwrap_or(false);
+                if !embedded {
+                    if let Some(t) = &trailer {
+                        send_trailer_bubble(bot, chat_id, thread_id, t).await;
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!(
@@ -330,6 +364,54 @@ pub(crate) async fn render_suggestions(
             // The buttons never landed — drop the stash so a stale entry can't
             // swallow an unrelated future tap.
             state.drop_pending_followup(&token).await;
+        }
+        // #31: the standalone body never carries the embed — whether the
+        // buttons landed or died, the sign-off ships as its own bubble.
+        if let Some(t) = &trailer {
+            send_trailer_bubble(bot, chat_id, thread_id, t).await;
+        }
+    }
+}
+
+/// The #31 sign-off trailer as its own bubble: Markdown rendered with the
+/// same HTML wire as every other telegram bubble, thread-routed, with a
+/// plain-text retry when the parse-mode send is rejected — a malformed
+/// markdown construct must degrade the sign-off, never discard it
+/// (keep-never-discard is the whole point of #31).
+async fn send_trailer_bubble(
+    bot: &teloxide::Bot,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    trailer: &str,
+) {
+    use teloxide::prelude::Requester;
+
+    let html = super::markdown::markdown_to_telegram_html(trailer);
+    let mut req = bot.send_message(chat_id, html).parse_mode(ParseMode::Html);
+    if let Some(tid) = thread_id {
+        req = req.message_thread_id(tid);
+    }
+    match req.await {
+        Ok(msg) => {
+            tracing::info!("Telegram: #31 trailer bubble delivered as msg {}", msg.id);
+        }
+        Err(e) => {
+            tracing::warn!("Telegram: #31 trailer bubble HTML send failed ({e}) — retrying plain");
+            let mut plain = bot.send_message(chat_id, trailer);
+            if let Some(tid) = thread_id {
+                plain = plain.message_thread_id(tid);
+            }
+            match plain.await {
+                Ok(msg) => {
+                    tracing::info!(
+                        "Telegram: #31 trailer bubble delivered plain as msg {}",
+                        msg.id
+                    );
+                }
+                Err(e2) => {
+                    tracing::warn!("Telegram: #31 trailer bubble dropped after plain retry: {e2}");
+                }
+            }
         }
     }
 }
