@@ -12,9 +12,10 @@ use crate::channels::telegram::rich::api::build_body_markdown_media;
 use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
 use crate::channels::telegram::rich::mermaid::{
-    MediaEntry, base64url, classify_render_failure, error_note, failure_html, find_mermaid_fences,
-    has_mermaid_fence, image_html, ink_url, is_image_response, looks_like_mermaid_source,
-    markdown_failure_block, replacement_for, resolve_blocks, resolve_markdown_media,
+    MediaEntry, base64url, cache_get, cache_put, classify_render_failure, error_note, failure_html,
+    find_mermaid_fences, has_mermaid_fence, image_html, ink_url, is_image_response,
+    looks_like_mermaid_source, markdown_failure_block, replacement_for, resolve_blocks,
+    resolve_markdown_media,
 };
 
 // ---------------------------------------------------------------------------
@@ -328,6 +329,33 @@ fn classify_render_failure_empty_body_names_status() {
         MermaidResult::ParseError(note) => assert!(note.contains("HTTP 400")),
         other => panic!("expected ParseError, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// render cache (#37)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn render_cache_hit_returns_cached_outcome() {
+    let source = "graph TD\n    CacheHitProbe --> A";
+    let outcome = MermaidResult::ParseError("Parse error on line 2".into());
+    cache_put(source, &outcome);
+    assert_eq!(cache_get(source), Some(outcome));
+}
+
+#[test]
+fn render_cache_miss_on_unknown_source() {
+    assert_eq!(cache_get("graph TD\n    NeverCachedProbe --> Z"), None);
+}
+
+#[test]
+fn render_cache_never_stores_transient_failures() {
+    let source = "graph TD\n    TransientProbe --> B";
+    cache_put(
+        source,
+        &MermaidResult::Failed("diagram renderer timed out".into()),
+    );
+    assert_eq!(cache_get(source), None);
 }
 
 // ---------------------------------------------------------------------------
