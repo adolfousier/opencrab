@@ -5837,6 +5837,18 @@ impl AgentService {
                                 near_in_window,
                                 NEAR_WINDOW,
                             );
+                            // Loud break (#32): append a user-visible breadcrumb so the turn
+                            // does not end silent — the user sees the guard tripped, nothing
+                            // is queued, and how to resume.
+                            let call_label =
+                                normalized_call.split(':').next().unwrap_or("tool");
+                            response.content.push(ContentBlock::Text {
+                                text: crate::brain::agent::service::nudge::loop_guard_breadcrumb(
+                                    call_label,
+                                    near_in_window,
+                                    NEAR_WINDOW,
+                                ),
+                            });
                             final_response = Some(response);
                             break;
                         }
@@ -5921,6 +5933,16 @@ impl AgentService {
                             repeat_in_window,
                             REPEAT_WINDOW,
                         );
+                        // Loud break (#32): append a user-visible breadcrumb so the turn
+                        // does not end silent — the user sees the guard tripped, nothing
+                        // is queued, and how to resume.
+                        response.content.push(ContentBlock::Text {
+                            text: crate::brain::agent::service::nudge::loop_guard_breadcrumb(
+                                &tool_label,
+                                repeat_in_window,
+                                REPEAT_WINDOW,
+                            ),
+                        });
                         final_response = Some(response);
                         break;
                     }
