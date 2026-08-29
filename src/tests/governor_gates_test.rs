@@ -253,9 +253,14 @@ fn ensure_tracing_capture() {
     });
 }
 
-#[tokio::test(start_paused = true)]
-async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
-    ensure_tracing_capture();
+/// One full drainer round: fresh registry + virtual clock, fresh mock server
+/// and bot, one final queued through the starved edits bucket, then the
+/// spawned drainer settles it on the wire. Each round is an independent draw
+/// of the paused-clock schedule lottery; the stress variant below runs six
+/// draws so a rare wire race cannot hide behind a green run.
+///
+/// `label` names the round in every race-relevant failure message.
+async fn drainer_wire_round(label: &str) {
     let _guard = ts::registry_guard().await;
     ts::reset(5_000);
     rl_config!(
@@ -351,7 +356,7 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
             // the drainer stalled — wire verdict vs bookkeeping.
             match ts::snapshot(CHAT) {
                 Some(s) => panic!(
-                    "queued final never drained: delivered={} failed={} pending={}",
+                    "queued final never drained ({label}): delivered={} failed={} pending={}",
                     s.delivered_finals, s.failed_finals, s.finals_pending
                 ),
                 None => panic!("queued final never drained: peer snapshot vanished"),
@@ -367,7 +372,7 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
     // of the pipeline stalled (#28).
     assert_eq!(
         snap.delivered_finals, 1,
-        "one delivered final must be accounted exactly once: \
+        "one delivered final must be accounted exactly once ({label}): \
          delivered={} failed={} pending={}",
         snap.delivered_finals,
         snap.failed_finals,
@@ -375,13 +380,27 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
     );
     assert_eq!(
         snap.failed_finals, 0,
-        "drainer abandoned within the retry budget: \
+        "drainer abandoned within the retry budget ({label}): \
          delivered={} failed={} pending={}",
         snap.delivered_finals,
         snap.failed_finals,
         snap.finals_pending,
     );
     assert_eq!(snap.finals_pending, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
+    ensure_tracing_capture();
+    drainer_wire_round("single").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn queued_final_drains_over_the_wire_through_mock_bot_api_stress_6x() {
+    ensure_tracing_capture();
+    for round in 0..6 {
+        drainer_wire_round(&format!("stress-{round}")).await;
+    }
 }
 
 #[tokio::test(start_paused = true)]
