@@ -12,9 +12,9 @@ use crate::channels::telegram::rich::api::build_body_markdown_media;
 use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
 use crate::channels::telegram::rich::mermaid::{
-    MediaEntry, base64url, error_note, failure_html, find_mermaid_fences, has_mermaid_fence,
-    image_html, ink_url, is_image_response, looks_like_mermaid_source, markdown_failure_block,
-    replacement_for, resolve_blocks, resolve_markdown_media,
+    MediaEntry, base64url, classify_render_failure, error_note, failure_html, find_mermaid_fences,
+    has_mermaid_fence, image_html, ink_url, is_image_response, looks_like_mermaid_source,
+    markdown_failure_block, replacement_for, resolve_blocks, resolve_markdown_media,
 };
 
 // ---------------------------------------------------------------------------
@@ -280,6 +280,54 @@ fn replacement_for_failed_emits_failure_block_and_no_entry() {
     assert!(md.contains("Mermaid diagram could not be rendered"));
     assert!(md.contains("Parse error"));
     assert!(md.contains("graph TD;"));
+}
+
+#[test]
+fn replacement_for_parse_error_matches_failed_block_shape() {
+    // #37: a deterministic parse rejection degrades to the same legible
+    // failure block as a transient failure — the regen nudge is a
+    // loop-side concern, delivery treats both identically.
+    let outcome = MermaidResult::ParseError("Parse error on line 2: X".into());
+    let (md, entry) = replacement_for(&outcome, 0, "graph TD;");
+    assert!(
+        entry.is_none(),
+        "parse-error outcome must not carry a media entry"
+    );
+    assert!(md.contains("Mermaid diagram could not be rendered"));
+    assert!(md.contains("Parse error on line 2: X"));
+    assert!(md.contains("graph TD;"));
+}
+
+// ---------------------------------------------------------------------------
+// classify_render_failure (#37)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn classify_render_failure_4xx_is_parse_error() {
+    match classify_render_failure(400, "Parse error on line 3: syntax error") {
+        MermaidResult::ParseError(note) => assert!(note.contains("Parse error on line 3")),
+        other => panic!("expected ParseError, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_render_failure_transient_statuses_stay_failed() {
+    // 408/429 are transient (timeout/rate limit) even though they are 4xx;
+    // 5xx and anything odd is infra, not a model mistake.
+    for status in [408u16, 429, 500, 502] {
+        match classify_render_failure(status, "body") {
+            MermaidResult::Failed(note) => assert!(note.contains("body")),
+            other => panic!("status {status}: expected Failed, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn classify_render_failure_empty_body_names_status() {
+    match classify_render_failure(400, "   ") {
+        MermaidResult::ParseError(note) => assert!(note.contains("HTTP 400")),
+        other => panic!("expected ParseError, got {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------

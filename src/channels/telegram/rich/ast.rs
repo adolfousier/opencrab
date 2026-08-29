@@ -53,8 +53,15 @@ pub enum MermaidResult {
     /// The renderer accepted the diagram; carries the image URL to embed.
     Image(String),
     /// The renderer rejected the diagram or was unreachable; carries a
-    /// legible error note for the failure block.
+    /// legible error note for the failure block. Transient in nature
+    /// (timeout, unreachable, photo-box bust, server error) — the same
+    /// source may render fine on a later attempt.
     Failed(String),
+    /// The renderer rejected the diagram with a deterministic PARSE error
+    /// (HTTP 4xx carrying the renderer's own error text). The source is
+    /// broken as written; the note names the offending construct so the
+    /// model can fix the fence and re-emit it (#37 regen nudge).
+    ParseError(String),
 }
 
 /// A bulleted or numbered list.

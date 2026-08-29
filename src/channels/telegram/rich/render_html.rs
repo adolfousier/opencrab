@@ -77,7 +77,9 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
         // super::mermaid so the escaping stays in one place.
         Block::Mermaid { source, result } => match result {
             MermaidResult::Image(url) => super::mermaid::image_html(url),
-            MermaidResult::Failed(err) => super::mermaid::failure_html(err, source),
+            MermaidResult::Failed(err) | MermaidResult::ParseError(err) => {
+                super::mermaid::failure_html(err, source)
+            }
         },
         Block::Quote(inner) => format!(
             "<blockquote>{}</blockquote>",
