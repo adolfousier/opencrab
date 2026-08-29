@@ -49,6 +49,15 @@ pub struct LangConfig {
     /// `let me know` addresses the user, `I'll be happy to` is not an action.
     #[serde(default)]
     pub intent_verb_exclusions: Vec<String>,
+    /// Gerund-led plan announcement with NO imminence marker, sequenced
+    /// with then / before — "Setting up the plan, then mapping every call
+    /// site before touching anything." `work_announcement_re` enumerates
+    /// execution verbs and demands a trailing now / … / :, `gerund_re`
+    /// demands a leading "Now"; a turn that announces the PREPARATION for
+    /// work satisfied neither and was delivered as if it were an answer
+    /// (#1261). Consumed by the zero-tool gate only.
+    #[serde(default)]
+    pub plan_announcement_re: String,
     #[serde(default)]
     pub gerund_re: String,
     #[serde(default)]

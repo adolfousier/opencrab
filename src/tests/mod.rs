@@ -469,6 +469,7 @@ pub mod phantom_deferment_test;
 pub mod phantom_dotted_command_test;
 pub mod phantom_fenced_command_test;
 pub mod phantom_persist_budget_test;
+pub mod phantom_plan_announcement_test;
 pub mod phantom_playback_claim_test;
 pub mod phantom_post_success_exemption_test;
 pub mod phantom_pronoun_drop_test;

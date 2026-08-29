@@ -250,6 +250,17 @@ line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:vale|bien|ok|okey|sí|claro)\\s*,?\\s
 # herramienta — "Ejecutando las pruebas ahora.", "Verificando…". Requiere
 # gerundio de acción + marcador de inmediatez (ahora / … / : ).
 work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:(?:y\\s+)?luego|(?:y\\s+)?despu[ée]s|(?:y\\s+)?entonces|a\\s+continuaci[óo]n|y)[,]?\\s+)?(?:(?:vale|bien|ok|okey|sí|claro)[,.!:]?\\s+)?(?:estoy\\s+|ahora\\s+)?(?:ejecutando|corriendo|verificando|revisando|comprobando|construyendo|compilando|probando|buscando|leyendo|escribiendo|creando|generando|actualizando|modificando|instalando|aplicando|desplegando|descargando|subiendo|eliminando|borrando|arreglando|corrigiendo|analizando|investigando)\\b[^.!?:\\n]{0,60}?(?:\\s+ahora(?:[.!…,:]+|\\s*$)|\\.{3}|…|:\\s*$)"
+# Gerund-led plan announcement carrying NO imminence marker — "Setting up the
+# plan, then mapping every call site before touching anything." Two reasons
+# the patterns above cannot see it (#1261): the verb is a PREPARATION verb
+# (mapping, planning, drafting, listing) that work_announcement_re never
+# enumerated, and the clause is sequenced with then / before instead of ending
+# in now / … / :, which that pattern requires and gerund_re expects at the
+# front. Scanned by the zero-tool gate only: once a tool has run, the same
+# shape can be a legitimate recap ("Updating the config fixed it, then the
+# build passed").
+plan_announcement_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|vale|bien|claro)[,.!:]?\\s+)?(?:voy\\s+a\\s+|estoy\\s+|primero\\s+|ahora\\s+)?(?:configurando|configurar|mapeando|mapear|planificando|planificar|preparando|preparar|revisando|revisar|listando|listar|documentando|documentar|creando|crear|actualizando|actualizar|verificando|verificar|leyendo|leer|ejecutando|ejecutar|analizando|analizar|investigando|investigar)\\b[^.!?\\n]{0,120}?\\b(?:luego|después|despues|entonces|antes\\s+de|a\\s+continuación|a\\s+continuacion)\\b"
+
 
 gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:ahora|ya)\\s+(?:actualizando|modificando|corrigiendo|arreglando|creando|añadiendo|agregando|eliminando|borrando|ejecutando|leyendo|buscando)\\b"
 

@@ -642,6 +642,17 @@ line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|okay|sure|alright|right|hmm|well|a
 # ... / :) so ordinary sentences that merely open with a gerund ("Reading the
 # file is straightforward.") don't match.
 work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:(?:and\\s+)?then|next|after\\s+that|followed\\s+by|and)[,]?\\s+)?(?:(?:ok|okay|sure|alright|right|got it|will do|on it)[,.!:]?\\s+)?(?:i['’]?m\\s+|i\\s+am\\s+|now\\s+|let\\s+me\\s+)?(?:re-?)?(?:running|checking|building|rebuilding|testing|fetching|pushing|pulling|committing|updating|fixing|installing|compiling|verifying|validating|searching|scanning|reading|writing|creating|generating|deleting|removing|applying|deploying|merging|rebasing|cloning|downloading|uploading|executing|launching|starting|investigating|inspecting|analy[sz]ing|gathering|loading|reloading|syncing|registering|enabling|disabling)\\b[^.!?:\\n]{0,60}?(?:\\s+(?:right\\s+)?now(?:[.!…,:]+|\\s*$)|\\.{3}|…|:\\s*$)"
+# Gerund-led plan announcement carrying NO imminence marker — "Setting up the
+# plan, then mapping every call site before touching anything." Two reasons
+# the patterns above cannot see it (#1261): the verb is a PREPARATION verb
+# (mapping, planning, drafting, listing) that work_announcement_re never
+# enumerated, and the clause is sequenced with then / before instead of ending
+# in now / … / :, which that pattern requires and gerund_re expects at the
+# front. Scanned by the zero-tool gate only: once a tool has run, the same
+# shape can be a legitimate recap ("Updating the config fixed it, then the
+# build passed").
+plan_announcement_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|okay|alright|right|sure|got it|will do|on it)[,.!:]?\\s+)?(?:i['’]?m\\s+|i\\s+am\\s+|first\\s+|now\\s+)?(?:setting\\s+up|setting|mapping|planning|drafting|preparing|outlining|sketching|scoping|listing|catalogu?ing|collecting|gathering|documenting|tracing|auditing|reviewing|implementing|refactoring|migrating|wiring|building|creating|writing|updating|fixing|checking|running|reading|searching|scanning|investigating|inspecting|analy[sz]ing)\\b[^.!?\\n]{0,120}?\\b(?:then|before|after\\s+that|next)\\b"
+
 
 gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*now\\s+(?:re-?)?(?:updating|fixing|committing|amending|pushing|pulling|cherry-picking|merging|rebasing|deploying|redeploying|building|rebuilding|testing|checking|applying|restarting|creating|generating|writing|editing|adding|removing|deleting|reading|running|starting|finishing|finalizing|installing|configuring|wiring|fetching|cloning|downloading|uploading|compiling|verifying|validating|searching|scanning|executing|launching|investigating|inspecting|analy[sz]ing|gathering|loading|reloading|syncing|registering|enabling|disabling)\\b"
 

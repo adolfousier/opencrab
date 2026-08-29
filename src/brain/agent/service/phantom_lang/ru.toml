@@ -264,6 +264,17 @@ line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ладно|хорошо|ну|ок|о�
 # настоящее время 1-го лица, поэтому требуем «сейчас/теперь» в начале или в
 # конце (или … / : ) — это и есть маркер немедленности.
 work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:(?:а\\s+)?затем|(?:а\\s+)?потом|далее|и)[,]?\\s+)?(?:(?:ладно|хорошо|ну|ок|окей|так)[,.!:]?\\s+)?(?:(?:сейчас|теперь)\\s+(?:запускаю|перезапускаю|проверяю|собираю|тестирую|обновляю|исправляю|читаю|пишу|создаю|генерирую|ищу|устанавливаю|компилирую|анализирую|исследую|загружаю|скачиваю|удаляю|применяю|разворачиваю)\\b[^.!?:\\n]{0,60}|(?:запускаю|перезапускаю|проверяю|собираю|тестирую|обновляю|исправляю|читаю|пишу|создаю|генерирую|ищу|устанавливаю|компилирую|анализирую|исследую|загружаю|скачиваю|удаляю|применяю|разворачиваю)\\b[^.!?:\\n]{0,40}?\\s+(?:сейчас|теперь))(?:[.!…,:]+|\\s*$)"
+# Gerund-led plan announcement carrying NO imminence marker — "Setting up the
+# plan, then mapping every call site before touching anything." Two reasons
+# the patterns above cannot see it (#1261): the verb is a PREPARATION verb
+# (mapping, planning, drafting, listing) that work_announcement_re never
+# enumerated, and the clause is sequenced with then / before instead of ending
+# in now / … / :, which that pattern requires and gerund_re expects at the
+# front. Scanned by the zero-tool gate only: once a tool has run, the same
+# shape can be a legitimate recap ("Updating the config fixed it, then the
+# build passed").
+plan_announcement_re = "(?im)^[\\s\\-*•>]*(?:(?:ок|хорошо|ладно)[,.!:]?\\s+)?(?:сейчас\\s+|сначала\\s+)?(?:настраиваю|составляю|планирую|готовлю|размечаю|собираю|проверяю|читаю|анализирую|исследую|создаю|обновляю|запускаю|документирую)\\b[^.!?\\n]{0,120}?\\b(?:затем|потом|далее|прежде\\s+чем|после\\s+этого)\\b"
+
 
 gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:сейчас|теперь)\\s+(?:обновляю|исправляю|создаю|изменяю|добавляю|удаляю|запускаю|читаю|ищу|изучаю|проверяю)\\b"
 

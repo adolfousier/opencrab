@@ -69,6 +69,12 @@ pub fn has_phantom_tool_intent_no_tools(text: &str) -> bool {
         if matches_now_gerund(window) {
             return true;
         }
+        // Sequenced plan announcement ("Setting up the plan, then mapping
+        // every call site before touching anything.") — no imminence marker
+        // at either end, so neither pattern above sees it (#1261).
+        if matches_plan_announcement(window) {
+            return true;
+        }
         if too_short_for_phrases {
             continue;
         }
@@ -664,6 +670,31 @@ pub(crate) fn matches_now_gerund(text: &str) -> bool {
         !lang.gerund_re.is_empty()
             && Regex::new(&lang.gerund_re)
                 .map(|re| re.is_match(&text))
+                .unwrap_or(false)
+    })
+}
+
+/// Does `text` announce the PREPARATION for work, sequenced rather than
+/// imminent, in ANY supported language (`plan_announcement_re`)?
+///
+/// "Setting up the plan, then mapping every call site before touching
+/// anything." is a promise of steps, and in a turn that emitted zero tool
+/// calls it is a promise already broken. It escaped every existing tell on
+/// two counts: `work_announcement_re` enumerates execution verbs and never
+/// carried the preparation ones (mapping, planning, drafting, listing), and
+/// both it and `gerund_re` key on an imminence marker (trailing now / … / :,
+/// or a leading "Now") that a sequenced clause does not carry.
+///
+/// Zero-tool path only. After a tool has run, "Updating the config fixed it,
+/// then the build passed" is the same shape as a legitimate recap, and the
+/// ambiguity that the zero-tool count resolves is no longer there.
+pub(crate) fn matches_plan_announcement(text: &str) -> bool {
+    let text = strip_inline_directives(text);
+    let text = text.trim();
+    phantom_lang::all_langs().iter().any(|lang| {
+        !lang.plan_announcement_re.is_empty()
+            && Regex::new(&lang.plan_announcement_re)
+                .map(|re| re.is_match(text))
                 .unwrap_or(false)
     })
 }
