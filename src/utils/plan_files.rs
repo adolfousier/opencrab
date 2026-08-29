@@ -419,9 +419,7 @@ pub fn load_plan_from_path(path: &Path) -> Option<PlanDocument> {
         // same shape as save_plan).
         if let Ok(json) = serde_json::to_string_pretty(&plan) {
             let tmp = path.with_extension("tmp");
-            if let Err(e) = std::fs::write(&tmp, &json)
-                .and_then(|_| std::fs::rename(&tmp, path))
-            {
+            if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, path)) {
                 tracing::warn!(
                     "Failed to persist plan approval demotion at {}: {e}",
                     path.display()
@@ -645,6 +643,25 @@ pub async fn recent_archived_plan(session_id: Uuid, max_age: std::time::Duration
     recent_archive_in_dir(&dir, max_age)
 }
 
+/// Canonical archive stem for the plan living at `json_path` (#16 round 2).
+///
+/// `archive_plan_files` renames into `{stem}-{ts}.json` and
+/// `latest_archived_plan_from_path` filters archive names by this same stem
+/// prefix — BOTH must go through this one helper. The 2026-08-29 incident:
+/// the writer trimmed the leading dot off `.opencrabs_plan_<sid>` while the
+/// reader kept it, so the reader's `starts_with` prefix never matched any
+/// archive on disk, every completed-plan finalize hit its no-doc branch, and
+/// no completion card was ever posted again (zero successful finalizes
+/// between c57de25c and this fix). One stem, one place, no drift.
+fn plan_archive_stem(json_path: &Path) -> String {
+    json_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("plan")
+        .trim_start_matches('.')
+        .to_string()
+}
+
 fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
     // Archive next to wherever the plan actually lives (resolved or legacy
     // dir), so this stays sync and path-based for the loader's terminal-status
@@ -655,12 +672,7 @@ fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
         .unwrap_or_else(|| PathBuf::from("archive"));
     std::fs::create_dir_all(&dir)?;
     let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-    let stem = json_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("plan")
-        .trim_start_matches('.')
-        .to_string();
+    let stem = plan_archive_stem(json_path);
     if json_path.exists() {
         std::fs::rename(json_path, dir.join(format!("{stem}-{ts}.json")))?;
     }
@@ -702,15 +714,13 @@ fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
 pub fn latest_archived_plan_from_path(json_path: &Path) -> Option<PlanDocument> {
     let dir = json_path.parent()?.join("archive");
     // Only this session's own archives qualify (#1239). archive_plan_files
-    // renames into `{live-stem}-{ts}.json`, so the live file's stem prefixes
-    // precisely its session's entries no matter which layout dir holds them.
-    let prefix = format!(
-        "{}-",
-        json_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("plan")
-    );
+    // renames into `{stem}-{ts}.json`, and the stem comes from the SAME
+    // `plan_archive_stem` helper the writer uses — the live file's stem
+    // prefixes precisely its session's entries no matter which layout dir
+    // holds them. (#16 round 2: computing this stem separately at the two
+    // sites let a leading-dot trim drift between them — writer trimmed,
+    // reader kept the dot, `starts_with` never matched again.)
+    let prefix = format!("{}-", plan_archive_stem(json_path));
     let newest = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())

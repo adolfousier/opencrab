@@ -647,14 +647,30 @@ async fn finalize_plan_card_locked(
     session_id: Uuid,
 ) -> bool {
     let Some((mid, _sig)) = state.plan_card(session_id).await else {
-        // Nothing tracked: finalized once already, or never posted. Either
-        // way deliberately NOT reposting is what kills resurrection. Consume
+        // Nothing tracked: finalized once already, or never posted (card
+        // tracking is in-memory — a restart empties it). Either way
+        // deliberately NOT reposting is what kills resurrection. Consume
         // the flag (#16) so a stale stamp cannot gate every later settle.
+        // Logged (#16 round 2): this consume drops the completion notice
+        // permanently — it must never be forensic-silent again.
+        tracing::warn!(
+            "Telegram plan card finalize for session {session_id}: no tracked \
+             card (already finalized or never posted) — consuming just-archived \
+             flag, completion notice NOT posted"
+        );
         crate::utils::plan_files::take_plan_just_archived(session_id).await;
         return true;
     };
     let Some(doc) = crate::utils::plan_files::latest_archived_plan(session_id).await else {
         // No archived document to render from: terminal, consume (#16).
+        // Logged (#16 round 2): the stem-drift bug routed EVERY finalize
+        // through this branch (reader prefix never matched the dot-less
+        // archive names) — it must never be forensic-silent again.
+        tracing::warn!(
+            "Telegram plan card finalize for session {session_id}: no archived \
+             plan document found — consuming just-archived flag, completion \
+             notice NOT posted"
+        );
         crate::utils::plan_files::take_plan_just_archived(session_id).await;
         return true;
     };
@@ -755,7 +771,14 @@ async fn finalize_plan_card_locked(
             let Some((mid, _)) = state.plan_card(session_id).await else {
                 // Tracked card vanished mid-finalize: nothing left to edit,
                 // and reposting from here would resurrect a deliberately
-                // removed card. Terminal — consume the flag (#16).
+                // removed card. Terminal — consume the flag (#16). Logged
+                // (#16 round 2): a vanished card plus a dropped notice must
+                // stay forensic.
+                tracing::warn!(
+                    "Telegram plan card finalize for session {session_id}: \
+                     tracked card vanished mid-finalize — consuming \
+                     just-archived flag, completion notice NOT posted"
+                );
                 crate::utils::plan_files::take_plan_just_archived(session_id).await;
                 abort_guard.armed = false;
                 return true;

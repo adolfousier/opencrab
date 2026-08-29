@@ -344,3 +344,55 @@ async fn plan_autonomy_is_a_durable_session_policy() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn archive_roundtrip_latest_archived_plan_finds_writer_output() {
+    // #16 round 2 regression: `archive_plan_files` trims the leading dot
+    // off `.opencrabs_plan_<sid>` when renaming into `archive/`, and
+    // `latest_archived_plan_from_path` must prefix-match exactly those
+    // dot-less names via the shared `plan_archive_stem`. Between c57de25c
+    // and this fix the reader computed its own prefix WITH the dot,
+    // matched nothing on disk, and every completed-plan card finalize hit
+    // its no-doc branch — zero completion cards posted.
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        let mut plan = PlanDocument::new(sid, "Round trip".to_string());
+        plan.add_task(task(1, "t1"));
+        save_plan(&plan).await.unwrap();
+
+        // The live file is dotted…
+        let live = plan_json_path(sid).await;
+        assert!(
+            live.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.')),
+            "live plan file must be dotted, got {}",
+            live.display()
+        );
+
+        // …the archive name is dot-less…
+        crate::utils::plan_files::archive_plan(sid).await.unwrap();
+        let names: Vec<String> = std::fs::read_dir(archive_dir(sid).await)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .any(|n| n.starts_with("opencrabs_plan_") && n.ends_with(".json")),
+            "archive writer must produce dot-less names, got {names:?}"
+        );
+
+        // …and the reader finds it again — the round trip itself.
+        let doc = crate::utils::plan_files::latest_archived_plan(sid)
+            .await
+            .expect(
+                "latest_archived_plan must match the writer's dot-less \
+                 archive names (#16 round 2)",
+            );
+        assert_eq!(doc.title, "Round trip");
+        assert_eq!(doc.tasks.len(), 1);
+    })
+    .await;
+}
