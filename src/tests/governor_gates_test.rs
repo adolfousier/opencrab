@@ -273,7 +273,15 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
         .create_async()
         .await;
 
-    let bot = Bot::new("TESTTOKEN").set_api_url(server.url().parse().unwrap());
+    // Not Bot::new: that applies teloxide's default_reqwest_settings(),
+    // which includes a 17s request timeout built from tokio timers. Under
+    // this test's paused clock the deadline sits on VIRTUAL time, so the
+    // converge loop's advances can cancel an in-flight request that mockito
+    // already counted -> the drainer sees Err, requeues, retries -> second
+    // wire hit -> .expect(1) flakes (~50% of runs). A client with no
+    // timeout leaves nothing for the virtual clock to race.
+    let bot = Bot::with_client("TESTTOKEN", reqwest::Client::builder().build().unwrap())
+        .set_api_url(server.url().parse().unwrap());
     assert!(
         !governor::edit_admission(
             &bot,
