@@ -85,7 +85,9 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
                 "diagram rendered locally but could not be embedded in HTML",
                 source,
             ),
-            MermaidResult::Failed(err) => super::mermaid::failure_html(err, source),
+            MermaidResult::Failed(err) | MermaidResult::ParseError(err) => {
+                super::mermaid::failure_html(err, source)
+            }
         },
         Block::Quote(inner) => format!(
             "<blockquote>{}</blockquote>",

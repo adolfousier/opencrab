@@ -16,8 +16,8 @@
 //! hangs; failure paths yield [`MermaidResult::Failed`].
 
 use super::ast::{Block, MermaidResult};
-use futures::FutureExt;
 use futures::future::BoxFuture;
+use futures::FutureExt;
 
 /// Base URL of the mermaid.ink image renderer. The diagram source is
 /// base64url-appended. NOTE: this sends the diagram text to a third party.
@@ -363,7 +363,22 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
     // Not a usable image: surface the renderer's own error text (mermaid.ink
     // returns a plain-text parse error) so the failure block is legible.
     let body = resp.text().await.unwrap_or_default();
-    MermaidResult::Failed(error_note(status, &body))
+    classify_render_failure(status, &body)
+}
+
+/// Classify a non-image renderer response (#37): HTTP 4xx — except the
+/// transient 408/429 — is a deterministic PARSE rejection of this exact
+/// source; mermaid.ink answers it with plain-text error text naming the
+/// offending construct, which the model can act on (regen nudge). Anything
+/// else (server errors, odd non-image responses) is transient/infra and
+/// keeps the plain note. Pure, so the branching is unit-testable without a
+/// network call.
+pub(crate) fn classify_render_failure(status: u16, body: &str) -> MermaidResult {
+    if (400..500).contains(&status) && !matches!(status, 408 | 429) {
+        MermaidResult::ParseError(error_note(status, body))
+    } else {
+        MermaidResult::Failed(error_note(status, body))
+    }
 }
 
 /// Whether an HTTP response represents a usable rendered image. Split out so
@@ -413,7 +428,9 @@ pub(crate) fn replacement_for(
                 }),
             )
         }
-        MermaidResult::Failed(err) => (markdown_failure_block(err, source), None),
+        MermaidResult::Failed(err) | MermaidResult::ParseError(err) => {
+            (markdown_failure_block(err, source), None)
+        }
     }
 }
 
