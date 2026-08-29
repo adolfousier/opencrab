@@ -251,6 +251,7 @@ pub(crate) async fn deliver_final_response(
                         take_folded_final(bot, chat_id, streaming, options_pending(streaming))
                             .await;
                     if let Some(t) = trailer {
+                        let trailer_len = t.len();
                         // #31: the post-halt sign-off rides AFTER the buttons —
                         // stash it for render_suggestions (keep-never-discard).
                         streaming
@@ -260,7 +261,7 @@ pub(crate) async fn deliver_final_response(
                         tracing::info!(
                             "Telegram: stashed {} trailer chars reclaimed before the react \
                              decision (#31)",
-                            t.len()
+                            trailer_len
                         );
                     }
                     match reclaimed {

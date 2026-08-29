@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use teloxide::payloads::{EditMessageTextSetters, SendMessageSetters};
+use teloxide::prelude::Requester;
 use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, ThreadId};
 use uuid::Uuid;
 
