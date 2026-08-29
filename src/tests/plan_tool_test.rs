@@ -314,7 +314,10 @@ async fn import_under_auto_approve_waits_in_editing_by_default() {
         // surface never appears.
         let plan = load_plan(ctx.session_id).await.unwrap();
         assert!(plan.pending_approval, "pending_approval marker must be set");
-        assert!(plan.approved_at.is_none(), "no approval stamp without approval");
+        assert!(
+            plan.approved_at.is_none(),
+            "no approval stamp without approval"
+        );
         assert!(plan.approval_source.is_none());
     })
     .await;

@@ -186,11 +186,17 @@ async fn approve_refuses_no_plan_pre_init_and_running_checklist() {
     in_temp_home(async {
         // NoPlan.
         let sid = Uuid::new_v4();
-        assert!(matches!(try_approve(sid, ApprovalSource::User).await, ApproveOutcome::Refused(_)));
+        assert!(matches!(
+            try_approve(sid, ApprovalSource::User).await,
+            ApproveOutcome::Refused(_)
+        ));
 
         // Pre-init.
         set_pre_init_editing(sid).await.unwrap();
-        assert!(matches!(try_approve(sid, ApprovalSource::User).await, ApproveOutcome::Refused(_)));
+        assert!(matches!(
+            try_approve(sid, ApprovalSource::User).await,
+            ApproveOutcome::Refused(_)
+        ));
         plan_files::discard_plan(sid).await;
 
         // Active with a running checklist: /execute is not applicable.

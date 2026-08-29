@@ -236,7 +236,10 @@ async fn resume_demotes_auto_stamped_plan_while_gate_on() {
             PlanStatus::Editing,
             "Auto-stamped Active plan must demote while the gate is on (#20)"
         );
-        assert!(plan.pending_approval, "demoted plan re-enters the approval queue");
+        assert!(
+            plan.pending_approval,
+            "demoted plan re-enters the approval queue"
+        );
         assert!(plan.approved_at.is_none(), "auto stamp is cleared");
         assert!(plan.approval_source.is_none());
 
@@ -291,7 +294,11 @@ async fn resume_keeps_user_stamped_plan() {
         );
 
         let plan = load_plan_from_path(&path).expect("plan loads");
-        assert_eq!(plan.status, PlanStatus::Active, "user approval survives resume");
+        assert_eq!(
+            plan.status,
+            PlanStatus::Active,
+            "user approval survives resume"
+        );
         assert!(plan.approved_at.is_some());
         assert_eq!(plan.approval_source, Some(ApprovalSource::User));
     })
@@ -344,8 +351,14 @@ async fn resume_keeps_active_plan_without_approved_at() {
 
 #[test]
 fn approval_source_serde_roundtrip() {
-    assert_eq!(serde_json::to_string(&ApprovalSource::User).unwrap(), "\"user\"");
-    assert_eq!(serde_json::to_string(&ApprovalSource::Auto).unwrap(), "\"auto\"");
+    assert_eq!(
+        serde_json::to_string(&ApprovalSource::User).unwrap(),
+        "\"user\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ApprovalSource::Auto).unwrap(),
+        "\"auto\""
+    );
     let back: ApprovalSource = serde_json::from_str("\"auto\"").unwrap();
     assert_eq!(back, ApprovalSource::Auto);
 }

@@ -440,7 +440,8 @@ pub(crate) async fn handle_channel_command(
                     session_id,
                     crate::tui::plan::ApprovalSource::User,
                 )
-                .await {
+                .await
+                {
                     crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
                         super::ephemeral::send_ack(
                             bot,

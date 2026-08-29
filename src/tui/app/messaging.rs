@@ -866,7 +866,8 @@ impl App {
                     sid,
                     crate::tui::plan::ApprovalSource::User,
                 )
-                .await {
+                .await
+                {
                     crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
                         self.push_system_message(reply);
                     }

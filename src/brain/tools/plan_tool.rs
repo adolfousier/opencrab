@@ -2409,7 +2409,8 @@ impl Tool for PlanTool {
                     // in-session autonomy, so it counts as user approval.
                     ApprovalSource::User,
                 )
-                .await {
+                .await
+                {
                     crate::utils::plan_mode::ApproveOutcome::Refused(msg) => {
                         Ok(ToolResult::error(msg))
                     }
