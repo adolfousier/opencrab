@@ -1476,13 +1476,12 @@ async fn cmd_chat_inner(
     // Wake (#1227): recently-active bound sessions that were NOT mid-turn at
     // boot have no journal row, so they look dead until someone pokes one.
     // #1224 re-registers their routes (draining parked reports) at connect,
-    // but quietly — nothing tells the topic the platform survived. Send each
-    // a single lightweight nudge so it does not appear dead. Purely
-    // informational; it runs no turn and re-executes nothing.
+    // but quietly. Log the stranded set so it is auditable; purely
+    // informational — it runs no turn, re-executes nothing, sends no message
+    // (the former "I'm back" bubble was removed per #34).
     #[cfg(feature = "telegram")]
     crate::channels::telegram::resume::wake_recently_active(
         db.pool().clone(),
-        telegram_state.clone(),
         &resumed_session_ids,
     )
     .await;
