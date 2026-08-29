@@ -173,6 +173,7 @@ pub(crate) fn suggestion_rows_rich_html(options: &[String], token: &str) -> Stri
     }
 }
 
+#[allow(clippy::too_many_arguments)] // #31: trailer rides the existing arg set
 pub(crate) async fn render_suggestions(
     bot: &teloxide::Bot,
     state: &Arc<TelegramState>,
@@ -331,10 +332,8 @@ pub(crate) async fn render_suggestions(
                     .await
                     .map(|h| h.rich && trailer.is_some())
                     .unwrap_or(false);
-                if !embedded {
-                    if let Some(t) = &trailer {
-                        send_trailer_bubble(bot, chat_id, thread_id, t).await;
-                    }
+                if !embedded && let Some(t) = &trailer {
+                    send_trailer_bubble(bot, chat_id, thread_id, t).await;
                 }
             }
             Err(e) => {
