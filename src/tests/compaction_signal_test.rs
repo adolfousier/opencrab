@@ -6,10 +6,11 @@ use std::time::Duration;
 
 use crate::brain::agent::service::nudge::{in_pressure_warning_band, should_emit_pressure_warning};
 use crate::channels::telegram::flow::{
-    COMPACTING_HEADER_TEXT, FlowHeader, FlowLine, compacted_flow_line, compacting_flow_line,
-    render_flow_html_chrome_pref, render_flow_rich,
+    COMPACTING_HEADER_TEXT, FlowHeader, FlowLine, HeaderMarkup, compacted_flow_line,
+    compacting_flow_line, flow_header_text, render_flow_html_chrome_pref, render_flow_rich,
+    starts_with_icon,
 };
-use crate::channels::telegram::flow_chrome::FlowSections;
+use crate::channels::telegram::flow_chrome::{FlowSections, FooterParts, merged_footer};
 
 #[test]
 fn compacting_line_without_prediction() {
@@ -175,4 +176,101 @@ fn pressure_warning_once_per_entry() {
     assert!(should_emit_pressure_warning(60.0, false).is_some());
     assert!(should_emit_pressure_warning(60.0, true).is_none());
     assert!(should_emit_pressure_warning(40.0, false).is_none());
+}
+
+// ── gear-strip (#29 fix round, owner directive): the standing ⚙️ chrome
+// prefix is dropped whenever another icon follows it ──
+
+#[test]
+fn starts_with_icon_classification() {
+    // Icon glyphs drop the standing gear; word text (Latin, Cyrillic) keeps it.
+    assert!(starts_with_icon("⏳ Compacting context…"));
+    assert!(starts_with_icon("✅ bash git status"));
+    assert!(starts_with_icon("❌ grep pattern"));
+    assert!(!starts_with_icon("bash gh pr list"));
+    assert!(!starts_with_icon("Reading the handler."));
+    assert!(!starts_with_icon("Чтение лога"));
+    assert!(!starts_with_icon(""));
+}
+
+#[test]
+fn live_header_drops_gear_before_icon_status() {
+    // The pinned compaction status leads with ⏳ → the header renders bare.
+    assert_eq!(
+        flow_header_text(
+            11,
+            &FlowHeader::Live(Some("1:05")),
+            Some(COMPACTING_HEADER_TEXT),
+            HeaderMarkup::Html
+        ),
+        "<b>⏳ Compacting context…</b> • <i>11 tool calls</i> • <i>1:05</i>"
+    );
+    // Plain status keeps the gear (#509 shape unchanged).
+    assert_eq!(
+        flow_header_text(
+            3,
+            &FlowHeader::Live(Some("0:12")),
+            Some("Reading logs"),
+            HeaderMarkup::Html
+        ),
+        "⚙️ <b>Reading logs</b> • <i>3 tool calls</i> • <i>0:12</i>"
+    );
+}
+
+#[test]
+fn live_footer_drops_gear_before_icon_activity() {
+    // Same rule on the footer's activity segment: icon-led activity renders
+    // bare, plain-text activity keeps the running cog (#1052).
+    let icon = merged_footer(
+        &FooterParts {
+            outcome: None,
+            plan_state: None,
+            working_on: None,
+            activity: Some("✅ bash git status"),
+            tool_count: 1,
+            has_log: true,
+            ctx: None,
+            elapsed_secs: 0,
+            bg: None,
+        },
+        HeaderMarkup::Markdown,
+    );
+    assert_eq!(icon, "✅ bash git status • 1 tool calls • ⏱ 0:00");
+    let plain = merged_footer(
+        &FooterParts {
+            outcome: None,
+            plan_state: None,
+            working_on: None,
+            activity: Some("Reading the handler."),
+            tool_count: 2,
+            has_log: true,
+            ctx: None,
+            elapsed_secs: 0,
+            bg: None,
+        },
+        HeaderMarkup::Markdown,
+    );
+    assert_eq!(plain, "⚙️ Reading the handler. • 2 tool calls • ⏱ 0:00");
+}
+
+#[test]
+fn icon_led_segment_retires_the_bare_cog_fallback() {
+    // With an icon-led pin as the only narration (activity suppressed by the
+    // compaction dedupe, zero tool calls), the bare-⚙️ fallback segment is
+    // redundant — the icon already signals activity.
+    let out = merged_footer(
+        &FooterParts {
+            outcome: None,
+            plan_state: None,
+            working_on: Some(COMPACTING_HEADER_TEXT),
+            activity: None,
+            tool_count: 0,
+            has_log: true,
+            ctx: None,
+            elapsed_secs: 65,
+            bg: None,
+        },
+        HeaderMarkup::Markdown,
+    );
+    assert_eq!(out, "⏳ Compacting context… • ⏱ 1:05");
 }
