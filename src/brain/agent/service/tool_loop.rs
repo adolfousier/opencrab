@@ -5864,10 +5864,10 @@ impl AgentService {
                                 "[System: You have issued nearly identical tool calls {} times \
                                  in the last {} steps. They differ only in numbers, counters, \
                                  or whitespace, so they return the same kind of result. \
-                                 Repeating near-duplicate calls will not move you forward. Use \
-                                 the output you already have, or take a genuinely different \
-                                 action. Do not re-issue another near-identical call.]",
-                                near_in_window, NEAR_WINDOW,
+                                 Repeating near-duplicate calls will not move you forward. {}]",
+                                near_in_window,
+                                NEAR_WINDOW,
+                                crate::brain::agent::service::nudge::variation_directive(),
                             )));
                             near_match_nudged = true;
                             continue;
