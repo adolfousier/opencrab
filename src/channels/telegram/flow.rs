@@ -1858,11 +1858,12 @@ pub(crate) fn pop_trailing_folded_texts(
             }
         }
     }
+    let had_trailing_tools = !aside.is_empty();
     while let Some(e) = aside.pop() {
         entries.push(e);
     }
 
-    if aside.is_empty() {
+    if !had_trailing_tools {
         // No Tool entry trailed the run — the gate's precondition (flow ends
         // on the suggest Tool) does not hold, so the popped run is just the
         // stock trailing answer. Return it as the host, never as a trailer.
