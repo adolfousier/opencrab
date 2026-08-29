@@ -135,3 +135,21 @@ pub fn should_emit_pressure_warning(usage_pct: f64, already_emitted: bool) -> Op
         None
     }
 }
+// ── Mermaid regen nudge (#37) ──
+
+/// In-loop correction for a model whose mermaid fence failed the render
+/// preflight with a deterministic parse error (#37). Quotes the renderer's
+/// own error text — it names the offending line or token — and states the
+/// regen budget so the model knows how many attempts remain. Same shape as
+/// the other nudges: a `[System: …]` bracket the loop injects as a user
+/// message after echoing the assistant's broken text.
+#[cfg(feature = "telegram")]
+pub(crate) fn mermaid_regen_nudge(errors: &[String], attempt: u32, max: u32) -> String {
+    let quoted = errors.join("\n");
+    format!(
+        "[System: Your mermaid diagram failed to render — mermaid.ink returned:\n{quoted}\n\
+         This is a syntax error in the fence you wrote (the renderer text above names the \
+         offending line or token). Fix the mermaid source and re-emit the COMPLETE corrected \
+         fence in your reply — keep everything else you wrote. Regen attempt {attempt}/{max}.]"
+    )
+}
