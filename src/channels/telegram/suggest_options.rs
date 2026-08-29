@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use teloxide::payloads::{EditMessageTextSetters, SendMessageSetters};
+use teloxide::prelude::Requester;
 use teloxide::types::{
     ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, ThreadId,
 };
