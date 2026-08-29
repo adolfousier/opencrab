@@ -811,7 +811,7 @@ pub(crate) async fn handle_message(
                 // indicator. The loop self-terminates after 90s; if
                 // compaction finishes earlier, real streaming chunks
                 // resume the indicator naturally.
-                ProgressEvent::Compacting => {
+                ProgressEvent::Compacting { .. } => {
                     let http = http.clone();
                     tokio::spawn(async move {
                         for _ in 0..12 {

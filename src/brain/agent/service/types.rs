@@ -62,10 +62,21 @@ pub enum ProgressEvent {
     StreamingChunk {
         text: String,
     },
-    Compacting,
-    /// Compaction finished — carry the summary so the TUI can display it
+    /// Auto-compaction is about to run — the next 10–60s produce zero
+    /// streaming chunks. Carries the context FILL LEVEL at trigger time so
+    /// channels can surface it (a level, not compaction progress — the
+    /// summarizer call has no intermediate state, #29).
+    Compacting {
+        usage_pct: f64,
+    },
+    /// Compaction finished — carry the summary so the TUI can display it,
+    /// plus before/after fill levels and the wall-clock duration of the
+    /// silent window so channels can render a completion line (#29).
     CompactionSummary {
         summary: String,
+        before_pct: f64,
+        after_pct: f64,
+        elapsed: std::time::Duration,
     },
     /// A single build-output line (e.g. "Compiling foo v1.0"). The TUI keeps a
     /// rolling window of the last few lines and clears them on RestartReady.
