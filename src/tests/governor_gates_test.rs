@@ -232,8 +232,30 @@ async fn edit_ladder_drops_in_priority_order_and_queues_latest_wins_finals() {
     );
 }
 
+/// Install (once per process) a warn-level tracing subscriber writing to
+/// stderr, so the governor drainer's abandonment `warn!` — which carries the
+/// underlying wire error string — lands in the failing test's captured
+/// output instead of vanishing (the default test binary installs no
+/// subscriber). The drainer runs as a spawned task on this test's own
+/// current-thread runtime, so libtest attaches its stderr to THIS test.
+/// Without this a red drainer run leaves no receipt for why the wire attempt
+/// failed (#28 mode 3).
+fn ensure_tracing_capture() {
+    use std::sync::OnceLock;
+    static HOOK: OnceLock<()> = OnceLock::new();
+    HOOK.get_or_init(|| {
+        // Best effort: only the first caller in the process may install the
+        // global default; a later Err means one is already in place.
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::io::stderr)
+            .try_init();
+    });
+}
+
 #[tokio::test(start_paused = true)]
 async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
+    ensure_tracing_capture();
     let _guard = ts::registry_guard().await;
     ts::reset(5_000);
     rl_config!(
@@ -340,12 +362,25 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
     delivered.assert(); // wire hits within the retry budget, body matched above
     let snap = ts::snapshot(CHAT).unwrap();
     // The exactly-once invariant lives in the governor's own counter: a
-    // double-delivered final lands at 2, a lost delivery at 0.
+    // double-delivered final lands at 2, a lost delivery at 0. On red, the
+    // counters (plus the captured drainer warn below) self-report WHICH half
+    // of the pipeline stalled (#28).
     assert_eq!(
         snap.delivered_finals, 1,
-        "one delivered final must be accounted exactly once"
+        "one delivered final must be accounted exactly once: \
+         delivered={} failed={} pending={}",
+        snap.delivered_finals,
+        snap.failed_finals,
+        snap.finals_pending,
     );
-    assert_eq!(snap.failed_finals, 0);
+    assert_eq!(
+        snap.failed_finals, 0,
+        "drainer abandoned within the retry budget: \
+         delivered={} failed={} pending={}",
+        snap.delivered_finals,
+        snap.failed_finals,
+        snap.finals_pending,
+    );
     assert_eq!(snap.finals_pending, 0);
 }
 
