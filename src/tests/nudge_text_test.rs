@@ -8,6 +8,8 @@
 //!
 //! Fixtures are synthetic and carry no user identifiers.
 
+#[cfg(feature = "telegram")]
+use crate::brain::agent::service::nudge::mermaid_regen_nudge;
 use crate::brain::agent::service::nudge::{no_tool_calls_nudge, uncalled_commands_nudge};
 
 #[test]
@@ -107,4 +109,20 @@ fn a_nudge_is_framed_as_a_system_message() {
         assert!(nudge.starts_with("[System:"), "{nudge}");
         assert!(nudge.ends_with(']'), "{nudge}");
     }
+}
+
+// ── Mermaid regen nudge (#37) ──
+
+#[cfg(feature = "telegram")]
+#[test]
+fn mermaid_regen_nudge_quotes_renderer_errors_and_counts_attempts() {
+    let errors = vec!["Parse error on line 2: Lexical error".to_string()];
+    let nudge = mermaid_regen_nudge(&errors, 1, 3);
+    assert!(
+        nudge.contains("Parse error on line 2: Lexical error"),
+        "must quote the renderer's own error text: {nudge}"
+    );
+    assert!(nudge.contains("Regen attempt 1/3"), "{nudge}");
+    assert!(nudge.starts_with("[System:"), "{nudge}");
+    assert!(nudge.ends_with(']'), "{nudge}");
 }
