@@ -334,33 +334,67 @@ async fn drainer_wire_round(label: &str) {
     );
     assert_eq!(ts::snapshot(CHAT).unwrap().finals_pending, 1);
 
-    // Mock the passage of time until a token refills, polling in DRAIN_TICK
-    // steps; the spawned drainer lands the queued payload on the mock server.
-    // Everything runs on tokio's paused clock — no real sleeping anywhere.
-    let converge = async {
-        for _ in 0..60 {
-            ts::advance(600); // > 1/s refill AND > DRAIN_TICK (400ms)
-            tokio::time::sleep(Duration::from_millis(400)).await;
-            if ts::snapshot(CHAT)
-                .map(|s| s.delivered_finals == 1 && s.finals_pending == 0)
-                .unwrap_or(false)
-            {
-                break;
+    // Event-driven settle wait (#28 mode 4). `take_due_final` pops the final
+    // BEFORE the wire call, so `finals_pending` hits 0 while
+    // `delivered_finals` is still 0 — the old poll's exit condition
+    // (`delivered==1 && pending==0`) was unreachable mid-flight. Its 400ms
+    // sleep pump kept a virtual timer pending every iteration, so the
+    // paused runtime auto-advanced instead of real-parking on the reactor;
+    // the buffered mockito 200 never reached the drainer and the whole
+    // budget burned out in virtual milliseconds (receipt: run 33262674165,
+    // 0/0/0 at the exactly-once assert). Now `deliver_final` fires
+    // `ts::notify_settled()` on every verdict exit, and this loop parks on
+    // that notifier with NO tokio timer pending in this task — a real
+    // reactor park, so the in-flight response lands in real time and the
+    // drainer's verdict wakes the loop. The drainer's own DRAIN_TICK timer
+    // keeps auto-advance ticking until the wire call is in flight, then
+    // real time takes over. No real sleeping anywhere in the test itself.
+    //
+    // Watchdog: one real-clock thread per round. If the drainer is genuinely
+    // wedged (no verdict, no notify), the thread fires after 30s and the
+    // self-reporting panic below trips — the backstop the deleted 120s
+    // virtual timeout used to be (with the sleep pump gone that timeout
+    // would be the ONLY pending virtual timer and auto-advance to zero,
+    // panicking every run).
+    let watchdog = std::sync::Arc::new(tokio::sync::Notify::new());
+    let armed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    {
+        let watchdog = std::sync::Arc::clone(&watchdog);
+        let armed = std::sync::Arc::clone(&armed);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(30));
+            if armed.load(std::sync::atomic::Ordering::SeqCst) {
+                watchdog.notify_one();
             }
+        });
+    }
+    let wedged = loop {
+        let settled = ts::snapshot(CHAT)
+            .map(|s| s.finals_pending == 0 && (s.delivered_finals + s.failed_finals) >= 1)
+            .unwrap_or(false);
+        if settled {
+            break false;
+        }
+        tokio::select! {
+            _ = ts::settle_notifier().notified() => {
+                // A drainer exit happened; re-read the counters next pass.
+                // Keep advancing virtual time for refill / 429-wait
+                // bookkeeping while drainer timers are still pending.
+                ts::advance(600); // > 1/s refill AND > DRAIN_TICK (400ms)
+            }
+            _ = watchdog.notified() => break true,
         }
     };
-    match tokio::time::timeout(Duration::from_secs(120), converge).await {
-        Ok(()) => {}
-        Err(_) => {
-            // Self-reporting failure (#28): the counters say WHICH half of
-            // the drainer stalled — wire verdict vs bookkeeping.
-            match ts::snapshot(CHAT) {
-                Some(s) => panic!(
-                    "queued final never drained ({label}): delivered={} failed={} pending={}",
-                    s.delivered_finals, s.failed_finals, s.finals_pending
-                ),
-                None => panic!("queued final never drained: peer snapshot vanished"),
-            }
+    armed.store(false, std::sync::atomic::Ordering::SeqCst); // disarm
+    if wedged {
+        // Self-reporting failure (#28): the counters say WHICH half of
+        // the drainer stalled — wire verdict vs bookkeeping.
+        match ts::snapshot(CHAT) {
+            Some(s) => panic!(
+                "queued final never drained ({label}): delivered={} failed={} pending={}",
+                s.delivered_finals, s.failed_finals, s.finals_pending
+            ),
+            None => panic!("queued final never drained: peer snapshot vanished"),
         }
     }
 

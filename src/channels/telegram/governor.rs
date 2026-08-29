@@ -722,6 +722,12 @@ async fn deliver_final(chat_id: i64, msg_id: i32, mut pending: PendingFinal) {
     let verdict = {
         let mut map = peers().lock().unwrap_or_else(|e| e.into_inner());
         let Some(peer) = map.get_mut(&chat_id) else {
+            // The peer vanished between pop and verdict: no counter will ever
+            // move for this final. Still fire the settle hook so a parked
+            // converge loop wakes to observe the 0/0/0 shape instead of
+            // waiting out its watchdog (#28 mode 4).
+            #[cfg(test)]
+            test_support::notify_settled();
             return;
         };
         match result {
@@ -769,6 +775,11 @@ async fn deliver_final(chat_id: i64, msg_id: i32, mut pending: PendingFinal) {
             }
         }
     }
+    // Test hook (#28 mode 4): every verdict exit ends the silence — wake a
+    // parked converge loop. Precedent: the `test_support::advance` hooks in
+    // this file for the paused-clock sleeps.
+    #[cfg(test)]
+    test_support::notify_settled();
 }
 
 /// The two wire shapes a queued final can take, mirroring the call sites that
@@ -1042,6 +1053,28 @@ pub(crate) mod test_support {
     /// sleeping anywhere — mocked passage of time per the #1211 test brief.
     pub(crate) fn advance(ms: u64) {
         CLOCK_OFFSET_MS.fetch_add(ms, Ordering::Relaxed);
+    }
+
+    /// Process-wide settle notifier for the drainer wire tests (#28 mode 4).
+    /// `deliver_final` fires [`notify_settled`] on EVERY exit (delivered,
+    /// abandoned, retried, and the peer-vanished early return); a converge
+    /// loop parks on `settle_notifier().notified()` instead of pumping
+    /// virtual-time sleeps. With no tokio timer left pending in the test
+    /// task, the paused runtime performs a REAL reactor park, so the
+    /// in-flight mockito response lands in real time and the drainer's
+    /// verdict wakes the loop — the wait is event-driven, not a lottery.
+    pub(crate) fn settle_notifier() -> &'static tokio::sync::Notify {
+        static SETTLED: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+        SETTLED.get_or_init(tokio::sync::Notify::new)
+    }
+
+    /// Wake any converge loop parked on [`settle_notifier`]. `notify_one`
+    /// permit semantics: a notify with no waiter stores one permit that the
+    /// next `notified()` consumes — at worst one spurious re-check (the loop
+    /// always re-reads the settle counters before parking again), never a
+    /// lost wakeup.
+    pub(crate) fn notify_settled() {
+        settle_notifier().notify_one();
     }
 
     /// Mark a chat as an already-seen forum peer WITHOUT consuming budget,
