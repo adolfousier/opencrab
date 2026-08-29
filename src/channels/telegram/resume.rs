@@ -519,9 +519,10 @@ pub(crate) async fn resume_session_inner(
                 if let Ok(mut s) = st.lock() {
                     s.compacting = false;
                     s.header_preview = None;
-                    s.display_queue.push(DisplayItem::Intermediate(compacted_flow_line(
-                        before_pct, after_pct, elapsed,
-                    )));
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacted_flow_line(
+                            before_pct, after_pct, elapsed,
+                        )));
                 }
             }
             _ => {}
