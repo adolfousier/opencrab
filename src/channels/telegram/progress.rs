@@ -8,8 +8,8 @@ use teloxide::Bot;
 use teloxide::types::{ChatAction, ChatId, ThreadId};
 
 use super::flow::{
-    DisplayItem, StreamingState, ToolMsg, compacted_flow_line, compacting_flow_line,
-    detach_flow_for_followup,
+    COMPACTING_HEADER_TEXT, DisplayItem, StreamingState, ToolMsg, compacted_flow_line,
+    compacting_flow_line, detach_flow_for_followup,
 };
 use super::handler::tool_context;
 use super::send::fire_chat_action;
@@ -47,6 +47,8 @@ pub(crate) fn build_progress_cb(
                     .await;
                 });
                 if let Ok(mut s) = st.lock() {
+                    s.compacting = true;
+                    s.header_preview = Some(COMPACTING_HEADER_TEXT.to_string());
                     s.display_queue
                         .push(DisplayItem::Intermediate(compacting_flow_line(usage_pct)));
                 }
@@ -188,6 +190,11 @@ pub(crate) fn build_progress_cb(
                 ..
             } => {
                 if let Ok(mut s) = st.lock() {
+                    // Lift the header pin FIRST so the next tick recomputes
+                    // from live data; the ✅ line leads the body until newer
+                    // activity arrives (#29).
+                    s.compacting = false;
+                    s.header_preview = None;
                     s.display_queue.push(DisplayItem::Intermediate(compacted_flow_line(
                         before_pct, after_pct, elapsed,
                     )));

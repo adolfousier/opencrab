@@ -351,6 +351,7 @@ pub(crate) async fn resume_session_inner(
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         // Telegram: positive chat id = private/DM, negative = group (#677).
         is_dm: chat_id.0 > 0,
+        compacting: false,
         pending_suggestions: None,
         msg_id: None,
         thinking: String::new(),
@@ -424,6 +425,8 @@ pub(crate) async fn resume_session_inner(
                         .await;
                 });
                 if let Ok(mut s) = st.lock() {
+                    s.compacting = true;
+                    s.header_preview = Some(COMPACTING_HEADER_TEXT.to_string());
                     s.display_queue
                         .push(DisplayItem::Intermediate(compacting_flow_line(usage_pct)));
                 }
@@ -554,6 +557,8 @@ pub(crate) async fn resume_session_inner(
                 ..
             } => {
                 if let Ok(mut s) = st.lock() {
+                    s.compacting = false;
+                    s.header_preview = None;
                     s.display_queue.push(DisplayItem::Intermediate(compacted_flow_line(
                         before_pct, after_pct, elapsed,
                     )));
