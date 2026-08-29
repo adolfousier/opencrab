@@ -305,14 +305,30 @@ impl TelegramAgent {
                                                 .message
                                                 .as_ref()
                                                 .and_then(|m| m.regular_message())
-                                                && let Err(e) = bot
+                                            {
+                                                match bot
                                                     .edit_message_reply_markup(msg.chat.id, msg.id)
                                                     .await
-                                            {
-                                                tracing::warn!(
-                                                    "Telegram followup tap: stale keyboard strip \
-                                                     failed: {e}"
-                                                );
+                                                {
+                                                    Ok(()) => {
+                                                        // #1226: the strip used to ride bare
+                                                        // rich_edit telemetry with nothing
+                                                        // naming it — log the outcome so a
+                                                        // stale-shell tap is re-derivable.
+                                                        tracing::info!(
+                                                            "Telegram followup tap: stripped \
+                                                             dead keyboard from msg {} \
+                                                             (expired token {cb_token}, #1226)",
+                                                            msg.id
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!(
+                                                            "Telegram followup tap: stale \
+                                                             keyboard strip failed: {e}"
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                         // (session, chosen text, merged host). The host is
@@ -464,6 +480,13 @@ impl TelegramAgent {
                                                     );
                                                     false
                                                 } else {
+                                                    // #1226: the pick-record edit also strips
+                                                    // the keyboard — name it so teardown is
+                                                    // visible in logs, not just failure.
+                                                    tracing::info!(
+                                                        "Telegram followup tap: pick recorded \
+                                                         on msg {mid}, keyboard stripped"
+                                                    );
                                                     true
                                                 }
                                             }

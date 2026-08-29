@@ -659,6 +659,8 @@ pub mod telegram_ephemeral_test;
 pub mod telegram_folded_reclaim_suppression_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_newest_msg_id_test;
+#[cfg(feature = "telegram")]
+pub mod telegram_options_reclaim_test;
 pub mod telegram_outbound_dedup_test;
 pub mod telegram_raw_update_parse_test;
 pub mod telegram_reaction_map_test;

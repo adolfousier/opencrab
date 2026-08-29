@@ -291,6 +291,15 @@ pub(crate) async fn render_suggestions(
         match outcome {
             Ok(()) => {
                 placed = true;
+                // #1226: placement outcome used to be invisible on success —
+                // name the arm, the host message and the token so any tap can
+                // be mapped back to its panel from logs alone.
+                tracing::info!(
+                    "Telegram suggest_options: keyboard merged onto msg {mid} \
+                     ({} host, token {token}, {} options)",
+                    if rich { "rich" } else { "classic" },
+                    options.len()
+                );
                 state
                     .attach_followup_host(
                         &token,
@@ -325,11 +334,21 @@ pub(crate) async fn render_suggestions(
         if let Some(tid) = thread_id {
             req = req.message_thread_id(tid);
         }
-        if let Err(e) = req.await {
-            tracing::warn!("Telegram suggest_options: send failed: {e}");
-            // The buttons never landed — drop the stash so a stale entry can't
-            // swallow an unrelated future tap.
-            state.drop_pending_followup(&token).await;
+        match req.await {
+            Ok(msg) => {
+                tracing::info!(
+                    "Telegram suggest_options: standalone block msg {} \
+                     (token {token}, {} options)",
+                    msg.id,
+                    options.len()
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Telegram suggest_options: send failed: {e}");
+                // The buttons never landed — drop the stash so a stale entry can't
+                // swallow an unrelated future tap.
+                state.drop_pending_followup(&token).await;
+            }
         }
     }
 }

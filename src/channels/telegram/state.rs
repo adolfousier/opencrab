@@ -691,6 +691,7 @@ impl TelegramState {
         options: Vec<String>,
     ) -> String {
         let token = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let count = options.len();
         self.pending_followups.lock().await.insert(
             token.clone(),
             PendingFollowupEntry {
@@ -698,6 +699,12 @@ impl TelegramState {
                 options,
                 host: None,
             },
+        );
+        // #1226: stash lifecycle used to be invisible — a register line lets
+        // every later tap be mapped to the arm that minted its token.
+        tracing::info!(
+            "Telegram followups: registered stash token {token} for session \
+             {session_id} ({count} options)"
         );
         token
     }
@@ -711,7 +718,10 @@ impl TelegramState {
 
     /// Forget an unused registration (buttons never landed).
     pub(crate) async fn drop_pending_followup(&self, token: &str) {
-        self.pending_followups.lock().await.remove(token);
+        let existed = self.pending_followups.lock().await.remove(token).is_some();
+        if existed {
+            tracing::info!("Telegram followups: dropped unplaced stash token {token}");
+        }
     }
 
     /// Take a tapped follow-up suggestion by index, consuming the WHOLE set for
@@ -736,10 +746,20 @@ impl TelegramState {
     /// Drop this session's pending follow-up suggestions (the user sent their
     /// own message, so the buttons are stale).
     pub async fn clear_pending_followups(&self, session_id: Uuid) {
-        self.pending_followups
-            .lock()
-            .await
-            .retain(|_, e| e.session_id != session_id);
+        let removed = {
+            let mut map = self.pending_followups.lock().await;
+            let before = map.len();
+            map.retain(|_, e| e.session_id != session_id);
+            before - map.len()
+        };
+        if removed > 0 {
+            // #1226: the #597 wipe used to leave zero log lines, which made
+            // stale-shell taps impossible to explain from logs alone.
+            tracing::info!(
+                "Telegram followups: cleared {removed} stale stash entries for \
+                 session {session_id} (#597 — user sent their own message)"
+            );
+        }
     }
 
     /// Store a cancel token for a session (before starting an agent call).

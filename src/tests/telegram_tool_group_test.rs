@@ -913,7 +913,7 @@ fn trailing_text_run_pops_joined_in_order() {
         FlowEntry::Text("first part of the answer".into()),
         FlowEntry::Text("Already factored in. Standing by.".into()),
     ];
-    let reclaimed = pop_trailing_folded_texts(&mut entries).expect("reclaims");
+    let reclaimed = pop_trailing_folded_texts(&mut entries, false).expect("reclaims");
     assert_eq!(
         reclaimed,
         "first part of the answer\n\nAlready factored in. Standing by."
@@ -928,7 +928,7 @@ fn text_only_flow_pops_everything() {
         FlowEntry::Text("the whole answer".into()),
         FlowEntry::Text("plus a follow-up".into()),
     ];
-    let reclaimed = pop_trailing_folded_texts(&mut entries).expect("reclaims");
+    let reclaimed = pop_trailing_folded_texts(&mut entries, false).expect("reclaims");
     assert!(reclaimed.starts_with("the whole answer"));
     assert!(entries.is_empty());
 }
@@ -937,7 +937,7 @@ fn text_only_flow_pops_everything() {
 fn tool_last_flow_reclaims_nothing() {
     // Trailing tool call = the answer is in response.content, not folded.
     let mut entries = vec![FlowEntry::Text("narration".into()), FlowEntry::Tool(0)];
-    assert!(pop_trailing_folded_texts(&mut entries).is_none());
+    assert!(pop_trailing_folded_texts(&mut entries, false).is_none());
     assert_eq!(entries.len(), 2, "nothing consumed");
 }
 
