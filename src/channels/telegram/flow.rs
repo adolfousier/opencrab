@@ -76,6 +76,13 @@ pub(crate) struct StreamingState {
     /// the options here and render them once, after the final delivery. Only the
     /// latest set is kept if the tool fires more than once.
     pub(crate) pending_suggestions: Option<Vec<String>>,
+    /// Trailing text reclaimed from the flow AFTER the option-surface Tool
+    /// entry (#31): the model's post-halt sign-off iteration. Stashed by the
+    /// options-pending reclaim in `deliver_final_response`, rendered by
+    /// `render_suggestions` — rich: paragraph after the in-body button rows;
+    /// classic: its own bubble. Keep-never-discard: the ack must neither leak
+    /// into the answer bubble nor vanish with the flow block.
+    pub(crate) pending_trailer: Option<String>,
     /// Response/thinking message (always at bottom)
     pub(crate) msg_id: Option<MessageId>,
     /// Reasoning/thinking text — streamed live, cleared before tool calls or response
@@ -1731,24 +1738,30 @@ pub(crate) async fn restick_flow_if_buried(
 /// The popper lifts the trailing Tool run aside, reclaims that Text run, and
 /// restores the Tool run on top: only the answer text leaves the block, the
 /// tool history stays.
+///
+/// #31: a text-only iteration AFTER the halt leaves its sign-off run as a
+/// Text entry past the Tool — the popper returns BOTH runs as
+/// `(host, trailer)` and nothing is discarded. The host is the answer, the
+/// trailer rides after the buttons; when both are `None` the entries are
+/// untouched.
 pub(crate) async fn take_folded_final(
     bot: &Bot,
     chat: ChatId,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
     options_pending: bool,
-) -> Option<String> {
-    let (text, none_kind): (Option<String>, Option<&'static str>) = {
+) -> (Option<String>, Option<String>) {
+    let (host, trailer, none_kind): (Option<String>, Option<String>, Option<&'static str>) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        let popped = pop_trailing_folded_texts(&mut s.flow_entries, options_pending);
+        let (host, trailer) = pop_trailing_folded_texts(&mut s.flow_entries, options_pending);
         // #1226: a None here used to be silent, which made the K failure mode
         // (answer stranded in the collapsed flow) undiagnosable from logs.
         // Name what the flow ended on.
-        let kind = popped.is_none().then(|| match s.flow_entries.last() {
+        let kind = (host.is_none() && trailer.is_none()).then(|| match s.flow_entries.last() {
             Some(FlowEntry::Tool(_)) => "Tool",
             Some(FlowEntry::Text(_)) => "Text",
             None => "empty",
         });
-        (popped, kind)
+        (host, trailer, kind)
     };
     if let Some(kind) = none_kind {
         tracing::info!(
@@ -1756,38 +1769,87 @@ pub(crate) async fn take_folded_final(
              options_pending={options_pending}) (#1226)"
         );
     }
-    text.as_ref()?;
-    // Re-render the block without the promoted answer. An emptied block is
-    // NOT deleted anymore: the flow message is the turn's chrome surface
-    // (header, sections, ctx) and settles header-only at turn end, same as a
-    // no-tool long turn.
-    refresh_flow(bot, chat, streaming, super::governor::EditClass::Final).await;
-    text
+    if host.is_some() || trailer.is_some() {
+        // Re-render the block without the promoted runs. An emptied block is
+        // NOT deleted anymore: the flow message is the turn's chrome surface
+        // (header, sections, ctx) and settles header-only at turn end, same as a
+        // no-tool long turn.
+        refresh_flow(bot, chat, streaming, super::governor::EditClass::Final).await;
+    }
+    (host, trailer)
 }
 
-/// Pop the trailing run of folded model `Text` entries and join them
-/// (#478). Mid-turn narration is always followed by more tool calls, so
+/// Pop the trailing folded `Text` runs, split into host and trailer runs
+/// (#478, #31). Mid-turn narration is always followed by more tool calls, so
 /// the trailing text run after the last tool IS the final answer — and
 /// since #475 keeps ONE block across queued follow-ups, that answer can
 /// be multi-part. Popping only the last entry left earlier parts
 /// imprisoned in the block.
 ///
+/// `options_pending` (#1226 K): the turn halted on a `suggest_options`
+/// call, so a Tool entry sits LAST and the answer is the Text run
+/// immediately BEFORE it. Lift the trailing Tool run aside, pop that Text
+/// run, then restore the Tool run in its original order — the block keeps
+/// its tool history; only the answer text is reclaimed. When no Text run
+/// precedes the tools nothing is popped and the entries are untouched.
+///
+/// #31: when the model's text-only iteration FOLLOWED the halt, its
+/// sign-off run sits AFTER the Tool entry as the trailer. That run is
+/// popped FIRST, then the K lift runs — the return is `(host, trailer)`
+/// and nothing is discarded. `trailer` is always `None` without
+/// `options_pending` (the stock pop never looks past a Tool entry).
 pub(crate) fn pop_trailing_folded_texts(
     entries: &mut Vec<FlowEntry>,
     options_pending: bool,
-) -> Option<String> {
-    let mut aside: Vec<FlowEntry> = Vec::new();
-    if options_pending {
-        while matches!(entries.last(), Some(FlowEntry::Tool(_))) {
-            if let Some(e) = entries.pop() {
-                aside.push(e);
+) -> (Option<String>, Option<String>) {
+    let join = |mut parts: Vec<String>| {
+        parts.reverse();
+        parts.join("\n\n")
+    };
+    if !options_pending {
+        // Stock pop (#478): the trailing Text run IS the final answer.
+        let mut parts: Vec<String> = Vec::new();
+        while matches!(entries.last(), Some(FlowEntry::Text(_))) {
+            match entries.pop() {
+                Some(FlowEntry::Text(t)) => parts.push(t),
+                other => {
+                    if let Some(e) = other {
+                        entries.push(e);
+                    }
+                    break;
+                }
+            }
+        }
+        if parts.is_empty() {
+            return (None, None);
+        }
+        return (Some(join(parts)), None);
+    }
+
+    // #31: the post-halt trailer run sits AFTER the trailing Tool entry —
+    // pop it first, then run the K lift for the host run.
+    let mut trailer_parts: Vec<String> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
+        match entries.pop() {
+            Some(FlowEntry::Text(t)) => trailer_parts.push(t),
+            other => {
+                if let Some(e) = other {
+                    entries.push(e);
+                }
+                break;
             }
         }
     }
-    let mut parts: Vec<String> = Vec::new();
+    let mut aside: Vec<FlowEntry> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Tool(_))) {
+        if let Some(e) = entries.pop() {
+            aside.push(e);
+        }
+    }
+    let mut host_parts: Vec<String> = Vec::new();
     while matches!(entries.last(), Some(FlowEntry::Text(_))) {
         match entries.pop() {
-            Some(FlowEntry::Text(t)) => parts.push(t),
+            Some(FlowEntry::Text(t)) => host_parts.push(t),
             other => {
                 if let Some(e) = other {
                     entries.push(e);
@@ -1799,11 +1861,17 @@ pub(crate) fn pop_trailing_folded_texts(
     while let Some(e) = aside.pop() {
         entries.push(e);
     }
-    if parts.is_empty() {
-        return None;
+
+    if aside.is_empty() {
+        // No Tool entry trailed the run — the gate's precondition (flow ends
+        // on the suggest Tool) does not hold, so the popped run is just the
+        // stock trailing answer. Return it as the host, never as a trailer.
+        let host = (!trailer_parts.is_empty()).then(|| join(trailer_parts));
+        return (host, None);
     }
-    parts.reverse();
-    Some(parts.join("\n\n"))
+    let host = (!host_parts.is_empty()).then(|| join(host_parts));
+    let trailer = (!trailer_parts.is_empty()).then(|| join(trailer_parts));
+    (host, trailer)
 }
 /// The last model-authored folded text, looking past any system chrome
 /// appended after it and stopping at the last tool call (#1253).
@@ -1848,4 +1916,43 @@ pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
     }
     let overlap = norm_folded.len().min(norm_final.len());
     overlap >= 20 && (norm_final.starts_with(&norm_folded) || norm_folded.starts_with(&norm_final))
+}
+
+/// Settle the options-pending reclaim into `(final text, trailer)` (#31).
+///
+/// `content` is the response.content text — with an option-surface halt the
+/// trailing text-only iteration usually leaks its sign-off ack here. `host`
+/// is the reclaimed answer run (before the trailing Tool), `trailer` the
+/// reclaimed post-halt run (after it). Pure so the #31 arbitration is unit-
+/// testable without a Bot or a session.
+///
+/// Rules, per the owner-approved design:
+/// - The host WINS the content slot. The old prepend (`host\n\ncontent`)
+///   shipped the ack inside the answer bubble; the answer must not stay
+///   imprisoned in the flow block and the ack must not ride inside it.
+/// - The trailer survives unless it duplicates the final text (provider
+///   double-copy observed inferhub-side in smoke v4/S4) — no double-send.
+/// - Keep-never-discard: when the popper found no trailer run but content
+///   carries a non-duplicate leftover (the ack never folded into the flow),
+///   the content text BECOMES the trailer instead of vanishing.
+pub(crate) fn settle_options_reclaim(
+    content: String,
+    host: Option<String>,
+    trailer: Option<String>,
+) -> (String, Option<String>) {
+    let text = match &host {
+        Some(h) => h.clone(),
+        None => content.clone(),
+    };
+    let trailer = match trailer {
+        Some(t) if folded_duplicates_final(&t, &text) => None,
+        Some(t) => Some(t),
+        None => match host {
+            Some(_) if !content.trim().is_empty() && !folded_duplicates_final(&content, &text) => {
+                Some(content)
+            }
+            _ => None,
+        },
+    };
+    (text, trailer)
 }

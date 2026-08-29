@@ -353,6 +353,7 @@ pub(crate) async fn resume_session_inner(
         is_dm: chat_id.0 > 0,
         compacting: false,
         pending_suggestions: None,
+        pending_trailer: None,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: Vec::new(),
@@ -747,9 +748,11 @@ pub(crate) async fn resume_session_inner(
         .pending_suggestions
         .take();
     if let Some(options) = suggestions {
-        let merge_host = {
+        // #31: the sign-off trailer rides to render_suggestions with the
+        // merge host — same last-out-of-the-flow ordering as handle_message.
+        let (merge_host, trailer) = {
             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            s.final_bubble.take()
+            (s.final_bubble.take(), s.pending_trailer.take())
         };
         super::suggest_options::render_suggestions(
             &bot,
@@ -759,6 +762,7 @@ pub(crate) async fn resume_session_inner(
             thread_id,
             options,
             merge_host,
+            trailer,
         )
         .await;
     }
