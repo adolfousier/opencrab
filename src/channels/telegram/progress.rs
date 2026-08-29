@@ -195,9 +195,10 @@ pub(crate) fn build_progress_cb(
                     // activity arrives (#29).
                     s.compacting = false;
                     s.header_preview = None;
-                    s.display_queue.push(DisplayItem::Intermediate(compacted_flow_line(
-                        before_pct, after_pct, elapsed,
-                    )));
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacted_flow_line(
+                            before_pct, after_pct, elapsed,
+                        )));
                 }
             }
             _ => {}
