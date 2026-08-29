@@ -8,7 +8,10 @@
 //! read live data as-is: the session plan JSON for title and checklist, and
 //! `GoalManager` for the active goal one-liner. Empty sections are omitted.
 
-use super::flow::{HeaderMarkup, StreamingState, humanize_duration, open_flow, refresh_flow};
+use super::flow::{
+    COMPACTING_HEADER_TEXT, HeaderMarkup, StreamingState, humanize_duration, open_flow,
+    refresh_flow,
+};
 use super::handler::escape_html;
 use crate::brain::agent::AgentService;
 use crate::brain::goal::GoalManager;
@@ -755,6 +758,21 @@ pub(crate) async fn tick_flow_header(
     let open_block = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.open_group_msg_id
+    };
+    // Compaction pin (#29): while the summarizer runs, nothing streams, so
+    // pin the header to the dedicated compacting state instead of whatever
+    // stale preview the caller computed. The CompactionSummary arm clears
+    // the flag; the next tick recomputes normally.
+    let preview = {
+        let compacting = {
+            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            s.compacting
+        };
+        if compacting {
+            Some(COMPACTING_HEADER_TEXT.to_string())
+        } else {
+            preview
+        }
     };
     if open_block.is_some() {
         if show_status {

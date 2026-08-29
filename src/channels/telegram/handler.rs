@@ -2393,6 +2393,7 @@ pub(crate) async fn handle_message(
     // ── Streaming setup ───────────────────────────────────────────────────────
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         is_dm,
+        compacting: false,
         pending_suggestions: None,
         msg_id: None,
         thinking: String::new(),

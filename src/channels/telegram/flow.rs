@@ -122,6 +122,12 @@ pub(crate) struct StreamingState {
     /// legacy pre-block status bubble is gone, so early-turn status rides
     /// here from the first activity tick.
     pub(crate) header_preview: Option<String>,
+    /// Auto-compaction in flight (#29): while set, `tick_flow_header` pins
+    /// the header to `COMPACTING_HEADER_TEXT` regardless of the computed
+    /// preview — no streaming chunks arrive during the silent window, so
+    /// the ordinary preview would go stale. Cleared by the CompactionSummary
+    /// arm; the next tick recomputes from live data.
+    pub(crate) compacting: bool,
     /// Always-visible flow sections (plan title, checklist progress, active
     /// goal, ctx footer). Rolled by the edit loop from live data; ctx is set
     /// once at final delivery.
