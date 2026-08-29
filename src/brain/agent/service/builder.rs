@@ -244,6 +244,12 @@ pub struct AgentService {
     /// below 55% so a fresh entry into the band warns again. Keeps the
     /// transient nudge to once-per-entry instead of every turn.
     pub(super) session_pressure_warned: std::sync::RwLock<HashMap<Uuid, bool>>,
+    /// Observed wall-clock duration of each session's last SUCCESSFUL
+    /// compaction (#29 E2). Feeds the `predicted` ETA hint on the next
+    /// `Compacting` event — grounded in what actually happened instead of a
+    /// static guess. Written at CompactionSummary emit, read at Compacting
+    /// emit; same per-session map pattern as `session_pressure_warned`.
+    pub(super) last_compaction_elapsed: std::sync::RwLock<HashMap<Uuid, std::time::Duration>>,
 
     /// Per-session ring buffer of outgoing assistant texts (#957). The
     /// cross-turn announcement guard: near-identical turn-final texts that
@@ -404,6 +410,7 @@ impl AgentService {
             session_primary_failure_streak: std::sync::RwLock::new(HashMap::new()),
             active_skills: std::sync::RwLock::new(HashMap::new()),
             session_pressure_warned: std::sync::RwLock::new(HashMap::new()),
+            last_compaction_elapsed: std::sync::RwLock::new(HashMap::new()),
             session_outgoing_text_ring: std::sync::RwLock::new(HashMap::new()),
             context,
             tool_registry: Arc::new(ToolRegistry::new()),

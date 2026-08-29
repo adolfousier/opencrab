@@ -407,6 +407,7 @@ pub(crate) fn render_flow_html_chrome(
         FOLDED_NARRATION_CAP,
         elapsed_secs,
         None,
+        false,
     )
 }
 
@@ -496,10 +497,21 @@ pub(crate) fn render_flow_html_chrome_pref(
     narration_cap: usize,
     elapsed_secs: u64,
     bg: Option<&str>,
+    compacting: bool,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
     let has_log = !out.is_empty();
-    let activity = latest_activity_preview(lines);
+    // Dedupe (#29): during the silent window the newest log line IS the ⏳
+    // body entry while the pinned header_preview carries the dedicated
+    // compacting state — rendering both doubles the compaction text in the
+    // footer (the owner-sighted live-fire bug). Suppress the activity-derived
+    // segment while the flag is set; the pinned constant stays the sole
+    // compaction string, and the #1052 split moves the gear onto the count.
+    let activity = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let footer = super::flow_chrome::merged_footer(
         &footer_parts(
             header,
@@ -584,6 +596,7 @@ pub(crate) fn render_flow_details_chrome(
         FOLDED_NARRATION_CAP,
         elapsed_secs,
         None,
+        false,
     )
 }
 
@@ -602,10 +615,18 @@ pub(crate) fn render_flow_details_chrome_pref(
     narration_cap: usize,
     elapsed_secs: u64,
     bg: Option<&str>,
+    compacting: bool,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
     let has_log = !out.is_empty();
-    let activity = latest_activity_preview(lines);
+    // Dedupe (#29): same suppression as the classic renderer — the footer
+    // join must never drift between surfaces (ADR 0005 Decision 12), so the
+    // compacting flag kills the activity segment here too.
+    let activity = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let footer = super::flow_chrome::merged_footer(
         &footer_parts(
             header,
@@ -654,7 +675,11 @@ pub(crate) fn render_flow_details_chrome_pref(
 // collapse); kept because #420 reuses this renderer once RichBlockDetails
 // serialization lands, and its tests pin the markdown contract meanwhile.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) -> String {
+pub(crate) fn render_flow_rich(
+    lines: &[FlowLine],
+    live_status: Option<&str>,
+    compacting: bool,
+) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -695,8 +720,14 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
     }
     // Same latest-activity preview as the HTML renderer (#405), leading the
     // header status-first (#509); this markdown path is always live. Raw text,
-    // no escaping — the markdown dialect keeps narration verbatim.
-    let status_msg = latest_activity_preview(lines);
+    // no escaping — the markdown dialect keeps narration verbatim. Dedupe
+    // (#29): while the compacting flag is set the newest line is the ⏳ body
+    // entry — suppress it here too so the three renderers never drift.
+    let status_msg = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let header = flow_header_text(
         tool_count,
         &FlowHeader::Live(live_status),
@@ -728,9 +759,23 @@ pub(crate) const COMPACTING_HEADER_TEXT: &str = "⏳ Compacting context…";
 
 /// Flow-block body line posted when auto-compaction starts (#29). The
 /// percentage is the context FILL LEVEL at trigger time — a "how full was
-/// it" fact, never a progress indicator.
-pub(crate) fn compacting_flow_line(usage_pct: f64) -> String {
-    format!("⏳ Compacting context — {:.0}% full (≈10–60s)…", usage_pct)
+/// it" fact, never a progress indicator. The ETA hint, when present, is the
+/// duration the session's PREVIOUS compaction actually took (E2) — grounded
+/// in observation, never a static guess: the old `≈10–60s` constant was
+/// retired because it was never right (observed live range 10s → 29 min),
+/// so a session with no compaction history renders no parenthetical at all.
+pub(crate) fn compacting_flow_line(
+    usage_pct: f64,
+    predicted: Option<std::time::Duration>,
+) -> String {
+    match predicted {
+        Some(d) => format!(
+            "⏳ Compacting context — {:.0}% full (≈{})…",
+            usage_pct,
+            humanize_duration(d.as_secs().max(1))
+        ),
+        None => format!("⏳ Compacting context — {:.0}% full…", usage_pct),
+    }
 }
 
 /// Flow-block body line posted when compaction finishes (#29). Doubles as
@@ -999,6 +1044,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
                 narration_cap,
                 elapsed,
                 s.bg_indicator.as_deref(),
+                false, // settled renders drop the activity segment regardless
             )
         }
         None => render_flow_html_chrome_pref(
@@ -1009,6 +1055,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
             narration_cap,
             elapsed,
             s.bg_indicator.as_deref(),
+            s.compacting,
         ),
     }
 }
@@ -1034,6 +1081,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
                 narration_cap,
                 elapsed,
                 s.bg_indicator.as_deref(),
+                false, // settled renders drop the activity segment regardless
             )
         }
         None => render_flow_details_chrome_pref(
@@ -1044,6 +1092,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
             narration_cap,
             elapsed,
             s.bg_indicator.as_deref(),
+            s.compacting,
         ),
     }
 }
