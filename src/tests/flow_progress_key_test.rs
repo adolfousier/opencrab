@@ -70,3 +70,18 @@ fn provider_retries_also_supersede() {
         Some("provider-retry")
     );
 }
+
+#[test]
+fn mermaid_regen_attempts_share_one_key() {
+    // The regen counter (#37) supersedes in place the same way the
+    // empty-answer nudge counter does.
+    let keys: Vec<_> = (1..=3)
+        .map(|n| progress_key(&format!("🔧 Mermaid render failed — regen {n}/3")))
+        .collect();
+    assert!(keys.iter().all(|k| *k == Some("mermaid-regen")));
+    // No emoji: the key is derived from the message, not its decoration.
+    assert_eq!(
+        progress_key("Mermaid render failed — regen 1/3"),
+        Some("mermaid-regen")
+    );
+}

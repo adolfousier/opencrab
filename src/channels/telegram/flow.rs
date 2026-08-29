@@ -1457,6 +1457,10 @@ pub(crate) fn progress_key(text: &str) -> Option<&'static str> {
         Some("fallback-attempt")
     } else if t.starts_with("Retry ") {
         Some("provider-retry")
+    } else if t.starts_with("Mermaid render failed") {
+        // The regen-nudge counter (#37): 1/3 → 2/3 → 3/3 supersedes in
+        // place like the empty-answer nudge counter.
+        Some("mermaid-regen")
     } else {
         None
     }

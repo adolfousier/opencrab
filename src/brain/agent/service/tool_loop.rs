@@ -1458,12 +1458,23 @@ impl AgentService {
         // scaffolding that already failed on the primary (#979).
         let mut pre_nudge_len: Option<usize> = None;
         const EMPTY_REASONING_MAX_NUDGES: u32 = 5;
+        // Mermaid regen budget (#37): how many parse-error nudges a fence
+        // gets before the reply ships and degrades to the usual failure
+        // block. Owner dial: 3 (2026-08-29).
+        #[cfg_attr(not(feature = "telegram"), allow(unused))]
+        const MERMAID_REGEN_MAX_NUDGES: u32 = 3;
         // Local reasoning models (notably Qwen3.6-35B on MLX) periodically
         // emit an EOS token mid-sentence — the response looks complete from
         // a protocol standpoint (proper finish_reason=stop + usage chunk)
         // but the visible text ends mid-word ("Standard Get I"). One-shot
         // nudge to continue from where they left off.
         let mut truncated_mid_sentence_retry_used: bool = false;
+        // Mermaid regen attempts spent (#37): each spend echoes the broken
+        // text as an assistant message and injects the renderer's error as
+        // a user-role [System: ...] nudge — same shape as the empty-answer
+        // ladder.
+        #[cfg_attr(not(feature = "telegram"), allow(unused))]
+        let mut mermaid_regen_retries: u32 = 0;
         // One-shot nudge for the browser screenshot-spam pattern detected
         // by the semantic-loop check below the per-iteration tool dispatch.
         // Reset per turn; fires at most once.
@@ -5492,6 +5503,60 @@ impl AgentService {
                     // cross-provider fallback for the continuation request.
                     current_iter_is_truncation_continue = true;
                     continue;
+                }
+
+                // Mermaid regen nudge (#37): if any fence in the reply fails
+                // to parse DETERMINISTICALLY, hand the model the renderer's
+                // own error text before the reply goes final — same shape as
+                // the empty-answer ladder: echo the broken text as an
+                // assistant message, inject the correction as a user-role
+                // [System: ...] nudge, re-run the iteration. Transient
+                // renderer failures stay silent here (preflight reports parse
+                // errors only) and keep the delivery path's degrade-to-block
+                // behaviour. Gated to channel sessions — the CLI has no
+                // mermaid delivery, so there is nothing to regenerate.
+                #[cfg(feature = "telegram")]
+                if mermaid_regen_retries < MERMAID_REGEN_MAX_NUDGES
+                    && !is_cli_provider
+                    && progress_callback.is_some()
+                    && crate::channels::telegram::rich::mermaid::should_render_mermaid(
+                        &iteration_text,
+                    )
+                {
+                    let parse_errors =
+                        crate::channels::telegram::rich::mermaid::preflight_parse_errors(
+                            &iteration_text,
+                        )
+                        .await;
+                    if !parse_errors.is_empty() {
+                        mermaid_regen_retries += 1;
+                        let attempt = mermaid_regen_retries;
+                        tracing::warn!(
+                            fences_broken = parse_errors.len(),
+                            attempt,
+                            budget = MERMAID_REGEN_MAX_NUDGES,
+                            "mermaid preflight parse errors; nudging regen"
+                        );
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "Mermaid render failed — regen \
+                                         {attempt}/{MERMAID_REGEN_MAX_NUDGES}"
+                                    ),
+                                },
+                            );
+                        }
+                        let nudge = crate::brain::agent::service::nudge::mermaid_regen_nudge(
+                            &parse_errors,
+                            attempt,
+                            MERMAID_REGEN_MAX_NUDGES,
+                        );
+                        context.add_message(Message::assistant(iteration_text));
+                        context.add_message(Message::user(nudge));
+                        continue;
+                    }
                 }
 
                 if iteration > 0 {
