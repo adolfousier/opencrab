@@ -26,6 +26,7 @@ pub(crate) mod phantom_lang;
 pub(crate) mod plan_mode_provider;
 pub(crate) mod repetition;
 pub(crate) mod restart_recovery;
+pub(crate) mod session_cwd;
 pub(crate) mod session_routes;
 pub(crate) mod tool_loop;
 pub(crate) mod tool_repeat;

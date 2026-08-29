@@ -1266,6 +1266,36 @@ impl AgentService {
             context.add_message(Message::user(cont_text));
         }
 
+        // Restore the directory `/cd` persisted for this session before the
+        // handle is created, otherwise the lazy seed hands a channel chat the
+        // directory the process was launched in and the DB row is ignored
+        // forever. Only the first turn of a session in this process can hit
+        // this: once the handle exists, a `cd` made since then wins.
+        if self.session_working_dir_unset(session_id) {
+            let persisted = crate::services::SessionService::new(self.context.clone())
+                .get_session(session_id)
+                .await;
+            match persisted {
+                Ok(Some(session)) => {
+                    if let Some(dir) =
+                        super::session_cwd::restorable_cwd(session.working_directory.as_deref())
+                    {
+                        tracing::info!(
+                            "Restored session {} working directory: {}",
+                            session_id,
+                            dir.display()
+                        );
+                        self.set_session_only_working_directory(session_id, dir);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "failed to load session {session_id} for working-directory restore"
+                ),
+            }
+        }
+
         // Create tool execution context. The working directory is per-session
         // (#703): resolve THIS session's own handle so a `cd` here mutates only
         // this session's cwd, and a concurrent session's `cd` can never move it.

@@ -930,6 +930,33 @@ impl AgentService {
         self.set_working_directory(path);
     }
 
+    /// True when this session has no cwd handle yet, i.e. the next
+    /// `working_dir_handle_for_session` call would seed it from the global
+    /// directory. Restore reads this to know whether the persisted
+    /// `sessions.working_directory` still has a say, so a `cd` made later in
+    /// the same process is never overwritten by a stale DB row.
+    pub fn session_working_dir_unset(&self, session_id: Uuid) -> bool {
+        !self
+            .session_working_dirs
+            .read()
+            .expect("session_working_dirs lock poisoned")
+            .contains_key(&session_id)
+    }
+
+    /// Set ONLY this session's working directory, leaving the global untouched.
+    ///
+    /// `set_working_directory_for_session` also moves the global so a new
+    /// foreground session seeds from the last directory the operator picked.
+    /// Restoring a background chat's persisted directory must not do that: a
+    /// Telegram group waking up in its own repo would otherwise drag the TUI
+    /// and every other chat along with it.
+    pub fn set_session_only_working_directory(&self, session_id: Uuid, path: std::path::PathBuf) {
+        *self
+            .working_dir_handle_for_session(session_id)
+            .write()
+            .expect("session working_directory lock poisoned") = path;
+    }
+
     /// Set the brain path (~/.opencrabs/)
     pub fn with_brain_path(mut self, brain_path: std::path::PathBuf) -> Self {
         self.brain_path = Some(brain_path);

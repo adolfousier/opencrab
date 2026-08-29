@@ -1037,9 +1037,14 @@ impl TelegramAgent {
                                     // Confirm directory — set as working dir
                                     let session_id = resolve_callback_session(&query, &state, &shared_session).await;
                                     if let Some(sid) = session_id {
-                                        // Update runtime working directory
-                                        let wd = agent.shared_working_directory();
-                                        *wd.write().expect("working_directory lock poisoned") = std::path::PathBuf::from(&current_path);
+                                        // Move THIS chat's own cwd handle (#703). Writing the
+                                        // global instead left the chat that ran /cd on its old
+                                        // directory — its handle already existed — while every
+                                        // other chat and the TUI silently moved.
+                                        agent.set_session_only_working_directory(
+                                            sid,
+                                            std::path::PathBuf::from(&current_path),
+                                        );
                                         // Persist to session DB
                                         let svc = crate::services::SessionService::new(agent.context().clone());
                                         if let Err(e) = svc.update_session_working_directory(sid, Some(current_path.clone())).await {
