@@ -119,9 +119,9 @@ pub(crate) fn build_enqueue_callback(
                     teloxide::types::ChatId(chat_id),
                     thread_id,
                     &echo_md,
-                    None,
                     "bg-resume",
                     "-",
+                    None,
                 )
                 .await
                 {
