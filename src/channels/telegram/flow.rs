@@ -414,7 +414,7 @@ pub(crate) fn render_flow_html_chrome(
 /// inputs (ADR 0005 Decision 12), shared by the classic and rich paths so the
 /// footer join can never drift between surfaces.
 #[allow(clippy::too_many_arguments)] // one primitive per footer input; the
-// decomposition IS the point (ADR 0005 Decision 12)
+                                     // decomposition IS the point (ADR 0005 Decision 12)
 fn footer_parts<'a>(
     header: &'a FlowHeader,
     fallback_status: Option<&'a str>,
@@ -1499,6 +1499,10 @@ pub(crate) fn progress_key(text: &str) -> Option<&'static str> {
         Some("fallback-attempt")
     } else if t.starts_with("Retry ") {
         Some("provider-retry")
+    } else if t.starts_with("Mermaid render failed") {
+        // The regen-nudge counter (#37): 1/3 → 2/3 → 3/3 supersedes in
+        // place like the empty-answer nudge counter.
+        Some("mermaid-regen")
     } else {
         None
     }
