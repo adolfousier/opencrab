@@ -33,7 +33,10 @@ pub(crate) fn build_progress_cb(
             // the moment compaction starts (#29). The start line also lands
             // in the flow body so the silent window has a visible
             // explanation — a fill level, not a progress bar.
-            ProgressEvent::Compacting { usage_pct } => {
+            ProgressEvent::Compacting {
+                usage_pct,
+                predicted,
+            } => {
                 let bot = bot_typing.clone();
                 let chat = chat_typing;
                 tokio::spawn(async move {
@@ -50,7 +53,9 @@ pub(crate) fn build_progress_cb(
                     s.compacting = true;
                     s.header_preview = Some(COMPACTING_HEADER_TEXT.to_string());
                     s.display_queue
-                        .push(DisplayItem::Intermediate(compacting_flow_line(usage_pct)));
+                        .push(DisplayItem::Intermediate(compacting_flow_line(
+                            usage_pct, predicted,
+                        )));
                 }
             }
             ProgressEvent::ReasoningChunk { text } => {

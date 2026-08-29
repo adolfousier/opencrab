@@ -677,6 +677,7 @@ fn settled_footer_shows_bg_indicator_when_task_running() {
         usize::MAX,
         517,
         Some("cargo test running"),
+        false,
     );
     assert!(
         with_bg.ends_with("⏱ 8:37 • 🔧 cargo test running"),
@@ -690,6 +691,7 @@ fn settled_footer_shows_bg_indicator_when_task_running() {
         usize::MAX,
         517,
         None,
+        false,
     );
     assert!(
         without_bg.ends_with("⏱ 8:37") && !without_bg.contains('🔧'),
@@ -703,6 +705,7 @@ fn settled_footer_shows_bg_indicator_when_task_running() {
         usize::MAX,
         517,
         Some("3 tasks running"),
+        false,
     );
     assert!(
         many.contains("🔧 3 tasks running"),
@@ -904,6 +907,7 @@ fn cli_cap_truncates_body_api_keeps_it_full_html() {
         300,
         2,
         None,
+        false,
     );
     let api = render_flow_html_chrome_pref(
         &lines,
@@ -913,6 +917,7 @@ fn cli_cap_truncates_body_api_keeps_it_full_html() {
         usize::MAX,
         2,
         None,
+        false,
     );
     assert!(
         cli.contains('…'),
@@ -941,6 +946,7 @@ fn cli_cap_truncates_body_api_keeps_it_full_details() {
         300,
         2,
         None,
+        false,
     );
     let api = render_flow_details_chrome_pref(
         &lines,
@@ -950,6 +956,7 @@ fn cli_cap_truncates_body_api_keeps_it_full_details() {
         usize::MAX,
         2,
         None,
+        false,
     );
     assert!(
         cli.contains('…'),
@@ -978,6 +985,7 @@ fn short_narration_untouched_by_either_cap() {
             cap,
             2,
             None,
+            false,
         );
         assert!(out.contains("brief note"));
         assert!(

@@ -62,12 +62,17 @@ pub enum ProgressEvent {
     StreamingChunk {
         text: String,
     },
-    /// Auto-compaction is about to run — the next 10–60s produce zero
+    /// Auto-compaction is about to run — the silent window produces zero
     /// streaming chunks. Carries the context FILL LEVEL at trigger time so
     /// channels can surface it (a level, not compaction progress — the
-    /// summarizer call has no intermediate state, #29).
+    /// summarizer call has no intermediate state, #29), plus the wall-clock
+    /// duration the session's PREVIOUS successful compaction actually took,
+    /// so channels can show a grounded ETA hint. `None` on a session's first
+    /// compaction — a static guess is never right (observed live range:
+    /// 10s → 29 min), so no history means no prediction (#29 E2).
     Compacting {
         usage_pct: f64,
+        predicted: Option<std::time::Duration>,
     },
     /// Compaction finished — carry the summary so the TUI can display it,
     /// plus before/after fill levels and the wall-clock duration of the

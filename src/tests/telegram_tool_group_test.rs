@@ -722,12 +722,12 @@ fn settled_block_carries_no_activity_preview_rich() {
 
 #[test]
 fn rich_empty_group_renders_header_only() {
-    assert_eq!(render_flow_rich(&[], None), "**Processing log**");
+    assert_eq!(render_flow_rich(&[], None, false), "**Processing log**");
 }
 
 #[test]
 fn rich_single_tool_renders_plain_line() {
-    let out = render_flow_rich(&[tline("✅ bash", "git status")], None);
+    let out = render_flow_rich(&[tline("✅ bash", "git status")], None, false);
     assert_eq!(out, "**✅ bash** `git status`");
     // Single tool: no blockquote wrapping, just bold label + context
     assert!(!out.contains(">"));
@@ -738,6 +738,7 @@ fn rich_multiple_tools_render_markdown_header() {
     let out = render_flow_rich(
         &[tline("✅ bash", "git status"), tline("✅ read", "file.rs")],
         None,
+        false,
     );
     // No narration: the activity fallback (most recent tool line) leads the
     // header, bold, then the italic count (#509).
@@ -757,13 +758,14 @@ fn rich_live_status_in_header() {
             tline("⚙️ grep", "pattern"),
         ],
         Some("10s"),
+        false,
     );
     assert!(out.starts_with("⚙️ **Searching.** • _2 tool calls_ • _10s_\n\n"));
 }
 
 #[test]
 fn rich_single_tool_live_status_appends() {
-    let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash • 5s"));
+    let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash • 5s"), false);
     assert_eq!(out, "**⚙️ bash** `git status` • bash • 5s");
 }
 

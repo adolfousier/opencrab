@@ -377,7 +377,10 @@ pub(crate) async fn resume_session_inner(
             // Auto-compaction silent window — immediate typing refresh plus
             // the visible start line in the flow body (#29).
             // See handle_message for the full rationale.
-            ProgressEvent::Compacting { usage_pct } => {
+            ProgressEvent::Compacting {
+                usage_pct,
+                predicted,
+            } => {
                 let bot = bot_typing.clone();
                 let chat = chat_typing;
                 tokio::spawn(async move {
@@ -388,7 +391,9 @@ pub(crate) async fn resume_session_inner(
                     s.compacting = true;
                     s.header_preview = Some(COMPACTING_HEADER_TEXT.to_string());
                     s.display_queue
-                        .push(DisplayItem::Intermediate(compacting_flow_line(usage_pct)));
+                        .push(DisplayItem::Intermediate(compacting_flow_line(
+                            usage_pct, predicted,
+                        )));
                 }
             }
             ProgressEvent::ReasoningChunk { text } => {
