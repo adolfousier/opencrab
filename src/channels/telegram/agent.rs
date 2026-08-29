@@ -310,7 +310,7 @@ impl TelegramAgent {
                                                     .edit_message_reply_markup(msg.chat.id, msg.id)
                                                     .await
                                                 {
-                                                    Ok(()) => {
+                                                    Ok(_) => {
                                                         // #1226: the strip used to ride bare
                                                         // rich_edit telemetry with nothing
                                                         // naming it — log the outcome so a
