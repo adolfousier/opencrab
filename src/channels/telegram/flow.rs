@@ -933,6 +933,19 @@ fn strip_leading_gear(s: &str) -> &str {
     s.trim_start_matches(['⚙', '\u{fe0f}']).trim_start()
 }
 
+/// True when `s` starts with an icon glyph (emoji / symbol / dingbat) rather
+/// than a word character. The standing `⚙️` chrome prefix is dropped before
+/// such text — the gear never fronts another icon (#29 fix round, owner
+/// directive). Detection is deliberately simple: a non-ASCII first char that
+/// is not alphanumeric reads as an icon — covers ⏳ ✅ ❌ ⚙ ⏱ ❕ and friends
+/// while Latin, Cyrillic, and CJK text keeps the gear.
+pub(crate) fn starts_with_icon(s: &str) -> bool {
+    match s.chars().next() {
+        Some(c) => !c.is_ascii() && !c.is_alphanumeric(),
+        None => false,
+    }
+}
+
 /// Build the fully-styled header shared by all three renderers so the classic
 /// HTML, rich-details, and rich-markdown headers can never drift (#480, #509).
 /// The live header leads with the status message (bold), then the tool-call
@@ -961,19 +974,30 @@ pub(crate) fn flow_header_text(
             // Ordered live header: status message FIRST (bold), then the count,
             // then the duration (both italic), all `•`-separated (#509).
             let mut segs: Vec<String> = Vec::new();
+            let mut icon_led = false;
             if let Some(status) = status_msg {
                 // The header already prints one live gear; strip a leading
                 // running-gear from the status message so the bare-tool fallback
                 // ("⚙️ bash …") does not render a double gear (#509 follow-up).
                 // Settled ✅/❌ tool icons are left alone: they read as the tool's
                 // own outcome, not a duplicate of the header gear.
-                segs.push(markup.bold(strip_leading_gear(status)));
+                let status = strip_leading_gear(status);
+                icon_led = starts_with_icon(status);
+                segs.push(markup.bold(status));
             }
             segs.push(markup.italic(&base));
             if let Some(dur) = duration {
                 segs.push(markup.italic(dur));
             }
-            format!("⚙️ {}", segs.join(" • "))
+            // The standing gear is dropped when the status already leads with
+            // an icon (#29 fix round, owner directive) — the pinned
+            // `⏳ Compacting context…` header and icon-led tool activity render
+            // bare, never `⚙️ ⏳ …`.
+            if icon_led {
+                segs.join(" • ")
+            } else {
+                format!("⚙️ {}", segs.join(" • "))
+            }
         }
         FlowHeader::Settled {
             icon,
