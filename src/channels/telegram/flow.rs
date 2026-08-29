@@ -707,6 +707,35 @@ pub(crate) fn humanize_duration(secs: u64) -> String {
     }
 }
 
+/// Header text pinned for the whole silent window (#29). No percentage on
+/// purpose: compaction progress is unknowable (one summarizer call), so a
+/// number here would read as a fake progress bar. The START line carries the
+/// fill level instead — that IS knowable.
+pub(crate) const COMPACTING_HEADER_TEXT: &str = "⏳ Compacting context…";
+
+/// Flow-block body line posted when auto-compaction starts (#29). The
+/// percentage is the context FILL LEVEL at trigger time — a "how full was
+/// it" fact, never a progress indicator.
+pub(crate) fn compacting_flow_line(usage_pct: f64) -> String {
+    format!("⏳ Compacting context — {:.0}% full (≈10–60s)…", usage_pct)
+}
+
+/// Flow-block body line posted when compaction finishes (#29). Doubles as
+/// the definitive completion signal: arrival means the silent window is
+/// over, so a FAILED compaction never emits one (no false ✅).
+pub(crate) fn compacted_flow_line(
+    before_pct: f64,
+    after_pct: f64,
+    elapsed: std::time::Duration,
+) -> String {
+    format!(
+        "✅ Compacted: {:.0}% → {:.0}% in {}",
+        before_pct,
+        after_pct,
+        humanize_duration(elapsed.as_secs().max(1))
+    )
+}
+
 /// Terminal state of a turn, shown in the settled flow-block header (#480).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum FlowOutcome {
