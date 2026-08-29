@@ -18,6 +18,9 @@
 use super::ast::{Block, MermaidResult};
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 /// Base URL of the mermaid.ink image renderer. The diagram source is
 /// base64url-appended. NOTE: this sends the diagram text to a third party.
@@ -244,6 +247,71 @@ pub(crate) fn png_dims(png: &[u8]) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
+// ── Render cache (#37) ──
+//
+// The regen-nudge preflight resolves the same fence the delivery path
+// resolves moments later, and mermaid.ink renders are deterministic:
+// identical source, identical outcome. Caching the fresh outcome spares the
+// renderer the duplicate round-trip — and spares the delivery path a second
+// chance to hit a transient wobble on an already-proven source. Only
+// deterministic outcomes are stored: rendered image bytes and parse errors.
+// Transient `Failed` outcomes are never pinned, because the same source may
+// render fine seconds later.
+
+/// Freshness window for cached render outcomes (#37).
+const RENDER_CACHE_TTL_SECS: u64 = 600;
+
+/// Most cached render outcomes held; the oldest entry is evicted when the
+/// cap is reached (#37).
+const RENDER_CACHE_CAP: usize = 64;
+
+/// Cached render outcomes keyed by diagram source: insertion time plus the
+/// outcome itself (#37).
+static RENDER_CACHE: LazyLock<Mutex<HashMap<String, (Instant, MermaidResult)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// A fresh cached render outcome for `source`, if any (#37). Expired
+/// entries are swept on every lookup so an idle cache cannot bloat.
+pub(crate) fn cache_get(source: &str) -> Option<MermaidResult> {
+    let mut cache = RENDER_CACHE.lock().ok()?;
+    let now = Instant::now();
+    cache.retain(|_, (at, _)| now.duration_since(*at) < Duration::from_secs(RENDER_CACHE_TTL_SECS));
+    cache.get(source).map(|(_, outcome)| outcome.clone())
+}
+
+/// Store a deterministic render outcome for `source` (#37). Only
+/// [`MermaidResult::ImageBytes`] and [`MermaidResult::ParseError`] are
+/// stored; transient failures are skipped so a retryable outage is never
+/// pinned as a stuck failure block. Evicts the oldest entry at the cap.
+pub(crate) fn cache_put(source: &str, outcome: &MermaidResult) {
+    if !matches!(
+        outcome,
+        MermaidResult::ImageBytes(_) | MermaidResult::ParseError(_)
+    ) {
+        return;
+    }
+    let Ok(mut cache) = RENDER_CACHE.lock() else {
+        return;
+    };
+    if cache.len() >= RENDER_CACHE_CAP && !cache.contains_key(source) {
+        let oldest = cache
+            .iter()
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone());
+        if let Some(key) = oldest {
+            cache.remove(&key);
+        }
+    }
+    cache.insert(source.to_string(), (Instant::now(), outcome.clone()));
+}
+
+/// Hand the render outcome to the caller, caching it first when it is
+/// deterministic (#37).
+fn finish(source: &str, outcome: MermaidResult) -> MermaidResult {
+    cache_put(source, &outcome);
+    outcome
+}
+
 /// Pre-validate a single mermaid diagram against the renderer. On HTTP 200
 /// with an `image/*` content type it DOWNLOADS the rendered PNG and returns
 /// [`MermaidResult::ImageBytes`] — Telegram never fetches a URL from us
@@ -261,6 +329,12 @@ pub(crate) fn png_dims(png: &[u8]) -> Option<(u32, u32)> {
 /// mermaid.ink; if every rung fails or still busts Telegram's photo box,
 /// the fence degrades to a legible failure block. No local renderer exists.
 pub(crate) async fn resolve(source: &str) -> MermaidResult {
+    // #37: reuse a fresh render — the regen preflight and the delivery path
+    // resolve the same source, and the renderer's outcome is deterministic.
+    if let Some(cached) = cache_get(source) {
+        return cached;
+    }
+
     let url = ink_url(source);
 
     let client = match reqwest::Client::builder()
@@ -349,7 +423,7 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
                     bytes = cbytes.len(),
                     "mermaid.ink clamp render ok; delivering bytes"
                 );
-                return MermaidResult::ImageBytes(cbytes.to_vec());
+                return finish(source, MermaidResult::ImageBytes(cbytes.to_vec()));
             }
             _ => {}
         }
@@ -357,13 +431,13 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
             bytes = body.len(),
             "mermaid.ink render ok; delivering bytes"
         );
-        return MermaidResult::ImageBytes(body.to_vec());
+        return finish(source, MermaidResult::ImageBytes(body.to_vec()));
     }
 
     // Not a usable image: surface the renderer's own error text (mermaid.ink
     // returns a plain-text parse error) so the failure block is legible.
     let body = resp.text().await.unwrap_or_default();
-    classify_render_failure(status, &body)
+    finish(source, classify_render_failure(status, &body))
 }
 
 /// Classify a non-image renderer response (#37): HTTP 4xx — except the
