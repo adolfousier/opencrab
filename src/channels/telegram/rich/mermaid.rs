@@ -440,6 +440,24 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
     finish(source, classify_render_failure(status, &body))
 }
 
+/// Pre-render every mermaid fence in `text` and collect the PARSE errors
+/// (#37). Called from the tool loop before the reply is final: each fence
+/// is resolved through [`resolve`] — which populates the render cache, so
+/// the delivery path reuses every outcome instead of re-asking the
+/// renderer — and only deterministic parse rejections are reported.
+/// Transient failures stay silent here; the delivery path degrades them
+/// to legible failure blocks as before. An empty `Vec` means every fence
+/// rendered.
+pub(crate) async fn preflight_parse_errors(text: &str) -> Vec<String> {
+    let mut errors = Vec::new();
+    for fence in find_mermaid_fences(text) {
+        if let MermaidResult::ParseError(note) = resolve(&fence.source).await {
+            errors.push(note);
+        }
+    }
+    errors
+}
+
 /// Classify a non-image renderer response (#37): HTTP 4xx — except the
 /// transient 408/429 — is a deterministic PARSE rejection of this exact
 /// source; mermaid.ink answers it with plain-text error text naming the
