@@ -179,6 +179,7 @@ async fn resume_shape_loop_edits_tools_in_place_and_never_reacts() {
         dirty: false,
         recreate: false,
         header_preview: None,
+        compacting: false,
         sections: Default::default(),
         retained_goal: None,
         tool_round_count: 0,
