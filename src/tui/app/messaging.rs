@@ -862,7 +862,11 @@ impl App {
                     self.push_system_message("No active session.".to_string());
                     return true;
                 };
-                match crate::utils::plan_mode::try_approve(sid).await {
+                match crate::utils::plan_mode::try_approve(
+                    sid,
+                    crate::tui::plan::ApprovalSource::User,
+                )
+                .await {
                     crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
                         self.push_system_message(reply);
                     }

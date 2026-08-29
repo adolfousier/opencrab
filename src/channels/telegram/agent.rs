@@ -1522,7 +1522,11 @@ impl TelegramAgent {
                                     }
                                     return ResponseResult::Ok(());
                                 }
-                                match crate::utils::plan_mode::try_approve(session_id).await {
+                                match crate::utils::plan_mode::try_approve(
+                                    session_id,
+                                    crate::tui::plan::ApprovalSource::User,
+                                )
+                                .await {
                                     crate::utils::plan_mode::ApproveOutcome::Refused(msg) => {
                                         let _ =
                                             bot.answer_callback_query(query.id.clone()).await;

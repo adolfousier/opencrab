@@ -7,7 +7,7 @@
 use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::db::Database;
 use crate::services::ServiceContext;
-use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
+use crate::tui::plan::{ApprovalSource, PlanDocument, PlanStatus, PlanTask, TaskType};
 use crate::utils::plan_files::{
     self, PlanModeState, create_design_md, plan_md_path, plan_mode_state, save_plan,
     set_pre_init_editing,
@@ -86,7 +86,7 @@ async fn first_approve_transitions_and_returns_seed_turn() {
         let sid = Uuid::new_v4();
         make_post_init(sid, GOLDEN_MD).await;
 
-        match try_approve(sid).await {
+        match try_approve(sid, ApprovalSource::User).await {
             ApproveOutcome::SeedTurn { prompt } => {
                 assert!(prompt.contains("PLAN APPROVED"));
                 assert!(prompt.contains("add_tasks"));
@@ -136,7 +136,7 @@ async fn checklist_approve_transitions_without_md_validation() {
 
         assert_eq!(plan_mode_state(sid).await, PlanModeState::PostInitEditing);
 
-        match try_approve(sid).await {
+        match try_approve(sid, ApprovalSource::User).await {
             ApproveOutcome::SeedTurn { prompt } => {
                 assert!(prompt.contains("PLAN APPROVED"));
                 assert!(
@@ -160,7 +160,7 @@ async fn approve_refuses_invalid_template_without_transition() {
         let sid = Uuid::new_v4();
         make_post_init(sid, "just prose, no template").await;
 
-        match try_approve(sid).await {
+        match try_approve(sid, ApprovalSource::User).await {
             ApproveOutcome::Refused(msg) => {
                 assert!(
                     msg.contains("Not ready") || msg.contains("not ready"),
@@ -186,11 +186,11 @@ async fn approve_refuses_no_plan_pre_init_and_running_checklist() {
     in_temp_home(async {
         // NoPlan.
         let sid = Uuid::new_v4();
-        assert!(matches!(try_approve(sid).await, ApproveOutcome::Refused(_)));
+        assert!(matches!(try_approve(sid, ApprovalSource::User).await, ApproveOutcome::Refused(_)));
 
         // Pre-init.
         set_pre_init_editing(sid).await.unwrap();
-        assert!(matches!(try_approve(sid).await, ApproveOutcome::Refused(_)));
+        assert!(matches!(try_approve(sid, ApprovalSource::User).await, ApproveOutcome::Refused(_)));
         plan_files::discard_plan(sid).await;
 
         // Active with a running checklist: /execute is not applicable.
@@ -200,7 +200,7 @@ async fn approve_refuses_no_plan_pre_init_and_running_checklist() {
         plan.add_task(t);
         plan.status = PlanStatus::Active;
         save_plan(&plan).await.unwrap();
-        match try_approve(sid).await {
+        match try_approve(sid, ApprovalSource::User).await {
             ApproveOutcome::Refused(msg) => assert!(msg.contains("already Active"), "got: {msg}"),
             other => panic!("expected Refused, got {other:?}"),
         }
@@ -215,7 +215,7 @@ async fn empty_tasks_seed_retry_redispatches_without_second_approve() {
         make_post_init(sid, GOLDEN_MD).await;
 
         // First approve.
-        let first_stamp = match try_approve(sid).await {
+        let first_stamp = match try_approve(sid, ApprovalSource::User).await {
             ApproveOutcome::SeedTurn { .. } => plan_files::load_plan(sid)
                 .await
                 .unwrap()
@@ -226,7 +226,7 @@ async fn empty_tasks_seed_retry_redispatches_without_second_approve() {
 
         // Seed failed (tasks still empty): idle retry re-dispatches the
         // seed turn with no status transition and no re-stamp.
-        match try_approve(sid).await {
+        match try_approve(sid, ApprovalSource::User).await {
             ApproveOutcome::SeedTurn { prompt } => assert!(prompt.contains("add_tasks")),
             other => panic!("expected retry SeedTurn, got {other:?}"),
         }
@@ -334,7 +334,7 @@ async fn show_plan_reports_each_state() {
 
         // Approved but seed not finished: retry guidance.
         assert!(matches!(
-            try_approve(sid).await,
+            try_approve(sid, ApprovalSource::User).await,
             ApproveOutcome::SeedTurn { .. }
         ));
         let s = show_plan(sid).await;
@@ -374,7 +374,7 @@ async fn seed_window_closes_when_a_task_starts() {
         let sid = Uuid::new_v4();
         make_post_init(sid, GOLDEN_MD).await;
         assert!(matches!(
-            try_approve(sid).await,
+            try_approve(sid, ApprovalSource::User).await,
             ApproveOutcome::SeedTurn { .. }
         ));
         assert!(in_seed_window(sid).await);
@@ -429,7 +429,7 @@ async fn editing_reminder_and_plan_state_block_follow_state() {
 
         // Active: block names the checklist and says plan start.
         assert!(matches!(
-            try_approve(sid).await,
+            try_approve(sid, ApprovalSource::User).await,
             ApproveOutcome::SeedTurn { .. }
         ));
         let block = plan_state_block(sid).await.unwrap();
@@ -450,7 +450,7 @@ async fn plan_recovery_derives_from_state() {
         make_post_init(sid, GOLDEN_MD).await;
         assert_eq!(PlanRecovery::for_session(sid).await, PlanRecovery::Editing);
         assert!(matches!(
-            try_approve(sid).await,
+            try_approve(sid, ApprovalSource::User).await,
             ApproveOutcome::SeedTurn { .. }
         ));
         assert_eq!(PlanRecovery::for_session(sid).await, PlanRecovery::Active);

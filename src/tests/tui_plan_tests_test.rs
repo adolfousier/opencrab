@@ -173,10 +173,11 @@ fn test_plan_state_transitions() {
     assert_eq!(plan.status, PlanStatus::Editing);
     assert!(plan.approved_at.is_none());
 
-    // User Approve: Editing -> Active, stamping approved_at.
-    plan.approve();
+    // User Approve: Editing -> Active, stamping approved_at and the source.
+    plan.approve(ApprovalSource::User);
     assert_eq!(plan.status, PlanStatus::Active);
     assert!(plan.approved_at.is_some());
+    assert_eq!(plan.approval_source, Some(ApprovalSource::User));
 }
 
 #[test]

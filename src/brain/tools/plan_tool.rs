@@ -6,7 +6,7 @@ use super::error::{Result, ToolError};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use crate::brain::tools::subagent::agent_type::ALWAYS_EXCLUDED;
 use crate::tui::plan::{
-    PlanDocument, PlanStatus, PlanTask, TaskDep, TaskScope, TaskStatus, TaskType,
+    ApprovalSource, PlanDocument, PlanStatus, PlanTask, TaskDep, TaskScope, TaskStatus, TaskType,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -130,6 +130,14 @@ pub(crate) struct InlineTask {
 
 pub(crate) fn default_complexity() -> u8 {
     3
+}
+
+/// #20: whether plan approval REQUIRES an explicit human signal. Shared
+/// with the resume demotion in `plan_files::load_plan_from_path` — the
+/// single definition lives there so both the init arms and the loader
+/// read the same default policy.
+fn plan_require_approval_enabled() -> bool {
+    crate::utils::plan_files::plan_require_approval_enabled()
 }
 
 fn default_task_type() -> String {
@@ -1248,8 +1256,9 @@ impl Tool for PlanTool {
          dependencies is by task order number (1-based). A started task's acceptance criteria \
          become the session goal until it completes. Completing the last task archives the plan. \
          \n\nIMPORT: `init` with an absolute `file_path` (non-empty tasks required) goes to \
-         Editing for user review; under tool auto-approve it goes Active immediately \
-         (mirrors the create arm, #581). \
+         Editing for user review and waits for an explicit user Approve; the tool \
+         auto-approve policy does NOT satisfy the plan approval gate unless the \
+         operator opts out via `[agent] plan_require_approval = false` (#20). \
          BUNDLED REFERENCE PLANS: source at `src/docs/reference/plans/` (embedded), runtime at \
          `~/.opencrabs/profiles/<profile>/plans/`. See `coding-plans/rust-fast.json` etc. and \
          `plan-json-spec.md`. \
@@ -1437,6 +1446,11 @@ impl Tool for PlanTool {
                     PlanModeState::NoPlan | PlanModeState::PreInitEditing => {}
                 }
 
+                // #20: tool auto-approve never satisfies plan approval unless
+                // the operator opted out via `[agent] plan_require_approval =
+                // false`. Read once for both arms below.
+                let require_approval = plan_require_approval_enabled();
+
                 if let Some(path) = file_path {
                     // ===== import mode (mode param ignored) =====
                     let import_path = std::path::Path::new(&path);
@@ -1523,12 +1537,15 @@ impl Tool for PlanTool {
                     // Import is checklist-track: tasks are already structured.
                     // Default is Editing first so the user can review before
                     // execution starts (start/complete are blocked until
-                    // approval); under tool auto-approve the plan goes Active
-                    // immediately instead (mirrors the create arm, #581).
+                    // approval); the tool auto-approve policy does NOT satisfy
+                    // the approval gate (#20) — only the explicit
+                    // `[agent] plan_require_approval = false` escape hatch
+                    // auto-activates (mirrors the create arm).
                     imported.status = PlanStatus::Editing;
                     imported.created_at = Utc::now();
                     imported.updated_at = Utc::now();
                     imported.approved_at = None;
+                    imported.approval_source = None;
 
                     imported.resolve_index_deps();
 
@@ -1592,13 +1609,19 @@ impl Tool for PlanTool {
                         ));
                     }
 
-                    // #581 parity with the create arm: under tool auto-approve
-                    // (yolo / cron / run / a2a) there is no user Approve step,
-                    // so the imported checklist goes live now instead of
-                    // stalling in Editing with nobody to approve it.
-                    let auto_active = context.auto_approve;
+                    // #20: tool auto-approve (yolo / cron / run / a2a) does NOT
+                    // satisfy plan approval by default — the imported checklist
+                    // waits in Editing for a human Approve like any plan. Only
+                    // the explicit `[agent] plan_require_approval = false`
+                    // escape hatch keeps the legacy #581 auto-activation.
+                    let auto_active = context.auto_approve && !require_approval;
                     if auto_active {
-                        imported.approve();
+                        imported.approve(ApprovalSource::Auto);
+                    } else {
+                        // Durable approval-queue marker (#1145) — without it an
+                        // imported checklist (Editing, no `.md`) derives NoPlan
+                        // and the Approve surface never appears.
+                        imported.pending_approval = true;
                     }
 
                     let count = imported.tasks.len();
@@ -1673,7 +1696,7 @@ impl Tool for PlanTool {
                             crate::utils::plan_files::pre_init_origin(plan_sid).await,
                             crate::utils::plan_files::PreInitOrigin::Slash
                         );
-                    if design && context.auto_approve && !slash_armed {
+                    if design && context.auto_approve && !require_approval && !slash_armed {
                         return Ok(ToolResult::error(
                             "The design track under tool auto-approve is available only \
                              when the user entered Plan mode with the /plan command (the \
@@ -1724,13 +1747,14 @@ impl Tool for PlanTool {
                         )?;
                     }
 
-                    // Under tool auto-approve (yolo / cron / run / a2a) there is
-                    // no user Approve step, so a checklist plan goes live now
-                    // instead of stalling in Editing with nobody to approve it
-                    // (#581 — the previous behavior left it stuck).
-                    let auto_active = !design && context.auto_approve;
+                    // #20: tool auto-approve (yolo / cron / run / a2a) does NOT
+                    // satisfy plan approval by default — the checklist waits in
+                    // Editing for a human Approve. Only the explicit
+                    // `[agent] plan_require_approval = false` escape hatch keeps
+                    // the legacy #581 auto-activation.
+                    let auto_active = !design && context.auto_approve && !require_approval;
                     if auto_active {
-                        new_plan.approve();
+                        new_plan.approve(ApprovalSource::Auto);
                     } else {
                         // Durable approval-queue marker (#1145): state
                         // derivation keys on this flag, not on the design
@@ -2379,7 +2403,13 @@ impl Tool for PlanTool {
                             .to_string(),
                     ));
                 }
-                return match crate::utils::plan_mode::try_approve(plan_sid).await {
+                return match crate::utils::plan_mode::try_approve(
+                    plan_sid,
+                    // #20: the approve operation is gated on a user-granted
+                    // in-session autonomy, so it counts as user approval.
+                    ApprovalSource::User,
+                )
+                .await {
                     crate::utils::plan_mode::ApproveOutcome::Refused(msg) => {
                         Ok(ToolResult::error(msg))
                     }

@@ -9,7 +9,7 @@
 
 use crate::brain::goal::GoalManager;
 use crate::services::ServiceContext;
-use crate::tui::plan::PlanStatus;
+use crate::tui::plan::{ApprovalSource, PlanStatus};
 use crate::utils::plan_files::{self, PlanModeState};
 use uuid::Uuid;
 
@@ -90,7 +90,7 @@ fn start_prompt() -> String {
 ///
 /// Everything else refuses with a deterministic message. The caller MUST
 /// have already refused when a turn is in flight.
-pub async fn try_approve(session_id: Uuid) -> ApproveOutcome {
+pub async fn try_approve(session_id: Uuid, source: ApprovalSource) -> ApproveOutcome {
     let md_path = plan_files::plan_md_path(session_id).await;
     match plan_files::plan_mode_state(session_id).await {
         PlanModeState::NoPlan => ApproveOutcome::Refused(
@@ -118,7 +118,7 @@ pub async fn try_approve(session_id: Uuid) -> ApproveOutcome {
             // (#573 audit: 6 real tasks, empty template). Approve straight to
             // Active and start executing; there is nothing to seed.
             if !plan.tasks.is_empty() {
-                plan.approve();
+                plan.approve(source);
                 if let Err(e) = plan_files::save_plan(&plan).await {
                     return ApproveOutcome::Refused(format!(
                         "Failed to persist the approval: {e}. Try again."
@@ -137,9 +137,9 @@ pub async fn try_approve(session_id: Uuid) -> ApproveOutcome {
                     md_path.display()
                 ));
             }
-            // First approve: Editing -> Active + approved_at. The .md
-            // freezes automatically (the gate keys off Active status).
-            plan.approve();
+            // First approve: Editing -> Active + approved_at + source.
+            // The .md freezes automatically (the gate keys off Active status).
+            plan.approve(source);
             if let Err(e) = plan_files::save_plan(&plan).await {
                 return ApproveOutcome::Refused(format!(
                     "Failed to persist the approval: {e}. The .md is untouched; try again."

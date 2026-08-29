@@ -1167,6 +1167,16 @@ pub struct AgentConfig {
     #[serde(default = "default_plan_auto_start")]
     pub plan_auto_start: bool,
 
+    /// Gate plan approval on an explicit human signal (#20). Default TRUE:
+    /// `approval_policy = "auto-always"` does NOT satisfy the plan approval
+    /// gate — plans stay Editing until the user Approves (plan-card button,
+    /// `/execute`, reaction consent) or the agent approves under a
+    /// user-granted in-session autonomy (`plan grant_autonomy`). Set FALSE
+    /// only if you deliberately want the legacy auto-activation, where
+    /// yolo / cron / run / a2a sessions go Active with no human approve.
+    #[serde(default = "default_plan_require_approval")]
+    pub plan_require_approval: bool,
+
     /// Whether isolated plan-task workers may themselves spawn sub-agents or
     /// background tasks (#1195). Default false: a plan worker executes one
     /// item solo - nested spawns orphan grandchildren and race the parent's
@@ -1380,6 +1390,12 @@ fn default_plan_auto_start() -> bool {
     false
 }
 
+fn default_plan_require_approval() -> bool {
+    // #20: the plan approval gate is never satisfied by the tool
+    // auto-approve policy unless the operator explicitly opts out.
+    true
+}
+
 fn default_subagent_session_ttl_days() -> u32 {
     7
 }
@@ -1399,6 +1415,7 @@ impl Default for AgentConfig {
             execute_model: None,
             plan_isolated_execution: default_plan_isolated_execution(),
             plan_auto_start: default_plan_auto_start(),
+            plan_require_approval: default_plan_require_approval(),
             plan_worker_allow_nested: false,
             plan_worker_allow_write: false,
             auto_update: default_auto_update(),

@@ -284,7 +284,7 @@ async fn import_sample_plan_succeeds() {
 }
 
 #[tokio::test]
-async fn import_under_auto_approve_goes_active() {
+async fn import_under_auto_approve_waits_in_editing_by_default() {
     in_temp_home(async {
         let json = include_str!("../brain/tools/test_data/sample-coding-plan.json");
         let tmp_dir = TempDir::new().unwrap();
@@ -301,19 +301,21 @@ async fn import_under_auto_approve_goes_active() {
 
         let result = tool.execute(input, &ctx).await.unwrap();
         assert!(result.success);
-        // #581 parity with the create arm: under tool auto-approve there is no
-        // user Approve step, so the imported plan must go Active, not stall in
-        // Editing with a "call 'start'" message that the Editing gate refuses.
+        // #20 supersedes the #581 auto-activation: tool auto-approve never
+        // satisfies plan approval by default. The imported checklist waits
+        // in Editing for a human Approve.
         assert!(
-            result.output.contains("Active — auto-approve"),
-            "expected Active message, got: {}",
+            result.output.contains("Editing"),
+            "expected Editing message under default plan_require_approval, got: {}",
             result.output
         );
-        assert!(
-            !result.output.contains("Editing"),
-            "must not report Editing under auto-approve: {}",
-            result.output
-        );
+        // The durable approval-queue marker must be set, or the plan
+        // derives NoPlan (no .md on the checklist track) and the Approve
+        // surface never appears.
+        let plan = load_plan(ctx.session_id).await.unwrap();
+        assert!(plan.pending_approval, "pending_approval marker must be set");
+        assert!(plan.approved_at.is_none(), "no approval stamp without approval");
+        assert!(plan.approval_source.is_none());
     })
     .await;
 }
@@ -530,7 +532,7 @@ async fn setup_plan_with_tasks(tool: &PlanTool, n: usize) -> ToolExecutionContex
     .unwrap();
     // Approve the plan so start/complete operations are allowed.
     if let Some(mut plan) = crate::utils::plan_files::load_plan(ctx.session_id).await {
-        plan.approve();
+        plan.approve(crate::tui::plan::ApprovalSource::User);
         crate::utils::plan_files::save_plan(&plan).await.unwrap();
     }
     ctx

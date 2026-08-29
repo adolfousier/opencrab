@@ -182,6 +182,24 @@ fn default_now() -> DateTime<Utc> {
     Utc::now()
 }
 
+/// Who approved a plan (#20). Persisted on the plan JSON alongside
+/// `approved_at` so a resume after restart can tell a genuine approval
+/// from an activation the operator exempted via the escape hatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalSource {
+    /// Explicit user approval: plan-card Approve button, `/execute`,
+    /// TUI approve, positive-reaction consent signal, or the plan tool's
+    /// `approve` operation (which is itself gated on a user-granted
+    /// in-session autonomy).
+    User,
+    /// Auto-activated because the operator set
+    /// `[agent] plan_require_approval = false` (#20 escape hatch). If the
+    /// operator re-enables the gate, `load_plan_from_path` demotes Active
+    /// plans carrying this stamp back to the approval queue on resume.
+    Auto,
+}
+
 /// Plan document containing tasks and metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanDocument {
@@ -220,9 +238,18 @@ pub struct PlanDocument {
 
     /// When the plan was approved (if applicable). Set on user Approve
     /// (or first `/execute`) on the design track — never auto-set by the
-    /// plan tool.
+    /// plan tool under the auto-approve policy (#20).
     #[serde(default)]
     pub approved_at: Option<DateTime<Utc>>,
+
+    /// Who approved the plan, when `approved_at` is set (#20). Absent on
+    /// plans stamped by pre-fix binaries — those are GRANDFATHERED on
+    /// resume (indistinguishable from a genuine approval, and demoting
+    /// them would stall legitimately approved work). Plans stamped `Auto`
+    /// (the `plan_require_approval = false` escape hatch) demote back to
+    /// the approval queue on load whenever the gate is re-enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_source: Option<ApprovalSource>,
 
     /// Durable pre-init Editing flag: the user entered Plan-mode intent
     /// (`/plan` / soft-nudge) but `plan init` has not succeeded yet. Lives
@@ -257,6 +284,7 @@ impl PlanDocument {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             approved_at: None,
+            approval_source: None,
             pre_init_editing: false,
             pending_approval: false,
         }
@@ -437,12 +465,15 @@ impl PlanDocument {
         false
     }
 
-    /// Approve the plan: Editing → Active, stamping `approved_at`. Called
-    /// on user Approve (or first `/execute`) on the design track — the
-    /// plan tool never calls this on `start`.
-    pub fn approve(&mut self) {
+    /// Approve the plan: Editing → Active, stamping `approved_at` and the
+    /// approval source (#20). Called on user Approve (or first `/execute`)
+    /// on the design track, or under the explicit
+    /// `plan_require_approval = false` escape hatch — never by the tool
+    /// auto-approve policy alone.
+    pub fn approve(&mut self, source: ApprovalSource) {
         self.status = PlanStatus::Active;
         self.approved_at = Some(Utc::now());
+        self.approval_source = Some(source);
         self.updated_at = Utc::now();
     }
 

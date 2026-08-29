@@ -8,7 +8,7 @@
 use crate::brain::tools::plan_tool::PlanTool;
 use crate::brain::tools::{Tool, ToolExecutionContext};
 use crate::config::profile::{home_for_profile, with_profile_home_async};
-use crate::tui::plan::PlanStatus;
+use crate::tui::plan::{ApprovalSource, PlanStatus};
 use crate::utils::plan_files::{
     PlanModeState, PreInitOrigin, load_plan, plan_json_path, plan_md_path, plan_mode_state,
     set_pre_init_editing, set_pre_init_editing_with_origin,
@@ -43,7 +43,7 @@ async fn run(
 /// Helper to approve a plan so start/complete operations are allowed.
 async fn approve_plan(ctx: &ToolExecutionContext) {
     if let Some(mut plan) = load_plan(ctx.session_id).await {
-        plan.approve();
+        plan.approve(ApprovalSource::User);
         crate::utils::plan_files::save_plan(&plan).await.unwrap();
     }
 }
@@ -151,6 +151,8 @@ async fn checklist_init_creates_no_design_md() {
     // existed only to hold the plan in Editing for approval (#573), and the
     // card rendered its hollow `## Implementation steps` section as a phantom
     // prose block. No file, no "Plan document" line in the message.
+    // #20: this holds even under tool auto-approve — the plan gate never
+    // inherits the tool approval policy, so the plan parks in Editing.
     in_temp_home(async {
         let tool = PlanTool;
         let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
@@ -173,8 +175,16 @@ async fn checklist_init_creates_no_design_md() {
             !out.contains("Plan document"),
             "checklist init must not point at a plan document, got: {out}"
         );
+        assert_eq!(
+            plan_mode_state(ctx.session_id).await,
+            PlanModeState::PostInitEditing
+        );
         let plan = load_plan(ctx.session_id).await.unwrap();
-        assert_eq!(plan.status, PlanStatus::Active);
+        assert_eq!(plan.status, PlanStatus::Editing);
+        assert!(
+            plan.pending_approval,
+            "#20: auto-approve no longer self-activates; the plan waits"
+        );
         assert_eq!(plan.tasks.len(), 1);
     })
     .await;
@@ -218,11 +228,15 @@ async fn checklist_init_editing_creates_no_design_md() {
 }
 
 #[tokio::test]
-async fn design_init_refused_under_auto_approve() {
+async fn design_init_waits_in_editing_under_auto_approve_when_gate_on() {
+    // #20: the rush-refusal existed because tool auto-approve used to
+    // auto-activate design plans. With `plan_require_approval` on (the
+    // default) the plan gate no longer inherits the tool approval policy, so
+    // an agent-initiated design in yolo is harmless — it parks in Editing for
+    // explicit approval exactly like a checklist. The refusal survives only
+    // under the escape hatch (plan_approval_gate_test).
     in_temp_home(async {
         let tool = PlanTool;
-        // Agent-initiated design in yolo (no /plan slash, NoPlan state):
-        // refused toward the checklist track — words are the gas.
         let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
         let (ok, msg) = run(
             &tool,
@@ -230,18 +244,25 @@ async fn design_init_refused_under_auto_approve() {
             json!({ "operation": "init", "title": "Yolo design", "mode": "design" }),
         )
         .await;
-        assert!(!ok, "yolo plus design must be refused without the slash");
         assert!(
-            msg.contains("checklist"),
-            "refusal names the alternative, got: {msg}"
+            ok,
+            "gate-on yolo design init must succeed and wait, got: {msg}"
         );
         assert!(
-            msg.contains("/plan"),
-            "refusal names /plan as the review gate, got: {msg}"
+            plan_md_path(ctx.session_id).await.exists(),
+            "design init must create its .md"
         );
+        assert_eq!(
+            plan_mode_state(ctx.session_id).await,
+            PlanModeState::PostInitEditing
+        );
+        let plan = load_plan(ctx.session_id).await.unwrap();
+        assert_eq!(plan.status, PlanStatus::Editing);
+        assert!(plan.pending_approval);
+        assert!(plan.approved_at.is_none());
 
         // Keyword soft-nudge origin (user typed plan-shaped words, never the
-        // slash): same refusal. Only an explicit /plan arms the gate.
+        // slash): same contract — parks in Editing.
         let ctx_nudge =
             ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
         set_pre_init_editing(ctx_nudge.session_id).await.unwrap();
@@ -251,17 +272,23 @@ async fn design_init_refused_under_auto_approve() {
             json!({ "operation": "init", "title": "Nudge design", "mode": "design" }),
         )
         .await;
-        assert!(!ok, "nudge-origin yolo design must be refused");
-        assert!(msg.contains("/plan"), "got: {msg}");
+        assert!(
+            ok,
+            "nudge-origin yolo design must park in Editing, got: {msg}"
+        );
+        let nudge_plan = load_plan(ctx_nudge.session_id).await.unwrap();
+        assert_eq!(nudge_plan.status, PlanStatus::Editing);
 
-        // Checklist stays allowed under auto-approve.
+        // Checklist stays allowed under auto-approve (fresh session — the
+        // design plan above is live in ctx, reinit there is refused).
+        let ctx_checklist = ToolExecutionContext::new(uuid::Uuid::new_v4());
         let (ok, _) = run(
             &tool,
-            &ctx,
+            &ctx_checklist,
             json!({ "operation": "init", "title": "Yolo checklist", "tasks": [{ "title": "t", "description": "d" }] }),
         )
         .await;
-        assert!(ok, "yolo checklist init must succeed");
+        assert!(ok, "checklist init must succeed");
     })
     .await;
 }
@@ -295,7 +322,7 @@ async fn design_init_allowed_under_auto_approve_when_plan_slash_armed() {
 
         // The scaffold .md is not approvable yet.
         assert!(matches!(
-            crate::utils::plan_mode::try_approve(ctx.session_id).await,
+            crate::utils::plan_mode::try_approve(ctx.session_id, ApprovalSource::User).await,
             crate::utils::plan_mode::ApproveOutcome::Refused(_)
         ));
 
@@ -312,7 +339,7 @@ async fn design_init_allowed_under_auto_approve_when_plan_slash_armed() {
              2. Amend the ADRs.\n",
         )
         .unwrap();
-        match crate::utils::plan_mode::try_approve(ctx.session_id).await {
+        match crate::utils::plan_mode::try_approve(ctx.session_id, ApprovalSource::User).await {
             crate::utils::plan_mode::ApproveOutcome::SeedTurn { prompt } => {
                 assert!(prompt.contains("PLAN APPROVED"), "got: {prompt}");
                 assert!(prompt.contains("add_tasks"), "got: {prompt}");
@@ -599,7 +626,7 @@ async fn import_refused_while_live_but_replaces_pre_init() {
         )
         .unwrap();
 
-        // From pre-init: import replaces the flag and goes Active.
+        // From pre-init: import replaces the flag and waits for approval.
         let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
         set_pre_init_editing(ctx.session_id).await.unwrap();
         let (ok, _) = run(
@@ -609,7 +636,12 @@ async fn import_refused_while_live_but_replaces_pre_init() {
         )
         .await;
         assert!(ok, "import from pre-init must replace the flag");
-        assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::Active);
+        // #20: the pending_approval marker parks the import in Editing — it
+        // no longer rides draft-normalization to Active under the tool policy.
+        assert_eq!(
+            plan_mode_state(ctx.session_id).await,
+            PlanModeState::PostInitEditing
+        );
 
         // From post-init Editing: refused.
         let ctx2 = ToolExecutionContext::new(uuid::Uuid::new_v4());

@@ -22,7 +22,7 @@
 //! `Completed` archives silently and `Cancelled` deletes: both yield
 //! `None` (NoPlan).
 
-use crate::tui::plan::{PlanDocument, PlanStatus};
+use crate::tui::plan::{ApprovalSource, PlanDocument, PlanStatus};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
@@ -302,6 +302,18 @@ pub fn plan_mode_state_of(plan: Option<&PlanDocument>, md_exists: bool) -> PlanM
     }
 }
 
+/// #20: whether plan approval REQUIRES an explicit human signal. Reads
+/// `[agent] plan_require_approval` fresh from disk each call (hot-reload
+/// friendly, same pattern as the isolation flag in `plan_tool`). Defaults
+/// TRUE — the tool auto-approve policy never satisfies the plan approval
+/// gate unless the operator explicitly opts out. Shared by the plan tool's
+/// init arms and the resume demotion below.
+pub(crate) fn plan_require_approval_enabled() -> bool {
+    crate::config::Config::load()
+        .map(|c| c.agent.plan_require_approval)
+        .unwrap_or(true)
+}
+
 /// Load the session plan, applying the legacy lifecycle rules:
 ///
 /// - legacy `Completed` → silently archive both files, return `None`
@@ -372,6 +384,50 @@ pub fn load_plan_from_path(path: &Path) -> Option<PlanDocument> {
         && !md_path_for(path).exists()
     {
         plan.status = PlanStatus::Active;
+    }
+
+    // #20: re-assert the approval gate on resume. Plans auto-activated
+    // under the escape hatch (`[agent] plan_require_approval = false`)
+    // are stamped `ApprovalSource::Auto`; if the gate is on at load time
+    // (the default), such Active plans demote back to the approval queue
+    // — a restart must resume the approval WAIT, not the execution of a
+    // plan no human approved under the current policy.
+    //
+    // GRANDFATHERED: Active plans stamped by pre-fix binaries
+    // (`approved_at` set, no `approval_source`) stay Active — they are
+    // indistinguishable on disk from a genuine human approval, and
+    // demoting them would stall legitimately approved work. Active plans
+    // with no `approved_at` (legacy normalization above) predate the
+    // stamp itself and pass as well.
+    if plan.status == PlanStatus::Active
+        && plan.approval_source == Some(ApprovalSource::Auto)
+        && plan_require_approval_enabled()
+    {
+        tracing::warn!(
+            "Plan {} at {}: Active via the auto escape-hatch stamp while \
+             plan_require_approval is on — demoting to Editing pending \
+             explicit approval (#20)",
+            plan.id,
+            path.display()
+        );
+        plan.status = PlanStatus::Editing;
+        plan.approved_at = None;
+        plan.approval_source = None;
+        plan.pending_approval = true;
+        // Persist the demotion so a crash before the next save cannot
+        // resurrect the auto-activated Active state (atomic tmp + rename,
+        // same shape as save_plan).
+        if let Ok(json) = serde_json::to_string_pretty(&plan) {
+            let tmp = path.with_extension("tmp");
+            if let Err(e) = std::fs::write(&tmp, &json)
+                .and_then(|_| std::fs::rename(&tmp, path))
+            {
+                tracing::warn!(
+                    "Failed to persist plan approval demotion at {}: {e}",
+                    path.display()
+                );
+            }
+        }
     }
 
     Some(plan)
