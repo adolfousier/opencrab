@@ -93,16 +93,32 @@ fn compacting_footer_suppresses_duplicate_activity_segment() {
 
 #[test]
 fn compacting_rich_footer_suppresses_duplicate_status() {
-    // Same dedupe contract on the rich-markdown path: status_msg suppressed
-    // while the flag is set.
     let lines = [FlowLine::Text(
         "⏳ Compacting context — 66% full…".to_string(),
     )];
+    // Flag on: the HEADER (first line) carries the pinned compaction string
+    // exactly once — the activity preview is suppressed. The body keeps the
+    // ⏳ START line (a real log entry, the fill-level carrier), so the count
+    // is asserted on the header line, never the whole message.
     let rich = render_flow_rich(&lines, Some(COMPACTING_HEADER_TEXT), true);
+    let header = rich.lines().next().unwrap_or_default();
     assert_eq!(
-        rich.matches("Compacting context").count(),
+        header.matches("Compacting context").count(),
         1,
-        "rich footer dedupes too: {rich:?}"
+        "rich header dedupes too: {rich:?}"
+    );
+    assert!(
+        rich.contains("⏳ Compacting context — 66% full…"),
+        "body keeps the START line: {rich:?}"
+    );
+    // Flag off: the header duplicates the body entry (documents the
+    // suppression contract).
+    let idle = render_flow_rich(&lines, Some(COMPACTING_HEADER_TEXT), false);
+    let idle_header = idle.lines().next().unwrap_or_default();
+    assert_eq!(
+        idle_header.matches("Compacting context").count(),
+        2,
+        "without the flag the activity preview duplicates the pin: {idle:?}"
     );
 }
 
