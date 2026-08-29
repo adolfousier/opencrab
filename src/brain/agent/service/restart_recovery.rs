@@ -391,7 +391,7 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
     let orphans = crate::brain::tools::subagent::reconcile::reconcile_orphaned_agents();
     let mut reported = 0usize;
     for orphan in orphans {
-        match Uuid::parse_str(&orphan.parent_session_id) {
+        match Uuid::parse_str(&orphan.session_id) {
             Ok(session_id) => {
                 deliver_or_park(session_id, subagent_interrupted_message(&orphan));
                 reported += 1;
@@ -404,7 +404,7 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
                     "Sub-agent '{}' has an unparseable parent session '{}', its interruption \
                      cannot be reported: {e}",
                     orphan.label,
-                    orphan.parent_session_id
+                    orphan.session_id
                 );
             }
         }
@@ -438,14 +438,14 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
 /// not finish and hand the decision back, rather than letting the agent read
 /// an absent result as either success or failure.
 fn subagent_interrupted_message(
-    status: &crate::brain::tools::subagent::status::AgentStatus,
+    status: &crate::brain::agent::service::work_status::WorkStatus,
 ) -> QueuedUserMessage {
     let context_text = format!(
         "[SUB-AGENT INTERRUPTED] The sub-agent `{}` (id {}) was still running when OpenCrabs \
          restarted, so it was killed and produced no result. Its task was:\n\n```\n{}\n```\n\nIt \
          did NOT complete. Decide whether to spawn it again based on what you were doing; do not \
          assume it succeeded or failed.",
-        status.label, status.id, status.prompt
+        status.label, status.id, status.task
     );
     QueuedUserMessage {
         context_text,

@@ -15,7 +15,6 @@ pub mod reconcile;
 mod resume;
 mod send_input;
 pub mod spawn;
-pub mod status;
 pub mod team;
 mod wait;
 pub(crate) mod worktree;
