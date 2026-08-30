@@ -3909,19 +3909,23 @@ impl Provider for OpenAIProvider {
                                     // actually got (chars/deltas/tail) against what the stream
                                     // declared. `[DONE]` carries no usage, so output/reasoning
                                     // are 0 here — the inline/usage-only paths carry real counts.
-                                    let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect();
+                                    // Sanitize the tail for logging: mid-turn text ends in paragraph
+                                    // breaks (`\n\n` before a tool call) and the log writer does NOT
+                                    // escape embedded newlines — a raw tail splits the log line and
+                                    // orphans every field after it (caught in post-swap smoke).
+                                    let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r");
                                     let stop_source = if st.saw_finish_reason { "provider" } else { "default" };
                                     tracing::info!(
-                                        "[STREAM_RECONCILE] text_chars={}, text_deltas={}, text_tail={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output=0, usage_reasoning=0",
+                                        "[STREAM_RECONCILE] text_chars={}, text_deltas={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output=0, usage_reasoning=0, text_tail={}",
                                         st.text_chars,
                                         st.text_delta_count,
-                                        reconc_tail,
                                         st.reasoning_chars,
                                         st.reasoning_delta_count,
                                         st.saw_finish_reason,
                                         stop_reason,
                                         stop_source,
-                                        total_input_tokens
+                                        total_input_tokens,
+                                        reconc_tail
                                     );
                                     tracing::info!("[STREAM_USAGE] Final usage (fallback on DONE): input={}, output=0, stop_reason={:?}", total_input_tokens, stop_reason);
                                     events.push(Ok(StreamEvent::MessageDelta {
@@ -4382,7 +4386,9 @@ impl Provider for OpenAIProvider {
                                                         "[TEXT_ACCUM] text_len={}, text_delta_count={}, text_tail={}",
                                                         st.text_chars,
                                                         st.text_delta_count,
-                                                        st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>()
+                                                        // Sanitized: raw tails carry embedded newlines
+                                                        // that split log lines (see STREAM_RECONCILE note).
+                                                        st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r")
                                                     );
                                                     events.push(Ok(StreamEvent::ContentBlockDelta {
                                                         index: 0,
@@ -4495,7 +4501,9 @@ impl Provider for OpenAIProvider {
                                                         "[TEXT_ACCUM] text_len={}, text_delta_count={}, text_tail={}",
                                                         st.text_chars,
                                                         st.text_delta_count,
-                                                        st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>()
+                                                        // Sanitized: raw tails carry embedded newlines
+                                                        // that split log lines (see STREAM_RECONCILE note).
+                                                        st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r")
                                                     );
                                                     events.push(Ok(StreamEvent::ContentBlockDelta {
                                                         index: 0,
@@ -4596,13 +4604,12 @@ impl Provider for OpenAIProvider {
                                             // If this chunk already carries real usage (some
                                             // providers inline it), emit immediately + stop.
                                             if raw_input > 0 || raw_output > 0 {
-                                                let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect();
+                                                let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r");
                                                 let stop_source = if st.saw_finish_reason { "provider" } else { "default" };
                                                 tracing::info!(
-                                                    "[STREAM_RECONCILE] text_chars={}, text_deltas={}, text_tail={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output={}, usage_reasoning={}",
+                                                    "[STREAM_RECONCILE] text_chars={}, text_deltas={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output={}, usage_reasoning={}, text_tail={}",
                                                     st.text_chars,
                                                     st.text_delta_count,
-                                                    reconc_tail,
                                                     st.reasoning_chars,
                                                     st.reasoning_delta_count,
                                                     st.saw_finish_reason,
@@ -4610,7 +4617,8 @@ impl Provider for OpenAIProvider {
                                                     stop_source,
                                                     raw_input,
                                                     raw_output,
-                                                    raw_reasoning
+                                                    raw_reasoning,
+                                                    reconc_tail
                                                 );
                                                 tracing::info!(
                                                     "[STREAM_USAGE] Final usage (inline): input={}, output={}, cache_read={}, cache_create={}",
@@ -4658,13 +4666,12 @@ impl Provider for OpenAIProvider {
                                                     let final_stop_reason = st.pending_stop_reason.take().unwrap_or(
                                                         crate::brain::provider::types::StopReason::EndTurn,
                                                     );
-                                                    let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect();
+                                                    let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r");
                                                     let stop_source = if st.saw_finish_reason { "provider" } else { "default" };
                                                     tracing::info!(
-                                                        "[STREAM_RECONCILE] text_chars={}, text_deltas={}, text_tail={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output={}, usage_reasoning={}",
+                                                        "[STREAM_RECONCILE] text_chars={}, text_deltas={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output={}, usage_reasoning={}, text_tail={}",
                                                         st.text_chars,
                                                         st.text_delta_count,
-                                                        reconc_tail,
                                                         st.reasoning_chars,
                                                         st.reasoning_delta_count,
                                                         st.saw_finish_reason,
@@ -4672,7 +4679,8 @@ impl Provider for OpenAIProvider {
                                                         stop_source,
                                                         input,
                                                         output,
-                                                        reasoning
+                                                        reasoning,
+                                                        reconc_tail
                                                     );
                                                     tracing::info!(
                                                         "[STREAM_USAGE] Final usage: input={}, output={}, cache_read={}, cache_create={}, reasoning={}",
