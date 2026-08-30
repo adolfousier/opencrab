@@ -3,6 +3,7 @@
 //! ([`markdown_to_html`]). The rich-first `InputRichMessage` serializer is
 //! finalized separately against the Bot API field schema and tested there.
 
+use crate::channels::telegram::resume::BubbleWire;
 use crate::channels::telegram::rich::ast::{Align, Block, Inline};
 use crate::channels::telegram::rich::{
     contains_table, has_rich_structure, markdown_to_html, parse_markdown, prefers_rich_render,
@@ -304,17 +305,21 @@ fn has_rich_structure_gates_native_rich_path() {
     assert!(!has_rich_structure("A #hashtag is not a heading."));
 }
 
-#[test]
-fn receipt_card_md_is_rich_structured_issue_15() {
-    // Regression for the 2026-08-28 owner screenshot: the N4 notify card
-    // is fence-less by design ("a notify is a document, not a log"), so its
-    // rich verdict must come from the inline `<details><summary>` opener
-    // alone. When the gate missed it, the card fell to the HTML ladder and
-    // Telegram escaped the unknown tags to literal soup. Both receipt
-    // shapes must stay rich-eligible end-to-end.
-    let (notify_md, _notify_html) =
-        crate::channels::telegram::resume::build_notify_receipt_card("Compiler", "body text");
-    assert!(has_rich_structure(&notify_md));
+#[tokio::test]
+async fn receipt_cards_route_the_html_wire_issue_38() {
+    // #38 regression (supersedes the #15 rich-structure gate): the
+    // `<details>` chrome must ride the HTML input mode (send_rich_html_id),
+    // where it parses into a native RichBlockDetails — the markdown rich
+    // mode cannot express it, and the old #1234 outbox route leaked
+    // escaped tags when its internal fallback re-escaped the wrapper
+    // (2026-08-29). Both card builders must emit the Html wire; the
+    // empty-body guard must drop the wrapper entirely onto the flat
+    // markdown wire (the RICH_MESSAGE_EMPTY class, 3 events that day).
+    let (notify_wire, _) =
+        crate::channels::telegram::resume::build_notify_receipt_card("Compiler", "body text").await;
+    let BubbleWire::Html(_) = notify_wire else {
+        panic!("notify card must ride the HTML rich wire (#38)");
+    };
 
     let meta = crate::brain::agent::BgTaskMeta {
         success: true,
@@ -322,8 +327,25 @@ fn receipt_card_md_is_rich_structured_issue_15() {
         elapsed_secs: 1.0,
         tail: "ok".to_string(),
     };
-    let (bg_md, _bg_html) = crate::channels::telegram::resume::build_bg_receipt_card(&meta);
-    assert!(has_rich_structure(&bg_md));
+    let (bg_wire, _) = crate::channels::telegram::resume::build_bg_receipt_card(&meta);
+    let BubbleWire::Html(_) = bg_wire else {
+        panic!("bg card must ride the HTML rich wire (#38)");
+    };
+
+    let empty = crate::brain::agent::BgTaskMeta {
+        success: true,
+        label: "cmd".to_string(),
+        elapsed_secs: 1.0,
+        tail: "  \n".to_string(),
+    };
+    let (flat_wire, _) = crate::channels::telegram::resume::build_bg_receipt_card(&empty);
+    let BubbleWire::Markdown(flat_md) = flat_wire else {
+        panic!("empty-tail card must ride the flat markdown wire (#38 guard)");
+    };
+    assert!(
+        !flat_md.contains("<details>"),
+        "guard drops the wrapper: {flat_md}"
+    );
 }
 
 #[test]

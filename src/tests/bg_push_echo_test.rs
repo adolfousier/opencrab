@@ -6,7 +6,7 @@
 
 use crate::brain::agent::BgTaskMeta;
 use crate::channels::telegram::resume::{
-    NotifySender, background_task_title, build_bg_echo_bubble, build_bg_receipt_card,
+    BubbleWire, NotifySender, background_task_title, build_bg_echo_bubble, build_bg_receipt_card,
     build_notify_receipt_card, split_bg_echo_parts, split_notify_header, strip_system_framing,
 };
 use uuid::Uuid;
@@ -109,7 +109,11 @@ fn absent_framing_passes_through_untouched() {
 
 #[test]
 fn bubble_wraps_in_blockquote_with_bold_header() {
-    let (markdown, html) = build_bg_echo_bubble("some output", "📨 Ops / Push to session");
+    let (wire, html) = build_bg_echo_bubble("some output", "📨 Ops / Push to session");
+    let markdown = match wire {
+        BubbleWire::Markdown(md) => md,
+        _ => panic!("echo bubble rides the markdown outbox wire (#38)"),
+    };
     assert!(markdown.contains("📨 Ops / Push to session"));
     assert!(markdown.contains("some output"));
     assert!(html.starts_with("<blockquote expandable>"));
@@ -127,7 +131,11 @@ fn background_task_title_is_preserved() {
 #[test]
 fn rich_markdown_keeps_fences() {
     let ctx = "# Heading\n```rust\nfn main() {}\n```";
-    let (markdown, _) = build_bg_echo_bubble(ctx, "📨 Team");
+    let (wire, _) = build_bg_echo_bubble(ctx, "📨 Team");
+    let markdown = match wire {
+        BubbleWire::Markdown(md) => md,
+        _ => panic!("echo bubble rides the markdown outbox wire (#38)"),
+    };
     assert!(markdown.contains("```rust"));
     assert!(markdown.contains("# Heading"));
 }
@@ -135,7 +143,11 @@ fn rich_markdown_keeps_fences() {
 #[test]
 fn long_output_is_truncated_before_conversion_and_stays_wellformed() {
     let big = format!("{{}}\n{}", "y".repeat(10_000));
-    let (markdown, html) = build_bg_echo_bubble(&big, "⚙️ background task result");
+    let (wire, html) = build_bg_echo_bubble(&big, "⚙️ background task result");
+    let markdown = match wire {
+        BubbleWire::Markdown(md) => md,
+        _ => panic!("echo bubble rides the markdown outbox wire (#38)"),
+    };
     assert!(markdown.contains("(truncated)"));
     assert!(html.contains("(truncated)"));
     // Truncating raw text first means the wrapper tags can never be cut:
@@ -178,7 +190,11 @@ fn html_fallback_escapes_dynamic_title() {
 
 #[test]
 fn bubble_md_and_classic_stay_separate() {
-    let (md, classic) = build_bg_echo_bubble("body", "T");
+    let (wire, classic) = build_bg_echo_bubble("body", "T");
+    let md = match wire {
+        BubbleWire::Markdown(md) => md,
+        _ => panic!("echo bubble rides the markdown outbox wire (#38)"),
+    };
     assert!(
         classic.contains("blockquote expandable"),
         "fallback stays classic-dialect"
@@ -202,24 +218,31 @@ fn meta(success: bool, label: &str, secs: f32, tail: &str) -> BgTaskMeta {
 
 #[test]
 fn bg_receipt_card_matches_the_locked_p3f_shape() {
-    let (md, classic) = build_bg_receipt_card(&meta(
+    let (wire, classic) = build_bg_receipt_card(&meta(
         true,
         "gh run watch 33117665576",
         1646.0,
         "line one\nline two",
     ));
+    let rich_html = match wire {
+        BubbleWire::Html(html) => html,
+        _ => panic!("bg card rides the HTML rich wire (#38)"),
+    };
     assert!(
-        md.starts_with(
-            "<details><summary><sub>✅ `gh run watch 33117665576` 🕒 27m 26s</sub></summary>"
+        rich_html.starts_with(
+            "<details><summary><sub>✅ <code>gh run watch 33117665576</code> 🕒 27m 26s</sub></summary>"
         ),
-        "summary = icon + monospace roster label + clock + duration, whole line subbed: {md}"
+        "summary = icon + monospace roster label + clock + duration, whole line subbed: {rich_html}"
     );
     assert!(
-        md.contains("```\nline one\nline two\n```"),
-        "body is ONE fenced block with the tail verbatim"
+        rich_html.contains("<pre>line one\nline two</pre>"),
+        "body is the output tail verbatim inside <pre>: {rich_html}"
     );
-    assert!(md.ends_with("</details>"));
-    assert!(!md.contains("exit"), "no exit code / wording in the bubble");
+    assert!(rich_html.ends_with("</details>"));
+    assert!(
+        !rich_html.contains("exit"),
+        "no exit code / wording in the bubble"
+    );
     // Degraded path stays a classic blockquote carrying the same content.
     assert!(classic.starts_with("<blockquote expandable>"));
     assert!(classic.contains("gh run watch 33117665576"));
@@ -228,15 +251,25 @@ fn bg_receipt_card_matches_the_locked_p3f_shape() {
 
 #[test]
 fn bg_receipt_card_failure_uses_the_cross_icon() {
-    let (md, _) = build_bg_receipt_card(&meta(false, "cargo test", 3.0, "boom"));
-    assert!(md.starts_with("<details><summary><sub>❌ `cargo test` 🕒 3s</sub></summary>"));
+    let (wire, _) = build_bg_receipt_card(&meta(false, "cargo test", 3.0, "boom"));
+    let md = match wire {
+        BubbleWire::Html(html) => html,
+        _ => panic!("bg card rides the HTML rich wire (#38)"),
+    };
+    assert!(
+        md.starts_with("<details><summary><sub>❌ <code>cargo test</code> 🕒 3s</sub></summary>")
+    );
 }
 
 #[test]
 fn bg_receipt_card_strips_backticks_from_the_label() {
-    let (md, _) = build_bg_receipt_card(&meta(true, "cat `file`.md", 1.0, "ok"));
+    let (wire, _) = build_bg_receipt_card(&meta(true, "cat `file`.md", 1.0, "ok"));
+    let md = match wire {
+        BubbleWire::Html(html) => html,
+        _ => panic!("bg card rides the HTML rich wire (#38)"),
+    };
     assert!(
-        md.contains("`cat file.md`"),
+        md.contains("<code>cat file.md</code>"),
         "label backticks stripped so the code span stays intact: {md}"
     );
 }
@@ -244,18 +277,93 @@ fn bg_receipt_card_strips_backticks_from_the_label() {
 #[test]
 fn bg_receipt_card_fence_outgrows_backtick_runs_in_the_tail() {
     let tail = "look:\n```\nnested fence\n```\ndone";
-    let (md, _) = build_bg_receipt_card(&meta(true, "cat README.md", 2.0, tail));
+    let (wire, classic) = build_bg_receipt_card(&meta(true, "cat README.md", 2.0, tail));
+    // #38: the HTML rich leg carries the tail inside <pre> — containment
+    // comes from the tag, backtick runs are inert there.
+    let md = match wire {
+        BubbleWire::Html(html) => html,
+        _ => panic!("bg card rides the HTML rich wire (#38)"),
+    };
     assert!(
-        md.contains("````\nlook:"),
-        "fence grows past the tail's longest backtick run"
+        md.contains("<pre>look:\n```\nnested fence\n```\ndone</pre>"),
+        "tail rides <pre> verbatim on the HTML leg: {md}"
+    );
+    // The classic leg keeps the fence arms-race: receipt_fence still grows
+    // past the tail's longest backtick run. markdown_to_html renders that
+    // fenced tail as code block(s) with the tail text preserved (inner
+    // fence runs split the block on this leg — pre-existing converter
+    // behavior, display-only).
+    assert!(
+        classic.contains("<pre><code>"),
+        "classic leg renders the tail as code block(s): {classic}"
+    );
+    assert!(
+        classic.contains("nested fence"),
+        "tail content survives the classic leg: {classic}"
     );
 }
 
+// ---- #38: empty-body guard + hostile-tail escaping ----
+
 #[test]
-fn notify_receipt_card_matches_the_locked_n4_shape() {
+fn bg_receipt_card_empty_tail_drops_the_wrapper() {
+    // Regression #38: a whitespace-only tail left nothing inside the
+    // <details> wrapper and Telegram rejected the card with 400
+    // RICH_MESSAGE_EMPTY; the outbox fallback then re-escaped the wrapper
+    // into visible text (the 2026-08-29 leak). Guard: flat one-line card,
+    // no wrapper on either leg.
+    for tail in ["", " ", "\n  \n"] {
+        let (wire, classic) =
+            build_bg_receipt_card(&meta(true, "gh run watch 33279712496", 467.0, tail));
+        let md = match wire {
+            BubbleWire::Markdown(md) => md,
+            _ => panic!("empty tail must ride the flat markdown wire (#38 guard)"),
+        };
+        assert!(
+            !md.contains("<details>"),
+            "no wrapper on the flat card: {md}"
+        );
+        assert!(
+            !classic.contains("<details>"),
+            "no wrapper on the fallback: {classic}"
+        );
+        assert!(md.contains("`gh run watch 33279712496`"));
+        assert!(md.contains("🕒 7m 47s"));
+    }
+}
+
+#[test]
+fn bg_receipt_card_escapes_hostile_tail_in_pre() {
+    let (wire, _) = build_bg_receipt_card(&meta(
+        true,
+        "grep '<b>'",
+        1.0,
+        "a < b & <script>alert(1)</script>",
+    ));
+    let md = match wire {
+        BubbleWire::Html(html) => html,
+        _ => panic!("bg card rides the HTML rich wire (#38)"),
+    };
+    assert!(
+        md.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
+        "tail is escaped inside <pre>: {md}"
+    );
+    assert!(!md.contains("<script>"), "raw HTML must not inject: {md}");
+    assert!(
+        md.contains("<code>grep &lt;b&gt;</code>"),
+        "label is escaped too: {md}"
+    );
+}
+
+#[tokio::test]
+async fn notify_receipt_card_matches_the_locked_n4_shape() {
     let body = "RECEIPT CONTRACT DELIVERED — swap verified, all three clauses journal-anchored.\n\n\
                 | Clause | Anchor |\n|---|---|\n| Build | run 1 |";
-    let (md, classic) = build_notify_receipt_card("Compiler", body);
+    let (wire, classic) = build_notify_receipt_card("Compiler", body).await;
+    let md = match wire {
+        BubbleWire::Html(html) => html,
+        _ => panic!("notify card rides the HTML rich wire (#38)"),
+    };
     assert!(
         md.starts_with(
             "<details><summary><sub>📨 From <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
@@ -263,19 +371,26 @@ fn notify_receipt_card_matches_the_locked_n4_shape() {
         ),
         "summary = 📨 + From + bold sender + colon + 45-char first-line preview, whole line subbed: {md}"
     );
+    // Body rendered from markdown on the HTML leg (#38): the table renders
+    // as HTML (grid/key-value/cards — any table shape carries the content).
     assert!(
-        md.contains("|---|---|"),
-        "markdown body keeps pipe tables native for the rich parser"
+        md.contains("<table") || md.contains("<pre>"),
+        "table body renders on the rich leg: {md}"
     );
+    assert!(md.contains("Build"), "table content survives: {md}");
     assert!(!md.contains("```"), "notify body is never fenced");
     assert!(md.ends_with("</details>"));
     assert!(classic.starts_with("<blockquote expandable>"));
     assert!(classic.contains("Compiler"));
 }
 
-#[test]
-fn notify_receipt_card_sanitizes_angle_brackets_in_sender() {
-    let (md, _) = build_notify_receipt_card("Ops <script>", "body line");
+#[tokio::test]
+async fn notify_receipt_card_sanitizes_angle_brackets_in_sender() {
+    let (wire, _) = build_notify_receipt_card("Ops <script>", "body line").await;
+    let md = match wire {
+        BubbleWire::Html(html) => html,
+        _ => panic!("notify card rides the HTML rich wire (#38)"),
+    };
     assert!(
         md.contains("<b>Ops ‹script›</b>: body line"),
         "angle brackets neutralized so the sender can't open a tag: {md}"
@@ -283,10 +398,14 @@ fn notify_receipt_card_sanitizes_angle_brackets_in_sender() {
     assert!(!md.contains("<script>"));
 }
 
-#[test]
-fn notify_preview_truncates_the_first_line_only() {
+#[tokio::test]
+async fn notify_preview_truncates_the_first_line_only() {
     let body = format!("{}\nsecond line stays in the body", "x".repeat(80));
-    let (md, _) = build_notify_receipt_card("Worker", &body);
+    let (wire, _) = build_notify_receipt_card("Worker", &body).await;
+    let md = match wire {
+        BubbleWire::Html(html) => html,
+        _ => panic!("notify card rides the HTML rich wire (#38)"),
+    };
     let preview = format!("{}…", "x".repeat(45));
     assert!(
         md.contains(&format!(": {preview}</sub>")),
@@ -296,4 +415,27 @@ fn notify_preview_truncates_the_first_line_only() {
         md.contains("second line stays in the body"),
         "the full body survives inside the fold"
     );
+}
+
+#[tokio::test]
+async fn notify_receipt_card_empty_body_drops_the_wrapper() {
+    // #38: whitespace-only notify body = empty card inside the wrapper =
+    // 400 RICH_MESSAGE_EMPTY (same defect class as the bg card). Guard:
+    // flat one-line card, no wrapper on either leg.
+    for body in ["", "  \n"] {
+        let (wire, classic) = build_notify_receipt_card("Compiler", body).await;
+        let md = match wire {
+            BubbleWire::Markdown(md) => md,
+            _ => panic!("empty body must ride the flat markdown wire (#38 guard)"),
+        };
+        assert!(
+            !md.contains("<details>"),
+            "no wrapper on the flat card: {md}"
+        );
+        assert!(
+            !classic.contains("<details>"),
+            "no wrapper on the fallback: {classic}"
+        );
+        assert!(md.contains("📨 From **Compiler**"));
+    }
 }
