@@ -93,11 +93,10 @@ fn heals_legacy_database_and_preserves_rows() {
     // The cache check works again: NULL chunk_hash on the legacy row means
     // re-embed (true), a fresh hash for a new chunk means re-embed (true),
     // and an unchanged hash means skip (false).
-    assert_eq!(
+    assert!(
         store
             .chunk_needs_embedding("dochash", 0, "any")
             .expect("cache check on healed store"),
-        true,
         "legacy row with NULL chunk_hash must be re-embedded"
     );
     store
@@ -114,18 +113,16 @@ fn heals_legacy_database_and_preserves_rows() {
             Some("c1"),
         )
         .expect("insert_embedding on healed store");
-    assert_eq!(
-        store
+    assert!(
+        !store
             .chunk_needs_embedding("dochash", 1, "c1")
             .expect("cache check after insert"),
-        false,
         "unchanged chunk must be skipped"
     );
-    assert_eq!(
+    assert!(
         store
             .chunk_needs_embedding("dochash", 1, "c2")
             .expect("cache check after content change"),
-        true,
         "changed chunk must be re-embedded"
     );
 }
@@ -157,11 +154,10 @@ fn fresh_database_has_chunk_hash_from_ddl() {
 
     let store = Store::open(&db_path).expect("open fresh store");
     assert!(has_chunk_hash_column(&db_path));
-    assert_eq!(
+    assert!(
         store
             .chunk_needs_embedding("h", 0, "c")
             .expect("cache check on fresh store"),
-        true,
         "no embedding exists yet on a fresh store"
     );
 }
