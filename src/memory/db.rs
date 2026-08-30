@@ -146,7 +146,39 @@ impl Store {
             )
             .map_err(|e| format!("Failed to initialize schema: {e}"))?;
 
+        // Column heal (#14): the DDL above is CREATE TABLE IF NOT EXISTS, a
+        // no-op on tables created by older builds. A content_vectors table
+        // that predates #1107 (2026-08-19) has no chunk_hash column, and
+        // chunk_needs_embedding then fails on every chunk of every backfill
+        // cycle. Probe and add the column when it is missing; idempotent.
+        self.ensure_chunk_hash_column()?;
+
         self.create_fts_triggers()
+    }
+
+    /// Add `chunk_hash` to `content_vectors` when the table predates it (#14).
+    ///
+    /// SQLite has no `ADD COLUMN IF NOT EXISTS`, so probe `pragma_table_info`
+    /// and ALTER only when the column is absent. On a fresh store the DDL
+    /// above already created the column and this stays a single read.
+    fn ensure_chunk_hash_column(&self) -> Result<(), String> {
+        let has_column: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('content_vectors')
+                 WHERE name = 'chunk_hash'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| format!("chunk_hash column probe: {e}"))?;
+
+        if !has_column {
+            self.conn
+                .execute_batch("ALTER TABLE content_vectors ADD COLUMN chunk_hash TEXT;")
+                .map_err(|e| format!("chunk_hash column heal: {e}"))?;
+        }
+        Ok(())
     }
 
     /// FTS5 external-content sync triggers. Copied verbatim from qmd: the
