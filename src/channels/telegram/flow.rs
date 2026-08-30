@@ -1838,6 +1838,7 @@ pub(crate) async fn take_folded_final(
         let kind = (host.is_none() && trailer.is_none()).then(|| match s.flow_entries.last() {
             Some(FlowEntry::Tool(_)) => "Tool",
             Some(FlowEntry::Text(_)) => "Text",
+            Some(FlowEntry::System(_)) => "System",
             None => "empty",
         });
         (host, trailer, kind)
@@ -1886,19 +1887,10 @@ pub(crate) fn pop_trailing_folded_texts(
         parts.join("\n\n")
     };
     if !options_pending {
-        // Stock pop (#478): the trailing Text run IS the final answer.
-        let mut parts: Vec<String> = Vec::new();
-        while matches!(entries.last(), Some(FlowEntry::Text(_))) {
-            match entries.pop() {
-                Some(FlowEntry::Text(t)) => parts.push(t),
-                other => {
-                    if let Some(e) = other {
-                        entries.push(e);
-                    }
-                    break;
-                }
-            }
-        }
+        // Stock pop (#478), chrome-aware (#1253): the trailing Text run IS
+        // the final answer; a System banner under it is lifted and put back
+        // in place — never reclaimed as the answer, never deleted.
+        let (parts, _) = pop_run(entries, false);
         if parts.is_empty() {
             return (None, None);
         }
@@ -1907,36 +1899,9 @@ pub(crate) fn pop_trailing_folded_texts(
 
     // #31: the post-halt trailer run sits AFTER the trailing Tool entry —
     // pop it first, then run the K lift for the host run.
-    let mut trailer_parts: Vec<String> = Vec::new();
-    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
-        match entries.pop() {
-            Some(FlowEntry::Text(t)) => trailer_parts.push(t),
-            other => {
-                if let Some(e) = other {
-                    entries.push(e);
-                }
-                break;
-            }
-        }
-    }
-    let mut aside: Vec<FlowEntry> = Vec::new();
-    while matches!(entries.last(), Some(FlowEntry::Tool(_))) {
-        if let Some(e) = entries.pop() {
-            aside.push(e);
-        }
-    }
-    let mut host_parts: Vec<String> = Vec::new();
-    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
-        match entries.pop() {
-            Some(FlowEntry::Text(t)) => host_parts.push(t),
-            other => {
-                if let Some(e) = other {
-                    entries.push(e);
-                }
-                break;
-            }
-        }
-    }
+    let (trailer_parts, _) = pop_run(entries, false);
+    let (_, mut aside) = pop_run(entries, true);
+    let (host_parts, _) = pop_run(entries, false);
     let had_trailing_tools = !aside.is_empty();
     while let Some(e) = aside.pop() {
         entries.push(e);
@@ -1953,6 +1918,41 @@ pub(crate) fn pop_trailing_folded_texts(
     let trailer = (!trailer_parts.is_empty()).then(|| join(trailer_parts));
     (host, trailer)
 }
+
+/// Pop the contiguous trailing run of Text (or Tool) entries, looking PAST
+/// System chrome (#1253): a banner is lifted aside and restored, in order,
+/// before returning — it never blocks the pop, never joins the popped run,
+/// and never leaves the block.
+fn pop_run(entries: &mut Vec<FlowEntry>, want_tool: bool) -> (Vec<String>, Vec<FlowEntry>) {
+    let mut texts: Vec<String> = Vec::new();
+    let mut tools: Vec<FlowEntry> = Vec::new();
+    let mut chrome: Vec<FlowEntry> = Vec::new();
+    loop {
+        match entries.last() {
+            Some(FlowEntry::Text(_)) if !want_tool => {
+                if let Some(FlowEntry::Text(t)) = entries.pop() {
+                    texts.push(t);
+                }
+            }
+            Some(FlowEntry::Tool(_)) if want_tool => {
+                if let Some(e) = entries.pop() {
+                    tools.push(e);
+                }
+            }
+            Some(FlowEntry::System(_)) => {
+                if let Some(e) = entries.pop() {
+                    chrome.push(e);
+                }
+            }
+            _ => break,
+        }
+    }
+    while let Some(e) = chrome.pop() {
+        entries.push(e);
+    }
+    (texts, tools)
+}
+
 /// The last model-authored folded text, looking past any system chrome
 /// appended after it and stopping at the last tool call (#1253).
 ///
