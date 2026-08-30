@@ -54,6 +54,45 @@ pub(crate) fn echo_fallback(text: &str, chooser: Option<&str>) -> String {
     }
 }
 
+/// What a tapped suggestion block is rewritten into (#39).
+///
+/// The pick record is baked into the body BEFORE any transport arm runs,
+/// so no arm can drop it: a merged host — rich or classic — keeps its
+/// answer HTML and gains the pick record; a standalone block becomes the
+/// pick record. Before this shape the append lived inside the rich arm
+/// only, and the classic merged host silently lost the choice (owner
+/// report 2026-08-29 23:51Z).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PickRewrite {
+    /// Rich merged host: body rides `edit_rich_html`, empty markup strips
+    /// the dead buttons.
+    RichHost(String),
+    /// Classic merged host: body rides `edit_message_text` + empty markup
+    /// to strip the dead buttons.
+    ClassicHost(String),
+    /// Standalone suggestion block: body rides plain `edit_message_text`.
+    Standalone(String),
+}
+
+/// The single construction site for a post-tap body (#39).
+///
+/// `host` is `(html, rich)` of the merged host bubble when the tapped
+/// message IS it; merged host → answer HTML + pick record, standalone →
+/// pick record alone.
+pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRewrite {
+    match host {
+        Some((full, rich)) => {
+            let body = format!("{full}\n\n{picked}");
+            if rich {
+                PickRewrite::RichHost(body)
+            } else {
+                PickRewrite::ClassicHost(body)
+            }
+        }
+        None => PickRewrite::Standalone(picked),
+    }
+}
+
 /// Button-width calibration, measured 2026-08-25 on Alexey's client
 /// (`sendRichMessage` probes, messages 29975 + 29991): a single full-width
 /// button fits <=50 chars on one line and wraps by 54; shared rows only
