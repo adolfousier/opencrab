@@ -5,7 +5,7 @@
 
 use super::TelegramState;
 use super::flow::{
-    DisplayItem, FlowEntry, StreamingState, append_intermediate_to_flow, append_system_to_flow,
+    DisplayItem, StreamingState, append_intermediate_to_flow, append_system_to_flow,
     append_tool_group, folded_duplicates_final, last_folded_text, settle_options_reclaim,
     take_folded_final,
 };
