@@ -415,7 +415,7 @@ pub(crate) fn render_flow_html_chrome(
 /// inputs (ADR 0005 Decision 12), shared by the classic and rich paths so the
 /// footer join can never drift between surfaces.
 #[allow(clippy::too_many_arguments)] // one primitive per footer input; the
-                                     // decomposition IS the point (ADR 0005 Decision 12)
+// decomposition IS the point (ADR 0005 Decision 12)
 fn footer_parts<'a>(
     header: &'a FlowHeader,
     fallback_status: Option<&'a str>,
