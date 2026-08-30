@@ -350,7 +350,7 @@ fn bg_receipt_card_escapes_hostile_tail_in_pre() {
     );
     assert!(!md.contains("<script>"), "raw HTML must not inject: {md}");
     assert!(
-        md.contains("<code>grep &lt;b&gt;</code>"),
+        md.contains("<code>grep '&lt;b&gt;'</code>"),
         "label is escaped too: {md}"
     );
 }
