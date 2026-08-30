@@ -741,8 +741,9 @@ fn rich_multiple_tools_render_markdown_header() {
         false,
     );
     // No narration: the activity fallback (most recent tool line) leads the
-    // header, bold, then the italic count (#509).
-    assert!(out.starts_with("⚙️ **✅ read file.rs** • _2 tool calls_\n\n"));
+    // header, bold, then the italic count (#509). Icon-led activity: the
+    // standing gear is stripped (owner directive 2026-08-29).
+    assert!(out.starts_with("**✅ read file.rs** • _2 tool calls_\n\n"));
     assert!(out.contains("**✅ bash** `git status`"));
     assert!(out.contains("**✅ read** `file.rs`"));
 }
