@@ -1123,6 +1123,7 @@ impl AgentService {
                     cache_read_tokens,
                     billing_cache_creation,
                     billing_cache_read,
+                    ..Default::default()
                 },
                 streaming_active_secs,
             },
