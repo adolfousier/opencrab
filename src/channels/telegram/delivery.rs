@@ -627,7 +627,6 @@ pub(crate) async fn deliver_final_response(
                         Some(folded) => folded_duplicates_final(folded, &text_only),
                         None => false,
                     }
-                    }
                 };
                 if trailing_matches {
                     // Remove the duplicate from the block
