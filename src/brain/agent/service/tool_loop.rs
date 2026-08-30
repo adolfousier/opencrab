@@ -5478,6 +5478,7 @@ impl AgentService {
                     && super::truncation::try_emit_truncation_continue(
                         &iteration_text,
                         reasoning_text.as_ref(),
+                        &response.usage,
                         &mut context,
                         session_id,
                         &progress_callback,
@@ -5491,6 +5492,22 @@ impl AgentService {
                     // Mark the next iteration so the stream-error path skips
                     // cross-provider fallback for the continuation request.
                     current_iter_is_truncation_continue = true;
+                    self.record_provider_feedback(
+                        session_id,
+                        "truncation_retry",
+                        "stream-integrity",
+                        Some(&format!(
+                            "mid-sentence cut (tail {:?}); corrective continuation attempted (#36)",
+                            iteration_text
+                                .chars()
+                                .rev()
+                                .take(60)
+                                .collect::<String>()
+                                .chars()
+                                .rev()
+                                .collect::<String>()
+                        )),
+                    );
                     continue;
                 }
 
@@ -7102,8 +7119,8 @@ impl AgentService {
             match super::truncation::join_continuation(partial, &final_text) {
                 Continuation::Extended(joined) => {
                     tracing::info!(
-                        "Truncation continue: joined {} char partial with {} char continuation \
-                         into {} chars",
+                        "[TRUNCATION] verdict=recovered: joined {} char partial with {} char \
+                         continuation into {} chars",
                         partial.chars().count(),
                         final_text.chars().count(),
                         joined.chars().count()
@@ -7117,10 +7134,20 @@ impl AgentService {
                     // is as complete as it will get. Delivering it unmarked told
                     // the user a sentence ending at a colon was finished (#956).
                     tracing::warn!(
-                        "Truncation continue FAILED: {} char continuation added nothing to the \
-                         {} char partial (model echoed the tail) — delivering it marked incomplete",
+                        "[TRUNCATION] verdict=unrecovered: {} char continuation added nothing \
+                         to the {} char partial (model echoed the tail) — delivering it marked \
+                         incomplete",
                         final_text.chars().count(),
                         partial.chars().count(),
+                    );
+                    self.record_provider_feedback(
+                        session_id,
+                        "truncation_unrecovered",
+                        "stream-integrity",
+                        Some(
+                            "continuation echoed the tail; answer delivered with incomplete \
+                             marker (#36)",
+                        ),
                     );
                     final_text = format!("{still_partial}{}", super::truncation::INCOMPLETE_MARKER);
                 }
