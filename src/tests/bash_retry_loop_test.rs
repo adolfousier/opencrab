@@ -149,3 +149,26 @@ fn rejection_message_names_the_window_size() {
     let msg = check_recent_failure(sid, "x").expect("should block");
     assert!(msg.contains(&RECENT_BASH_WINDOW.to_string()));
 }
+
+#[test]
+fn rejection_message_carries_the_shared_variation_directive() {
+    // #32: the Layer-3 rejection must teach the same lesson every
+    // loop-breaker teaches — read the result in hand, verify state,
+    // vary or report completion. The 2026-08-29 incident was exactly
+    // this fixture: a ship call retried after a sibling lane had
+    // already shipped, the reason sitting in the first result.
+    let sid = Uuid::new_v4();
+    record_bash_outcome(
+        sid,
+        "oc-deploy ship --sha abc123".to_string(),
+        true,
+        Some("already shipped by sibling lane".to_string()),
+    );
+    let msg = check_recent_failure(sid, "oc-deploy ship --sha abc123").expect("should block");
+    assert!(msg.contains("Do not re-issue the same call"), "{msg}");
+    assert!(msg.contains("result you already have"), "{msg}");
+    assert!(msg.contains("report completion"), "{msg}");
+    // The frame and the quoted error survive the rewording.
+    assert!(msg.contains("already ran this exact command"), "{msg}");
+    assert!(msg.contains("Previous error:"), "{msg}");
+}

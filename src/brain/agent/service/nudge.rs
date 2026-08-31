@@ -135,3 +135,43 @@ pub fn should_emit_pressure_warning(usage_pct: f64, already_emitted: bool) -> Op
         None
     }
 }
+
+// ── Shared variation directive (#32) ──
+//
+// Born from the 2026-08-29 incident: a ship call recurred through the
+// loop-guard ladder (nudge at 3-in-8, break at 4-in-8) and the turn broke
+// silently. The reason the call failed sat in the first tool result — the
+// work had already been done by a sibling lane — but no guard message made
+// the model read it and act on it. The directive is that missing instruction,
+// stated once so every loop-breaker that fires on a recurring call teaches
+// the same lesson in the same words. Callers keep their own mechanism
+// sentence and compose this around it; the shared part is the behavioural
+// core (read the result, verify state, vary or report completion).
+
+/// The behavioural core shared by every guard that fires on a recurring
+/// call (#32): stop re-issuing, read the result already in hand, verify
+/// current state, then vary the action or report completion.
+///
+/// Pure so the wording is testable without a provider.
+pub fn variation_directive() -> &'static str {
+    "Do not re-issue the same call. Read the reason in the result you already have: it often \
+     says the work is already done or the input is wrong. Verify current state before acting \
+     again, then take a genuinely different action — different flags, a different command, or \
+     report completion if there is nothing left to do."
+}
+
+/// User-visible breadcrumb appended to the final response when a loop
+/// guard BREAKS a turn (#32).
+///
+/// Before this existed the break was silent: the guard logged a WARN,
+/// the model's partial text went out as the final message, and nothing
+/// told the user the turn had ended on a guard trip — the 2026-08-29
+/// incident sat that way until the owner pinged. The breadcrumb names
+/// the trip, states that no work is queued, and hands control back
+/// explicitly.
+pub fn loop_guard_breadcrumb(call_label: &str, count: usize, window: usize) -> String {
+    format!(
+        "⚠️ Loop guard ended this turn: '{call_label}' recurred {count}x in the last {window} \
+         steps. Nothing is queued — say the word to resume."
+    )
+}

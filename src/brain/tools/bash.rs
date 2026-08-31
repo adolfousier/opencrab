@@ -1149,9 +1149,10 @@ pub(crate) fn check_recent_failure(session_id: Uuid, cmd: &str) -> Option<String
                 .unwrap_or("(no detail captured)");
             return Some(format!(
                 "You already ran this exact command in the last {} bash calls and it failed. \
-                 Don't retry the same string — try a different approach (different flags, a \
-                 different command, or address the root cause).\n\nPrevious error:\n{}",
-                RECENT_BASH_WINDOW, snippet
+                 {}\n\nPrevious error:\n{}",
+                RECENT_BASH_WINDOW,
+                crate::brain::agent::service::nudge::variation_directive(),
+                snippet
             ));
         }
     }
