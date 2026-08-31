@@ -492,10 +492,16 @@ pub(crate) async fn deliver_final_response(
             // the original response had rich structure (tables, headings,
             // lists), replace the HTML intermediates with a single native rich
             // message so Telegram renders proper tables and blocks.
+            // #46: this arm decides on `pre_dedup_text` BEFORE the options
+            // reclaim below can restore the host, so it must consult
+            // options_pending itself — same gate as the final-answer site
+            // (#45) — or a fully-deduped buttons turn stays plain.
             let text_only = if text_only.is_empty()
                 && !sent.is_empty()
-                && super::rich::should_send_native_rich(&pre_dedup_text)
-            {
+                && super::rich::should_send_native_rich_for(
+                    &pre_dedup_text,
+                    options_pending(&streaming),
+                ) {
                 let rich_md = pre_dedup_text.clone();
                 match super::rich::send_rich_with_mermaid_id(
                     bot.api_url().as_str(),
