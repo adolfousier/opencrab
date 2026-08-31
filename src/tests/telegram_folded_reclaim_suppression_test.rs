@@ -52,8 +52,9 @@ fn pop_joins_whole_trailing_text_run() {
         FlowEntry::Text("part one".to_string()),
         FlowEntry::Text("part two".to_string()),
     ];
-    let joined = pop_trailing_folded_texts(&mut entries).expect("trailing run exists");
-    assert_eq!(joined, "part one\n\npart two");
+    let (joined, trailer) = pop_trailing_folded_texts(&mut entries, false);
+    assert_eq!(joined.as_deref(), Some("part one\n\npart two"));
+    assert_eq!(trailer, None, "stock pop never produces a trailer");
     assert_eq!(entries.len(), 1, "the Tool entry must survive");
 }
 
@@ -66,8 +67,8 @@ fn pop_stops_at_tool_entry() {
         FlowEntry::Tool(1),
         FlowEntry::Text("tail".to_string()),
     ];
-    let joined = pop_trailing_folded_texts(&mut entries).expect("tail run exists");
-    assert_eq!(joined, "tail");
+    let (joined, _) = pop_trailing_folded_texts(&mut entries, false);
+    assert_eq!(joined.as_deref(), Some("tail"));
     assert_eq!(entries.len(), 2, "narration + tool stay in the block");
 }
 
@@ -76,5 +77,5 @@ fn pop_on_tool_ended_flow_returns_none() {
     // Flow ended on a tool call -> nothing folded to strip; delivery falls
     // through to response.content handling as before.
     let mut entries: Vec<FlowEntry> = vec![FlowEntry::Tool(3)];
-    assert_eq!(pop_trailing_folded_texts(&mut entries), None);
+    assert_eq!(pop_trailing_folded_texts(&mut entries, false), (None, None));
 }
