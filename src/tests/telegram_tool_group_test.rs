@@ -58,7 +58,7 @@ fn single_tool_renders_block() {
     assert_eq!(
         out,
         "<blockquote expandable><b>✅ bash</b> <code>git status</code></blockquote>\n\
-         ⚙️ ✅ bash git status • 1 tool calls • ⏱ 0:00"
+         ✅ bash git status • 1 tool calls • ⏱ 0:00"
     );
     assert!(out.contains("<blockquote expandable>"));
 }
@@ -88,7 +88,7 @@ fn multiple_tools_render_expandable_blockquote() {
     assert!(out.starts_with("<blockquote expandable><b>✅ bash</b> <code>cargo fmt</code>\n\n"));
     assert!(out.contains("</blockquote>\n"));
     let footer = out.rsplit('\n').next().unwrap();
-    assert_eq!(footer, "⚙️ ❌ grep pattern • 3 tool calls • ⏱ 0:00");
+    assert_eq!(footer, "❌ grep pattern • 3 tool calls • ⏱ 0:00");
     assert!(out.contains("<b>✅ bash</b> <code>cargo fmt</code>"));
     assert!(out.contains("<b>✅ read_file</b> <code>handler.rs</code>"));
     assert!(out.contains("<b>❌ grep</b> <code>pattern</code>"));
@@ -381,7 +381,7 @@ fn blank_text_entries_are_dropped() {
     assert_eq!(
         out,
         "<blockquote expandable><b>✅ bash</b> <code>x</code></blockquote>\n\
-         ⚙️ ✅ bash x • 1 tool calls • ⏱ 0:00"
+         ✅ bash x • 1 tool calls • ⏱ 0:00"
     );
 }
 
@@ -494,7 +494,7 @@ fn no_duration_still_leads_with_activity() {
     );
     assert!(out.starts_with("<blockquote expandable><b>✅ bash</b> <code>cargo fmt</code>\n\n"));
     let footer = out.rsplit('\n').next().unwrap();
-    assert_eq!(footer, "⚙️ ✅ read_file handler.rs • 2 tool calls • ⏱ 0:00");
+    assert_eq!(footer, "✅ read_file handler.rs • 2 tool calls • ⏱ 0:00");
     assert!(!out.contains("45s"));
 }
 
@@ -722,12 +722,12 @@ fn settled_block_carries_no_activity_preview_rich() {
 
 #[test]
 fn rich_empty_group_renders_header_only() {
-    assert_eq!(render_flow_rich(&[], None), "**Processing log**");
+    assert_eq!(render_flow_rich(&[], None, false), "**Processing log**");
 }
 
 #[test]
 fn rich_single_tool_renders_plain_line() {
-    let out = render_flow_rich(&[tline("✅ bash", "git status")], None);
+    let out = render_flow_rich(&[tline("✅ bash", "git status")], None, false);
     assert_eq!(out, "**✅ bash** `git status`");
     // Single tool: no blockquote wrapping, just bold label + context
     assert!(!out.contains(">"));
@@ -738,10 +738,12 @@ fn rich_multiple_tools_render_markdown_header() {
     let out = render_flow_rich(
         &[tline("✅ bash", "git status"), tline("✅ read", "file.rs")],
         None,
+        false,
     );
     // No narration: the activity fallback (most recent tool line) leads the
-    // header, bold, then the italic count (#509).
-    assert!(out.starts_with("⚙️ **✅ read file.rs** • _2 tool calls_\n\n"));
+    // header, bold, then the italic count (#509). Icon-led activity: the
+    // standing gear is stripped (owner directive 2026-08-29).
+    assert!(out.starts_with("**✅ read file.rs** • _2 tool calls_\n\n"));
     assert!(out.contains("**✅ bash** `git status`"));
     assert!(out.contains("**✅ read** `file.rs`"));
 }
@@ -757,13 +759,14 @@ fn rich_live_status_in_header() {
             tline("⚙️ grep", "pattern"),
         ],
         Some("10s"),
+        false,
     );
     assert!(out.starts_with("⚙️ **Searching.** • _2 tool calls_ • _10s_\n\n"));
 }
 
 #[test]
 fn rich_single_tool_live_status_appends() {
-    let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash • 5s"));
+    let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash • 5s"), false);
     assert_eq!(out, "**⚙️ bash** `git status` • bash • 5s");
 }
 
@@ -782,7 +785,7 @@ fn details_single_tool_renders_details_block() {
     let out = render_flow_details(&[tline("✅ bash", "git status")], None);
     assert_eq!(
         out,
-        "<details><summary><sub>⚙️ ✅ bash git status • 1 tool calls • ⏱ 0:00</sub></summary>\
+        "<details><summary><sub>✅ bash git status • 1 tool calls • ⏱ 0:00</sub></summary>\
          <p><b>✅ bash</b> <code>git status</code></p></details>"
     );
     assert!(out.contains("<details>"));
@@ -799,7 +802,7 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
     // collapsed block shows progress with the body hidden (#405); with no
     // narration it falls back to the most recent tool line.
     assert!(out.starts_with(
-        "<details><summary><sub>⚙️ ✅ read file.rs • 2 tool calls • ⏱ 0:00</sub></summary>"
+        "<details><summary><sub>✅ read file.rs • 2 tool calls • ⏱ 0:00</sub></summary>"
     ));
     assert!(out.ends_with("</details>"));
     assert!(!out.contains("<details open"));

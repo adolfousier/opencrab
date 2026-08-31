@@ -148,10 +148,29 @@ impl AgentService {
 
         // Signal channels that the next 10-60s will produce zero
         // streaming chunks so their typing-indicator pingers can keep
-        // firing. Carries no user-visible text — the event is consumed
-        // for typing/spinner refresh only.
+        // firing. Carries the fill level so channels can render a visible
+        // "compacting" line (#29); the percentage is a LEVEL, not progress.
+        // The Instant anchors the elapsed duration reported on the
+        // CompactionSummary emit below.
+        let compact_started = std::time::Instant::now();
+        let before_pct = usage_pct;
+        // E2 (#29): the ETA hint rides the event — the duration this
+        // session's LAST successful compaction actually took. `None` on the
+        // first compaction: no history, no prediction (a static guess is
+        // never right — owner 2026-08-29).
+        let predicted = self
+            .last_compaction_elapsed
+            .read()
+            .ok()
+            .and_then(|map| map.get(&session_id).copied());
         if let Some(cb) = progress_callback {
-            cb(session_id, ProgressEvent::Compacting);
+            cb(
+                session_id,
+                ProgressEvent::Compacting {
+                    usage_pct,
+                    predicted,
+                },
+            );
         }
 
         // Up to 3 attempts — transient summarizer errors (network blip,
@@ -208,6 +227,38 @@ impl AgentService {
                 );
                 context.hard_truncate_to(safety_target);
                 context.trim_to_fit(0);
+            }
+        }
+
+        // Success: surface the outcome to channels (first-ever user-visible
+        // compaction receipt, #29) and clear the #909 pressure throttle so
+        // the settled ctx footer never wears the ❕ until usage climbs the
+        // 55% floor again.
+        if let Some(ref summary) = summary_result {
+            if let Ok(mut map) = self.session_pressure_warned.write() {
+                map.insert(session_id, false);
+            }
+            // E2 (#29): this run's observed duration becomes the ETA hint
+            // for the session's NEXT compaction — grounded, never a guess.
+            let elapsed = compact_started.elapsed();
+            if let Ok(mut map) = self.last_compaction_elapsed.write() {
+                map.insert(session_id, elapsed);
+            }
+            if let Some(cb) = progress_callback {
+                let after_pct = if effective_max > 0 {
+                    (context.effective_token_count() as f64 / effective_max as f64) * 100.0
+                } else {
+                    100.0
+                };
+                cb(
+                    session_id,
+                    ProgressEvent::CompactionSummary {
+                        summary: summary.clone(),
+                        before_pct,
+                        after_pct,
+                        elapsed,
+                    },
+                );
             }
         }
 
@@ -287,5 +338,17 @@ impl AgentService {
             }
         }
         // else: in-band but already emitted -> no-op (once-per-entry).
+    }
+
+    /// True while the pre-compaction pressure nudge (#909, 55–64% band) is
+    /// active for this session. The settled-flow ctx segment wears the quiet
+    /// ❕ marker exactly when the hint is in the prompt (#29); the flag is
+    /// cleared on compaction success and re-arms below the 55% floor.
+    pub fn pressure_warning_active(&self, session_id: Uuid) -> bool {
+        self.session_pressure_warned
+            .read()
+            .ok()
+            .and_then(|map| map.get(&session_id).copied())
+            .unwrap_or(false)
     }
 }

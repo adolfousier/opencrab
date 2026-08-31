@@ -122,6 +122,12 @@ pub(crate) struct StreamingState {
     /// legacy pre-block status bubble is gone, so early-turn status rides
     /// here from the first activity tick.
     pub(crate) header_preview: Option<String>,
+    /// Auto-compaction in flight (#29): while set, `tick_flow_header` pins
+    /// the header to `COMPACTING_HEADER_TEXT` regardless of the computed
+    /// preview — no streaming chunks arrive during the silent window, so
+    /// the ordinary preview would go stale. Cleared by the CompactionSummary
+    /// arm; the next tick recomputes from live data.
+    pub(crate) compacting: bool,
     /// Always-visible flow sections (plan title, checklist progress, active
     /// goal, ctx footer). Rolled by the edit loop from live data; ctx is set
     /// once at final delivery.
@@ -394,6 +400,7 @@ pub(crate) fn render_flow_html_chrome(
         FOLDED_NARRATION_CAP,
         elapsed_secs,
         None,
+        false,
     )
 }
 
@@ -475,6 +482,7 @@ fn flow_body_entries(lines: &[FlowLine], narration_cap: usize) -> (Vec<String>, 
 /// `<blockquote expandable>` (full body, no summary line above it — Decision
 /// 11/12); the merged footer is the plain final line (Decision 3).
 /// `elapsed_secs` drives the footer clock (Decision 13).
+#[allow(clippy::too_many_arguments)] // chrome-pref signature keeps render knobs explicit (#29 adds compacting)
 pub(crate) fn render_flow_html_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
@@ -483,10 +491,21 @@ pub(crate) fn render_flow_html_chrome_pref(
     narration_cap: usize,
     elapsed_secs: u64,
     bg: Option<&str>,
+    compacting: bool,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
     let has_log = !out.is_empty();
-    let activity = latest_activity_preview(lines);
+    // Dedupe (#29): during the silent window the newest log line IS the ⏳
+    // body entry while the pinned header_preview carries the dedicated
+    // compacting state — rendering both doubles the compaction text in the
+    // footer (the owner-sighted live-fire bug). Suppress the activity-derived
+    // segment while the flag is set; the pinned constant stays the sole
+    // compaction string, and the #1052 split moves the gear onto the count.
+    let activity = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let footer = super::flow_chrome::merged_footer(
         &footer_parts(
             header,
@@ -571,6 +590,7 @@ pub(crate) fn render_flow_details_chrome(
         FOLDED_NARRATION_CAP,
         elapsed_secs,
         None,
+        false,
     )
 }
 
@@ -581,6 +601,7 @@ pub(crate) fn render_flow_details_chrome(
 /// when the log has entries that `<sub>` becomes the processing-log `<summary>`
 /// with the full entry list as the collapsed body (Decision 12). `elapsed_secs`
 /// drives the footer clock.
+#[allow(clippy::too_many_arguments)] // same as html chrome-pref (#29 adds compacting)
 pub(crate) fn render_flow_details_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
@@ -589,10 +610,18 @@ pub(crate) fn render_flow_details_chrome_pref(
     narration_cap: usize,
     elapsed_secs: u64,
     bg: Option<&str>,
+    compacting: bool,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
     let has_log = !out.is_empty();
-    let activity = latest_activity_preview(lines);
+    // Dedupe (#29): same suppression as the classic renderer — the footer
+    // join must never drift between surfaces (ADR 0005 Decision 12), so the
+    // compacting flag kills the activity segment here too.
+    let activity = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let footer = super::flow_chrome::merged_footer(
         &footer_parts(
             header,
@@ -641,7 +670,11 @@ pub(crate) fn render_flow_details_chrome_pref(
 // collapse); kept because #420 reuses this renderer once RichBlockDetails
 // serialization lands, and its tests pin the markdown contract meanwhile.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) -> String {
+pub(crate) fn render_flow_rich(
+    lines: &[FlowLine],
+    live_status: Option<&str>,
+    compacting: bool,
+) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -682,8 +715,14 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
     }
     // Same latest-activity preview as the HTML renderer (#405), leading the
     // header status-first (#509); this markdown path is always live. Raw text,
-    // no escaping — the markdown dialect keeps narration verbatim.
-    let status_msg = latest_activity_preview(lines);
+    // no escaping — the markdown dialect keeps narration verbatim. Dedupe
+    // (#29): while the compacting flag is set the newest line is the ⏳ body
+    // entry — suppress it here too so the three renderers never drift.
+    let status_msg = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let header = flow_header_text(
         tool_count,
         &FlowHeader::Live(live_status),
@@ -705,6 +744,49 @@ pub(crate) fn humanize_duration(secs: u64) -> String {
     } else {
         format!("{} min {}s", secs / 60, secs % 60)
     }
+}
+
+/// Header text pinned for the whole silent window (#29). No percentage on
+/// purpose: compaction progress is unknowable (one summarizer call), so a
+/// number here would read as a fake progress bar. The START line carries the
+/// fill level instead — that IS knowable.
+pub(crate) const COMPACTING_HEADER_TEXT: &str = "⏳ Compacting context…";
+
+/// Flow-block body line posted when auto-compaction starts (#29). The
+/// percentage is the context FILL LEVEL at trigger time — a "how full was
+/// it" fact, never a progress indicator. The ETA hint, when present, is the
+/// duration the session's PREVIOUS compaction actually took (E2) — grounded
+/// in observation, never a static guess: the old `≈10–60s` constant was
+/// retired because it was never right (observed live range 10s → 29 min),
+/// so a session with no compaction history renders no parenthetical at all.
+pub(crate) fn compacting_flow_line(
+    usage_pct: f64,
+    predicted: Option<std::time::Duration>,
+) -> String {
+    match predicted {
+        Some(d) => format!(
+            "⏳ Compacting context — {:.0}% full (≈{})…",
+            usage_pct,
+            humanize_duration(d.as_secs().max(1))
+        ),
+        None => format!("⏳ Compacting context — {:.0}% full…", usage_pct),
+    }
+}
+
+/// Flow-block body line posted when compaction finishes (#29). Doubles as
+/// the definitive completion signal: arrival means the silent window is
+/// over, so a FAILED compaction never emits one (no false ✅).
+pub(crate) fn compacted_flow_line(
+    before_pct: f64,
+    after_pct: f64,
+    elapsed: std::time::Duration,
+) -> String {
+    format!(
+        "✅ Compacted: {:.0}% → {:.0}% in {}",
+        before_pct,
+        after_pct,
+        humanize_duration(elapsed.as_secs().max(1))
+    )
 }
 
 /// Terminal state of a turn, shown in the settled flow-block header (#480).
@@ -853,6 +935,19 @@ fn strip_leading_gear(s: &str) -> &str {
     s.trim_start_matches(['⚙', '\u{fe0f}']).trim_start()
 }
 
+/// True when `s` starts with an icon glyph (emoji / symbol / dingbat) rather
+/// than a word character. The standing `⚙️` chrome prefix is dropped before
+/// such text — the gear never fronts another icon (#29 fix round, owner
+/// directive). Detection is deliberately simple: a non-ASCII first char that
+/// is not alphanumeric reads as an icon — covers ⏳ ✅ ❌ ⚙ ⏱ ❕ and friends
+/// while Latin, Cyrillic, and CJK text keeps the gear.
+pub(crate) fn starts_with_icon(s: &str) -> bool {
+    match s.chars().next() {
+        Some(c) => !c.is_ascii() && !c.is_alphanumeric(),
+        None => false,
+    }
+}
+
 /// Build the fully-styled header shared by all three renderers so the classic
 /// HTML, rich-details, and rich-markdown headers can never drift (#480, #509).
 /// The live header leads with the status message (bold), then the tool-call
@@ -881,19 +976,30 @@ pub(crate) fn flow_header_text(
             // Ordered live header: status message FIRST (bold), then the count,
             // then the duration (both italic), all `•`-separated (#509).
             let mut segs: Vec<String> = Vec::new();
+            let mut icon_led = false;
             if let Some(status) = status_msg {
                 // The header already prints one live gear; strip a leading
                 // running-gear from the status message so the bare-tool fallback
                 // ("⚙️ bash …") does not render a double gear (#509 follow-up).
                 // Settled ✅/❌ tool icons are left alone: they read as the tool's
                 // own outcome, not a duplicate of the header gear.
-                segs.push(markup.bold(strip_leading_gear(status)));
+                let status = strip_leading_gear(status);
+                icon_led = starts_with_icon(status);
+                segs.push(markup.bold(status));
             }
             segs.push(markup.italic(&base));
             if let Some(dur) = duration {
                 segs.push(markup.italic(dur));
             }
-            format!("⚙️ {}", segs.join(" • "))
+            // The standing gear is dropped when the status already leads with
+            // an icon (#29 fix round, owner directive) — the pinned
+            // `⏳ Compacting context…` header and icon-led tool activity render
+            // bare, never `⚙️ ⏳ …`.
+            if icon_led {
+                segs.join(" • ")
+            } else {
+                format!("⚙️ {}", segs.join(" • "))
+            }
         }
         FlowHeader::Settled {
             icon,
@@ -957,6 +1063,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
                 narration_cap,
                 elapsed,
                 s.bg_indicator.as_deref(),
+                false, // settled renders drop the activity segment regardless
             )
         }
         None => render_flow_html_chrome_pref(
@@ -967,6 +1074,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
             narration_cap,
             elapsed,
             s.bg_indicator.as_deref(),
+            s.compacting,
         ),
     }
 }
@@ -992,6 +1100,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
                 narration_cap,
                 elapsed,
                 s.bg_indicator.as_deref(),
+                false, // settled renders drop the activity segment regardless
             )
         }
         None => render_flow_details_chrome_pref(
@@ -1002,6 +1111,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
             narration_cap,
             elapsed,
             s.bg_indicator.as_deref(),
+            s.compacting,
         ),
     }
 }

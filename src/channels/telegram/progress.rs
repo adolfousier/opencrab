@@ -7,7 +7,10 @@ use std::sync::Arc;
 use teloxide::Bot;
 use teloxide::types::{ChatAction, ChatId, ThreadId};
 
-use super::flow::{DisplayItem, StreamingState, ToolMsg, detach_flow_for_followup};
+use super::flow::{
+    COMPACTING_HEADER_TEXT, DisplayItem, StreamingState, ToolMsg, compacted_flow_line,
+    compacting_flow_line, detach_flow_for_followup,
+};
 use super::handler::tool_context;
 use super::send::fire_chat_action;
 use crate::brain::agent::{ProgressCallback, ProgressEvent};
@@ -27,9 +30,13 @@ pub(crate) fn build_progress_cb(
             // Auto-compaction produces zero streaming chunks for 10-60s.
             // The 4s typing pinger upstream stays alive, but fire an
             // immediate refresh on entry so the indicator visibly resets
-            // the moment compaction starts. No text — just the native
-            // "is typing" dots stay continuous through the silent window.
-            ProgressEvent::Compacting => {
+            // the moment compaction starts (#29). The start line also lands
+            // in the flow body so the silent window has a visible
+            // explanation — a fill level, not a progress bar.
+            ProgressEvent::Compacting {
+                usage_pct,
+                predicted,
+            } => {
                 let bot = bot_typing.clone();
                 let chat = chat_typing;
                 tokio::spawn(async move {
@@ -42,6 +49,14 @@ pub(crate) fn build_progress_cb(
                     )
                     .await;
                 });
+                if let Ok(mut s) = st.lock() {
+                    s.compacting = true;
+                    s.header_preview = Some(COMPACTING_HEADER_TEXT.to_string());
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacting_flow_line(
+                            usage_pct, predicted,
+                        )));
+                }
             }
             ProgressEvent::ReasoningChunk { text } => {
                 if let Ok(mut s) = st.lock() {
@@ -168,6 +183,27 @@ pub(crate) fn build_progress_cb(
                 // is kept if the tool fires more than once.
                 if let Ok(mut s) = st.lock() {
                     s.pending_suggestions = Some(options);
+                }
+            }
+            // Compaction finished — the ✅ line is the definitive "silent
+            // window over" signal (#29). Arrival means success: a failed
+            // compaction never emits this event, so no false receipts.
+            ProgressEvent::CompactionSummary {
+                before_pct,
+                after_pct,
+                elapsed,
+                ..
+            } => {
+                if let Ok(mut s) = st.lock() {
+                    // Lift the header pin FIRST so the next tick recomputes
+                    // from live data; the ✅ line leads the body until newer
+                    // activity arrives (#29).
+                    s.compacting = false;
+                    s.header_preview = None;
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacted_flow_line(
+                            before_pct, after_pct, elapsed,
+                        )));
                 }
             }
             _ => {}

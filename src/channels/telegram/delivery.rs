@@ -418,6 +418,14 @@ pub(crate) async fn deliver_final_response(
                 ctx_max,
                 response.tokens_per_second,
             );
+            // Quiet ❕ while the #909 pressure hint is active (#29): the
+            // settled footer mirrors the nudge that's in the prompt. Cleared
+            // on compaction success; re-arms below the 55% floor.
+            let footer = if !footer.is_empty() && agent.pressure_warning_active(session_id) {
+                format!("{footer} ❕")
+            } else {
+                footer
+            };
             {
                 let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 s.sections.ctx = (!footer.is_empty()).then(|| footer.clone());

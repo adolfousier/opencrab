@@ -332,6 +332,7 @@ pub(crate) async fn resume_session_inner(
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         // Telegram: positive chat id = private/DM, negative = group (#677).
         is_dm: chat_id.0 > 0,
+        compacting: false,
         pending_suggestions: None,
         msg_id: None,
         thinking: String::new(),
@@ -394,15 +395,27 @@ pub(crate) async fn resume_session_inner(
         let bot_typing = bot.clone();
         let chat_typing = chat_id;
         Arc::new(move |_sid, event| match event {
-            // Auto-compaction silent window — immediate typing refresh.
+            // Auto-compaction silent window — immediate typing refresh plus
+            // the visible start line in the flow body (#29).
             // See handle_message for the full rationale.
-            ProgressEvent::Compacting => {
+            ProgressEvent::Compacting {
+                usage_pct,
+                predicted,
+            } => {
                 let bot = bot_typing.clone();
                 let chat = chat_typing;
                 tokio::spawn(async move {
                     fire_chat_action(&bot, chat, thread_id, ChatAction::Typing, "resume typing")
                         .await;
                 });
+                if let Ok(mut s) = st.lock() {
+                    s.compacting = true;
+                    s.header_preview = Some(COMPACTING_HEADER_TEXT.to_string());
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacting_flow_line(
+                            usage_pct, predicted,
+                        )));
+                }
             }
             ProgressEvent::ReasoningChunk { text } => {
                 if let Ok(mut s) = st.lock() {
@@ -519,6 +532,23 @@ pub(crate) async fn resume_session_inner(
                 // keyboard ABOVE the final answer on resumed turns.
                 if let Ok(mut s) = st.lock() {
                     s.pending_suggestions = Some(options);
+                }
+            }
+            // Compaction finished — definitive completion receipt (#29).
+            // See the handle_message progress callback for the rationale.
+            ProgressEvent::CompactionSummary {
+                before_pct,
+                after_pct,
+                elapsed,
+                ..
+            } => {
+                if let Ok(mut s) = st.lock() {
+                    s.compacting = false;
+                    s.header_preview = None;
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacted_flow_line(
+                            before_pct, after_pct, elapsed,
+                        )));
                 }
             }
             _ => {}
