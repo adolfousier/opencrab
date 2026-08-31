@@ -46,26 +46,36 @@ pub(crate) fn contains_table(text: &str) -> bool {
 /// deployments opt out (onboard dialog or `richtext off`) and get the
 /// universal HTML rendering. Read via the zero-disk config mirror.
 pub(crate) fn should_send_native_rich(text: &str) -> bool {
+    should_send_native_rich_for(text, false)
+}
+
+/// #45 variant: `has_buttons` forces the rich plane for plain prose that ends
+/// on a `suggest_options` surface. The tap rewrite preserves the host plane,
+/// so a classic prose host would keep the pick record in plain HTML even
+/// though the turn carries interactive buttons — button-bearing answers ride
+/// rich instead. The `rich_messages` flag still gates everything (richtext
+/// off = never rich, buttons or not).
+pub(crate) fn should_send_native_rich_for(text: &str, has_buttons: bool) -> bool {
     let flag = crate::config::Config::current()
         .channels
         .telegram
         .rich_messages;
     let structured = has_rich_structure(text);
-    // Logged because the verdict was previously invisible: only FAILURES down
-    // the rich path were recorded, so "rich was never attempted" and "rich was
-    // sent and the client rendered it badly" produced identical logs. A table
-    // that arrived as unformatted HTML could not be diagnosed from the log at
-    // all (#860). Both inputs are recorded, not just the answer, so a false
-    // verdict says which half caused it.
+    let verdict = flag && (structured || has_buttons);
+    // Same visibility rationale as the base verdict (#860): both inputs are
+    // recorded so a false verdict says which half caused it — plus the
+    // buttons_forced input, so a prose-with-buttons send is distinguishable
+    // from a structured send in the log.
     tracing::info!(
-        "Telegram rich verdict: {} (rich_messages={}, structured={}, table={}, len={})",
-        flag && structured,
+        "Telegram rich verdict: {} (rich_messages={}, structured={}, buttons_forced={}, table={}, len={})",
+        verdict,
         flag,
         structured,
+        has_buttons,
         contains_table(text),
         text.len()
     );
-    flag && structured
+    verdict
 }
 
 /// Whether `text` contains block-level markdown structure that native rich
