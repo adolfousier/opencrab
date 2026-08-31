@@ -84,6 +84,11 @@ pub(crate) enum PickRewrite {
     /// Classic merged host: body rides `edit_message_text` + empty markup
     /// to strip the dead buttons.
     ClassicHost(String),
+    /// #55 glue tier: the keyboard was GLUED onto a body-unsafe bubble
+    /// (table-bearing rich answer). A tap NEVER rewrites the body — it
+    /// strips the dead keyboard markup-only and echoes the pick record as
+    /// its own note bubble.
+    GluedHost,
     /// Standalone suggestion block: body rides plain `edit_message_text`.
     Standalone(String),
 }
@@ -318,11 +323,21 @@ pub(crate) async fn render_suggestions(
     // content instead of re-deriving it.
     let merge_payload: Option<MergePayload> = merge_host.map(|host| {
         let mid = host.message_id;
+        // #55 glue tier: table-bearing rich answers capture body=None — a
+        // body-rewriting merge would flatten the table (#679), so the
+        // keyboard rides `edit_message_reply_markup` instead and the body
+        // is never touched.
+        let Some(body) = host.body else {
+            return MergePayload {
+                message_id: mid,
+                new_html: String::new(),
+                rich: false,
+                glue: true,
+            };
+        };
         // Base body + surface: classic bubbles keep their exact delivered
-        // HTML; rich bubbles re-render from the captured markdown. Table-
-        // bearing answers never reach this arm as Markdown — capture skips
-        // them because rich HTML input flattens tables (#679).
-        let (mut new_html, rich) = match host.body {
+        // HTML; rich bubbles re-render from the captured markdown.
+        let (mut new_html, rich) = match body {
             super::state::BubbleBody::Html(html) => (html, false),
             super::state::BubbleBody::Markdown(md) => (super::rich::markdown_to_html_p(&md), true),
         };
@@ -351,14 +366,20 @@ pub(crate) async fn render_suggestions(
             message_id: mid,
             new_html,
             rich,
+            glue: false,
         }
     });
 
-    // Standalone fallback (no merge candidate, or the edit lost a race / grew
-    // too old): the header sentence is still gone per #tg-suggest-merge —
-    // prose mode shows just the numbered list, button modes need SOME text
-    // for the Bot API to accept the message, so they degrade to the bare 💡.
-    let standalone_body = standalone_fallback_body(&layout, &options);
+    // Standalone fallback (no merge candidate, no glue target, or the edit
+    // lost a race / grew too old): the header sentence is still gone per
+    // #tg-suggest-merge — prose mode shows just the numbered list, button
+    // modes need SOME text for the Bot API to accept the message. #55: the
+    // bare lamp is retired — "Pick one:" says the same with words.
+    let standalone_body = if layout == SuggestLayout::NumberedProse {
+        folded_list_html(&options).trim_start().to_string()
+    } else {
+        String::from("Pick one:")
+    };
 
     let option_count = options.len();
     match place_once(
@@ -485,6 +506,9 @@ struct MergePayload {
     message_id: MessageId,
     new_html: String,
     rich: bool,
+    /// #55 glue tier: attach via `edit_message_reply_markup` only — the
+    /// host body is not merge-safe (table) and must never be re-sent.
+    glue: bool,
 }
 
 /// Placement error class (#30): decides whether the stash survives the
@@ -547,7 +571,14 @@ async fn place_once(
 
     if let Some(mp) = merge {
         let mid = mp.message_id;
-        let outcome: Result<(), PlaceErr> = if mp.rich {
+        let outcome: Result<(), PlaceErr> = if mp.glue {
+            // #55 glue tier: attach the keyboard without touching the body.
+            bot.edit_message_reply_markup(chat_id, mid)
+                .reply_markup(keyboard.clone())
+                .await
+                .map(|_| ())
+                .map_err(classify_request_err)
+        } else if mp.rich {
             super::rich::api::edit_rich_html(
                 bot.api_url().as_str(),
                 bot.token(),
@@ -575,7 +606,13 @@ async fn place_once(
                 tracing::info!(
                     "Telegram suggest_options: keyboard merged onto msg {mid} \
                      ({} host, token {token}, {option_count} options)",
-                    if mp.rich { "rich" } else { "classic" }
+                    if mp.glue {
+                        "glue"
+                    } else if mp.rich {
+                        "rich"
+                    } else {
+                        "classic"
+                    }
                 );
                 state
                     .attach_followup_host(
@@ -584,6 +621,7 @@ async fn place_once(
                             message_id: mid,
                             html: mp.new_html.clone(),
                             rich: mp.rich,
+                            glued: mp.glue,
                         },
                     )
                     .await;

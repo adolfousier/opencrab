@@ -443,7 +443,7 @@ impl TelegramAgent {
                                                 let host_info =
                                                     merged_host.as_ref().and_then(|h| {
                                                         (h.message_id == mid)
-                                                            .then(|| (h.html.clone(), h.rich))
+                                                            .then(|| (h.html.clone(), h.rich, h.glued))
                                                     });
                                                 let empty_kb = teloxide::types::
                                                     InlineKeyboardMarkup::new(
@@ -454,14 +454,50 @@ impl TelegramAgent {
                                                 // site, so no arm can drop the choice again
                                                 // (the classic merged host used to edit the
                                                 // answer HTML alone and lose the record).
-                                                let rewrite =
-                                                    super::suggest_options::pick_rewrite(
-                                                        host_info
-                                                            .as_ref()
-                                                            .map(|(full, rich)| (full.as_str(), *rich)),
-                                                        picked,
-                                                    );
-                                                let outcome: Result<(), String> = match rewrite {
+                                                let outcome: Result<(), String> =
+                                                    if host_info
+                                                        .as_ref()
+                                                        .is_some_and(|(_, _, glued)| *glued)
+                                                    {
+                                                        // #55 glue tier: the host body is not
+                                                        // merge-safe (table-bearing rich answer) —
+                                                        // a text edit would flatten it. Strip the
+                                                        // dead keyboard markup-only, then echo the
+                                                        // pick record as its own note bubble.
+                                                        bot_clone
+                                                            .edit_message_reply_markup(chat_id, mid)
+                                                            .reply_markup(empty_kb)
+                                                            .await
+                                                            .map(|_| ())
+                                                            .map_err(|e| e.to_string())
+                                                            .and_then(|()| {
+                                                                crate::channels::telegram::send::
+                                                                    best_effort_note(
+                                                                        &bot_clone,
+                                                                        chat_id,
+                                                                        thread_id,
+                                                                        &picked,
+                                                                        Some(teloxide::types::ParseMode::Html),
+                                                                        "tap-glue",
+                                                                        "pick record after glued tap",
+                                                                        "the glued host body must not be rewritten",
+                                                                    );
+                                                                Ok(())
+                                                            })
+                                                    } else {
+                                                        // #39: the pick record is baked into the body
+                                                        // BEFORE any transport arm runs — one format
+                                                        // site, so no arm can drop the choice again.
+                                                        let rewrite =
+                                                            super::suggest_options::pick_rewrite(
+                                                                host_info.as_ref().map(
+                                                                    |(full, rich)| {
+                                                                        (full.as_str(), *rich)
+                                                                    },
+                                                                ),
+                                                                picked,
+                                                            );
+                                                        match rewrite {
                                                     super::suggest_options::PickRewrite::RichHost(
                                                         body,
                                                     ) => super::rich::api::edit_rich_html(
@@ -486,15 +522,16 @@ impl TelegramAgent {
                                                         .await
                                                         .map(|_| ())
                                                         .map_err(|e| e.to_string()),
-                                                    super::suggest_options::PickRewrite::Standalone(
-                                                        body,
-                                                    ) => bot_clone
-                                                        .edit_message_text(chat_id, mid, &body)
-                                                        .parse_mode(teloxide::types::ParseMode::Html)
-                                                        .await
-                                                        .map(|_| ())
-                                                        .map_err(|e| e.to_string()),
-                                                };
+                                                            super::suggest_options::PickRewrite::Standalone(
+                                                                body,
+                                                            ) => bot_clone
+                                                                .edit_message_text(chat_id, mid, &body)
+                                                                .parse_mode(teloxide::types::ParseMode::Html)
+                                                                .await
+                                                                .map(|_| ())
+                                                                .map_err(|e| e.to_string()),
+                                                        }
+                                                    };
                                                 if let Err(e) = outcome {
                                                     tracing::warn!(
                                                         "Telegram followup tap: could not edit the \
