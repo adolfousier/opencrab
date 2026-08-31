@@ -705,7 +705,7 @@ pub(crate) async fn deliver_final_response(
                     // #45: `options_pending` is true when the turn stashed a
                     // suggest_options set mid-turn (#1226 K helper) — force the
                     // rich plane for prose so buttons never live on a plain host.
-                    options_pending(&streaming),
+                    options_pending(streaming),
                 ) && {
                     let rich_md = text_only.clone();
                     // Send a FRESH rich message rather than editing the streamed
