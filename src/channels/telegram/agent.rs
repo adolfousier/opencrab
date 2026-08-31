@@ -473,7 +473,7 @@ impl TelegramAgent {
                                                         let rewrite =
                                                             super::suggest_options::pick_rewrite(
                                                                 host_info.as_ref().map(
-                                                                    |(full, rich)| {
+                                                                    |(full, rich, _glued)| {
                                                                         (full.as_str(), *rich)
                                                                     },
                                                                 ),

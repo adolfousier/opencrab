@@ -900,7 +900,7 @@ pub(crate) async fn deliver_final_response(
                                 // answer bubble suggest_options can ride on.
                                 final_bubble = Some(super::state::MergeBubble {
                                     message_id: mid,
-                                    body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                    body: Some(super::state::BubbleBody::Html(chunks[0].clone())),
                                 });
                             }
                             Err(teloxide::RequestError::RetryAfter(secs)) => {
@@ -914,7 +914,9 @@ pub(crate) async fn deliver_final_response(
                                         sent_reply_id = Some(mid.0);
                                         final_bubble = Some(super::state::MergeBubble {
                                             message_id: mid,
-                                            body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                            body: Some(super::state::BubbleBody::Html(
+                                                chunks[0].clone(),
+                                            )),
                                         });
                                     }
                                     Err(e) => {
@@ -940,9 +942,9 @@ pub(crate) async fn deliver_final_response(
                                             sent_reply_id = Some(sent.0);
                                             final_bubble = Some(super::state::MergeBubble {
                                                 message_id: sent,
-                                                body: super::state::BubbleBody::Html(
+                                                body: Some(super::state::BubbleBody::Html(
                                                     chunks[0].clone(),
-                                                ),
+                                                )),
                                             });
                                         } else {
                                             tracing::error!(
@@ -966,7 +968,9 @@ pub(crate) async fn deliver_final_response(
                                     sent_reply_id = Some(sent.0);
                                     final_bubble = Some(super::state::MergeBubble {
                                         message_id: sent,
-                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
+                                        body: Some(super::state::BubbleBody::Html(
+                                            chunks[0].clone(),
+                                        )),
                                     });
                                 }
                             }
@@ -985,7 +989,7 @@ pub(crate) async fn deliver_final_response(
                                 sent_reply_id = Some(sent.0);
                                 final_bubble = Some(super::state::MergeBubble {
                                     message_id: sent,
-                                    body: super::state::BubbleBody::Html(chunk.clone()),
+                                    body: Some(super::state::BubbleBody::Html(chunk.clone())),
                                 });
                             }
                         }
