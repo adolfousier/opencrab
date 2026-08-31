@@ -537,15 +537,20 @@ impl Store {
         seq: usize,
         chunk_hash: &str,
     ) -> Result<bool, String> {
+        // `optional()` turns "no such row" into None, so the closure itself
+        // must read the column as Option<String>: a healed legacy row has a
+        // NULL chunk_hash, and reading it as plain String would raise
+        // InvalidColumnType(Null) instead of falling through to re-embed (#14).
         let stored_hash: Option<String> = self
             .conn
             .query_row(
                 "SELECT chunk_hash FROM content_vectors WHERE hash = ?1 AND seq = ?2",
                 params![hash, seq as i64],
-                |r| r.get(0),
+                |r| r.get::<_, Option<String>>(0),
             )
             .optional()
-            .map_err(|e| format!("chunk_needs_embedding: {e}"))?;
+            .map_err(|e| format!("chunk_needs_embedding: {e}"))?
+            .flatten();
 
         match stored_hash {
             None => Ok(true),                         // No embedding exists yet
