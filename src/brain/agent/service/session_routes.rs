@@ -138,7 +138,7 @@ pub fn register_turn_probe(session_id: Uuid, probe: TurnProbe) {
 }
 
 /// The session's in-flight probe, if its channel registered one.
-fn turn_probe(session_id: Uuid) -> Option<TurnProbe> {
+pub(crate) fn turn_probe(session_id: Uuid) -> Option<TurnProbe> {
     match TURN_PROBES.lock() {
         Ok(guard) => guard.as_ref()?.get(&session_id).cloned(),
         Err(e) => {

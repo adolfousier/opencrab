@@ -12,6 +12,21 @@ use crate::brain::tools::error::{Result, ToolError};
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
+use std::time::Duration;
+
+/// Resolved v2 delivery policy (fork #50).
+enum DeliveryMode {
+    /// Refuse while the target is mid-turn (the failsafe default).
+    Now,
+    /// Queue for the target's next tool-loop boundary (alias: interrupt=true).
+    TurnEnd,
+    /// Defer until the target has been quiet for `quiet_for`; `max_delay`
+    /// forces delivery into a busy turn (fork #43/#50).
+    Quiet {
+        quiet_for: Duration,
+        max_delay: Duration,
+    },
+}
 
 /// Tool that pushes a queued user message into another session.
 pub struct SessionNotifyTool;
@@ -56,22 +71,56 @@ fn verdict(success: bool, state: &str, detail: String, extra: &[(&str, String)])
 /// (fork #50). `interrupt=true` was always "queue for the in-flight turn's
 /// next tool-loop boundary" — that is mode `turn-end`; unset/false was
 /// "refuse while streaming" — mode `now`. Both may be passed only when they
-/// agree; a disagreement is an error, never a silent precedence. Unknown
-/// modes (e.g. `quiet`, landing with the quiet engine) are rejected here so
-/// the schema can teach them before they exist.
-fn resolve_mode(mode: Option<&str>, interrupt: Option<bool>) -> Result<bool> {
-    let mode = match mode {
+/// agree; a disagreement is an error, never a silent precedence. `quiet`
+/// defers until the target has been idle for `quiet_for_secs` (starvation
+/// cap `max_delay_secs` forces delivery into a busy turn).
+fn resolve_mode(
+    mode: Option<&str>,
+    interrupt: Option<bool>,
+    delivery: Option<&Value>,
+) -> Result<DeliveryMode> {
+    fn secs(parent: Option<&Value>, key: &str, default: u64) -> Result<Duration> {
+        match parent.and_then(|d| d.get(key)) {
+            None => Ok(Duration::from_secs(default)),
+            Some(v) => {
+                let n = v.as_u64().ok_or_else(|| {
+                    ToolError::InvalidInput(format!(
+                        "delivery.{key} must be a non-negative integer"
+                    ))
+                })?;
+                Ok(Duration::from_secs(n))
+            }
+        }
+    }
+    let resolved = match mode {
         None => None,
         Some(known @ ("now" | "turn-end")) => Some(known),
+        Some("quiet") => {
+            // quiet contradicts interrupt=true by definition: quiet WAITS,
+            // turn-end DERAILS. interrupt=false/unset is the natural form.
+            if interrupt == Some(true) {
+                return Err(ToolError::InvalidInput(
+                    "delivery.mode 'quiet' and interrupt=true disagree — quiet defers, \
+                     interrupt derails"
+                        .into(),
+                ));
+            }
+            let quiet_for = secs(delivery, "quiet_for_secs", 60)?;
+            let max_delay = secs(delivery, "max_delay_secs", 1800)?;
+            return Ok(DeliveryMode::Quiet {
+                quiet_for,
+                max_delay,
+            });
+        }
         Some(other) => {
             return Err(ToolError::InvalidInput(format!(
-                "delivery.mode '{other}' is not available yet — use 'now' or 'turn-end'"
+                "delivery.mode '{other}' is not available yet — use 'now', 'turn-end' or 'quiet'"
             )));
         }
     };
-    match (mode, interrupt) {
-        (Some("turn-end"), None | Some(true)) | (None, Some(true)) => Ok(true),
-        (Some("now"), None | Some(false)) | (None, None | Some(false)) => Ok(false),
+    match (resolved, interrupt) {
+        (Some("turn-end"), None | Some(true)) | (None, Some(true)) => Ok(DeliveryMode::TurnEnd),
+        (Some("now"), None | Some(false)) | (None, None | Some(false)) => Ok(DeliveryMode::Now),
         _ => Err(ToolError::InvalidInput(
             "delivery.mode and interrupt disagree — pass one, not both".into(),
         )),
@@ -121,8 +170,16 @@ impl Tool for SessionNotifyTool {
                     "properties": {
                         "mode": {
                             "type": "string",
-                            "enum": ["now", "turn-end"],
-                            "description": "'now' (default): deliver immediately; REFUSES while the target is mid-turn. 'turn-end': queue the message for the target's next tool-loop boundary even while it streams. More modes (quiet: defer until the target has been idle for a window) arrive with the quiet engine."
+                            "enum": ["now", "turn-end", "quiet"],
+                            "description": "'now' (default): deliver immediately; REFUSES while the target is mid-turn. 'turn-end': queue the message for the target's next tool-loop boundary even while it streams. 'quiet': defer until the target has been idle for quiet_for_secs (any turn activity restarts the clock; max_delay_secs forces delivery into a busy turn so the notice cannot be starved forever); returns a deferred verdict with a notification id."
+                        },
+                        "quiet_for_secs": {
+                            "type": "integer",
+                            "description": "quiet mode only: idle window before delivery (default 60)."
+                        },
+                        "max_delay_secs": {
+                            "type": "integer",
+                            "description": "quiet mode only: starvation cap — deliver at latest this long after acceptance, even mid-turn (default 1800)."
                         }
                     }
                 },
@@ -185,15 +242,46 @@ impl Tool for SessionNotifyTool {
         // Failsafe default (fork #13): an unset interrupt must not derail a
         // session that is mid-turn. v2 (fork #50) re-expresses the knob as
         // the delivery policy — the alias keeps old prompts working.
-        let interrupt = resolve_mode(
-            input
-                .get("delivery")
+        let delivery_obj = input.get("delivery");
+        let mode = resolve_mode(
+            delivery_obj
                 .and_then(|d| d.get("mode"))
                 .and_then(Value::as_str),
             input.get("interrupt").and_then(Value::as_bool),
+            delivery_obj,
         )?;
 
+        use crate::brain::agent::service::quiet_delivery;
         use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
+
+        // Quiet mode (fork #43/#50): bank the notice, return the id. The
+        // deferred verdict is success-by-contract — accepted, not yet
+        // delivered; the id is the cancel/list handle from birth.
+        if let DeliveryMode::Quiet {
+            quiet_for,
+            max_delay,
+        } = mode
+        {
+            let summary = message.chars().take(80).collect::<String>();
+            let id = quiet_delivery::defer_quiet(target, msg, quiet_for, max_delay, summary);
+            return Ok(verdict(
+                true,
+                "deferred",
+                format!(
+                    "Deferred for session {target}: it will deliver once the session has been \
+                     quiet for {}s (hard cap {}s). Notification id {id}.",
+                    quiet_for.as_secs(),
+                    max_delay.as_secs()
+                ),
+                &[
+                    ("notify_target", target.to_string()),
+                    ("notify_id", id.to_string()),
+                    ("notify_reason", "quiet_window".into()),
+                ],
+            ));
+        }
+
+        let interrupt = matches!(mode, DeliveryMode::TurnEnd);
 
         match deliver_to_session(target, msg, interrupt) {
             Delivery::Delivered => Ok(verdict(
@@ -323,26 +411,78 @@ mod tests {
 
     #[test]
     fn resolve_mode_defaults_and_alias() {
+        use DeliveryMode::*;
         // Default: refuse while streaming (the fork #13 failsafe).
-        assert!(resolve_mode(None, None).unwrap() == false);
+        assert!(matches!(resolve_mode(None, None, None).unwrap(), Now));
         // The interrupt alias maps exactly onto the modes.
-        assert!(resolve_mode(None, Some(true)).unwrap());
-        assert!(resolve_mode(None, Some(false)).unwrap() == false);
-        assert!(resolve_mode(Some("now"), None).unwrap() == false);
-        assert!(resolve_mode(Some("turn-end"), None).unwrap());
+        assert!(matches!(
+            resolve_mode(None, Some(true), None).unwrap(),
+            TurnEnd
+        ));
+        assert!(matches!(
+            resolve_mode(None, Some(false), None).unwrap(),
+            Now
+        ));
+        assert!(matches!(
+            resolve_mode(Some("now"), None, None).unwrap(),
+            Now
+        ));
+        assert!(matches!(
+            resolve_mode(Some("turn-end"), None, None).unwrap(),
+            TurnEnd
+        ));
     }
 
     #[test]
     fn resolve_mode_agreeing_pair_passes_disagreement_rejected() {
-        assert!(resolve_mode(Some("turn-end"), Some(true)).unwrap());
-        assert!(resolve_mode(Some("now"), Some(false)).unwrap() == false);
-        assert!(resolve_mode(Some("now"), Some(true)).is_err());
-        assert!(resolve_mode(Some("turn-end"), Some(false)).is_err());
+        use DeliveryMode::*;
+        assert!(matches!(
+            resolve_mode(Some("turn-end"), Some(true), None).unwrap(),
+            TurnEnd
+        ));
+        assert!(matches!(
+            resolve_mode(Some("now"), Some(false), None).unwrap(),
+            Now
+        ));
+        assert!(resolve_mode(Some("now"), Some(true), None).is_err());
+        assert!(resolve_mode(Some("turn-end"), Some(false), None).is_err());
     }
 
     #[test]
-    fn resolve_mode_rejects_modes_before_their_engine_lands() {
-        let err = resolve_mode(Some("quiet"), None).unwrap_err().to_string();
+    fn resolve_mode_rejects_unknown_modes() {
+        let err = resolve_mode(Some("warp"), None, None)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("not available yet"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_mode_quiet_defaults_and_custom_windows() {
+        use DeliveryMode::*;
+        let default = resolve_mode(Some("quiet"), None, None).unwrap();
+        assert!(
+            matches!(default, Quiet { quiet_for, max_delay }
+                if quiet_for == Duration::from_secs(60) && max_delay == Duration::from_secs(1800)),
+            "got: {default:?}"
+        );
+        let custom = serde_json::json!({ "quiet_for_secs": 300, "max_delay_secs": 60 });
+        let got = resolve_mode(Some("quiet"), None, Some(&custom)).unwrap();
+        assert!(
+            matches!(got, Quiet { quiet_for, max_delay }
+                if quiet_for == Duration::from_secs(300) && max_delay == Duration::from_secs(60)),
+            "got: {got:?}"
+        );
+        // Non-integer window is rejected, not silently defaulted.
+        let bad = serde_json::json!({ "quiet_for_secs": "soon" });
+        assert!(resolve_mode(Some("quiet"), None, Some(&bad)).is_err());
+    }
+
+    #[test]
+    fn resolve_mode_quiet_contradicts_interrupt_true() {
+        // quiet WAITS; interrupt=true DERAILS — passing both is an error,
+        // never a silent precedence.
+        assert!(resolve_mode(Some("quiet"), Some(true), None).is_err());
+        // interrupt=false is the natural form and passes.
+        assert!(resolve_mode(Some("quiet"), Some(false), None).is_ok());
     }
 }
