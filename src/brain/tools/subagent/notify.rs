@@ -263,8 +263,7 @@ impl Tool for SessionNotifyTool {
             max_delay,
         } = mode
         {
-            let summary = message.chars().take(80).collect::<String>();
-            let id = quiet_delivery::defer_quiet(target, msg, quiet_for, max_delay, summary);
+            let id = quiet_delivery::defer_quiet(target, msg, quiet_for, max_delay);
             return Ok(verdict(
                 true,
                 "deferred",
