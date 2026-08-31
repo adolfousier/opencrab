@@ -1183,6 +1183,10 @@ async fn cmd_chat_inner(
     // agent reads context and picks up naturally — no loops, no leaking restart signals.
     // Routes responses back to the originating channel (TUI, Telegram, Discord, etc.).
     let resume_event_sender = app.event_sender();
+    // Sessions roused by the resume path below (see the wake pass, #1227) so
+    // they are not nudged a second time by it.
+    let mut resumed_session_ids: std::collections::HashSet<uuid::Uuid> =
+        std::collections::HashSet::new();
     {
         let pending_repo = crate::db::PendingRequestRepository::new(db.pool().clone());
         match pending_repo.get_interrupted().await {
@@ -1204,6 +1208,7 @@ async fn cmd_chat_inner(
                         if !seen.insert(session_id) {
                             continue;
                         }
+                        resumed_session_ids.insert(session_id);
                         // Restore the session's saved working directory before
                         // resuming so the agent runs tools in the right CWD.
                         // Note: agent_service shares one global WD lock across
@@ -1467,6 +1472,19 @@ async fn cmd_chat_inner(
             Err(e) => tracing::warn!("Failed to check for interrupted requests: {}", e),
         }
     }
+
+    // Wake (#1227): recently-active bound sessions that were NOT mid-turn at
+    // boot have no journal row, so they look dead until someone pokes one.
+    // #1224 re-registers their routes (draining parked reports) at connect,
+    // but quietly. Log the stranded set so it is auditable; purely
+    // informational — it runs no turn, re-executes nothing, sends no message
+    // (the former "I'm back" bubble was removed per #34).
+    #[cfg(feature = "telegram")]
+    crate::channels::telegram::resume::wake_recently_active(
+        db.pool().clone(),
+        &resumed_session_ids,
+    )
+    .await;
 
     // Channel manager — handles dynamic spawn/stop of channel agents on config reload
     let channel_manager = Arc::new(crate::channels::ChannelManager::new(

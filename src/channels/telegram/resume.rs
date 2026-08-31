@@ -867,3 +867,66 @@ async fn sender_label(
 fn short_session_id(uuid: Uuid) -> String {
     uuid.simple().to_string()[..8].to_owned()
 }
+
+/// How recently (seconds) a Telegram-bound session must have been active to
+/// appear in the boot-time wake log (#1227).
+///
+/// Kept short on purpose: a back-to-back dev restart (the recurring case on
+/// the ops box, 10+/day) must not flood the log with every recently-active
+/// session each time. Only sessions that touched their topic inside this
+/// window are recorded.
+pub const WAKE_RECENT_SECS: i64 = 600;
+
+/// Log every Telegram-bound session that was active shortly before boot but
+/// is not currently being resumed, so the stranded set is auditable (#1227).
+///
+/// The on-disk journal only rescues turns that were literally mid-loop at the
+/// kill instant; between-turn sessions have no row (#1224 re-registers their
+/// delivery routes, which drains parked reports, but that happens quietly).
+/// This pass names them in the log instead: it runs no turn, re-executes
+/// nothing, and sends no message — the former "I'm back" bubble was removed
+/// per #34 (owner direction 2026-08-29: remove the UX message, leave
+/// logging), because it promised resumption the feature does not yet deliver
+/// and was never persisted in `channel_messages`, so it could not be audited.
+///
+/// Sessions whose ids are in `already_resumed` are skipped: those were roused
+/// by a full continuation prompt via `resume_session` already. Returns how
+/// many sessions landed in the log.
+pub async fn wake_recently_active(
+    pool: crate::db::Pool,
+    already_resumed: &std::collections::HashSet<Uuid>,
+) -> usize {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let since_epoch = now.saturating_sub(WAKE_RECENT_SECS);
+    let repo = crate::db::SessionBindingRepository::new(pool);
+    let Ok(bindings) = repo.recent_for_channel("telegram", since_epoch).await else {
+        tracing::warn!(target: "telegram", "Boot wake could not read recent session bindings");
+        return 0;
+    };
+
+    let mut stranded: Vec<String> = Vec::new();
+    for b in bindings {
+        let Ok(sid) = Uuid::parse_str(&b.session_id) else { continue };
+        if already_resumed.contains(&sid) {
+            continue;
+        }
+        stranded.push(short_session_id(sid));
+    }
+
+    let scheduled = stranded.len();
+    if scheduled > 0 {
+        tracing::info!(
+            target: "telegram",
+            "Boot wake pass (log-only, #34): recently-active sessions not resumed: [{}]",
+            stranded.join(",")
+        );
+        tracing::info!(
+            target: "telegram",
+            "Scheduled boot wake for {scheduled} recently-active session(s) (#1227)"
+        );
+    }
+    scheduled
+}
