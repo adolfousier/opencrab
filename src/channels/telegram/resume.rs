@@ -960,7 +960,9 @@ pub async fn wake_recently_active(
 
     let mut stranded: Vec<String> = Vec::new();
     for b in bindings {
-        let Ok(sid) = Uuid::parse_str(&b.session_id) else { continue };
+        let Ok(sid) = Uuid::parse_str(&b.session_id) else {
+            continue;
+        };
         if already_resumed.contains(&sid) {
             continue;
         }

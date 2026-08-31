@@ -107,7 +107,11 @@ impl SessionBindingRepository {
     /// survived — without waking every historical session. The INNER JOIN
     /// against `sessions` drops bindings whose session was deleted, matching
     /// [`Self::all_for_channel`] (#1224).
-    pub async fn recent_for_channel(&self, channel: &str, since_epoch: i64) -> Result<Vec<SessionBinding>> {
+    pub async fn recent_for_channel(
+        &self,
+        channel: &str,
+        since_epoch: i64,
+    ) -> Result<Vec<SessionBinding>> {
         let ch = channel.to_string();
         let mapped = self
             .pool
