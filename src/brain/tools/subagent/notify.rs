@@ -34,6 +34,24 @@ fn redirect_message(target: uuid::Uuid, occupant: uuid::Uuid) -> String {
     )
 }
 
+/// Machine-readable send verdict (Notifications v2, fork #50): the external
+/// `notify_state` mirrors the internal `Delivery` enum 1:1 — delivered /
+/// queued / redirected / refused (+ `notify_reason`, `notify_occupant`, …) —
+/// so callers never parse prose. The human text stays in `output` for the
+/// calling model; the structured fields ride `metadata`.
+fn verdict(success: bool, state: &str, detail: String, extra: &[(&str, String)]) -> ToolResult {
+    let mut result = if success {
+        ToolResult::success(detail)
+    } else {
+        ToolResult::error(detail)
+    };
+    result = result.with_metadata("notify_state".into(), state.into());
+    for (key, value) in extra {
+        result = result.with_metadata((*key).to_string(), value.clone());
+    }
+    result
+}
+
 #[async_trait]
 impl Tool for SessionNotifyTool {
     fn name(&self) -> &str {
@@ -123,17 +141,30 @@ impl Tool for SessionNotifyTool {
         use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
         match deliver_to_session(target, msg, interrupt) {
-            Delivery::Delivered => Ok(ToolResult::success(format!(
-                "Delivered to session {target}. It will process the message on its next turn."
-            ))),
+            Delivery::Delivered => Ok(verdict(
+                true,
+                "delivered",
+                format!(
+                    "Delivered to session {target}. It will process the message on its next turn."
+                ),
+                &[("notify_target", target.to_string())],
+            )),
             // Queued, not lost: the target belongs to a channel that has not
             // claimed it since the last restart (#1206). Reporting this as a
             // failure would be the opposite of what happened.
-            Delivery::Parked => Ok(ToolResult::success(format!(
-                "Queued for session {target}. Its channel has not claimed it since the last \
-                 restart, so it will be delivered as soon as that channel next binds the \
-                 session."
-            ))),
+            Delivery::Parked => Ok(verdict(
+                true,
+                "queued",
+                format!(
+                    "Queued for session {target}. Its channel has not claimed it since the last \
+                     restart, so it will be delivered as soon as that channel next binds the \
+                     session."
+                ),
+                &[
+                    ("notify_target", target.to_string()),
+                    ("notify_reason", "awaiting_channel_claim".into()),
+                ],
+            )),
             Delivery::RefusedInFlight { redirected_to } => {
                 let who = match redirected_to {
                     Some(to) => format!(
@@ -142,22 +173,96 @@ impl Tool for SessionNotifyTool {
                     ),
                     None => target.to_string(),
                 };
-                Ok(ToolResult::error(format!(
-                    "Refused: session {who} is mid-turn (a turn is streaming) and interrupt \
-                     was not set — delivering now would derail its current task. Retry when \
-                     the session goes idle, or resend with interrupt=true to queue the \
-                     message for its in-flight turn's next tool-loop boundary."
-                )))
+                let mut extra = vec![
+                    ("notify_target", target.to_string()),
+                    ("notify_reason", "mid_turn".to_string()),
+                ];
+                if let Some(to) = redirected_to {
+                    extra.push(("notify_redirected_to", to.to_string()));
+                }
+                Ok(verdict(
+                    false,
+                    "refused",
+                    format!(
+                        "Refused: session {who} is mid-turn (a turn is streaming) and interrupt \
+                         was not set — delivering now would derail its current task. Retry when \
+                         the session goes idle, or resend with interrupt=true to queue the \
+                         message for its in-flight turn's next tool-loop boundary."
+                    ),
+                    &extra,
+                ))
             }
-            Delivery::NoRoute => Ok(ToolResult::error(format!(
-                "No live route for session {target} in this process — it has not messaged \
-                 since boot, or belongs to another instance/profile. Use a2a_send for \
-                 cross-instance targets."
-            ))),
+            Delivery::NoRoute => Ok(verdict(
+                false,
+                "refused",
+                format!(
+                    "No live route for session {target} in this process — it has not messaged \
+                     since boot, or belongs to another instance/profile. Use a2a_send for \
+                     cross-instance targets."
+                ),
+                &[
+                    ("notify_target", target.to_string()),
+                    ("notify_reason", "no_route".to_string()),
+                ],
+            )),
             // The target no longer owns its channel (fork #17): the message
             // was redirected to the session that owns it NOW (fork #19) — a
             // success, not a refusal, and the reply names where it went.
-            Delivery::Redirected { to } => Ok(ToolResult::success(redirect_message(target, to))),
+            Delivery::Redirected { to } => Ok(verdict(
+                true,
+                "redirected",
+                redirect_message(target, to),
+                &[
+                    ("notify_target", target.to_string()),
+                    ("notify_occupant", to.to_string()),
+                ],
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verdict_carries_state_and_extra_metadata() {
+        let result = verdict(
+            true,
+            "redirected",
+            "detail".into(),
+            &[
+                ("notify_target", "t".into()),
+                ("notify_occupant", "o".into()),
+            ],
+        );
+        assert!(result.success);
+        assert_eq!(result.metadata.get("notify_state").unwrap(), "redirected");
+        assert_eq!(result.metadata.get("notify_target").unwrap(), "t");
+        assert_eq!(result.metadata.get("notify_occupant").unwrap(), "o");
+    }
+
+    #[test]
+    fn verdict_refusal_is_error_with_state() {
+        let result = verdict(
+            false,
+            "refused",
+            "detail".into(),
+            &[("notify_reason", "mid_turn".into())],
+        );
+        assert!(!result.success);
+        assert_eq!(result.metadata.get("notify_state").unwrap(), "refused");
+        assert_eq!(result.metadata.get("notify_reason").unwrap(), "mid_turn");
+    }
+
+    #[test]
+    fn verdict_states_mirror_delivery_enum() {
+        // The v2 external vocabulary (fork #50): every internal Delivery
+        // variant maps to exactly one of these states.
+        const STATES: [&str; 4] = ["delivered", "queued", "redirected", "refused"];
+        for state in STATES {
+            let result = verdict(true, state, "d".into(), &[]);
+            assert_eq!(result.metadata.get("notify_state").unwrap(), state);
         }
     }
 }
