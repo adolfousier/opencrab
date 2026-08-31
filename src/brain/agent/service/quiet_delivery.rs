@@ -46,8 +46,6 @@ struct TargetState {
     entries: HashMap<Uuid, DeferredNotify>,
 }
 
-static REGISTRY: OnceLock<Mutex<HashMap<Uuid, TargetState>>> = OnceLock::new();
-
 fn registry() -> &'static Mutex<HashMap<Uuid, TargetState>> {
     static CELL: OnceLock<Mutex<HashMap<Uuid, TargetState>>> = OnceLock::new();
     CELL.get_or_init(|| Mutex::new(HashMap::new()))
@@ -83,6 +81,9 @@ pub fn defer_quiet(
 /// Cancel a deferred notification before it fires. `false` = already
 /// delivered, already cancelled, or unknown id (`too_late` in the v2
 /// verdict vocabulary).
+/// No lib consumer yet — the `cancel` action rides a later enum value
+/// (fork #50); the id returned by `defer_quiet` is the handle.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn cancel_deferred(id: Uuid) -> bool {
     let Ok(mut guard) = registry().lock() else {
         return false;
@@ -173,10 +174,10 @@ fn sweep(
                 e.max_delay,
             )
         };
-        if let Some(entry) = state.entries.get(&firing_id) {
-            if !due(entry) {
-                return None;
-            }
+        if let Some(entry) = state.entries.get(&firing_id)
+            && !due(entry)
+        {
+            return None;
         }
         let ids: Vec<Uuid> = state
             .entries
