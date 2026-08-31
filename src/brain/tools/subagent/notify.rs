@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 /// Resolved v2 delivery policy (fork #50).
+#[derive(Debug)]
 enum DeliveryMode {
     /// Refuse while the target is mid-turn (the failsafe default).
     Now,
@@ -231,12 +232,12 @@ impl Tool for SessionNotifyTool {
         // v2 surface (fork #50): `action` dispatches the verb family; v1
         // ships "send" only. Omitted action = "send" (existing callers
         // never pass it).
-        if let Some(action) = input.get("action").and_then(Value::as_str) {
-            if action != "send" {
-                return Err(ToolError::InvalidInput(format!(
-                    "action '{action}' is not available yet — v1 ships 'send' only"
-                )));
-            }
+        if let Some(action) = input.get("action").and_then(Value::as_str)
+            && action != "send"
+        {
+            return Err(ToolError::InvalidInput(format!(
+                "action '{action}' is not available yet — v1 ships 'send' only"
+            )));
         }
 
         // Failsafe default (fork #13): an unset interrupt must not derail a

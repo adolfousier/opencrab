@@ -17,7 +17,7 @@
 //! re-evaluates at fire time via `deliver_to_session`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use uuid::Uuid;
@@ -36,8 +36,6 @@ pub struct DeferredNotify {
     /// Birth of THIS entry — the starvation cap runs per entry, so a
     /// late-arriving entry is not starved by an older one's clock.
     pub created_at: Instant,
-    /// Short display form for `list` / diagnostics.
-    pub summary: String,
 }
 
 /// Per-target state: the shared quiet clock plus that target's entries.
@@ -63,7 +61,6 @@ pub fn defer_quiet(
     msg: QueuedUserMessage,
     quiet_for: Duration,
     max_delay: Duration,
-    summary: String,
 ) -> Uuid {
     let id = Uuid::new_v4();
     let entry = DeferredNotify {
@@ -71,7 +68,6 @@ pub fn defer_quiet(
         quiet_for,
         max_delay,
         created_at: Instant::now(),
-        summary,
     };
     if let Ok(mut guard) = registry().lock() {
         let state = guard.entry(target).or_insert_with(|| TargetState {
@@ -98,17 +94,6 @@ pub fn cancel_deferred(id: Uuid) -> bool {
         }
     }
     false
-}
-
-/// Snapshot of currently deferred ids/targets (diagnostics; `list` verb).
-pub fn deferred_ids() -> Vec<(Uuid, Uuid)> {
-    match registry().lock() {
-        Ok(guard) => guard
-            .iter()
-            .flat_map(|(target, s)| s.entries.keys().map(move |id| (*id, *target)))
-            .collect(),
-        Err(_) => Vec::new(),
-    }
 }
 
 /// Count of entries banked for `target` right now — the flow-message footer
@@ -250,6 +235,7 @@ fn outcome_state(delivery: &Delivery) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn msg() -> QueuedUserMessage {
         QueuedUserMessage {
@@ -302,11 +288,9 @@ mod tests {
             msg(),
             Duration::from_secs(3600),
             Duration::from_secs(7200),
-            "test".into(),
         );
         assert!(cancel_deferred(id));
         assert!(!cancel_deferred(id), "second cancel = too_late");
-        assert!(deferred_ids().is_empty(), "empty target states are pruned");
     }
 
     // Integration: quiet window elapses on an idle target, the watcher
@@ -330,7 +314,6 @@ mod tests {
             msg(),
             Duration::from_millis(50),
             Duration::from_secs(30),
-            "test quiet".into(),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
         while captured.lock().unwrap().is_none() && Instant::now() < deadline {
@@ -364,7 +347,6 @@ mod tests {
             msg(),
             Duration::from_secs(300),
             Duration::from_millis(80),
-            "test cap".into(),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
         while captured.lock().unwrap().is_none() && Instant::now() < deadline {
@@ -397,14 +379,12 @@ mod tests {
             msg(),
             Duration::from_millis(60),
             Duration::from_secs(30),
-            "batch a".into(),
         );
         let _b = defer_quiet(
             session,
             msg(),
             Duration::from_millis(60),
             Duration::from_secs(30),
-            "batch b".into(),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
         while captured.lock().unwrap().len() < 2 && Instant::now() < deadline {
@@ -415,6 +395,5 @@ mod tests {
             2,
             "both same-target entries drain in one batch"
         );
-        assert!(deferred_ids().is_empty());
     }
 }
