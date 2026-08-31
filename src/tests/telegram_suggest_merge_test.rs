@@ -9,8 +9,8 @@
 //! rule is that no source file carries a `#[cfg(test)] mod tests` block.
 
 use crate::channels::telegram::suggest_options::{
-    FOLLOWUP_PREFIX, MAX_BUTTON_CHARS, MAX_NUMBERS_PER_ROW, SHARED_ROW_MAX_CHARS, SuggestLayout,
-    folded_list_html, pick_layout, suggestion_rows_rich_html,
+    BUTTON_PADDING_CHARS, FOLLOWUP_PREFIX, MAX_BUTTON_CHARS, MAX_NUMBERS_PER_ROW, ROW_BUDGET_CHARS,
+    SuggestLayout, folded_list_html, pick_layout, suggestion_rows_rich_html,
 };
 
 fn opts(v: &[&str]) -> Vec<String> {
@@ -32,15 +32,47 @@ fn test_five_short_options_do_not_share_a_row() {
     // More than MAX_NUMBERS_PER_ROW tap targets in one row leaves each too
     // small for a finger, so they drop to the Column tier.
     let o = opts(&["alpha", "beta", "gamma", "delta", "eps"]);
-    assert!(o.iter().all(|s| s.chars().count() <= SHARED_ROW_MAX_CHARS));
+    let cost: usize = o
+        .iter()
+        .map(|s| s.chars().count() + BUTTON_PADDING_CHARS)
+        .sum();
+    assert!(
+        cost <= ROW_BUDGET_CHARS,
+        "the budget alone would allow this row — the count is what kills it"
+    );
     assert!(o.len() > MAX_NUMBERS_PER_ROW);
     assert_eq!(pick_layout(&o), SuggestLayout::Column);
 }
 
 #[test]
 fn test_one_long_label_kills_the_shared_row() {
-    let o = vec!["Yes".to_string(), "x".repeat(SHARED_ROW_MAX_CHARS + 1)];
+    // Budget model (#52): a label too wide for the row pushes the cost past
+    // ROW_BUDGET_CHARS even with a short sibling.
+    let o = vec![
+        "Yes".to_string(),
+        "x".repeat(ROW_BUDGET_CHARS - "Yes".len() - 2 * BUTTON_PADDING_CHARS + 1),
+    ];
+    let cost: usize = o
+        .iter()
+        .map(|s| s.chars().count() + BUTTON_PADDING_CHARS)
+        .sum();
+    assert_eq!(
+        cost,
+        ROW_BUDGET_CHARS + 1,
+        "test label must pierce the budget"
+    );
     assert_eq!(pick_layout(&o), SuggestLayout::Column);
+}
+
+#[test]
+fn test_row_budget_boundary_is_inclusive() {
+    // Calibrated 2026-08-31 (#52): four 8-char labels land exactly on the
+    // budget (4×8 + 4×1 pad = 36) and share the row, while 2×18 (38) cuts —
+    // the pair that pinned pad=1, B=36 over pad=2, B=40.
+    let edge = opts(&["approved", "declined", "postpone", "deferred"]);
+    assert_eq!(pick_layout(&edge), SuggestLayout::SharedRow);
+    let over = vec!["x".repeat(18), "x".repeat(18)];
+    assert_eq!(pick_layout(&over), SuggestLayout::Column);
 }
 
 #[test]

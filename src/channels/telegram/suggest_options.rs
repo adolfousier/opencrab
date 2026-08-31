@@ -97,16 +97,19 @@ pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRe
 /// (`sendRichMessage` probes, messages 29975 + 29991): a single full-width
 /// button fits <=50 chars on one line and wraps by 54. (The original
 /// "shared rows wrap at 11+8=19" claim was DISPROVEN by the 2026-08-31
-/// probes — see [`SHARED_ROW_MAX_CHARS`] and fork issue #49.)
+/// probes — see [`ROW_BUDGET_CHARS`] and fork issues #49/#52.)
 pub(crate) const MAX_BUTTON_CHARS: usize = 50;
-/// Longest label allowed to share one row with its siblings. Recalibrated
-/// 2026-08-31 (live probes, fork issue #49): the real constraint is
-/// ROW-TOTAL width (~32 chars shared equally across the row, before the
-/// body-width-dependent truncation Alexey observed), not per-label chars —
-/// 4×8=32 held, 15+18=33 clipped ~2 symbols, and bubble width varies with
-/// the message body, so 12 keeps a safety margin under the worst bubble
-/// while doubling information per row vs the old 8.
-pub(crate) const SHARED_ROW_MAX_CHARS: usize = 12;
+/// Shared-row BUDGET model (owner-directed, fork issue #52): a row of N
+/// buttons fits only if total label chars + BUTTON_PADDING_CHARS per button
+/// stay within ROW_BUDGET_CHARS. Solved from controlled probes 2026-08-31
+/// (raw surface, thread 30134): 4×8 (cost 36) and 2×15 (32) share the row;
+/// 2×18 (38), 3×12 (39), 3×15 (48), 4×10–11 (46) cut. The pair 2×18 cut vs
+/// 4×8 fit pins pad=1, B=36 uniquely — pad=2/B=40 would have allowed 2×18.
+/// Supersedes #49's per-label bump (8→12) — right observation, wrong axis.
+/// Known residual: bubble-width variance can still clip a legal row on
+/// narrow plain-html bodies.
+pub(crate) const ROW_BUDGET_CHARS: usize = 36;
+pub(crate) const BUTTON_PADDING_CHARS: usize = 1;
 /// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
 /// than 4 per row, so every target stays big enough for a finger.
 pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
@@ -115,7 +118,8 @@ pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
 /// Tiers are measured, not guessed — see [`MAX_BUTTON_CHARS`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SuggestLayout {
-    /// Every label short AND few options: all buttons share ONE row.
+    /// Few options AND the label total fits the row budget: all buttons
+    /// share ONE row.
     SharedRow,
     /// Every label fits a full-width button: one button per row.
     Column,
@@ -127,9 +131,11 @@ pub(crate) enum SuggestLayout {
 
 pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     let width = |o: &String| o.chars().count();
-    if options.len() <= MAX_NUMBERS_PER_ROW
-        && options.iter().all(|o| width(o) <= SHARED_ROW_MAX_CHARS)
-    {
+    let row_cost: usize = options
+        .iter()
+        .map(|o| width(o) + BUTTON_PADDING_CHARS)
+        .sum();
+    if options.len() <= MAX_NUMBERS_PER_ROW && row_cost <= ROW_BUDGET_CHARS {
         SuggestLayout::SharedRow
     } else if options.iter().all(|o| width(o) <= MAX_BUTTON_CHARS) {
         SuggestLayout::Column
