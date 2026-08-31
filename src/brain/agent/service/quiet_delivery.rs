@@ -97,17 +97,6 @@ pub fn cancel_deferred(id: Uuid) -> bool {
     false
 }
 
-/// Count of entries banked for `target` right now — the flow-message footer
-/// segment input (`✉️ N deferred`, fork #50). Snapshot semantics, same as the
-/// #1054 background indicator: a settled flow message keeps what was true at
-/// its settle render.
-pub fn deferred_count_for(target: Uuid) -> usize {
-    match registry().lock() {
-        Ok(guard) => guard.get(&target).map_or(0, |s| s.entries.len()),
-        Err(_) => 0,
-    }
-}
-
 /// Due predicate, pure so the window math is pinable by tests.
 ///
 /// Due when the starvation cap is hit regardless of turn state (forced

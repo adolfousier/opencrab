@@ -234,7 +234,6 @@ fn live_footer_drops_gear_before_icon_activity() {
             ctx: None,
             elapsed_secs: 0,
             bg: None,
-            quiet_deferred: 0,
         },
         HeaderMarkup::Markdown,
     );
@@ -250,7 +249,6 @@ fn live_footer_drops_gear_before_icon_activity() {
             ctx: None,
             elapsed_secs: 0,
             bg: None,
-            quiet_deferred: 0,
         },
         HeaderMarkup::Markdown,
     );
@@ -273,52 +271,8 @@ fn icon_led_segment_retires_the_bare_cog_fallback() {
             ctx: None,
             elapsed_secs: 65,
             bg: None,
-            quiet_deferred: 0,
         },
         HeaderMarkup::Markdown,
     );
     assert_eq!(out, "⏳ Compacting context… • ⏱ 1:05");
-}
-
-#[test]
-fn quiet_deferred_segment_renders_after_bg() {
-    // Fork #50: banked quiet notifications show as the final footer segment,
-    // after the #1054 background indicator — the quiet-mode visibility the
-    // owner directive required (same surface as detached tasks / sub-agents).
-    let out = merged_footer(
-        &FooterParts {
-            outcome: Some(("✅", "Finished")),
-            plan_state: None,
-            working_on: None,
-            activity: None,
-            tool_count: 1,
-            has_log: true,
-            ctx: None,
-            elapsed_secs: 30,
-            bg: Some("2 tasks running"),
-            quiet_deferred: 2,
-        },
-        HeaderMarkup::Markdown,
-    );
-    assert_eq!(
-        out,
-        "✅ Finished • 1 tool calls • ⏱ 0:30 • 🔧 2 tasks running • ✉️ 2 deferred"
-    );
-    // Zero banked notices render nothing — no segment, no glyph.
-    let none = merged_footer(
-        &FooterParts {
-            outcome: Some(("✅", "Finished")),
-            plan_state: None,
-            working_on: None,
-            activity: None,
-            tool_count: 0,
-            has_log: false,
-            ctx: None,
-            elapsed_secs: 5,
-            bg: None,
-            quiet_deferred: 0,
-        },
-        HeaderMarkup::Markdown,
-    );
-    assert_eq!(none, "✅ Finished • ⏱ 0:05");
 }

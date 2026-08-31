@@ -375,7 +375,6 @@ pub(crate) async fn resume_session_inner(
         turn_started_at: std::time::Instant::now(),
         flow_outcome: None,
         bg_indicator: None,
-        quiet_deferred: 0,
         bg_count: None,
         subagent_counts: Default::default(),
         sent_intermediates: Vec::new(),
@@ -713,9 +712,6 @@ pub(crate) async fn resume_session_inner(
         let (bg_indicator, bg_count) = super::handler::bg_indicator_for(&agent, session_id);
         s.bg_indicator = bg_indicator;
         s.bg_count = bg_count;
-        // Quiet-deferred stamp, same as handle_message's settle (fork #50).
-        s.quiet_deferred =
-            crate::brain::agent::service::quiet_delivery::deferred_count_for(session_id);
         // Sub-agent counts ride the same settle stamp as the crash-resume
         // path's background tasks (#1183 parity with handle_message).
         s.subagent_counts = super::handler::subagent_counts_for(&agent, session_id);

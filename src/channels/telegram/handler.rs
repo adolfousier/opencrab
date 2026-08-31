@@ -2442,7 +2442,6 @@ pub(crate) async fn handle_message(
         turn_started_at: std::time::Instant::now(),
         flow_outcome: None,
         bg_indicator: None,
-        quiet_deferred: 0,
         bg_count: None,
         subagent_counts: Default::default(),
         sent_intermediates: Vec::new(),
@@ -2693,10 +2692,6 @@ pub(crate) async fn handle_message(
         let (bg_indicator, bg_count) = bg_indicator_for(&agent, session_id);
         s.bg_indicator = bg_indicator;
         s.bg_count = bg_count;
-        // Quiet-deferred notices banked for this session (fork #50): settle-
-        // time snapshot feeding the footer's `✉️ N deferred` segment.
-        s.quiet_deferred =
-            crate::brain::agent::service::quiet_delivery::deferred_count_for(session_id);
         // Sub-agents are the second background registry (#1183): the header
         // must wait on them too, split working vs awaiting collection, or a
         // turn ending with agents mid-work reads "✅ Finished".

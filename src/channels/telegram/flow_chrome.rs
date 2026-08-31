@@ -335,12 +335,6 @@ pub(crate) struct FooterParts<'a> {
     /// are still running at settle time. Renders as the final footer segment
     /// `🔧 <label> running` (or `🔧 N tasks running`) after the clock.
     pub(crate) bg: Option<&'a str>,
-    /// Quiet-deferred notification count (fork #50): banked notices waiting
-    /// on this session's quiet window at settle time. `> 0` renders the final
-    /// footer segment `✉️ N deferred` after the background segment — the
-    /// quiet-mode visibility the owner directive required (mirror of how
-    /// background tasks and sub-agents show on the flow message).
-    pub(crate) quiet_deferred: usize,
 }
 
 /// Build the merged flow footer: one ` • `-joined string (ADR 0005 Decision
@@ -432,13 +426,6 @@ pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String
     // the typing indicator staying alive is too easy to miss.
     if let Some(bg) = parts.bg {
         segs.push(format!("🔧 {}", esc(bg)));
-    }
-
-    // Segment 6 — quiet-deferred notifications (fork #50): banked notices
-    // waiting on this session's quiet window. Icon-led per the #29 convention,
-    // so it renders bare (no cog) wherever it lands in the join.
-    if parts.quiet_deferred > 0 {
-        segs.push(format!("✉️ {} deferred", parts.quiet_deferred));
     }
 
     segs.join(" • ")

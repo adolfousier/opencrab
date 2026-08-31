@@ -163,11 +163,6 @@ pub(crate) struct StreamingState {
     /// for several, `None` when nothing is detached. Rendered as the final
     /// footer segment after the clock.
     pub(crate) bg_indicator: Option<String>,
-    /// Quiet-deferred notification count at settle time (fork #50): entries
-    /// banked in the quiet engine for this session when the turn settled.
-    /// Snapshot like [`Self::bg_indicator`]; feeds the footer's `✉️ N
-    /// deferred` segment (zero renders nothing).
-    pub(crate) quiet_deferred: usize,
     /// Background-task count at settle time (#1144): `None` when no manager is
     /// wired, `Some(n)` otherwise. Drives the settled-header override so a turn
     /// that ends with detached work reads "Waiting for N background task(s)"
@@ -412,7 +407,6 @@ pub(crate) fn render_flow_html_chrome(
         FOLDED_NARRATION_CAP,
         elapsed_secs,
         None,
-        0,
         false,
     )
 }
@@ -431,7 +425,6 @@ fn footer_parts<'a>(
     has_log: bool,
     elapsed_secs: u64,
     bg: Option<&'a str>,
-    quiet_deferred: usize,
 ) -> super::flow_chrome::FooterParts<'a> {
     let outcome = match header {
         FlowHeader::Settled { icon, verb, .. } => Some((*icon, *verb)),
@@ -447,7 +440,6 @@ fn footer_parts<'a>(
         ctx: sections.ctx.as_deref(),
         elapsed_secs,
         bg,
-        quiet_deferred,
     }
 }
 
@@ -506,7 +498,6 @@ pub(crate) fn render_flow_html_chrome_pref(
     narration_cap: usize,
     elapsed_secs: u64,
     bg: Option<&str>,
-    quiet_deferred: usize,
     compacting: bool,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
@@ -532,7 +523,6 @@ pub(crate) fn render_flow_html_chrome_pref(
             has_log,
             elapsed_secs,
             bg,
-            quiet_deferred,
         ),
         HeaderMarkup::Html,
     );
@@ -607,7 +597,6 @@ pub(crate) fn render_flow_details_chrome(
         FOLDED_NARRATION_CAP,
         elapsed_secs,
         None,
-        0,
         false,
     )
 }
@@ -628,7 +617,6 @@ pub(crate) fn render_flow_details_chrome_pref(
     narration_cap: usize,
     elapsed_secs: u64,
     bg: Option<&str>,
-    quiet_deferred: usize,
     compacting: bool,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
@@ -651,7 +639,6 @@ pub(crate) fn render_flow_details_chrome_pref(
             has_log,
             elapsed_secs,
             bg,
-            quiet_deferred,
         ),
         HeaderMarkup::Html,
     );
@@ -1083,7 +1070,6 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
                 narration_cap,
                 elapsed,
                 s.bg_indicator.as_deref(),
-                s.quiet_deferred,
                 false, // settled renders drop the activity segment regardless
             )
         }
@@ -1095,7 +1081,6 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
             narration_cap,
             elapsed,
             s.bg_indicator.as_deref(),
-            s.quiet_deferred,
             s.compacting,
         ),
     }
@@ -1122,7 +1107,6 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
                 narration_cap,
                 elapsed,
                 s.bg_indicator.as_deref(),
-                s.quiet_deferred,
                 false, // settled renders drop the activity segment regardless
             )
         }
@@ -1134,7 +1118,6 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
             narration_cap,
             elapsed,
             s.bg_indicator.as_deref(),
-            s.quiet_deferred,
             s.compacting,
         ),
     }
