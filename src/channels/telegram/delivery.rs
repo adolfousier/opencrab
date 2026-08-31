@@ -500,7 +500,7 @@ pub(crate) async fn deliver_final_response(
                 && !sent.is_empty()
                 && super::rich::should_send_native_rich_for(
                     &pre_dedup_text,
-                    options_pending(&streaming),
+                    options_pending(streaming),
                 ) {
                 let rich_md = pre_dedup_text.clone();
                 match super::rich::send_rich_with_mermaid_id(
