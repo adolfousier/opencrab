@@ -95,12 +95,18 @@ pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRe
 
 /// Button-width calibration, measured 2026-08-25 on Alexey's client
 /// (`sendRichMessage` probes, messages 29975 + 29991): a single full-width
-/// button fits <=50 chars on one line and wraps by 54; shared rows only
-/// survive MICRO labels (Yes/No pairs fit; 11+8=19 chars total wraps).
+/// button fits <=50 chars on one line and wraps by 54. (The original
+/// "shared rows wrap at 11+8=19" claim was DISPROVEN by the 2026-08-31
+/// probes — see [`SHARED_ROW_MAX_CHARS`] and fork issue #49.)
 pub(crate) const MAX_BUTTON_CHARS: usize = 50;
-/// Longest label allowed to share one row with its siblings (measured:
-/// 3-7 char words sit side by side without wrapping).
-pub(crate) const SHARED_ROW_MAX_CHARS: usize = 8;
+/// Longest label allowed to share one row with its siblings. Recalibrated
+/// 2026-08-31 (live probes, fork issue #49): the real constraint is
+/// ROW-TOTAL width (~32 chars shared equally across the row, before the
+/// body-width-dependent truncation Alexey observed), not per-label chars —
+/// 4×8=32 held, 15+18=33 clipped ~2 symbols, and bubble width varies with
+/// the message body, so 12 keeps a safety margin under the worst bubble
+/// while doubling information per row vs the old 8.
+pub(crate) const SHARED_ROW_MAX_CHARS: usize = 12;
 /// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
 /// than 4 per row, so every target stays big enough for a finger.
 pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
