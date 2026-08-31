@@ -52,6 +52,32 @@ fn verdict(success: bool, state: &str, detail: String, extra: &[(&str, String)])
     result
 }
 
+/// Resolve the v2 delivery policy against the deprecated `interrupt` alias
+/// (fork #50). `interrupt=true` was always "queue for the in-flight turn's
+/// next tool-loop boundary" — that is mode `turn-end`; unset/false was
+/// "refuse while streaming" — mode `now`. Both may be passed only when they
+/// agree; a disagreement is an error, never a silent precedence. Unknown
+/// modes (e.g. `quiet`, landing with the quiet engine) are rejected here so
+/// the schema can teach them before they exist.
+fn resolve_mode(mode: Option<&str>, interrupt: Option<bool>) -> Result<bool> {
+    let mode = match mode {
+        None => None,
+        Some(known @ ("now" | "turn-end")) => Some(known),
+        Some(other) => {
+            return Err(ToolError::InvalidInput(format!(
+                "delivery.mode '{other}' is not available yet — use 'now' or 'turn-end'"
+            )));
+        }
+    };
+    match (mode, interrupt) {
+        (Some("turn-end"), None | Some(true)) | (None, Some(true)) => Ok(true),
+        (Some("now"), None | Some(false)) | (None, None | Some(false)) => Ok(false),
+        _ => Err(ToolError::InvalidInput(
+            "delivery.mode and interrupt disagree — pass one, not both".into(),
+        )),
+    }
+}
+
 #[async_trait]
 impl Tool for SessionNotifyTool {
     fn name(&self) -> &str {
@@ -76,6 +102,11 @@ impl Tool for SessionNotifyTool {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["send"],
+                    "description": "Operation on the notification family. v1 ships 'send' only (the default when omitted); 'cancel' and 'list' join when notification ids gain consumers."
+                },
                 "target_session": {
                     "type": "string",
                     "description": "UUID of the target session (from session_search list/query, or the from=<id> header of a session_notify you received)"
@@ -84,9 +115,20 @@ impl Tool for SessionNotifyTool {
                     "type": "string",
                     "description": "Text to deliver to the target session"
                 },
+                "delivery": {
+                    "type": "object",
+                    "description": "Delivery policy. Omit for the default (mode 'now').",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["now", "turn-end"],
+                            "description": "'now' (default): deliver immediately; REFUSES while the target is mid-turn. 'turn-end': queue the message for the target's next tool-loop boundary even while it streams. More modes (quiet: defer until the target has been idle for a window) arrive with the quiet engine."
+                        }
+                    }
+                },
                 "interrupt": {
                     "type": "boolean",
-                    "description": "Deliver even if the target session is mid-turn. Default false: the tool REFUSES while the target is streaming, so a working session is never derailed. Set true only when the target must see this now; the message then queues for its next tool-loop boundary, framed as arrived-during-work."
+                    "description": "Deprecated alias for delivery.mode: true = 'turn-end', false/unset = 'now'. Prefer delivery.mode; passing both is allowed only when they agree."
                 }
             },
             "required": ["target_session", "message"]
@@ -129,14 +171,27 @@ impl Tool for SessionNotifyTool {
             bg_meta: None,
         };
 
+        // v2 surface (fork #50): `action` dispatches the verb family; v1
+        // ships "send" only. Omitted action = "send" (existing callers
+        // never pass it).
+        if let Some(action) = input.get("action").and_then(Value::as_str) {
+            if action != "send" {
+                return Err(ToolError::InvalidInput(format!(
+                    "action '{action}' is not available yet — v1 ships 'send' only"
+                )));
+            }
+        }
+
         // Failsafe default (fork #13): an unset interrupt must not derail a
-        // session that is mid-turn. The refusal names the remedy so the
-        // calling model learns the knob from the error itself — same pattern
-        // as the 429 RetryAfter help text.
-        let interrupt = input
-            .get("interrupt")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        // session that is mid-turn. v2 (fork #50) re-expresses the knob as
+        // the delivery policy — the alias keeps old prompts working.
+        let interrupt = resolve_mode(
+            input
+                .get("delivery")
+                .and_then(|d| d.get("mode"))
+                .and_then(Value::as_str),
+            input.get("interrupt").and_then(Value::as_bool),
+        )?;
 
         use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
@@ -264,5 +319,30 @@ mod tests {
             let result = verdict(true, state, "d".into(), &[]);
             assert_eq!(result.metadata.get("notify_state").unwrap(), state);
         }
+    }
+
+    #[test]
+    fn resolve_mode_defaults_and_alias() {
+        // Default: refuse while streaming (the fork #13 failsafe).
+        assert!(resolve_mode(None, None).unwrap() == false);
+        // The interrupt alias maps exactly onto the modes.
+        assert!(resolve_mode(None, Some(true)).unwrap());
+        assert!(resolve_mode(None, Some(false)).unwrap() == false);
+        assert!(resolve_mode(Some("now"), None).unwrap() == false);
+        assert!(resolve_mode(Some("turn-end"), None).unwrap());
+    }
+
+    #[test]
+    fn resolve_mode_agreeing_pair_passes_disagreement_rejected() {
+        assert!(resolve_mode(Some("turn-end"), Some(true)).unwrap());
+        assert!(resolve_mode(Some("now"), Some(false)).unwrap() == false);
+        assert!(resolve_mode(Some("now"), Some(true)).is_err());
+        assert!(resolve_mode(Some("turn-end"), Some(false)).is_err());
+    }
+
+    #[test]
+    fn resolve_mode_rejects_modes_before_their_engine_lands() {
+        let err = resolve_mode(Some("quiet"), None).unwrap_err().to_string();
+        assert!(err.contains("not available yet"), "got: {err}");
     }
 }
