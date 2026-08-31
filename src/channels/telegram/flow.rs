@@ -482,6 +482,7 @@ fn flow_body_entries(lines: &[FlowLine], narration_cap: usize) -> (Vec<String>, 
 /// `<blockquote expandable>` (full body, no summary line above it — Decision
 /// 11/12); the merged footer is the plain final line (Decision 3).
 /// `elapsed_secs` drives the footer clock (Decision 13).
+#[allow(clippy::too_many_arguments)] // chrome-pref signature keeps render knobs explicit (#29 adds compacting)
 pub(crate) fn render_flow_html_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
@@ -600,6 +601,7 @@ pub(crate) fn render_flow_details_chrome(
 /// when the log has entries that `<sub>` becomes the processing-log `<summary>`
 /// with the full entry list as the collapsed body (Decision 12). `elapsed_secs`
 /// drives the footer clock.
+#[allow(clippy::too_many_arguments)] // same as html chrome-pref (#29 adds compacting)
 pub(crate) fn render_flow_details_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
