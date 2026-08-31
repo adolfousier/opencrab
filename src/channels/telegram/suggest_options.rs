@@ -99,17 +99,25 @@ pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRe
 /// "shared rows wrap at 11+8=19" claim was DISPROVEN by the 2026-08-31
 /// probes — see [`ROW_BUDGET_CHARS`] and fork issues #49/#52.)
 pub(crate) const MAX_BUTTON_CHARS: usize = 50;
-/// Shared-row BUDGET model (owner-directed, fork issue #52): a row of N
-/// buttons fits only if total label chars + BUTTON_PADDING_CHARS per button
-/// stay within ROW_BUDGET_CHARS. Solved from controlled probes 2026-08-31
-/// (raw surface, thread 30134): 4×8 (cost 36) and 2×15 (32) share the row;
-/// 2×18 (38), 3×12 (39), 3×15 (48), 4×10–11 (46) cut. The pair 2×18 cut vs
-/// 4×8 fit pins pad=1, B=36 uniquely — pad=2/B=40 would have allowed 2×18.
-/// Supersedes #49's per-label bump (8→12) — right observation, wrong axis.
-/// Known residual: bubble-width variance can still clip a legal row on
-/// narrow plain-html bodies.
+/// Shared-row BUDGET model (owner-directed, fork issues #52/#53): a row of
+/// N buttons fits only if total label chars + BUTTON_PADDING_CHARS per
+/// button stay within ROW_BUDGET_CHARS. B=36/pad=1 was solved on the raw
+/// html plane (probes 2026-08-31, thread 30134): 4×8 (36) and 2×15 (32)
+/// shared; 2×18 (38), 3×12 (39), 3×15 (48) cut. The live rich-plane smoke
+/// matrix (#52 evidence, 8/8 verdicts) then showed rich is tighter at the
+/// same char cost: Latin 4×8 cut one label, Cyrillic 4×8 cut all four, and
+/// Cyrillic 2×17 clipped half a glyph per button — while Latin 2×17 fit.
+/// Owner call 2026-08-31: single-language model, no script factor, margin
+/// over density — PAD raised to 2 so the budget sits 2–4 cost-units below
+/// the measured rich wall. New boundaries: 4×7 and 2×16 (cost 36) share;
+/// 4×8 (40) and 2×17 (38) stack. Supersedes #49's per-label bump (8→12)
+/// — right observation, wrong axis. Known residual: bubble-width variance
+/// can still clip a legal row on narrow plain-html bodies.
 pub(crate) const ROW_BUDGET_CHARS: usize = 36;
-pub(crate) const BUTTON_PADDING_CHARS: usize = 1;
+/// Per-button padding inside the shared-row budget. Raised 1→2 (#53) as
+/// the rich-plane margin: rich's keyboard gutter eats more than html's,
+/// and the wider Cyrillic glyphs ride the same margin — no script factor.
+pub(crate) const BUTTON_PADDING_CHARS: usize = 2;
 /// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
 /// than 4 per row, so every target stays big enough for a finger.
 pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;

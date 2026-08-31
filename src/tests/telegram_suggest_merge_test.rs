@@ -66,13 +66,19 @@ fn test_one_long_label_kills_the_shared_row() {
 
 #[test]
 fn test_row_budget_boundary_is_inclusive() {
-    // Calibrated 2026-08-31 (#52): four 8-char labels land exactly on the
-    // budget (4×8 + 4×1 pad = 36) and share the row, while 2×18 (38) cuts —
-    // the pair that pinned pad=1, B=36 over pad=2, B=40.
-    let edge = opts(&["approved", "declined", "postpone", "deferred"]);
-    assert_eq!(pick_layout(&edge), SuggestLayout::SharedRow);
-    let over = vec!["x".repeat(18), "x".repeat(18)];
-    assert_eq!(pick_layout(&over), SuggestLayout::Column);
+    // Re-calibrated 2026-08-31 (#53, rich-plane margin): pad=2 moves the
+    // boundary — 4×7 (4×7 + 4×2 pad = 36) and 2×16 (36) share the row,
+    // while 4×8 (40) and 2×17 (38) stack. The 2×17-out arm is the row that
+    // fit full on Latin rich under pad=1 and clipped Cyrillic by half a
+    // glyph per button.
+    let edge4 = opts(&["abandon", "confirm", "decline", "restart"]);
+    assert_eq!(pick_layout(&edge4), SuggestLayout::SharedRow);
+    let edge2 = vec!["x".repeat(16), "x".repeat(16)];
+    assert_eq!(pick_layout(&edge2), SuggestLayout::SharedRow);
+    let over4 = opts(&["approved", "declined", "postpone", "deferred"]);
+    assert_eq!(pick_layout(&over4), SuggestLayout::Column);
+    let over2 = vec!["x".repeat(17), "x".repeat(17)];
+    assert_eq!(pick_layout(&over2), SuggestLayout::Column);
 }
 
 #[test]
