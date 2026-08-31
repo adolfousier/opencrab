@@ -232,8 +232,35 @@ async fn edit_ladder_drops_in_priority_order_and_queues_latest_wins_finals() {
     );
 }
 
-#[tokio::test(start_paused = true)]
-async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
+/// Install (once per process) a warn-level tracing subscriber writing to
+/// stderr, so the governor drainer's abandonment `warn!` — which carries the
+/// underlying wire error string — lands in the failing test's captured
+/// output instead of vanishing (the default test binary installs no
+/// subscriber). The drainer runs as a spawned task on this test's own
+/// current-thread runtime, so libtest attaches its stderr to THIS test.
+/// Without this a red drainer run leaves no receipt for why the wire attempt
+/// failed (#28 mode 3).
+fn ensure_tracing_capture() {
+    use std::sync::OnceLock;
+    static HOOK: OnceLock<()> = OnceLock::new();
+    HOOK.get_or_init(|| {
+        // Best effort: only the first caller in the process may install the
+        // global default; a later Err means one is already in place.
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::io::stderr)
+            .try_init();
+    });
+}
+
+/// One full drainer round: fresh registry + virtual clock, fresh mock server
+/// and bot, one final queued through the starved edits bucket, then the
+/// spawned drainer settles it on the wire. Each round is an independent draw
+/// of the paused-clock schedule lottery; the stress variant below runs six
+/// draws so a rare wire race cannot hide behind a green run.
+///
+/// `label` names the round in every race-relevant failure message.
+async fn drainer_wire_round(label: &str) {
     let _guard = ts::registry_guard().await;
     ts::reset(5_000);
     rl_config!(
@@ -269,11 +296,30 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
         .with_body(
             r#"{"ok":true,"result":{"message_id":11,"date":1756166400,"chat":{"id":-100333,"title":"gates","type":"supergroup"},"text":"settled"}}"#,
         )
-        .expect(1)
+        // Retry-budget tolerance (#28, mode 2): a transient Err on the FIRST
+        // attempt — the wire hit counted, the 200 served, yet reqwest
+        // surfaced an error under paused-clock skew — makes the drainer
+        // requeue and retry, as designed. `.expect(1)` stopped the mock
+        // matching after one hit (mockito's is_missing_hits gate), so every
+        // retry got an unmatched 501 and the test died in a retry storm:
+        // one wire hit, delivered_finals stuck at 0, twice red on 39857b16.
+        // Serve the real response for the drainer's full retry budget
+        // instead; exactly-once is enforced where it lives — the
+        // delivered_finals counter asserted below.
+        .expect_at_least(1)
+        .expect_at_most(8) // governor's FINAL_MAX_ATTEMPTS
         .create_async()
         .await;
 
-    let bot = Bot::new("TESTTOKEN").set_api_url(server.url().parse().unwrap());
+    // Not Bot::new: that applies teloxide's default_reqwest_settings(),
+    // which includes a 17s request timeout built from tokio timers. Under
+    // this test's paused clock the deadline sits on VIRTUAL time, so the
+    // converge loop's advances can cancel an in-flight request that mockito
+    // already counted -> the drainer sees Err, requeues, retries -> second
+    // wire hit -> .expect(1) flakes (~50% of runs). A client with no
+    // timeout leaves nothing for the virtual clock to race.
+    let bot = Bot::with_client("TESTTOKEN", reqwest::Client::builder().build().unwrap())
+        .set_api_url(server.url().parse().unwrap());
     assert!(
         !governor::edit_admission(
             &bot,
@@ -288,30 +334,107 @@ async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
     );
     assert_eq!(ts::snapshot(CHAT).unwrap().finals_pending, 1);
 
-    // Mock the passage of time until a token refills, polling in DRAIN_TICK
-    // steps; the spawned drainer lands the queued payload on the mock server.
-    // Everything runs on tokio's paused clock — no real sleeping anywhere.
-    let converge = async {
-        for _ in 0..60 {
-            ts::advance(600); // > 1/s refill AND > DRAIN_TICK (400ms)
-            tokio::time::sleep(Duration::from_millis(400)).await;
-            if ts::snapshot(CHAT)
-                .map(|s| s.delivered_finals == 1 && s.finals_pending == 0)
-                .unwrap_or(false)
-            {
-                break;
+    // Event-driven settle wait (#28 mode 4). `take_due_final` pops the final
+    // BEFORE the wire call, so `finals_pending` hits 0 while
+    // `delivered_finals` is still 0 — the old poll's exit condition
+    // (`delivered==1 && pending==0`) was unreachable mid-flight. Its 400ms
+    // sleep pump kept a virtual timer pending every iteration, so the
+    // paused runtime auto-advanced instead of real-parking on the reactor;
+    // the buffered mockito 200 never reached the drainer and the whole
+    // budget burned out in virtual milliseconds (receipt: run 33262674165,
+    // 0/0/0 at the exactly-once assert). Now `deliver_final` fires
+    // `ts::notify_settled()` on every verdict exit, and this loop parks on
+    // that notifier with NO tokio timer pending in this task — a real
+    // reactor park, so the in-flight response lands in real time and the
+    // drainer's verdict wakes the loop. The drainer's own DRAIN_TICK timer
+    // keeps auto-advance ticking until the wire call is in flight, then
+    // real time takes over. No real sleeping anywhere in the test itself.
+    //
+    // Watchdog: one real-clock thread per round. If the drainer is genuinely
+    // wedged (no verdict, no notify), the thread fires after 30s and the
+    // self-reporting panic below trips — the backstop the deleted 120s
+    // virtual timeout used to be (with the sleep pump gone that timeout
+    // would be the ONLY pending virtual timer and auto-advance to zero,
+    // panicking every run).
+    let watchdog = std::sync::Arc::new(tokio::sync::Notify::new());
+    let armed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    {
+        let watchdog = std::sync::Arc::clone(&watchdog);
+        let armed = std::sync::Arc::clone(&armed);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(30));
+            if armed.load(std::sync::atomic::Ordering::SeqCst) {
+                watchdog.notify_one();
             }
+        });
+    }
+    let wedged = loop {
+        let settled = ts::snapshot(CHAT)
+            .map(|s| s.finals_pending == 0 && (s.delivered_finals + s.failed_finals) >= 1)
+            .unwrap_or(false);
+        if settled {
+            break false;
+        }
+        tokio::select! {
+            _ = ts::settle_notifier().notified() => {
+                // A drainer exit happened; re-read the counters next pass.
+                // Keep advancing virtual time for refill / 429-wait
+                // bookkeeping while drainer timers are still pending.
+                ts::advance(600); // > 1/s refill AND > DRAIN_TICK (400ms)
+            }
+            _ = watchdog.notified() => break true,
         }
     };
-    tokio::time::timeout(Duration::from_secs(120), converge)
-        .await
-        .expect("queued final never drained");
+    armed.store(false, std::sync::atomic::Ordering::SeqCst); // disarm
+    if wedged {
+        // Self-reporting failure (#28): the counters say WHICH half of
+        // the drainer stalled — wire verdict vs bookkeeping.
+        match ts::snapshot(CHAT) {
+            Some(s) => panic!(
+                "queued final never drained ({label}): delivered={} failed={} pending={}",
+                s.delivered_finals, s.failed_finals, s.finals_pending
+            ),
+            None => panic!("queued final never drained: peer snapshot vanished"),
+        }
+    }
 
-    delivered.assert(); // exactly one wire hit, body matched above
+    delivered.assert(); // wire hits within the retry budget, body matched above
     let snap = ts::snapshot(CHAT).unwrap();
-    assert_eq!(snap.delivered_finals, 1);
-    assert_eq!(snap.failed_finals, 0);
+    // The exactly-once invariant lives in the governor's own counter: a
+    // double-delivered final lands at 2, a lost delivery at 0. On red, the
+    // counters (plus the captured drainer warn below) self-report WHICH half
+    // of the pipeline stalled (#28).
+    assert_eq!(
+        snap.delivered_finals, 1,
+        "one delivered final must be accounted exactly once ({label}): \
+         delivered={} failed={} pending={}",
+        snap.delivered_finals,
+        snap.failed_finals,
+        snap.finals_pending,
+    );
+    assert_eq!(
+        snap.failed_finals, 0,
+        "drainer abandoned within the retry budget ({label}): \
+         delivered={} failed={} pending={}",
+        snap.delivered_finals,
+        snap.failed_finals,
+        snap.finals_pending,
+    );
     assert_eq!(snap.finals_pending, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn queued_final_drains_over_the_wire_through_mock_bot_api() {
+    ensure_tracing_capture();
+    drainer_wire_round("single").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn queued_final_drains_over_the_wire_through_mock_bot_api_stress_6x() {
+    ensure_tracing_capture();
+    for round in 0..6 {
+        drainer_wire_round(&format!("stress-{round}")).await;
+    }
 }
 
 #[tokio::test(start_paused = true)]
