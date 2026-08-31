@@ -27,6 +27,11 @@ pub(crate) struct MergedHost {
     /// Host lives on the native rich API: tap-record edits must ride
     /// `super::rich::api::edit_rich_html`, not teloxide's edit_message_text.
     pub rich: bool,
+    /// #55: the keyboard was GLUED onto this bubble (glue tier — the body
+    /// was not merge-safe, e.g. a table-bearing rich answer). The body is
+    /// unknown/unsafe to rewrite, so a tap strips the keyboard markup-only
+    /// and echoes the pick record as its own note instead of editing text.
+    pub glued: bool,
 }
 
 /// Merge candidate captured by deliver_final_response (#tg-suggest-merge):
@@ -34,7 +39,11 @@ pub(crate) struct MergedHost {
 #[derive(Clone)]
 pub(crate) struct MergeBubble {
     pub message_id: MessageId,
-    pub body: BubbleBody,
+    /// `Some` = merge-safe body (classic HTML or table-free rich markdown).
+    /// `None` = rich answer carries a table (#55): merging would flatten it,
+    /// but the id is still a valid GLUE target — `edit_message_reply_markup`
+    /// attaches the keyboard without ever touching the body.
+    pub body: Option<BubbleBody>,
 }
 
 /// How a captured [`MergeBubble`] was sent — decides which edit call merges

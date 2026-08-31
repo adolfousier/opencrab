@@ -529,14 +529,18 @@ pub(crate) async fn deliver_final_response(
                             rich_md.len(),
                             intermediate_ids.len()
                         );
-                        // Merge candidate (#tg-suggest-merge): table-free rich
-                        // bubbles can carry the suggestion controls too.
-                        if !super::rich::contains_table(&pre_dedup_text) {
-                            final_bubble = Some(super::state::MergeBubble {
-                                message_id: teloxide::types::MessageId(rich_msg_id),
-                                body: super::state::BubbleBody::Markdown(pre_dedup_text.clone()),
-                            });
-                        }
+                        // Merge candidate (#tg-suggest-merge): the id is
+                        // captured ALWAYS. Table-free rich bubbles capture the
+                        // body too; table-bearing ones capture body=None — #55
+                        // glue tier (keyboard attaches via
+                        // edit_message_reply_markup, body never re-sent), not
+                        // the old skip-to-standalone.
+                        final_bubble = Some(super::state::MergeBubble {
+                            message_id: teloxide::types::MessageId(rich_msg_id),
+                            body: (!super::rich::contains_table(&pre_dedup_text)).then(|| {
+                                super::state::BubbleBody::Markdown(pre_dedup_text.clone())
+                            }),
+                        });
                         // Store bot reply in channel_messages even though
                         // text_only is empty (dedup stripped it). The rich
                         // fallback already sent pre_dedup_text, so the next
@@ -796,17 +800,18 @@ pub(crate) async fn deliver_final_response(
                                     rich_md.len()
                                 );
                                 sent_reply_id = Some(id);
-                                // Merge candidate (#tg-suggest-merge): the
-                                // controls can ride this bubble too — but only
-                                // when it carries no table: merging re-sends as
-                                // rich HTML input, which flattens tables (#679);
-                                // those answers keep the standalone fallback.
-                                if !super::rich::contains_table(&rich_md) {
-                                    final_bubble = Some(super::state::MergeBubble {
-                                        message_id: teloxide::types::MessageId(id),
-                                        body: super::state::BubbleBody::Markdown(rich_md.clone()),
-                                    });
-                                }
+                                // Merge candidate (#tg-suggest-merge): the id
+                                // is captured ALWAYS. Table-free bubbles carry
+                                // the controls in-body; table-bearing ones
+                                // capture body=None — merging re-sends as rich
+                                // HTML input, which flattens tables (#679), so
+                                // #55 glues the keyboard markup-only instead.
+                                final_bubble = Some(super::state::MergeBubble {
+                                    message_id: teloxide::types::MessageId(id),
+                                    body: (!super::rich::contains_table(&rich_md)).then(|| {
+                                        super::state::BubbleBody::Markdown(rich_md.clone())
+                                    }),
+                                });
                                 true
                             }
                             Err(e) => {
