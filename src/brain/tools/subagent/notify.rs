@@ -50,6 +50,11 @@ fn redirect_message(target: uuid::Uuid, occupant: uuid::Uuid) -> String {
     )
 }
 
+/// Confirmation budget for `confirm: true`: how long the sender watches the
+/// receiving machinery for a wake before falling back to an honest
+/// "routed, unconfirmed" verdict.
+const CONFIRM_CAP: Duration = Duration::from_secs(10);
+
 /// Machine-readable send verdict (Notifications v2, fork #50): the external
 /// `notify_state` mirrors the internal `Delivery` enum 1:1 — delivered /
 /// queued / redirected / refused (+ `notify_reason`, `notify_occupant`, …) —
@@ -66,6 +71,52 @@ fn verdict(success: bool, state: &str, detail: String, extra: &[(&str, String)])
         result = result.with_metadata((*key).to_string(), value.clone());
     }
     result
+}
+
+/// Post-route confirmation (owner-approved state-diag, 2026-09-01): watch
+/// the receiving machinery for a bounded budget instead of reporting
+/// "delivered" as a mere queue hand-off. The wake path is verifiable
+/// in-process — a channel-registered turn probe flips to true the moment
+/// the target's loop starts — so the sender gets `woke` (idle target
+/// started a turn), `queued_pending_drain` (already mid-turn; the message
+/// injects at its next tool-loop boundary), or an honest `delivered`
+/// (routed, but no wake observed within `cap`).
+async fn confirm_route(target: uuid::Uuid, cap: Duration) -> (&'static str, String, &'static str) {
+    use crate::brain::agent::service::session_routes::turn_probe;
+    let mid_turn = |t| turn_probe(t).is_some_and(|probe| probe());
+
+    if mid_turn(target) {
+        return (
+            "queued_pending_drain",
+            "Confirmed queued: the target is mid-turn; the message injects at its next \
+             tool-loop boundary."
+                .into(),
+            "mid_turn",
+        );
+    }
+    let deadline = tokio::time::Instant::now() + cap;
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if mid_turn(target) {
+            return (
+                "woke",
+                "Confirmed end-to-end: the target was idle and has started a turn on the \
+                 message."
+                    .into(),
+                "wake_confirmed",
+            );
+        }
+    }
+    (
+        "delivered",
+        format!(
+            "Routed to session {target}, but no wake was observed within {}s — the \
+             target may be parked (channel not claimed since boot) or slow to pick the \
+             message up. Re-check via session_search before resending.",
+            cap.as_secs()
+        ),
+        "unconfirmed",
+    )
 }
 
 /// Resolve the v2 delivery policy against the deprecated `interrupt` alias
@@ -184,6 +235,10 @@ impl Tool for SessionNotifyTool {
                         }
                     }
                 },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Verify end-to-end instead of reporting the route alone: after a successful route, spend up to ~10s watching the receiving machinery. The verdict then reports 'woke' (the idle target actually started a turn), 'queued_pending_drain' (the target was already mid-turn; the message injects at its next tool-loop boundary), or 'delivered' (routed, but no wake was observed within the cap). Applies to the 'delivered' and 'redirected' states only."
+                },
                 "interrupt": {
                     "type": "boolean",
                     "description": "Deprecated alias for delivery.mode: true = 'turn-end', false/unset = 'now'. Prefer delivery.mode; passing both is allowed only when they agree."
@@ -282,16 +337,34 @@ impl Tool for SessionNotifyTool {
         }
 
         let interrupt = matches!(mode, DeliveryMode::TurnEnd);
+        let confirm = input
+            .get("confirm")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         match deliver_to_session(target, msg, interrupt) {
-            Delivery::Delivered => Ok(verdict(
-                true,
-                "delivered",
-                format!(
-                    "Delivered to session {target}. It will process the message on its next turn."
-                ),
-                &[("notify_target", target.to_string())],
-            )),
+            Delivery::Delivered => {
+                if confirm {
+                    let (state, detail, reason) = confirm_route(target, CONFIRM_CAP).await;
+                    return Ok(verdict(
+                        true,
+                        state,
+                        detail,
+                        &[
+                            ("notify_target", target.to_string()),
+                            ("notify_reason", reason.into()),
+                        ],
+                    ));
+                }
+                Ok(verdict(
+                    true,
+                    "delivered",
+                    format!(
+                        "Delivered to session {target}. It will process the message on its next turn."
+                    ),
+                    &[("notify_target", target.to_string())],
+                ))
+            }
             // Queued, not lost: the target belongs to a channel that has not
             // claimed it since the last restart (#1206). Reporting this as a
             // failure would be the opposite of what happened.
@@ -351,15 +424,30 @@ impl Tool for SessionNotifyTool {
             // The target no longer owns its channel (fork #17): the message
             // was redirected to the session that owns it NOW (fork #19) — a
             // success, not a refusal, and the reply names where it went.
-            Delivery::Redirected { to } => Ok(verdict(
-                true,
-                "redirected",
-                redirect_message(target, to),
-                &[
-                    ("notify_target", target.to_string()),
-                    ("notify_occupant", to.to_string()),
-                ],
-            )),
+            Delivery::Redirected { to } => {
+                if confirm {
+                    let (state, detail, reason) = confirm_route(to, CONFIRM_CAP).await;
+                    return Ok(verdict(
+                        true,
+                        state,
+                        format!("{detail} (redirected to {to} — see notify_occupant)"),
+                        &[
+                            ("notify_target", target.to_string()),
+                            ("notify_occupant", to.to_string()),
+                            ("notify_reason", reason.into()),
+                        ],
+                    ));
+                }
+                Ok(verdict(
+                    true,
+                    "redirected",
+                    redirect_message(target, to),
+                    &[
+                        ("notify_target", target.to_string()),
+                        ("notify_occupant", to.to_string()),
+                    ],
+                ))
+            }
         }
     }
 }
@@ -484,5 +572,47 @@ mod tests {
         assert!(resolve_mode(Some("quiet"), Some(true), None).is_err());
         // interrupt=false is the natural form and passes.
         assert!(resolve_mode(Some("quiet"), Some(false), None).is_ok());
+    }
+
+    // confirm_route (owner-approved state-diag, 2026-09-01): each test uses
+    // its own session uuid — the probe registry is a process-wide static.
+
+    #[tokio::test]
+    async fn confirm_reports_pending_drain_when_target_already_mid_turn() {
+        use crate::brain::agent::service::session_routes::register_turn_probe;
+        let session = uuid::Uuid::new_v4();
+        register_turn_probe(session, std::sync::Arc::new(|| true));
+        let (state, _, reason) = confirm_route(session, Duration::from_millis(100)).await;
+        assert_eq!(state, "queued_pending_drain");
+        assert_eq!(reason, "mid_turn");
+    }
+
+    #[tokio::test]
+    async fn confirm_reports_woke_when_probe_flips_true() {
+        use crate::brain::agent::service::session_routes::register_turn_probe;
+        let session = uuid::Uuid::new_v4();
+        register_turn_probe(session, std::sync::Arc::new(|| false));
+        // The idle target "starts a turn" 300ms after the send.
+        let wake = session;
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            register_turn_probe(wake, std::sync::Arc::new(|| true));
+        });
+        let (state, detail, reason) = confirm_route(session, Duration::from_secs(3)).await;
+        assert_eq!(state, "woke");
+        assert_eq!(reason, "wake_confirmed");
+        assert!(detail.contains("started a turn"), "got: {detail}");
+    }
+
+    #[tokio::test]
+    async fn confirm_times_out_to_honest_unconfirmed_delivered() {
+        use crate::brain::agent::service::session_routes::register_turn_probe;
+        let session = uuid::Uuid::new_v4();
+        // An idle target that never wakes: probe reads false throughout.
+        register_turn_probe(session, std::sync::Arc::new(|| false));
+        let (state, detail, reason) = confirm_route(session, Duration::from_millis(150)).await;
+        assert_eq!(state, "delivered");
+        assert_eq!(reason, "unconfirmed");
+        assert!(detail.contains("no wake was observed"), "got: {detail}");
     }
 }
