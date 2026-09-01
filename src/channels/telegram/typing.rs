@@ -28,22 +28,21 @@ use super::send::fire_chat_action;
 /// this stays under that to avoid a visible flicker between ticks.
 const TICK: Duration = Duration::from_secs(4);
 
-/// Keep "typing" alive for the turn, then for as long as the session has
-/// background commands running.
-///
-/// `cancel` ends the turn phase, exactly as before. `background` is `None` on
-/// surfaces with no background manager wired, which collapses this to the
-/// original behaviour.
-pub(crate) fn spawn_typing(
+/// Turn-phase loop: immediate first action, then re-send every `TICK` until
+/// `cancel` fires. The building block — [`spawn_typing`] layers the detached
+/// tail on top of it. Surfaces that must start typing BEFORE they know the
+/// session id (message intake, before session resolution) spawn this directly
+/// and pair it with [`spawn_typing_after_turn`] once the id is known.
+pub(crate) fn spawn_typing_turn(
     bot: Bot,
     chat_id: ChatId,
     thread_id: Option<ThreadId>,
     cancel: CancellationToken,
-    background: Option<Arc<BackgroundTaskManager>>,
-    session_id: Uuid,
 ) {
     tokio::spawn(async move {
-        // Phase 1: the turn is running.
+        // Fire immediately: the user JUST sent a message — show typing now,
+        // not after the first tick.
+        fire_chat_action(&bot, chat_id, thread_id, ChatAction::Typing, "typing loop").await;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
@@ -53,9 +52,25 @@ pub(crate) fn spawn_typing(
                 }
             }
         }
-
-        keep_typing_while_detached(bot, chat_id, thread_id, background, session_id).await;
     });
+}
+
+/// Keep "typing" alive for the turn, then for as long as the session has
+/// background commands running.
+///
+/// `cancel` ends the turn phase, exactly as before. `background` is `None` on
+/// surfaces with no background manager wired, which collapses this to the
+/// turn loop only.
+pub(crate) fn spawn_typing(
+    bot: Bot,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    cancel: CancellationToken,
+    background: Option<Arc<BackgroundTaskManager>>,
+    session_id: Uuid,
+) {
+    spawn_typing_turn(bot.clone(), chat_id, thread_id, cancel.clone());
+    spawn_typing_after_turn(bot, chat_id, thread_id, cancel, background, session_id);
 }
 
 /// The tail of [`spawn_typing`], for callers that only learn their session id
