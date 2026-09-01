@@ -395,7 +395,7 @@ impl TelegramAgent {
                                         None
                                     }
                                 };
-                                if let Some((sid, text, merged_host)) = taken {
+                                if let Some((sid, text, picked_idx, merged_host)) = taken {
                                     let (chat_id, thread_id, prompt_msg_id) = query
                                         .message
                                         .as_ref()
@@ -519,7 +519,7 @@ impl TelegramAgent {
                                                                     },
                                                                 ),
                                                                 picked,
-                                                                idx,
+                                                                picked_idx,
                                                             );
                                                         match rewrite {
                                                     super::suggest_options::PickRewrite::RichHost(

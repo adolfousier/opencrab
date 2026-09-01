@@ -793,14 +793,16 @@ impl TelegramState {
         &self,
         token: &str,
         idx: usize,
-    ) -> Option<(Uuid, String, Option<MergedHost>)> {
+    ) -> Option<(Uuid, String, usize, Option<MergedHost>)> {
         let entry = self.pending_followups.lock().await.remove(token)?;
         let host = entry.host.clone();
         entry
             .options
             .get(idx)
             .cloned()
-            .map(|text| (entry.session_id, text, host))
+            // #67: idx rides along — the tap-redraw rewrite runs in a spawned
+            // task outside this arm's scope and needs the tapped index.
+            .map(|text| (entry.session_id, text, idx, host))
     }
 
     /// Drop this session's pending follow-up suggestions (the user sent their
