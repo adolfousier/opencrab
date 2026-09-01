@@ -286,6 +286,17 @@ pub struct TelegramState {
     /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
     /// session looking permanently busy.
     active_turns: std::sync::Mutex<std::collections::HashSet<Uuid>>,
+    /// #61: sessions with a LIVE flow roll on screen — the in-flight
+    /// `StreamingState` plus the chat coordinates its block renders in.
+    /// The push-echo path consults this to decide that a session notify
+    /// folds a line INTO the roll instead of posting a standalone bubble.
+    /// Registered at both turn sites (user turns and push-initiated turns)
+    /// via [`TelegramState::register_live_flow`], which returns a
+    /// [`LiveFlowRegistration`] drop-guard so any turn exit — normal,
+    /// error, or panic — unregisters. `std::sync::Mutex` like
+    /// `active_turns`: the echo path is async but the lock is never held
+    /// across an await, so blocking contention is nil.
+    live_flows: std::sync::Mutex<HashMap<Uuid, LiveFlowHandle>>,
     /// Newest NON-STICKY message id seen per chat (#451, semantics sharpened
     /// by #1150). This is burial EVIDENCE for the flow block: user messages
     /// (recorded in the handler) plus non-sticky bot bubbles — intermediate
@@ -338,6 +349,45 @@ impl Drop for ActiveTurnGuard {
     }
 }
 
+/// #61: everything the push-echo path needs to fold a notify line into a
+/// session's LIVE flow roll. `streaming` is the same Arc the edit loop
+/// renders from, so a fold under its lock is ordered with the loop's own
+/// writes; `chat`/`thread_id` are the coordinates the block's refresh
+/// (`refresh_flow`) edits through. A handle is only meaningful while
+/// `streaming.open_group_msg_id` is `Some` — the caller re-checks that at
+/// fold time, because the roll can close between registration and echo.
+#[derive(Clone)]
+pub(crate) struct LiveFlowHandle {
+    pub(crate) streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
+    pub(crate) chat: teloxide::types::ChatId,
+    pub(crate) thread_id: Option<teloxide::types::ThreadId>,
+}
+
+/// RAII counterpart of [`ActiveTurnGuard`] for the #61 live-flow registry:
+/// held for the whole span of a turn so the echo path can trust that a
+/// registered handle belongs to a turn that is still running. Drop
+/// unregisters — normal return, `?`, and panic all end here.
+pub(crate) struct LiveFlowRegistration {
+    state: std::sync::Arc<TelegramState>,
+    session_id: Uuid,
+    /// The streaming Arc this registration wrote — drop compares pointer
+    /// identity so a stale guard never evicts a successor turn's entry.
+    streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
+}
+
+impl Drop for LiveFlowRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.state.live_flows.lock() {
+            let mine = map
+                .get(&self.session_id)
+                .is_some_and(|h| std::sync::Arc::ptr_eq(&h.streaming, &self.streaming));
+            if mine {
+                map.remove(&self.session_id);
+            }
+        }
+    }
+}
+
 impl TelegramState {
     pub fn new() -> Self {
         Self {
@@ -375,6 +425,7 @@ impl TelegramState {
             pending_file_saves: Mutex::new(HashMap::new()),
             pending_reactions: std::sync::Mutex::new(HashMap::new()),
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
+            live_flows: std::sync::Mutex::new(HashMap::new()),
             chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
             last_sticky_action: std::sync::Mutex::new(HashMap::new()),
             media_dedup: super::outbound_dedup::MediaSendDedup::default(),
@@ -1312,6 +1363,51 @@ impl TelegramState {
             .unwrap_or(false)
     }
 
+    /// #61: register this turn's live flow roll, returning the drop-guard
+    /// that unregisters it. Takes `&Arc<Self>` because the guard must be
+    /// able to reach the registry after the turn's stack is gone. One live
+    /// roll per session by construction — but a re-register CAN precede
+    /// the previous turn's guard drop (turn overlap windows), and a naive
+    /// guard drop would then evict the NEW turn's entry. So the guard
+    /// holds its own streaming Arc and its drop removes the entry only if
+    /// the stored handle's streaming Arc is the same allocation
+    /// (`Arc::ptr_eq`) — a stale guard is a no-op against the successor.
+    pub(crate) fn register_live_flow(
+        self: &std::sync::Arc<Self>,
+        session_id: Uuid,
+        handle: LiveFlowHandle,
+    ) -> LiveFlowRegistration {
+        if let Ok(mut map) = self.live_flows.lock() {
+            map.insert(session_id, handle.clone());
+        }
+        LiveFlowRegistration {
+            state: std::sync::Arc::clone(self),
+            session_id,
+            streaming: handle.streaming,
+        }
+    }
+
+    /// #61: clone out the live-flow handle for `session_id`, if one is
+    /// registered. Registration proves a turn is in flight, NOT that the
+    /// roll block is still open — the caller must re-check
+    /// `open_group_msg_id.is_some()` under the streaming lock before
+    /// folding (the roll can close between lookup and fold).
+    pub(crate) fn live_flow(&self, session_id: Uuid) -> Option<LiveFlowHandle> {
+        self.live_flows
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&session_id).cloned())
+    }
+
+    /// #61: explicit unregister — used by tests and by turns that defuse
+    /// the drop-guard (rare; the guard's Drop normally suffices).
+    #[cfg(test)]
+    pub(crate) fn unregister_live_flow(&self, session_id: Uuid) {
+        if let Ok(mut map) = self.live_flows.lock() {
+            map.remove(&session_id);
+        }
+    }
+
     /// Enqueue a mid-turn reaction message for injection into the running loop.
     pub(crate) fn enqueue_reaction(
         &self,
@@ -1633,5 +1729,113 @@ impl TelegramState {
     /// Clear the profile-create flow state.
     pub async fn clear_prof_create(&self, chat_id: i64) {
         self.prof_create_states.lock().await.remove(&chat_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channels::telegram::flow::StreamingState;
+
+    /// Minimal StreamingState with one OPEN roll block — enough for
+    /// registry lifecycle tests; field set mirrors the turn-site literal
+    /// in handler.rs (house pattern, src/tests/telegram_stream_loop_resume_test.rs).
+    fn open_roll() -> std::sync::Arc<std::sync::Mutex<StreamingState>> {
+        Arc::new(std::sync::Mutex::new(StreamingState {
+            is_dm: true,
+            pending_suggestions: None,
+            pending_trailer: None,
+            msg_id: None,
+            thinking: String::new(),
+            tool_msgs: Vec::new(),
+            display_queue: Vec::new(),
+            open_group_msg_id: Some(teloxide::types::MessageId(1)),
+            flow_entries: Vec::new(),
+            flow_status: None,
+            flow_rich: false,
+            response: String::new(),
+            final_bubble: None,
+            dirty: false,
+            recreate: false,
+            header_preview: None,
+            compacting: false,
+            sections: Default::default(),
+            retained_goal: None,
+            applied_plan_kb: Default::default(),
+            tool_round_count: 0,
+            tools_started_at: None,
+            turn_started_at: std::time::Instant::now(),
+            flow_outcome: None,
+            bg_indicator: None,
+            bg_count: None,
+            subagent_counts: Default::default(),
+            sent_intermediates: Vec::new(),
+            intermediate_msg_ids: Vec::new(),
+            voice_msg_ids: Vec::new(),
+            processing: true,
+            is_cli: false,
+        }))
+    }
+
+    fn handle_for(
+        streaming: &std::sync::Arc<std::sync::Mutex<StreamingState>>,
+        chat: i64,
+    ) -> LiveFlowHandle {
+        LiveFlowHandle {
+            streaming: std::sync::Arc::clone(streaming),
+            chat: teloxide::types::ChatId(chat),
+            thread_id: None,
+        }
+    }
+
+    /// Register → lookup returns the same coordinates; explicit
+    /// unregister (cfg(test) path) clears; dropping an ALREADY-spent guard
+    /// afterwards is a no-op, not a panic.
+    #[test]
+    fn live_flow_registration_roundtrip() {
+        let state = std::sync::Arc::new(TelegramState::new());
+        let sid = Uuid::new_v4();
+        assert!(state.live_flow(sid).is_none(), "fresh state: no live flow");
+        let guard = state.register_live_flow(sid, handle_for(&open_roll(), 100));
+        let h = state.live_flow(sid).expect("registered handle visible");
+        assert_eq!(h.chat, teloxide::types::ChatId(100));
+        state.unregister_live_flow(sid);
+        assert!(state.live_flow(sid).is_none(), "explicit unregister clears");
+        drop(guard); // stale guard vs empty map: no panic, no resurrect
+        assert!(state.live_flow(sid).is_none());
+    }
+
+    /// The RAII contract: scope exit — normal, early return, or panic
+    /// unwind — unregisters. This pins the drop path.
+    #[test]
+    fn live_flow_guard_drop_unregisters() {
+        let state = std::sync::Arc::new(TelegramState::new());
+        let sid = Uuid::new_v4();
+        {
+            let _g = state.register_live_flow(sid, handle_for(&open_roll(), 200));
+            assert!(state.live_flow(sid).is_some(), "live during the turn");
+        }
+        assert!(state.live_flow(sid).is_none(), "guard drop must unregister");
+    }
+
+    /// Turn-overlap window (#61): a successor turn registers before the
+    /// previous turn's guard drops. The stale guard must NOT evict the
+    /// successor's entry — Arc::ptr_eq identity is what spares it.
+    #[test]
+    fn live_flow_stale_guard_spares_successor() {
+        let state = std::sync::Arc::new(TelegramState::new());
+        let sid = Uuid::new_v4();
+        let g1 = state.register_live_flow(sid, handle_for(&open_roll(), 300));
+        let g2 = state.register_live_flow(sid, handle_for(&open_roll(), 301));
+        drop(g1); // stale: its streaming Arc is no longer the registered one
+        let h = state
+            .live_flow(sid)
+            .expect("successor survives the stale guard drop");
+        assert_eq!(h.chat, teloxide::types::ChatId(301), "successor's handle");
+        drop(g2);
+        assert!(
+            state.live_flow(sid).is_none(),
+            "successor's own drop clears"
+        );
     }
 }

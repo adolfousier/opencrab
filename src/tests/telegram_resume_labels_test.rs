@@ -35,3 +35,55 @@ async fn dm_session_without_cached_bot_username_falls_back_to_short_id() {
         short_session_id(sender)
     );
 }
+
+#[test]
+fn roll_line_joins_label_and_first_body_line() {
+    let line = build_notify_roll_line("HQ", "*bzzt* status: green");
+    assert_eq!(line, "📨 notify from HQ: *bzzt* status: green");
+}
+
+/// #61: only the FIRST body line is the announcement — the full text
+/// reaches the session via the queue; a multiline body must not stack
+/// into the roll line.
+#[test]
+fn roll_line_uses_only_first_body_line() {
+    let line = build_notify_roll_line("ops", "first\nsecond\nthird");
+    assert_eq!(line, "📨 notify from ops: first");
+}
+
+/// #61: labels are user data (topic/chat names). Same neutralization
+/// the receipt card applies — angle brackets become single guillemets
+/// before the line hits roll chrome that renders into HTML.
+#[test]
+fn roll_line_neutralizes_angle_brackets_in_label() {
+    let line = build_notify_roll_line("<script>chat", "hello");
+    assert!(!line.contains('<'), "no raw angle brackets: {line}");
+    assert!(
+        line.starts_with("📨 notify from ‹script›chat: hello"),
+        "guillemet-swapped label: {line}"
+    );
+}
+
+/// #61: the cap counts CHARS, not bytes — a Cyrillic/emoji-heavy
+/// notify must truncate on a char boundary (no panics, no mojibake)
+/// and mark the cut with an ellipsis.
+#[test]
+fn roll_line_caps_multibyte_on_char_boundary() {
+    let label = "э".repeat(100);
+    let body = "ж".repeat(100);
+    let line = build_notify_roll_line(&label, &body);
+    let count = line.chars().count();
+    assert!(
+        count <= NOTIFY_ROLL_LINE_MAX + 1,
+        "cap + ellipsis, got {count}"
+    );
+    assert!(line.ends_with('…'), "cut marked with ellipsis");
+}
+
+/// #61: under the cap the line is verbatim — no ellipsis, no loss.
+#[test]
+fn roll_line_under_cap_has_no_ellipsis() {
+    let line = build_notify_roll_line("ops", "short body");
+    assert!(!line.ends_with('…'));
+    assert!(line.contains("short body"));
+}
