@@ -328,10 +328,8 @@ pub(crate) async fn render_suggestions(
                 .await
                 .map(|h| h.rich && trailer.is_some())
                 .unwrap_or(false);
-            if !embedded {
-                if let Some(t) = &trailer {
-                    send_trailer_bubble(bot, chat_id, thread_id, t).await;
-                }
+            if !embedded && let Some(t) = &trailer {
+                send_trailer_bubble(bot, chat_id, thread_id, t).await;
             }
         }
         Err(PlaceErr::Fatal(e)) => {
@@ -389,10 +387,8 @@ pub(crate) async fn render_suggestions(
                                 .await
                                 .map(|h| h.rich && trailer.is_some())
                                 .unwrap_or(false);
-                            if !embedded {
-                                if let Some(t) = &trailer {
-                                    send_trailer_bubble(&bot, chat_id, thread_id, t).await;
-                                }
+                            if !embedded && let Some(t) = &trailer {
+                                send_trailer_bubble(&bot, chat_id, thread_id, t).await;
                             }
                             return;
                         }
