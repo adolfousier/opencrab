@@ -519,6 +519,7 @@ impl TelegramAgent {
                                                                     },
                                                                 ),
                                                                 picked,
+                                                                idx,
                                                             );
                                                         match rewrite {
                                                     super::suggest_options::PickRewrite::RichHost(

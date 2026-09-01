@@ -85,10 +85,25 @@ pub(crate) enum PickRewrite {
 /// `host` is `(html, rich)` of the merged host bubble when the tapped
 /// message IS it; merged host → answer HTML + pick record, standalone →
 /// pick record alone.
-pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRewrite {
+pub(crate) fn pick_rewrite(
+    host: Option<(&str, bool)>,
+    picked: String,
+    picked_idx: usize,
+) -> PickRewrite {
     match host {
         Some((full, rich)) => {
-            let body = format!("{full}\n\n{picked}");
+            let body = if rich {
+                // #67 tap-redraw: the rows must not survive as live
+                // controls — they are rewritten to the picked state
+                // (success+✓+disabled / disabled) instead of stripped, so
+                // the bubble keeps showing what was chosen.
+                format!("{}\n\n{picked}", mark_picked_button(full, picked_idx))
+            } else {
+                // Classic hosts keep their buttons as reply markup (not in
+                // the body) — the empty-markup arm strips those; nothing to
+                // rewrite here.
+                format!("{full}\n\n{picked}")
+            };
             if rich {
                 PickRewrite::RichHost(body)
             } else {
@@ -223,6 +238,84 @@ pub(crate) fn strip_button_rows(html: &str) -> String {
     }
     out.push_str(rest);
     out.trim_end().to_string()
+}
+
+/// #67 tap-redraw: rewrite suggestion buttons in a rich bubble body to
+/// their post-pick state. The picked button (whose
+/// `data="followup:<token>:<idx>"` payload ends in `picked_idx`) becomes
+/// `style="success"` with a `✓ ` label prefix; every sibling follow-up
+/// button keeps its style and gains `disabled`. Non-follow-up markup and
+/// row containers pass through byte-for-byte. Best-effort by design: if
+/// the `disabled` attribute form is ever ignored by the client, a second
+/// tap routes to the #59 stale-strip guard, so nothing can loop.
+pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut rest = html;
+    while let Some(tag_start) = rest.find("<tg-button") {
+        let after_open = &rest[tag_start + "<tg-button".len()..];
+        // `<tg-button-row>` and any other `<tg-button…` lookalike that is
+        // not the button tag itself passes through untouched.
+        if !after_open.starts_with('>') && !after_open.starts_with(' ') {
+            out.push_str(&rest[..tag_start + "<tg-button".len()]);
+            rest = after_open;
+            continue;
+        }
+        let Some(attrs_rel) = after_open.find('>') else {
+            // Unterminated tag: emit the remainder verbatim.
+            out.push_str(rest);
+            return out;
+        };
+        let attrs = &after_open[..attrs_rel];
+        let after_attrs = &after_open[attrs_rel + 1..];
+        let body_rel = attrs_rel + 1;
+        let Some(label_rel) = after_attrs.find("</tg-button>") else {
+            // Unterminated label: emit through the tag opener verbatim.
+            out.push_str(&rest[..tag_start + body_rel]);
+            rest = after_attrs;
+            continue;
+        };
+        let label = &after_attrs[..label_rel];
+        let tail = &after_attrs[label_rel + "</tg-button>".len()..];
+        let idx = attrs
+            .split("data=\"followup:")
+            .nth(1)
+            .and_then(|v| v.split('"').next())
+            .and_then(|v| v.rsplit(':').next())
+            .and_then(|v| v.parse::<usize>().ok());
+        let picked = idx == Some(picked_idx);
+        if picked || idx.is_some() {
+            let mut new_attrs = attrs.to_string();
+            if picked {
+                // The picked button flips to success regardless of its
+                // original style; siblings keep theirs.
+                if let Some(s) = new_attrs.find("style=\"") {
+                    if let Some(e) = new_attrs[s + "style=\"".len()..].find('"') {
+                        let style_end = s + "style=\"".len() + e;
+                        new_attrs.replace_range(s + "style=\"".len()..style_end, "success");
+                    }
+                }
+            }
+            if !new_attrs.contains("disabled") {
+                new_attrs.push_str(" disabled");
+            }
+            out.push_str(&rest[..tag_start]);
+            out.push_str("<tg-button");
+            out.push_str(&new_attrs);
+            out.push('>');
+            if picked {
+                out.push_str("\u{2713} ");
+            }
+            out.push_str(label);
+            out.push_str("</tg-button>");
+        } else {
+            // Not a follow-up button: emit the whole span verbatim.
+            out.push_str(&rest[..tag_start + body_rel + label_rel]);
+            out.push_str("</tg-button>");
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
 }
 
 /// #59 (DRY): the empty reply-markup used to strip dead keyboards — one
