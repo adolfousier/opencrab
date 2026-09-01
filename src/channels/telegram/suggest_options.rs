@@ -288,11 +288,11 @@ pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
             if picked {
                 // The picked button flips to success regardless of its
                 // original style; siblings keep theirs.
-                if let Some(s) = new_attrs.find("style=\"") {
-                    if let Some(e) = new_attrs[s + "style=\"".len()..].find('"') {
-                        let style_end = s + "style=\"".len() + e;
-                        new_attrs.replace_range(s + "style=\"".len()..style_end, "success");
-                    }
+                if let Some(s) = new_attrs.find("style=\"")
+                    && let Some(e) = new_attrs[s + "style=\"".len()..].find('"')
+                {
+                    let style_end = s + "style=\"".len() + e;
+                    new_attrs.replace_range(s + "style=\"".len()..style_end, "success");
                 }
             }
             if !new_attrs.contains("disabled") {
