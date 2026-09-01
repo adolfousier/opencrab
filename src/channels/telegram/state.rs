@@ -1736,6 +1736,7 @@ impl TelegramState {
 mod tests {
     use super::*;
     use crate::channels::telegram::flow::StreamingState;
+    use std::sync::Arc;
 
     /// Minimal StreamingState with one OPEN roll block — enough for
     /// registry lifecycle tests; field set mirrors the turn-site literal
