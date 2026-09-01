@@ -5548,7 +5548,7 @@ impl AgentService {
                         "provider-integrity",
                         Some("leak persisted after corrective retry; failing clean"),
                     );
-                    return Err(crate::brain::provider::ProviderError::StreamError(msg));
+                    return Err(AgentError::Provider(crate::brain::provider::ProviderError::StreamError(msg)));
                 }
 
                 // ── Mid-sentence truncation retry ────────────────────────
