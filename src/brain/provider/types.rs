@@ -243,6 +243,14 @@ pub struct LLMResponse {
     /// this; non-streaming `parse_response` sites leave it `None`.
     #[serde(default)]
     pub streaming_active_secs: Option<f64>,
+    /// True when the provider detected tool-call JSON dumped as plain text
+    /// and could not recover it into structured ToolUse blocks (rescue
+    /// failed). Raw call-shaped JSON is stripped from `content` at the
+    /// parse boundary; the tool loop uses this flag for one corrective
+    /// retry, then fails clean instead of delivering the residue.
+    /// (fork #66, ex-upstream adolfousier/opencrabs#1260)
+    #[serde(default)]
+    pub tool_text_leak: bool,
 }
 
 /// Reason why the model stopped generating

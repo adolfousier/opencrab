@@ -186,3 +186,176 @@ pub fn try_repair(raw: &str) -> Option<String> {
 
     Some(out)
 }
+
+// ── Call-shaped JSON detection (tool-text leak defense) ─────────────────
+// fork #66, ex-upstream adolfousier/opencrabs#1260.
+//
+// When a model with weak function-calling support "invokes" a tool, it
+// dumps the call as raw JSON text instead of a structured tool_calls
+// field. The rescue layer (extract_text_tool_calls) converts known shapes;
+// what SURVIVES rescue is unparseable or unknown-shape residue that used
+// to ride to the user as the final answer.
+//
+// The detector here replaces the old keyword heuristic ("contains
+// \"function\" && contains \"arguments\"") which false-positived on prose
+// ABOUT tool calls. Rules:
+//   1. Only a PARSEABLE JSON object counts (keyword hits on broken JSON in
+//      prose no longer fire the leak path).
+//   2. The object must be call-shaped: name+arguments, bare command, or
+//      OpenAI-legacy function{name,arguments}.
+//   3. Fenced ```json code blocks are EXCLUDED — they are display
+//      artifacts of discussion (agents routinely explain tool-call JSON
+//      in fenced examples). The rescue layer above still converts known
+//      fenced shapes to real calls before detection runs.
+//   4. Unfenced parseable call-shaped objects are treated as genuine
+//      leaked invocations: stripped from content, flagged for retry.
+
+use super::types::ContentBlock;
+
+/// Byte ranges of fenced code blocks (``` ... ```) in `text`.
+/// An unterminated fence swallows the rest of the text.
+fn fenced_code_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut in_fence = false;
+    let mut fence_start = 0usize;
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        if line.trim_start().starts_with("```") {
+            if in_fence {
+                ranges.push((fence_start, offset + line.len()));
+                in_fence = false;
+            } else {
+                in_fence = true;
+                fence_start = offset;
+            }
+        }
+        offset += line.len();
+    }
+    if in_fence {
+        ranges.push((fence_start, offset));
+    }
+    ranges
+}
+
+/// Does `candidate` parse as a JSON object with tool-invocation shape?
+fn is_call_shaped_json(candidate: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) else {
+        return false;
+    };
+    let Some(obj) = v.as_object() else {
+        return false;
+    };
+    // Shape 1: {"name": "...", "arguments": {...}}
+    if obj.get("name").is_some_and(|n| n.is_string()) && obj.contains_key("arguments") {
+        return true;
+    }
+    // Shape 2: bare execution object {"command": ...}
+    if obj.contains_key("command") {
+        return true;
+    }
+    // Shape 3: OpenAI legacy {"function": {"name": ..., "arguments": ...}}
+    if let Some(f) = obj.get("function")
+        && f.get("name").is_some_and(|n| n.is_string())
+        && f.get("arguments").is_some()
+    {
+        return true;
+    }
+    false
+}
+
+/// Find spans of UNFENCED, parseable, call-shaped JSON objects in `text`.
+/// Outermost matching objects are returned; their nested content is not
+/// re-scanned (an outer span covers its inner keys).
+pub fn find_call_shaped_json_spans(text: &str) -> Vec<(usize, usize)> {
+    let fenced = fenced_code_ranges(text);
+    let bytes = text.as_bytes();
+    let mut spans = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            // String-aware scan to the matching close brace.
+            let mut depth = 0i32;
+            let mut in_string = false;
+            let mut escape = false;
+            let mut j = i;
+            let mut closed = false;
+            while j < bytes.len() {
+                let b = bytes[j];
+                if in_string {
+                    if escape {
+                        escape = false;
+                    } else if b == b'\\' {
+                        escape = true;
+                    } else if b == b'"' {
+                        in_string = false;
+                    }
+                } else {
+                    match b {
+                        b'"' => in_string = true,
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                closed = true;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                j += 1;
+            }
+            if closed {
+                let end = j + 1;
+                let in_fence = fenced.iter().any(|(s, e)| i >= *s && j < *e);
+                if !in_fence && is_call_shaped_json(&text[i..end]) {
+                    spans.push((i, end));
+                    i = end; // skip past the matched object
+                    continue;
+                }
+            }
+            // Unbalanced or not call-shaped: step forward so nested
+            // objects still get scanned.
+        }
+        i += 1;
+    }
+    spans
+}
+
+/// Remove call-shaped JSON spans from `text`. Returns the cleaned text and
+/// whether anything was stripped. Overlaps (nested matches inside an
+/// already-removed outer span) are consumed by the outermost span.
+pub fn strip_call_shaped_json(text: &str) -> (String, bool) {
+    let mut spans = find_call_shaped_json_spans(text);
+    if spans.is_empty() {
+        return (text.to_string(), false);
+    }
+    spans.sort_unstable();
+    let mut out = String::with_capacity(text.len());
+    let mut last_end = 0usize;
+    for (s, e) in spans {
+        if s < last_end {
+            continue;
+        }
+        out.push_str(&text[last_end..s]);
+        last_end = e;
+    }
+    out.push_str(&text[last_end..]);
+    (out.trim().to_string(), true)
+}
+
+/// Leak predicate over final content blocks: true when the response has NO
+/// structured ToolUse blocks but its text contains unfenced call-shaped
+/// JSON — i.e. the model tried to invoke tools as text and rescue failed.
+pub fn content_has_unrecovered_tool_text(blocks: &[ContentBlock]) -> bool {
+    if blocks
+        .iter()
+        .any(|b| matches!(b, ContentBlock::ToolUse { .. }))
+    {
+        return false;
+    }
+    blocks.iter().any(|b| match b {
+        ContentBlock::Text { text } => !find_call_shaped_json_spans(text).is_empty(),
+        _ => false,
+    })
+}

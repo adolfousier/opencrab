@@ -55,6 +55,7 @@ impl Provider for ArgTooLongMockProvider {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 
@@ -176,6 +177,7 @@ impl Provider for ContextLengthMockProvider {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 
