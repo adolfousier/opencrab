@@ -305,6 +305,7 @@ impl Provider for OpenCodeCliProvider {
             // CLI subprocess output is parsed in one shot, not streamed —
             // no per-token timing to measure here.
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 

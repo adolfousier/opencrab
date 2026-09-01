@@ -68,6 +68,7 @@ impl Provider for AutoTitleMockProvider {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 
@@ -402,6 +403,7 @@ impl Provider for ThinkingOnlyTitleProvider {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 

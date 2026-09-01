@@ -33,6 +33,7 @@ impl Provider for MockProvider {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 
@@ -136,6 +137,7 @@ impl Provider for MockProviderWithTools {
                     ..Default::default()
                 },
                 streaming_active_secs: None,
+                tool_text_leak: false,
             })
         } else {
             Ok(LLMResponse {
@@ -151,6 +153,7 @@ impl Provider for MockProviderWithTools {
                     ..Default::default()
                 },
                 streaming_active_secs: None,
+                tool_text_leak: false,
             })
         }
     }
@@ -361,6 +364,7 @@ impl Provider for MockProviderWithModel {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 
@@ -466,6 +470,7 @@ impl Provider for MockProviderWithNamedTool {
                     ..Default::default()
                 },
                 streaming_active_secs: None,
+                tool_text_leak: false,
             })
         } else {
             Ok(LLMResponse {
@@ -481,6 +486,7 @@ impl Provider for MockProviderWithNamedTool {
                     ..Default::default()
                 },
                 streaming_active_secs: None,
+                tool_text_leak: false,
             })
         }
     }
@@ -618,6 +624,7 @@ impl Provider for MockProviderWithTwoToolCalls {
                     ..Default::default()
                 },
                 streaming_active_secs: None,
+                tool_text_leak: false,
             })
         } else {
             Ok(LLMResponse {
@@ -633,6 +640,7 @@ impl Provider for MockProviderWithTwoToolCalls {
                     ..Default::default()
                 },
                 streaming_active_secs: None,
+                tool_text_leak: false,
             })
         }
     }

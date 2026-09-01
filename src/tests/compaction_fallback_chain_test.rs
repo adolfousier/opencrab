@@ -89,6 +89,7 @@ impl Provider for CountingMock {
                 stop_reason: None,
                 usage: TokenUsage::default(),
                 streaming_active_secs: None,
+                tool_text_leak: false,
             }),
             Behaviour::QuotaExhausted => Err(ProviderError::RateLimitExceeded(
                 "Insufficient balance or no resource package. Please recharge.".to_string(),

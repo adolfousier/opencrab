@@ -53,6 +53,7 @@ impl Provider for NamedMock {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 
