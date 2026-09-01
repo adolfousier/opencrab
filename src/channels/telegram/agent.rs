@@ -530,6 +530,21 @@ impl TelegramAgent {
                                                                 .await
                                                                 .map(|_| ())
                                                                 .map_err(|e| e.to_string()),
+                                                        super::suggest_options::PickRewrite::GluedHost => {
+                                                            // Defensive: glued hosts are routed by the
+                                                            // #55 arm above, so pick_rewrite never returns
+                                                            // GluedHost on this path. If routing ever
+                                                            // changes, fail LOUD — silently body-editing a
+                                                            // table-bearing bubble would flatten it.
+                                                            tracing::error!(
+                                                                "Telegram followup tap: pick_rewrite returned \
+                                                                 GluedHost outside the #55 glued arm"
+                                                            );
+                                                            Err(
+                                                                "glued host reached the body-rewrite match"
+                                                                    .to_string(),
+                                                            )
+                                                        }
                                                         }
                                                     };
                                                 if let Err(e) = outcome {
