@@ -810,6 +810,8 @@ impl TelegramState {
     }
 
     /// #59: current size of the stale-host map (bounded diagnostics).
+    /// Test-support only — the production path logs via peek/forget, never the count.
+    #[cfg(test)]
     pub(crate) async fn stale_host_count(&self) -> usize {
         self.stale_hosts.lock().await.len()
     }
