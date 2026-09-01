@@ -215,10 +215,6 @@ pub struct TelegramState {
     ///
     /// Per session, so unrelated chats never wait on each other.
     plan_card_locks: Mutex<HashMap<Uuid, std::sync::Arc<tokio::sync::Mutex<()>>>>,
-    /// Session → when the card was last re-stuck (deleted and reposted at the
-    /// bottom). The re-stick costs two writes, so it is worth doing
-    /// occasionally to keep the card reachable and ruinous to do every settle.
-    plan_card_restick: Mutex<HashMap<Uuid, std::time::Instant>>,
     /// Photo batching buffer: (chat_id, user_id, media_group_id) → Vec<(img_marker, Option<caption>)>
     /// When user sends multiple photos in an album, we buffer them and only fire the agent
     /// after a quiet period (no new photos for 3s). Keyed by media_group_id to avoid merging
@@ -343,7 +339,6 @@ impl TelegramState {
             plan_card_store: Mutex::new(None),
             plan_card_backoff: Mutex::new(HashMap::new()),
             plan_card_locks: Mutex::new(HashMap::new()),
-            plan_card_restick: Mutex::new(HashMap::new()),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
             text_buffer: Mutex::new(HashMap::new()),
@@ -932,6 +927,21 @@ impl TelegramState {
         Some(card)
     }
 
+    /// In-memory-only card check (#62): whether a card message id is live in
+    /// THIS process. Unlike [`Self::plan_card`] it never rehydrates from the
+    /// store, so it is cheap enough to gate the per-settle restick claim —
+    /// cardless settles must not spend the shared sticky budget (#1150) they
+    /// do not need, or the flow-block restick would starve for 15s after
+    /// every settle. A card tracked by a previous process but not yet
+    /// re-posted here skips at most one restick: the refresh below re-posted
+    /// and re-tracked it, so the next settle resticks normally.
+    pub(crate) async fn plan_card_cached(
+        &self,
+        session_id: Uuid,
+    ) -> Option<(teloxide::types::MessageId, String)> {
+        self.plan_cards.lock().await.get(&session_id).cloned()
+    }
+
     /// The lock serialising card writes for a session (#822).
     ///
     /// Returned as an `Arc` so the caller holds it across its API calls; the
@@ -970,28 +980,6 @@ impl TelegramState {
             .lock()
             .await
             .insert(session_id, std::time::Instant::now() + wait);
-    }
-
-    /// Should the card be re-stuck (deleted and reposted at the bottom) now?
-    ///
-    /// Records the decision, so a `true` starts the cooldown. Re-sticking keeps
-    /// the card from being buried by streamed output, but costs a delete plus a
-    /// create; doing it every settle is what put the card within reach of flood
-    /// control (#814, regression from 3c45e41a).
-    pub(crate) async fn should_restick_plan_card(
-        &self,
-        session_id: Uuid,
-        cooldown: std::time::Duration,
-    ) -> bool {
-        let now = std::time::Instant::now();
-        let mut map = self.plan_card_restick.lock().await;
-        match map.get(&session_id) {
-            Some(last) if now.duration_since(*last) < cooldown => false,
-            _ => {
-                map.insert(session_id, now);
-                true
-            }
-        }
     }
 
     /// Give the plan-card map durable backing. Called once at startup.
