@@ -163,9 +163,6 @@ fn the_rich_flag_decides_the_transport_not_the_body() {
             PickRewrite::RichHost(b) | PickRewrite::ClassicHost(b) | PickRewrite::Standalone(b) => {
                 b.as_str()
             }
-            // GluedHost carries no body (markup-only strip + note); this test
-            // only builds rich/classic hosts.
-            PickRewrite::GluedHost => unreachable!("GluedHost carries no body"),
         }
     }
     assert_eq!(body_of(&classic), body_of(&rich));

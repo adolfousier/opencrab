@@ -72,13 +72,12 @@ pub(crate) enum PickRewrite {
     /// Classic merged host: body rides `edit_message_text` + empty markup
     /// to strip the dead buttons.
     ClassicHost(String),
-    /// #55 glue tier: the keyboard was GLUED onto a body-unsafe bubble
-    /// (table-bearing rich answer). A tap NEVER rewrites the body — it
-    /// strips the dead keyboard markup-only and echoes the pick record as
-    /// its own note bubble.
-    GluedHost,
     /// Standalone suggestion block: body rides plain `edit_message_text`.
     Standalone(String),
+    // NOTE (#55): glued hosts (table-bearing rich answers, keyboard attached
+    // via edit_message_reply_markup) never reach pick_rewrite — the tap
+    // handler routes them by the `glued` flag BEFORE calling this function,
+    // because a tap on a glued host must NEVER rewrite the body.
 }
 
 /// The single construction site for a post-tap body (#39).

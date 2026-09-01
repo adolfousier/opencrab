@@ -440,32 +440,36 @@ impl TelegramAgent {
                                                     if host_info
                                                         .as_ref()
                                                         .is_some_and(|(_, _, glued)| *glued)
-                                                    {
+                                                        {
                                                         // #55 glue tier: the host body is not
                                                         // merge-safe (table-bearing rich answer) —
                                                         // a text edit would flatten it. Strip the
                                                         // dead keyboard markup-only, then echo the
                                                         // pick record as its own note bubble.
-                                                        bot_clone
+                                                        // Sequential, not and_then/map: the note
+                                                        // future must be awaited, which no
+                                                        // Result-combinator closure can do.
+                                                        let stripped = bot_clone
                                                             .edit_message_reply_markup(chat_id, mid)
                                                             .reply_markup(empty_kb)
                                                             .await
                                                             .map(|_| ())
-                                                            .map_err(|e| e.to_string())
-                                                            .and_then(|()| {
-                                                                crate::channels::telegram::send::
-                                                                    best_effort_note(
-                                                                        &bot_clone,
-                                                                        chat_id,
-                                                                        thread_id,
-                                                                        &picked,
-                                                                        Some(teloxide::types::ParseMode::Html),
-                                                                        "tap-glue",
-                                                                        "pick record after glued tap",
-                                                                        "the glued host body must not be rewritten",
-                                                                    );
-                                                                Ok(())
-                                                            })
+                                                            .map_err(|e| e.to_string());
+                                                        if stripped.is_ok() {
+                                                            crate::channels::telegram::send::
+                                                                best_effort_note(
+                                                                    &bot_clone,
+                                                                    chat_id,
+                                                                    thread_id,
+                                                                    &picked,
+                                                                    Some(teloxide::types::ParseMode::Html),
+                                                                    "tap-glue",
+                                                                    "pick record after glued tap",
+                                                                    "the glued host body must not be rewritten",
+                                                                )
+                                                                .await;
+                                                        }
+                                                        stripped
                                                     } else {
                                                         // #39: the pick record is baked into the body
                                                         // BEFORE any transport arm runs — one format
@@ -512,21 +516,6 @@ impl TelegramAgent {
                                                                 .await
                                                                 .map(|_| ())
                                                                 .map_err(|e| e.to_string()),
-                                                        super::suggest_options::PickRewrite::GluedHost => {
-                                                            // Defensive: glued hosts are routed by the
-                                                            // #55 arm above, so pick_rewrite never returns
-                                                            // GluedHost on this path. If routing ever
-                                                            // changes, fail LOUD — silently body-editing a
-                                                            // table-bearing bubble would flatten it.
-                                                            tracing::error!(
-                                                                "Telegram followup tap: pick_rewrite returned \
-                                                                 GluedHost outside the #55 glued arm"
-                                                            );
-                                                            Err(
-                                                                "glued host reached the body-rewrite match"
-                                                                    .to_string(),
-                                                            )
-                                                        }
                                                         }
                                                     };
                                                 if let Err(e) = outcome {
