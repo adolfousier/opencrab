@@ -416,6 +416,13 @@ impl WhatsAppState {
         }
     }
 
+    /// True while an agent turn is in flight for `session_id` (a live cancel
+    /// token exists). Mirrors TelegramState::is_turn_active so /execute and
+    /// /discard can refuse while the session is busy (#966).
+    pub async fn is_turn_active(&self, session_id: Uuid) -> bool {
+        self.cancel_tokens.lock().await.contains_key(&session_id)
+    }
+
     /// Buffer a photo marker for batching. Returns the current buffer size.
     pub async fn buffer_photo(
         &self,

@@ -934,6 +934,53 @@ pub(crate) async fn handle_message(
                 let _ = client.send_message(reply_target.clone(), reply).await;
                 return;
             }
+            ChannelCommand::ExecutePlan => {
+                // /execute while a turn is running: refuse immediately, never
+                // queue — mirrors the Telegram arm (#966).
+                if wa_state.is_turn_active(session_id).await {
+                    let reply = waproto::whatsapp::Message {
+                        conversation: Some(
+                            "⛔ A turn is running. /execute is refused while busy; \
+                             try again when the turn finishes."
+                                .to_string(),
+                        ),
+                        ..Default::default()
+                    };
+                    let _ = client.send_message(reply_target.clone(), reply).await;
+                    return;
+                }
+                match crate::utils::plan_mode::try_approve(session_id).await {
+                    crate::utils::plan_mode::ApproveOutcome::Refused(reply_text) => {
+                        let reply = waproto::whatsapp::Message {
+                            conversation: Some(reply_text),
+                            ..Default::default()
+                        };
+                        let _ = client.send_message(reply_target.clone(), reply).await;
+                        return;
+                    }
+                    crate::utils::plan_mode::ApproveOutcome::SeedTurn { prompt } => {
+                        // Visible seed turn: fall through to the agent with the
+                        // locked implement-turn prompt as the message.
+                        content = prompt;
+                    }
+                }
+            }
+            ChannelCommand::DiscardPlan => {
+                // /discard cancels an in-flight turn first, then cleans up —
+                // mirrors the Telegram arm (#966).
+                let cancelled = wa_state.cancel_session(session_id).await;
+                let mut reply =
+                    crate::utils::plan_mode::discard(session_id, agent.context()).await;
+                if cancelled {
+                    reply = format!("⏹️ Cancelled the running turn. {reply}");
+                }
+                let reply_msg = waproto::whatsapp::Message {
+                    conversation: Some(reply),
+                    ..Default::default()
+                };
+                let _ = client.send_message(reply_target.clone(), reply_msg).await;
+                return;
+            }
             _ => {}
         }
     }
