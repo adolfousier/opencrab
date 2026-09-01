@@ -68,7 +68,6 @@ fn compacting_footer_suppresses_duplicate_activity_segment() {
         usize::MAX,
         5,
         None,
-        0,
         true,
     );
     assert_eq!(
@@ -84,7 +83,6 @@ fn compacting_footer_suppresses_duplicate_activity_segment() {
         usize::MAX,
         5,
         None,
-        0,
         false,
     );
     assert_eq!(

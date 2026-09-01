@@ -677,7 +677,6 @@ fn settled_footer_shows_bg_indicator_when_task_running() {
         usize::MAX,
         517,
         Some("cargo test running"),
-        0,
         false,
     );
     assert!(
@@ -692,7 +691,6 @@ fn settled_footer_shows_bg_indicator_when_task_running() {
         usize::MAX,
         517,
         None,
-        0,
         false,
     );
     assert!(
@@ -707,7 +705,6 @@ fn settled_footer_shows_bg_indicator_when_task_running() {
         usize::MAX,
         517,
         Some("3 tasks running"),
-        0,
         false,
     );
     assert!(
@@ -910,7 +907,6 @@ fn cli_cap_truncates_body_api_keeps_it_full_html() {
         300,
         2,
         None,
-        0,
         false,
     );
     let api = render_flow_html_chrome_pref(
@@ -921,7 +917,6 @@ fn cli_cap_truncates_body_api_keeps_it_full_html() {
         usize::MAX,
         2,
         None,
-        0,
         false,
     );
     assert!(
@@ -951,7 +946,6 @@ fn cli_cap_truncates_body_api_keeps_it_full_details() {
         300,
         2,
         None,
-        0,
         false,
     );
     let api = render_flow_details_chrome_pref(
@@ -962,7 +956,6 @@ fn cli_cap_truncates_body_api_keeps_it_full_details() {
         usize::MAX,
         2,
         None,
-        0,
         false,
     );
     assert!(
@@ -992,7 +985,6 @@ fn short_narration_untouched_by_either_cap() {
             cap,
             2,
             None,
-            0,
             false,
         );
         assert!(out.contains("brief note"));
