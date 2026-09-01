@@ -415,46 +415,51 @@ impl TelegramAgent {
                                                     InlineKeyboardMarkup::new(
                                                         Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
                                                     );
-                                                let outcome: Result<(), String> = match host_info {
-                                                    Some((full, true)) => {
-                                                        super::rich::api::edit_rich_html(
-                                                            bot_clone.api_url().as_str(),
-                                                            bot_clone.token(),
-                                                            chat_id.0,
-                                                            mid.0,
-                                                            &format!("{full}\n\n{picked}"),
-                                                            Some(&serde_json::json!(empty_kb)),
-                                                            "turn",
-                                                            "-",
-                                                        )
+                                                // #39: the pick record is baked into the body
+                                                // BEFORE any transport arm runs — one format
+                                                // site, so no arm can drop the choice again
+                                                // (the classic merged host used to edit the
+                                                // answer HTML alone and lose the record).
+                                                let rewrite =
+                                                    super::suggest_options::pick_rewrite(
+                                                        host_info
+                                                            .as_ref()
+                                                            .map(|(full, rich)| (full.as_str(), *rich)),
+                                                        picked,
+                                                    );
+                                                let outcome: Result<(), String> = match rewrite {
+                                                    super::suggest_options::PickRewrite::RichHost(
+                                                        body,
+                                                    ) => super::rich::api::edit_rich_html(
+                                                        bot_clone.api_url().as_str(),
+                                                        bot_clone.token(),
+                                                        chat_id.0,
+                                                        mid.0,
+                                                        &body,
+                                                        Some(&serde_json::json!(empty_kb)),
+                                                        "turn",
+                                                        "-",
+                                                    )
+                                                    .await
+                                                    .map(|_| ())
+                                                    .map_err(|e| e.to_string()),
+                                                    super::suggest_options::PickRewrite::ClassicHost(
+                                                        body,
+                                                    ) => bot_clone
+                                                        .edit_message_text(chat_id, mid, &body)
+                                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                                        .reply_markup(empty_kb)
                                                         .await
                                                         .map(|_| ())
-                                                        .map_err(|e| e.to_string())
-                                                    }
-                                                    host_info => {
-                                                        let req = match host_info {
-                                                            Some((full, _)) => bot_clone
-                                                                .edit_message_text(
-                                                                    chat_id, mid, &full,
-                                                                )
-                                                                .parse_mode(
-                                                                    teloxide::types::ParseMode::
-                                                                        Html,
-                                                                )
-                                                                .reply_markup(empty_kb),
-                                                            None => bot_clone
-                                                                .edit_message_text(
-                                                                    chat_id, mid, &picked,
-                                                                )
-                                                                .parse_mode(
-                                                                    teloxide::types::ParseMode::
-                                                                        Html,
-                                                                ),
-                                                        };
-                                                        req.await
-                                                            .map(|_| ())
-                                                            .map_err(|e| e.to_string())
-                                                    }
+                                                        .map_err(|e| e.to_string()),
+                                                    super::suggest_options::PickRewrite::Standalone(
+                                                        body,
+                                                    ) => bot_clone
+                                                        .edit_message_text(chat_id, mid, &body)
+                                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                                        .await
+                                                        .map(|_| ())
+                                                        .map_err(|e| e.to_string()),
                                                 };
                                                 if let Err(e) = outcome {
                                                     tracing::warn!(

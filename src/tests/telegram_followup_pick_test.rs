@@ -12,7 +12,9 @@
 //!
 //! Fixtures are synthetic and carry no user identifiers.
 
-use crate::channels::telegram::suggest_options::{echo_fallback, picked_block};
+use crate::channels::telegram::suggest_options::{
+    PickRewrite, echo_fallback, pick_rewrite, picked_block,
+};
 
 const CHOICE: &str = "Update the SKILL.md with the new callback routing";
 
@@ -100,4 +102,69 @@ fn the_fallback_echo_names_the_chooser_too() {
     assert!(echo.starts_with("> "), "fallback must stay quoted: {echo}");
     assert!(echo.contains("Daniel"));
     assert!(echo.contains(CHOICE));
+}
+
+// ── Post-tap rewrite body (#39) ─────────────────────────────────────────────
+
+#[test]
+fn classic_host_body_keeps_answer_and_pick() {
+    // The exact regression from the owner report 2026-08-29 23:51Z: the
+    // classic merged host edited the answer HTML alone and the pick
+    // record vanished. The body must carry BOTH, answer first.
+    let rewrite = pick_rewrite(
+        Some(("<b>the answer</b>", false)),
+        picked_block(CHOICE, None),
+    );
+    let PickRewrite::ClassicHost(body) = rewrite else {
+        panic!("a classic host must stay classic: {rewrite:?}")
+    };
+    assert!(
+        body.starts_with("<b>the answer</b>"),
+        "answer html first: {body}"
+    );
+    assert!(body.contains(CHOICE), "pick record survives: {body}");
+    assert!(body.contains('\u{25b6}'), "pick marker survives: {body}");
+}
+
+#[test]
+fn rich_host_body_keeps_answer_and_pick() {
+    let rewrite = pick_rewrite(
+        Some(("<b>the answer</b>", true)),
+        picked_block(CHOICE, None),
+    );
+    let PickRewrite::RichHost(body) = rewrite else {
+        panic!("a rich host must stay rich: {rewrite:?}")
+    };
+    assert!(
+        body.starts_with("<b>the answer</b>"),
+        "answer html first: {body}"
+    );
+    assert!(body.contains(CHOICE), "pick record survives: {body}");
+}
+
+#[test]
+fn standalone_body_is_the_pick_record_alone() {
+    let record = picked_block(CHOICE, None);
+    assert_eq!(
+        pick_rewrite(None, record.clone()),
+        PickRewrite::Standalone(record)
+    );
+}
+
+#[test]
+fn the_rich_flag_decides_the_transport_not_the_body() {
+    // Same host html, same pick — only the rich flag flips, so the two
+    // bodies must match byte for byte; only the variant differs.
+    let picked = picked_block(CHOICE, None);
+    let classic = pick_rewrite(Some(("host", false)), picked.clone());
+    let rich = pick_rewrite(Some(("host", true)), picked);
+    fn body_of(r: &PickRewrite) -> &str {
+        match r {
+            PickRewrite::RichHost(b) | PickRewrite::ClassicHost(b) | PickRewrite::Standalone(b) => {
+                b.as_str()
+            }
+        }
+    }
+    assert_eq!(body_of(&classic), body_of(&rich));
+    assert_ne!(classic, rich, "the variant must flip with the flag");
 }
