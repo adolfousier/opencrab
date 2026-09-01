@@ -17,10 +17,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
-    ChatAction, ChatKind, FileId, InlineKeyboardMarkup, MessageId, ParseMode, ReplyParameters,
+    ChatKind, FileId, InlineKeyboardMarkup, MessageId, ParseMode, ReplyParameters,
 };
 
-use super::send::{best_effort_delete, fire_chat_action, message_in_thread};
+use super::send::{best_effort_delete, message_in_thread};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -1431,23 +1431,14 @@ pub(crate) async fn handle_message(
         truncate_str(&text, 50)
     );
 
-    // Start typing indicator loop — cancelled via guard on all return paths
+    // Start typing indicator loop — cancelled via guard on all return paths.
+    // Consolidated on typing.rs (#62): same turn-phase loop spawn_typing
+    // uses. The session id is not known yet (resolution happens below), so
+    // this is the bare turn loop; the detached tail is attached later via
+    // spawn_typing_after_turn once the id exists.
     let typing_cancel = CancellationToken::new();
     let _typing_guard = TypingGuard(typing_cancel.clone());
-    tokio::spawn({
-        let bot = bot.clone();
-        let chat = msg.chat.id;
-        let cancel = typing_cancel.clone();
-        async move {
-            loop {
-                fire_chat_action(&bot, chat, thread_id, ChatAction::Typing, "typing loop").await;
-                tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
-                }
-            }
-        }
-    });
+    super::typing::spawn_typing_turn(bot.clone(), msg.chat.id, thread_id, typing_cancel.clone());
 
     let is_owner = tg_cfg.is_owner(&user_id.to_string());
 
