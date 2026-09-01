@@ -4178,7 +4178,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (6,997 tests across 694 test modules; 32 slower tests are
+# Run tests (7,290 tests across 735 test modules; 32 slower tests are
 # #[ignore]d to keep the default run fast — profile tests that touch
 # ~/.opencrabs, browser end-to-end tests, and opencode provider tests.
 # Opt in with `cargo test --all-features -- --ignored` when needed)
@@ -4248,6 +4248,18 @@ The chain becomes a **majority-vote judge panel** (variance reduction + cross-mo
 #### Memory Search (in-tree store — FTS5 + Vector Embeddings)
 
 Hybrid semantic search: FTS5 BM25 keyword matching + vector embeddings combined via Reciprocal Rank Fusion. Three modes: local GGUF (default, no API key), OpenAI-compatible API, or FTS5-only (VPS-friendly).
+
+**External index paths (knowledge base):** `[memory] extra_paths` indexes directories of markdown/text outside your profile. Search them with `memory_search scope="external"` — ranked excerpts with file paths, quotable verbatim. Pair with `web_scrape` sitemap export to index an entire docs site at zero AI/API cost:
+
+```toml
+[memory]
+extra_paths = [
+  "~/knowledge/product-docs",
+  { path = "scrapes/docs.example.com", pattern = "**/*.md" },  # web_scrape --sitemap export output
+]
+# external_allowed_in_shared = false   # default: external results are owner-session-only
+# sweep_interval_secs = 300            # freshness sweep; changed files also caught lazily at search
+```
 
 
 Benchmarked with `cargo bench --bench memory` on release builds:
