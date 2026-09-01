@@ -119,6 +119,66 @@ async fn confirm_route(target: uuid::Uuid, cap: Duration) -> (&'static str, Stri
     )
 }
 
+/// Depth-3 status check (fork #50): `action: "status"` polls the receipt a
+/// send verdict carried. In-memory by design — receipts die with the
+/// process, so an unknown id after a restart reports honestly instead of
+/// guessing. DELIVERY ≠ QUEUE ACCEPTANCE becomes a query, not a hope: the
+/// tool-loop drain point stamps receipts `injected` when the target's queue
+/// is actually consumed.
+fn status_verdict(input: &Value) -> Result<ToolResult> {
+    use crate::brain::agent::service::notify_receipts::{self, ReceiptState};
+    let raw = input
+        .get("notify_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            ToolError::InvalidInput("'notify_id' is required for action 'status'".into())
+        })?;
+    let id: uuid::Uuid = raw
+        .parse()
+        .map_err(|_| ToolError::InvalidInput(format!("'notify_id' is not a valid UUID: {raw}")))?;
+    match notify_receipts::status(id) {
+        None => Ok(verdict(
+            false,
+            "unknown_id",
+            format!(
+                "No notification {id} is tracked in this process — receipts are in-memory \
+                 and do not survive restarts. A receipt stamped injected before a restart \
+                 counted as consumed."
+            ),
+            &[("notify_id", id.to_string())],
+        )),
+        Some(receipt) => {
+            let mut extra = vec![
+                ("notify_id", id.to_string()),
+                ("notify_target", receipt.target.to_string()),
+                ("queued_at", receipt.queued_at.to_rfc3339()),
+            ];
+            let detail = match receipt.state {
+                ReceiptState::Injected => {
+                    let at = receipt
+                        .injected_at
+                        .map(|t| t.to_rfc3339())
+                        .unwrap_or_default();
+                    extra.push(("injected_at", at.clone()));
+                    format!(
+                        "Notification {id} was INJECTED into session {}'s model context at \
+                         {at} — the receiving machinery consumed it.",
+                        receipt.target
+                    )
+                }
+                ReceiptState::Queued => format!(
+                    "Notification {id} is routed to session {} but NOT yet observed at a \
+                     tool-loop drain point (queued {}). Delivery ≠ queue acceptance: it \
+                     injects when that session's turn hits a boundary.",
+                    receipt.target,
+                    receipt.queued_at.to_rfc3339()
+                ),
+            };
+            Ok(verdict(true, receipt.state.as_str(), detail, &extra))
+        }
+    }
+}
+
 /// Resolve the v2 delivery policy against the deprecated `interrupt` alias
 /// (fork #50). `interrupt=true` was always "queue for the in-flight turn's
 /// next tool-loop boundary" — that is mode `turn-end`; unset/false was
@@ -205,8 +265,8 @@ impl Tool for SessionNotifyTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["send"],
-                    "description": "Operation on the notification family. v1 ships 'send' only (the default when omitted); 'cancel' and 'list' join when notification ids gain consumers."
+                    "enum": ["send", "status"],
+                    "description": "Operation on the notification family. 'send' (default when omitted) delivers; 'status' polls a receipt by notify_id — reports 'injected' (the receiving machinery stamped it at a tool-loop drain point), 'queued' (routed but not yet consumed), or 'unknown_id' (not tracked; receipts are in-memory and do not survive restarts)."
                 },
                 "target_session": {
                     "type": "string",
@@ -214,7 +274,11 @@ impl Tool for SessionNotifyTool {
                 },
                 "message": {
                     "type": "string",
-                    "description": "Text to deliver to the target session"
+                    "description": "Text to deliver to the target session (action 'send' only)"
+                },
+                "notify_id": {
+                    "type": "string",
+                    "description": "action 'status' only: the notification id from a send/deferred verdict's metadata"
                 },
                 "delivery": {
                     "type": "object",
@@ -244,7 +308,7 @@ impl Tool for SessionNotifyTool {
                     "description": "Deprecated alias for delivery.mode: true = 'turn-end', false/unset = 'now'. Prefer delivery.mode; passing both is allowed only when they agree."
                 }
             },
-            "required": ["target_session", "message"]
+            "required": ["target_session"]
         })
     }
 
@@ -265,6 +329,23 @@ impl Tool for SessionNotifyTool {
             ToolError::InvalidInput(format!("'target_session' is not a valid UUID: {target}"))
         })?;
 
+        // v2 surface (fork #50): `action` dispatches the verb family. v1
+        // shipped "send" only; depth-3 receipts add "status" — a real
+        // consumer for the notification ids the send verdicts carry.
+        match input
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("send")
+        {
+            "send" => {}
+            "status" => return status_verdict(&input),
+            other => {
+                return Err(ToolError::InvalidInput(format!(
+                    "action '{other}' is not available yet — available: 'send', 'status'"
+                )));
+            }
+        }
+
         let message = input
             .get("message")
             .and_then(|v| v.as_str())
@@ -284,17 +365,6 @@ impl Tool for SessionNotifyTool {
             bg_meta: None,
         };
 
-        // v2 surface (fork #50): `action` dispatches the verb family; v1
-        // ships "send" only. Omitted action = "send" (existing callers
-        // never pass it).
-        if let Some(action) = input.get("action").and_then(Value::as_str)
-            && action != "send"
-        {
-            return Err(ToolError::InvalidInput(format!(
-                "action '{action}' is not available yet — v1 ships 'send' only"
-            )));
-        }
-
         // Failsafe default (fork #13): an unset interrupt must not derail a
         // session that is mid-turn. v2 (fork #50) re-expresses the knob as
         // the delivery policy — the alias keeps old prompts working.
@@ -307,6 +377,7 @@ impl Tool for SessionNotifyTool {
             delivery_obj,
         )?;
 
+        use crate::brain::agent::service::notify_receipts;
         use crate::brain::agent::service::quiet_delivery;
         use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
@@ -319,6 +390,9 @@ impl Tool for SessionNotifyTool {
         } = mode
         {
             let id = quiet_delivery::defer_quiet(target, msg, quiet_for, max_delay);
+            // The deferred id is a first-class notification id: status-checkable
+            // like any send receipt (stamped injected when the release drains).
+            notify_receipts::record_queued(id, target);
             return Ok(verdict(
                 true,
                 "deferred",
@@ -342,8 +416,13 @@ impl Tool for SessionNotifyTool {
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
+        // Depth-3 receipt (fork #50): every success-path verdict carries an
+        // id the sender can poll with action:"status" — the tool-loop drain
+        // point stamps it injected when the target's queue is consumed.
+        let notify_id = uuid::Uuid::new_v4();
         match deliver_to_session(target, msg, interrupt) {
             Delivery::Delivered => {
+                notify_receipts::record_queued(notify_id, target);
                 if confirm {
                     let (state, detail, reason) = confirm_route(target, CONFIRM_CAP).await;
                     return Ok(verdict(
@@ -352,6 +431,7 @@ impl Tool for SessionNotifyTool {
                         detail,
                         &[
                             ("notify_target", target.to_string()),
+                            ("notify_id", notify_id.to_string()),
                             ("notify_reason", reason.into()),
                         ],
                     ));
@@ -360,27 +440,35 @@ impl Tool for SessionNotifyTool {
                     true,
                     "delivered",
                     format!(
-                        "Delivered to session {target}. It will process the message on its next turn."
+                        "Delivered to session {target}. It will process the message on its next \
+                         turn. Poll action:\"status\" with notify_id for the injection stamp."
                     ),
-                    &[("notify_target", target.to_string())],
+                    &[
+                        ("notify_target", target.to_string()),
+                        ("notify_id", notify_id.to_string()),
+                    ],
                 ))
             }
             // Queued, not lost: the target belongs to a channel that has not
             // claimed it since the last restart (#1206). Reporting this as a
             // failure would be the opposite of what happened.
-            Delivery::Parked => Ok(verdict(
-                true,
-                "queued",
-                format!(
-                    "Queued for session {target}. Its channel has not claimed it since the last \
-                     restart, so it will be delivered as soon as that channel next binds the \
-                     session."
-                ),
-                &[
-                    ("notify_target", target.to_string()),
-                    ("notify_reason", "awaiting_channel_claim".into()),
-                ],
-            )),
+            Delivery::Parked => {
+                notify_receipts::record_queued(notify_id, target);
+                Ok(verdict(
+                    true,
+                    "queued",
+                    format!(
+                        "Queued for session {target}. Its channel has not claimed it since the \
+                         last restart, so it will be delivered as soon as that channel next \
+                         binds the session. Poll action:\"status\" with notify_id."
+                    ),
+                    &[
+                        ("notify_target", target.to_string()),
+                        ("notify_id", notify_id.to_string()),
+                        ("notify_reason", "awaiting_channel_claim".into()),
+                    ],
+                ))
+            }
             Delivery::RefusedInFlight { redirected_to } => {
                 let who = match redirected_to {
                     Some(to) => format!(
@@ -425,6 +513,7 @@ impl Tool for SessionNotifyTool {
             // was redirected to the session that owns it NOW (fork #19) — a
             // success, not a refusal, and the reply names where it went.
             Delivery::Redirected { to } => {
+                notify_receipts::record_queued(notify_id, to);
                 if confirm {
                     let (state, detail, reason) = confirm_route(to, CONFIRM_CAP).await;
                     return Ok(verdict(
@@ -433,6 +522,7 @@ impl Tool for SessionNotifyTool {
                         format!("{detail} (redirected to {to} — see notify_occupant)"),
                         &[
                             ("notify_target", target.to_string()),
+                            ("notify_id", notify_id.to_string()),
                             ("notify_occupant", to.to_string()),
                             ("notify_reason", reason.into()),
                         ],
@@ -444,6 +534,7 @@ impl Tool for SessionNotifyTool {
                     redirect_message(target, to),
                     &[
                         ("notify_target", target.to_string()),
+                        ("notify_id", notify_id.to_string()),
                         ("notify_occupant", to.to_string()),
                     ],
                 ))
@@ -614,5 +705,66 @@ mod tests {
         assert_eq!(state, "delivered");
         assert_eq!(reason, "unconfirmed");
         assert!(detail.contains("no wake was observed"), "got: {detail}");
+    }
+
+    #[test]
+    fn status_verdict_unknown_id_is_honest_failure() {
+        let input = serde_json::json!({ "notify_id": uuid::Uuid::new_v4().to_string() });
+        let result = status_verdict(&input).expect("verdict builds");
+        assert!(!result.success);
+        assert_eq!(result.metadata.get("notify_state").unwrap(), "unknown_id");
+    }
+
+    #[test]
+    fn status_verdict_requires_notify_id() {
+        let input = serde_json::json!({});
+        let err = status_verdict(&input).unwrap_err().to_string();
+        assert!(err.contains("'notify_id' is required"), "got: {err}");
+    }
+
+    #[test]
+    fn status_verdict_tracks_queued_then_injected_lifecycle() {
+        use crate::brain::agent::service::notify_receipts;
+        let (id, target) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        notify_receipts::record_queued(id, target);
+
+        let input = serde_json::json!({ "notify_id": id.to_string() });
+        let queued = status_verdict(&input).expect("verdict builds");
+        assert!(queued.success);
+        assert_eq!(queued.metadata.get("notify_state").unwrap(), "queued");
+        assert_eq!(
+            queued.metadata.get("notify_target").unwrap(),
+            target.to_string()
+        );
+        assert!(queued.metadata.get("injected_at").is_none());
+        assert!(
+            queued.output.contains("NOT yet observed"),
+            "got: {}",
+            queued.output
+        );
+
+        assert_eq!(notify_receipts::mark_injected_for_target(target), 1);
+        let injected = status_verdict(&input).expect("verdict builds");
+        assert_eq!(injected.metadata.get("notify_state").unwrap(), "injected");
+        assert!(injected.metadata.get("injected_at").is_some());
+        assert!(
+            injected.output.contains("INJECTED"),
+            "got: {}",
+            injected.output
+        );
+    }
+
+    #[test]
+    fn schema_ships_status_verb_and_notify_id_param() {
+        let tool = SessionNotifyTool;
+        let schema = tool.input_schema();
+        assert_eq!(
+            schema["properties"]["action"]["enum"],
+            serde_json::json!(["send", "status"])
+        );
+        assert!(schema["properties"]["notify_id"].is_object());
+        // 'message' moved off required so status calls validate; the send
+        // path still refuses a missing/empty message at execute time.
+        assert_eq!(schema["required"], serde_json::json!(["target_session"]));
     }
 }

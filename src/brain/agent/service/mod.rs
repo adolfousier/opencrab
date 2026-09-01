@@ -19,6 +19,7 @@ mod gaslighting;
 pub(crate) mod helpers;
 mod messaging;
 mod model_refresh;
+pub(crate) mod notify_receipts;
 pub(crate) mod nudge;
 pub(crate) mod parallel_tools;
 pub(crate) mod phantom;

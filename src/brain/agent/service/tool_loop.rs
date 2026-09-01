@@ -7143,6 +7143,17 @@ impl AgentService {
             {
                 tracing::info!("Injecting queued user message between tool iterations");
 
+                // Depth-3 notify receipts (fork #50): the drain consumes the
+                // session's whole queue, so every notify receipt queued for
+                // this target is now provably consumed — stamp them injected
+                // before the sender can ask.
+                let stamped = super::notify_receipts::mark_injected_for_target(session_id);
+                if stamped > 0 {
+                    tracing::info!(
+                        "Stamped {stamped} notify receipt(s) injected for session {session_id}"
+                    );
+                }
+
                 // Notify TUI so the user message appears inline in the chat flow
                 if let Some(ref cb) = progress_callback {
                     cb(
