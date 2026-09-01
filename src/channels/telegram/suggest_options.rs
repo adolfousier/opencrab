@@ -295,7 +295,7 @@ pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
             out.push_str("</tg-button>");
         } else {
             // Not a follow-up button: emit the whole span verbatim.
-            out.push_str(&rest[..tag_start + body_rel + label_rel]);
+            out.push_str(&rest[..tag_start + tag_open_len + body_rel + label_rel]);
             out.push_str("</tg-button>");
         }
         rest = tail;
