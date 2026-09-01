@@ -8,6 +8,7 @@ pub(crate) mod commands_tg;
 pub(crate) mod cowork;
 pub(crate) mod dedup_approval;
 pub(crate) mod delivery;
+pub(crate) mod edit_retry;
 pub(crate) mod ephemeral;
 pub(crate) mod flow;
 pub(crate) mod flow_chrome;

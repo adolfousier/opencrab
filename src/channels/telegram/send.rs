@@ -288,12 +288,51 @@ pub async fn best_effort_note<C>(
             len,
             &hash8,
         ),
-        Err(e) => {
-            tracing::warn!(
-                "Telegram: best-effort note failed ({origin}/{origin_detail} {why}): chat={} err={e}",
-                chat.0
-            );
-        }
+        Err(e) => match super::edit_retry::classify(&e) {
+            super::edit_retry::EditErr::RetryAfter(wait) => {
+                tracing::warn!(
+                    "Telegram: best-effort note 429 (retry after {wait:?}) — deferring one retry \
+                     ({origin}/{origin_detail} {why}): chat={}",
+                    chat.0
+                );
+                // #68: the note re-fires after the server-instructed wait;
+                // the caller is long gone (this fn is fire-and-forget), so
+                // exhaustion just warns — same net effect as before, but the
+                // retry now lands instead of dying with attempt 1.
+                let bot2 = bot.clone();
+                let chat2 = chat;
+                let thread2 = thread_id;
+                let text2 = text.to_string();
+                let mode2 = parse_mode;
+                let origin2 = origin.to_string();
+                let detail2 = origin_detail.to_string();
+                let why2 = why.to_string();
+                super::edit_retry::spawn_deferred(
+                    wait,
+                    move || async move {
+                        let request = message_in_thread(&bot2, chat2, thread2, &text2);
+                        let request = match mode2 {
+                            Some(mode) => request.parse_mode(mode),
+                            None => request,
+                        };
+                        request.await.map(|_| ())
+                    },
+                    move || async move {
+                        tracing::warn!(
+                            "Telegram: best-effort note dropped after deferred retry \
+                             ({origin2}/{detail2} {why2}): chat={}",
+                            chat.0
+                        );
+                    },
+                );
+            }
+            super::edit_retry::EditErr::Fatal(msg) => {
+                tracing::warn!(
+                    "Telegram: best-effort note failed ({origin}/{origin_detail} {why}): chat={} err={msg}",
+                    chat.0
+                );
+            }
+        },
     }
 }
 

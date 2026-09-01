@@ -423,6 +423,10 @@ impl TelegramAgent {
                                                 &crate::channels::telegram::suggest_options::
                                                     picked_block(&text, chooser.as_deref()),
                                             );
+                                        // #68: true when the echo fallback is owned by the
+                                        // deferred retry task (do NOT echo into the same
+                                        // 429 window — the old immediate echo died there).
+                                        let mut echo_deferred = false;
                                         let recorded = match prompt_msg_id {
                                             Some(mid) => {
                                                 // Merged keyboard (#tg-suggest-merge): the
@@ -461,6 +465,14 @@ impl TelegramAgent {
                                                             .map(|(full, rich)| (full.as_str(), *rich)),
                                                         picked,
                                                     );
+                                                // #68: capture the rewrite payload so a
+                                                // Retry-After deferral can re-fire a
+                                                // byte-identical edit outside the 429 window.
+                                                let mut tap_retry = Some(match &rewrite {
+                                                    super::suggest_options::PickRewrite::RichHost(body) => TapRetry::Rich(chat_id, mid, body.clone(), empty_kb.clone()),
+                                                    super::suggest_options::PickRewrite::ClassicHost(body) => TapRetry::Classic(chat_id, mid, body.clone(), empty_kb.clone()),
+                                                    super::suggest_options::PickRewrite::Standalone(body) => TapRetry::Standalone(chat_id, mid, body.clone()),
+                                                });
                                                 let outcome: Result<(), String> = match rewrite {
                                                     super::suggest_options::PickRewrite::RichHost(
                                                         body,
@@ -496,11 +508,57 @@ impl TelegramAgent {
                                                         .map_err(|e| e.to_string()),
                                                 };
                                                 if let Err(e) = outcome {
-                                                    tracing::warn!(
-                                                        "Telegram followup tap: could not edit the \
-                                                         suggestion block ({e}) — falling back to \
-                                                         a quoted echo"
-                                                    );
+                                                    match super::edit_retry::classify_str(&e) {
+                                                        super::edit_retry::EditErr::RetryAfter(wait) => {
+                                                            tracing::warn!(
+                                                                "Telegram followup tap: pick-record edit \
+                                                                 429 (retry after {wait:?}) — deferring one \
+                                                                 identical retry"
+                                                            );
+                                                            if let Some(retry) = tap_retry.take() {
+                                                                let bot_r = bot_clone.clone();
+                                                                let bot_e = bot_clone.clone();
+                                                                let echo_text = text.clone();
+                                                                let echo_chooser = chooser.clone();
+                                                                super::edit_retry::spawn_deferred(
+                                                                    wait,
+                                                                    move || async move {
+                                                                        refire_pick_edit(&bot_r, retry)
+                                                                            .await
+                                                                    },
+                                                                    move || async move {
+                                                                        // The legacy quoted echo — now
+                                                                        // safely outside the 429 window
+                                                                        // that killed attempt 1 (#68).
+                                                                        let echo = crate::channels::telegram::handler::md_to_html(
+                                                                            &crate::channels::telegram::suggest_options::
+                                                                                echo_fallback(&echo_text, echo_chooser.as_deref()),
+                                                                        );
+                                                                        if let Err(e) =
+                                                                            crate::channels::telegram::send::message_in_thread(
+                                                                                &bot_e, chat_id, thread_id, echo,
+                                                                            )
+                                                                            .parse_mode(teloxide::types::ParseMode::Html)
+                                                                            .await
+                                                                        {
+                                                                            tracing::warn!(
+                                                                                "Telegram followup tap: echo fallback \
+                                                                                 also failed: {e}"
+                                                                            );
+                                                                        }
+                                                                    },
+                                                                );
+                                                                echo_deferred = true;
+                                                            }
+                                                        }
+                                                        super::edit_retry::EditErr::Fatal(_) => {
+                                                            tracing::warn!(
+                                                                "Telegram followup tap: could not edit the \
+                                                                 suggestion block ({e}) — falling back to \
+                                                                 a quoted echo"
+                                                            );
+                                                        }
+                                                    }
                                                     false
                                                 } else {
                                                     // #1226: the pick-record edit also strips
@@ -515,7 +573,7 @@ impl TelegramAgent {
                                             }
                                             None => false,
                                         };
-                                        if !recorded {
+                                        if !recorded && !echo_deferred {
                                             // The block is gone or too old to edit.
                                             // A quoted echo is worse attribution
                                             // but better than losing the record of
@@ -1948,6 +2006,62 @@ struct DispatchDeps {
     config_rx: tokio::sync::watch::Receiver<Config>,
     channel_msg_repo: ChannelMessageRepository,
     session_binding_repo: SessionBindingRepository,
+}
+
+/// Prebuilt retry payload for the tap pick-record edit (#68). Built BEFORE
+/// the first attempt fires, so the deferred retry is byte-identical to
+/// attempt 1 — same body, same empty keyboard, same transport arm.
+#[derive(Clone)]
+enum TapRetry {
+    /// Rich merged host: body rides `edit_rich_html`.
+    Rich(
+        ChatId,
+        MessageId,
+        String,
+        teloxide::types::InlineKeyboardMarkup,
+    ),
+    /// Classic merged host: body + empty keyboard strip the dead buttons.
+    Classic(
+        ChatId,
+        MessageId,
+        String,
+        teloxide::types::InlineKeyboardMarkup,
+    ),
+    /// Standalone suggestion block becomes the pick record.
+    Standalone(ChatId, MessageId, String),
+}
+
+/// Re-fire a tap pick-record edit exactly as attempt 1 fired it (#68).
+async fn refire_pick_edit(bot: &Bot, retry: TapRetry) -> Result<(), String> {
+    use teloxide::payloads::EditMessageTextSetters;
+    use teloxide::prelude::Requester;
+    match retry {
+        TapRetry::Rich(chat_id, mid, body, kb) => super::rich::api::edit_rich_html(
+            bot.api_url().as_str(),
+            bot.token(),
+            chat_id.0,
+            mid.0,
+            &body,
+            Some(&serde_json::json!(kb)),
+            "turn",
+            "-",
+        )
+        .await
+        .map_err(|e| e.to_string()),
+        TapRetry::Classic(chat_id, mid, body, kb) => bot
+            .edit_message_text(chat_id, mid, &body)
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .reply_markup(kb)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        TapRetry::Standalone(chat_id, mid, body) => bot
+            .edit_message_text(chat_id, mid, &body)
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+    }
 }
 
 /// Should this message be held until its edit stream settles? True only for
