@@ -13,7 +13,8 @@
 //! Fixtures are synthetic and carry no user identifiers.
 
 use crate::channels::telegram::suggest_options::{
-    PickRewrite, echo_fallback, pick_rewrite, picked_block,
+    PickRewrite, echo_fallback, mark_picked_button, pick_rewrite, picked_block,
+    suggestion_rows_rich_html,
 };
 
 const CHOICE: &str = "Update the SKILL.md with the new callback routing";
@@ -114,6 +115,7 @@ fn classic_host_body_keeps_answer_and_pick() {
     let rewrite = pick_rewrite(
         Some(("<b>the answer</b>", false)),
         picked_block(CHOICE, None),
+        0,
     );
     let PickRewrite::ClassicHost(body) = rewrite else {
         panic!("a classic host must stay classic: {rewrite:?}")
@@ -131,6 +133,7 @@ fn rich_host_body_keeps_answer_and_pick() {
     let rewrite = pick_rewrite(
         Some(("<b>the answer</b>", true)),
         picked_block(CHOICE, None),
+        0,
     );
     let PickRewrite::RichHost(body) = rewrite else {
         panic!("a rich host must stay rich: {rewrite:?}")
@@ -146,7 +149,7 @@ fn rich_host_body_keeps_answer_and_pick() {
 fn standalone_body_is_the_pick_record_alone() {
     let record = picked_block(CHOICE, None);
     assert_eq!(
-        pick_rewrite(None, record.clone()),
+        pick_rewrite(None, record.clone(), 0),
         PickRewrite::Standalone(record)
     );
 }
@@ -156,8 +159,8 @@ fn the_rich_flag_decides_the_transport_not_the_body() {
     // Same host html, same pick — only the rich flag flips, so the two
     // bodies must match byte for byte; only the variant differs.
     let picked = picked_block(CHOICE, None);
-    let classic = pick_rewrite(Some(("host", false)), picked.clone());
-    let rich = pick_rewrite(Some(("host", true)), picked);
+    let classic = pick_rewrite(Some(("host", false)), picked.clone(), 0);
+    let rich = pick_rewrite(Some(("host", true)), picked, 0);
     fn body_of(r: &PickRewrite) -> &str {
         match r {
             PickRewrite::RichHost(b) | PickRewrite::ClassicHost(b) | PickRewrite::Standalone(b) => {
@@ -167,4 +170,78 @@ fn the_rich_flag_decides_the_transport_not_the_body() {
     }
     assert_eq!(body_of(&classic), body_of(&rich));
     assert_ne!(classic, rich, "the variant must flip with the flag");
+}
+// ── #67 tap-redraw: mark_picked_button ──────────────────────────────────────
+
+fn shared_row_html() -> String {
+    // Build via the real renderer so the transform is tested against the
+    // production markup shape, not a hand-typed lookalike.
+    suggestion_rows_rich_html(&["Approve".to_string(), "Decline".to_string()], "tok")
+}
+
+#[test]
+fn picked_button_flips_to_success_check_disabled() {
+    let marked = mark_picked_button(&shared_row_html(), 0);
+    let picked_btn = marked.split("<tg-button ").nth(1).unwrap();
+    let picked_span = &picked_btn[..picked_btn.find("</tg-button>").unwrap()];
+    assert!(
+        picked_span.contains("style=\"success\""),
+        "picked flips to success: {picked_span}"
+    );
+    assert!(
+        picked_span.contains(" disabled"),
+        "picked disabled: {picked_span}"
+    );
+    assert!(
+        picked_span.ends_with("\u{2713} Approve"),
+        "check prefix on the picked label: {picked_span}"
+    );
+}
+
+#[test]
+fn unpicked_buttons_disabled_keep_style_and_label() {
+    let marked = mark_picked_button(&shared_row_html(), 0);
+    let second = marked.split("<tg-button ").nth(2).unwrap();
+    let span = &second[..second.find("</tg-button>").unwrap()];
+    assert!(span.contains(" disabled"), "sibling disabled: {span}");
+    assert!(
+        span.contains("style=\"primary\""),
+        "sibling keeps primary: {span}"
+    );
+    assert!(!span.contains('\u{2713}'), "no check on siblings: {span}");
+    assert!(span.ends_with(">Decline"), "label untouched: {span}");
+}
+
+#[test]
+fn non_followup_markup_passes_through_byte_for_byte() {
+    let html = "<p>hi</p><tg-button-row><tg-button type=\"url\" data=\"https://x\">x</tg-button></tg-button-row>";
+    assert_eq!(mark_picked_button(html, 0), html);
+}
+
+#[test]
+fn html_without_buttons_is_identity() {
+    let html = "<b>answer</b>\n\n<p>record</p>";
+    assert_eq!(mark_picked_button(html, 1), html);
+}
+
+#[test]
+fn tap_redraw_rich_host_body_has_marked_rows_and_record() {
+    // End-to-end through pick_rewrite: rows rewritten to the picked state,
+    // record appended, #39 order preserved (answer/rows first, record last).
+    let host = format!("<b>the answer</b>\n{}", shared_row_html());
+    let rewrite = pick_rewrite(Some((&host, true)), picked_block(CHOICE, None), 1);
+    let PickRewrite::RichHost(body) = rewrite else {
+        panic!("rich host stays rich")
+    };
+    assert!(body.contains("style=\"success\""), "picked marked: {body}");
+    assert!(body.contains(" disabled"), "buttons disabled: {body}");
+    assert!(
+        !body.contains("style=\"primary\"\">Approve"),
+        "the picked label must be check-prefixed"
+    );
+    assert!(body.contains(CHOICE), "pick record survives: {body}");
+    assert!(
+        body.rfind(CHOICE).unwrap() > body.rfind("</tg-button-row>").unwrap(),
+        "record rides after the rows (#39)"
+    );
 }

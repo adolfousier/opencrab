@@ -460,6 +460,7 @@ impl TelegramAgent {
                                                             .as_ref()
                                                             .map(|(full, rich)| (full.as_str(), *rich)),
                                                         picked,
+                                                        idx,
                                                     );
                                                 let outcome: Result<(), String> = match rewrite {
                                                     super::suggest_options::PickRewrite::RichHost(
