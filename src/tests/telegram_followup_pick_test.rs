@@ -183,7 +183,7 @@ use teloxide::types::MessageId;
 
 use crate::channels::telegram::state::{MergedHost, TelegramState};
 
-fn host(mid: u32, rich: bool, glued: bool) -> MergedHost {
+fn host(mid: i32, rich: bool, glued: bool) -> MergedHost {
     MergedHost {
         message_id: MessageId(mid),
         html: "<p>answer</p><tg-button-row><tg-button>Go</tg-button></tg-button-row>".into(),
@@ -197,7 +197,7 @@ async fn register_one(state: &TelegramState, sid: uuid::Uuid, token_tag: u8) -> 
         .register_pending_followups(sid, vec![format!("Option {token_tag}")])
         .await;
     state
-        .attach_followup_host(&token, host(100 + token_tag as u32, true, false))
+        .attach_followup_host(&token, host(100 + i32::from(token_tag), true, false))
         .await;
     token
 }
