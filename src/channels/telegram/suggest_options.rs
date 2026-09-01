@@ -275,12 +275,13 @@ pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
             out.push_str(rest);
             return out;
         };
+        let tag_open_len = "<tg-button".len();
         let attrs = &after_open[..attrs_rel];
         let after_attrs = &after_open[attrs_rel + 1..];
         let body_rel = attrs_rel + 1;
         let Some(label_rel) = after_attrs.find("</tg-button>") else {
             // Unterminated label: emit through the tag opener verbatim.
-            out.push_str(&rest[..tag_start + body_rel]);
+            out.push_str(&rest[..tag_start + tag_open_len + body_rel]);
             rest = after_attrs;
             continue;
         };
