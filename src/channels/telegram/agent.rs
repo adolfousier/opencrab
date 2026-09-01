@@ -348,6 +348,7 @@ impl TelegramAgent {
                                                                     empty_keyboard(),
                                                             )
                                                             .await
+                                                            .map(|_| ())
                                                             .map_err(|e| e.to_string())
                                                     }
                                                 };
