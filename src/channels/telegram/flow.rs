@@ -1998,6 +1998,19 @@ pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
     overlap >= 20 && (norm_final.starts_with(&norm_folded) || norm_folded.starts_with(&norm_final))
 }
 
+/// A post-halt run larger than this is not a sign-off — it is a substantive
+/// answer misfiled by position (#58). Counted in chars, not bytes.
+pub(crate) const MAX_TRAILER_CHARS: usize = 600;
+
+/// #58 cap+reroute decision, split out pure so the threshold matrix is
+/// unit-testable without a loaded config (`should_render_mermaid` reads
+/// `Config::current()`). A mermaid fence in the trailer would ship as raw
+/// fence text — the fence→PNG conversion only runs on the final-answer
+/// send — and an oversized trailer is a second answer, not a sign-off.
+pub(crate) fn trailer_promotes_to_answer(has_mermaid: bool, char_count: usize) -> bool {
+    has_mermaid || char_count > MAX_TRAILER_CHARS
+}
+
 /// Settle the options-pending reclaim into `(final text, trailer)` (#31).
 ///
 /// `content` is the response.content text — with an option-surface halt the
@@ -2015,6 +2028,14 @@ pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
 /// - Keep-never-discard: when the popper found no trailer run but content
 ///   carries a non-duplicate leftover (the ack never folded into the flow),
 ///   the content text BECOMES the trailer instead of vanishing.
+/// - #58 cap+reroute (owner-approved Option A): a trailer carrying a
+///   mermaid fence or exceeding [`MAX_TRAILER_CHARS`] is substantive answer
+///   text misfiled by position, NOT a sign-off. It is promoted to the
+///   answer slot — the normal final-answer send renders its fence to PNG
+///   for free — and the host it displaces demotes to the trailer (nothing
+///   dies). Live miss 2026-09-01 04:21Z: a 2668-byte design answer rode
+///   after the buttons, its fence shipped as raw text, the pre-rendered
+///   PNG died in the render cache (#58).
 pub(crate) fn settle_options_reclaim(
     content: String,
     host: Option<String>,
@@ -2034,5 +2055,20 @@ pub(crate) fn settle_options_reclaim(
             _ => None,
         },
     };
+    // #58 cap+reroute (owner-approved Option A): reject a misfiled trailer —
+    // promote it to the answer, demote the displaced host to the trailer.
+    if let Some(t) = &trailer {
+        if trailer_promotes_to_answer(
+            super::rich::mermaid::should_render_mermaid(t),
+            t.chars().count(),
+        ) {
+            let demoted = if text.trim().is_empty() {
+                None
+            } else {
+                Some(text)
+            };
+            return (t.clone(), demoted);
+        }
+    }
     (text, trailer)
 }
