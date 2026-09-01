@@ -204,6 +204,35 @@ pub(crate) fn folded_list_html_p(options: &[String]) -> String {
 }
 
 /// The suggestion controls as native rich-button rows (Bot API 10.3
+/// #59: cut every `<tg-button-row>…</tg-button-row>` span out of a rich
+/// bubble body — the inverse of [`suggestion_rows_rich_html`]. Used by the
+/// host-aware stale-shell strip: the #597 clear killed the stash, but the
+/// buttons keep rendering inside the body until the body is rewritten clean.
+pub(crate) fn strip_button_rows(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<tg-button-row>") {
+        match rest[start..].find("</tg-button-row>") {
+            Some(rel) => {
+                let end = start + rel + "</tg-button-row>".len();
+                out.push_str(&rest[..start]);
+                rest = &rest[end..];
+            }
+            None => break, // unterminated span: leave the remainder untouched
+        }
+    }
+    out.push_str(rest);
+    out.trim_end().to_string()
+}
+
+/// #59 (DRY): the empty reply-markup used to strip dead keyboards — one
+/// construction site instead of one per strip arm.
+pub(crate) fn empty_keyboard() -> teloxide::types::InlineKeyboardMarkup {
+    teloxide::types::InlineKeyboardMarkup::new(
+        Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
+    )
+}
+
 /// `<tg-button-row>`), laid out per the measured ladder. Primary style
 /// throughout — picked over app-default after Alexey compared both live.
 /// Callback payloads stay `followup:<session>:<idx>`, so taps route through
