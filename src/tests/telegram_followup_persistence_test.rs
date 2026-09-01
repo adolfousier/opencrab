@@ -93,7 +93,7 @@ async fn store_hydration_restores_armed_keyboards() {
     state.set_followup_store(repo.clone()).await;
 
     // The keyboard resolves a tap, host and all — no stale-shell strip.
-    let (entry, text) = state.take_pending_followup("boot1", 1).await.unwrap();
+    let (entry, text, _picked_idx) = state.take_pending_followup("boot1", 1).await.unwrap();
     assert_eq!(entry.session_id, sid);
     assert_eq!(text, "abort");
     let host = entry.host.expect("hydrated host survives");
@@ -132,7 +132,7 @@ async fn register_and_take_mirror_the_store() {
     assert!(rows[0].host.is_some());
 
     // Take consumes map + row.
-    let (entry, text) = state.take_pending_followup(&token, 0).await.unwrap();
+    let (entry, text, _picked_idx) = state.take_pending_followup(&token, 0).await.unwrap();
     assert_eq!(text, "alpha");
     assert_eq!(entry.options.len(), 2);
     assert!(repo.load_all().await.unwrap().is_empty());
@@ -148,12 +148,12 @@ async fn restore_revives_a_consumed_token_for_the_busy_guard() {
         .register_pending_followups(sid, vec!["first".to_string(), "second".to_string()])
         .await;
 
-    let (entry, _text) = state.take_pending_followup(&token, 0).await.unwrap();
+    let (entry, _text, _picked_idx) = state.take_pending_followup(&token, 0).await.unwrap();
     assert!(state.take_pending_followup(&token, 0).await.is_none());
 
     // The guard's recovery path.
     state.restore_pending_followup(&token, entry).await;
-    let (_revived, text) = state.take_pending_followup(&token, 1).await.unwrap();
+    let (_revived, text, _picked_idx) = state.take_pending_followup(&token, 1).await.unwrap();
     assert_eq!(text, "second");
 }
 

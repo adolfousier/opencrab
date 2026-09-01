@@ -328,7 +328,6 @@ pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
     out
 }
 
-
 #[allow(clippy::too_many_arguments)] // #31: trailer rides the existing arg set
 pub(crate) async fn render_suggestions(
     bot: &teloxide::Bot,
