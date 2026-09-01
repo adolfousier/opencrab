@@ -409,7 +409,8 @@ impl TelegramAgent {
                                         None
                                     }
                                 };
-                                if let Some((sid, text, picked_idx, merged_host)) = taken {
+                                if let Some((entry, text, picked_idx, merged_host)) = taken {
+                                    let sid = entry.session_id;
                                     let (chat_id, thread_id, prompt_msg_id) = query
                                         .message
                                         .as_ref()
