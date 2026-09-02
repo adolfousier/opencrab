@@ -17,10 +17,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
-    ChatAction, ChatKind, FileId, InlineKeyboardMarkup, MessageId, ParseMode, ReplyParameters,
+    ChatKind, FileId, InlineKeyboardMarkup, MessageId, ParseMode, ReplyParameters,
 };
 
-use super::send::{best_effort_delete, fire_chat_action, message_in_thread};
+use super::send::{best_effort_delete, message_in_thread};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -1431,23 +1431,14 @@ pub(crate) async fn handle_message(
         truncate_str(&text, 50)
     );
 
-    // Start typing indicator loop — cancelled via guard on all return paths
+    // Start typing indicator loop — cancelled via guard on all return paths.
+    // Consolidated on typing.rs (#62): same turn-phase loop spawn_typing
+    // uses. The session id is not known yet (resolution happens below), so
+    // this is the bare turn loop; the detached tail is attached later via
+    // spawn_typing_after_turn once the id exists.
     let typing_cancel = CancellationToken::new();
     let _typing_guard = TypingGuard(typing_cancel.clone());
-    tokio::spawn({
-        let bot = bot.clone();
-        let chat = msg.chat.id;
-        let cancel = typing_cancel.clone();
-        async move {
-            loop {
-                fire_chat_action(&bot, chat, thread_id, ChatAction::Typing, "typing loop").await;
-                tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
-                }
-            }
-        }
-    });
+    super::typing::spawn_typing_turn(bot.clone(), msg.chat.id, thread_id, typing_cancel.clone());
 
     let is_owner = tg_cfg.is_owner(&user_id.to_string());
 
@@ -1880,6 +1871,7 @@ pub(crate) async fn handle_message(
             std::sync::Arc::new(move || probe_state.channel_ownership_of(session_id)),
         );
     }
+
     // Archive any shared images under the session's project files dir (when the
     // session is assigned to a project) so a project's media lives together and
     // survives the tmp purge. Rewrites the <<IMG:tmp>> marker to the archived
@@ -2725,17 +2717,25 @@ pub(crate) async fn handle_message(
                 .sections
                 .plan_kb
         };
-        // Re-stick on a cooldown, not every settle (#814). Doing it every turn
-        // cost a delete PLUS a create on top of the refreshes already firing
-        // from the streaming path, which is what put the card within reach of
-        // flood control and produced duplicate cards. Skipping the re-stick
-        // still refreshes in place below, so the card stays correct; it just
-        // stays where it is until the next re-stick is due.
-        if crate::utils::plan_files::take_plan_just_archived(session_id).await {
+        // Re-stick on EVERY user-message settle (owner-approved #62): the card
+        // must stay reachable for the Approve button while a pre-approval plan
+        // is being discussed, and a restick per human turn is paced by typing
+        // speed, not by machine loops. Flood safety is NOT this gate's job:
+        // the fresh post goes through the G3 sends governor, the in-place
+        // refresh below rides G2 (#1211), so the old 90s RESTICK_COOLDOWN
+        // (#814) was a pre-governor duplicate — deleted. The ONLY gate left is
+        // the shared sticky-stack budget (#1150): a flow restick moments ago
+        // already spent this chat's delete+create allowance; skipping here
+        // costs nothing (no cooldown is recorded — retry next settle) and the
+        // refresh below still edits in place.
+        if crate::utils::plan_files::peek_plan_just_archived(session_id).await {
             // Plan completed THIS settle (#1158, #1231): finalize the tracked
             // card (✅ header, keyboard stripped, one-shot untrack) and re-stick
             // the completed card to the bottom of the thread instead of
-            // re-sticking or refreshing a now-archived plan.
+            // re-sticking or refreshing a now-archived plan. Finalize consumes
+            // the flag only after the notice LANDED (#16): a flood-aborted
+            // finalize leaves it in place, so the next settle retries instead
+            // of losing the completion notice forever.
             super::plan_card::finalize_plan_card(
                 &bot,
                 msg.chat.id,
@@ -2745,18 +2745,15 @@ pub(crate) async fn handle_message(
             )
             .await;
         } else {
-            const RESTICK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(90);
-            if telegram_state
-                .should_restick_plan_card(session_id, RESTICK_COOLDOWN)
-                .await
-                // Shared sticky-stack budget (#1150): a flow restick moments ago
-                // already spent this chat's delete+create allowance; skipping here
-                // is safe — the refresh below still edits in place, and the next
-                // settle or flow restick reorders.
-            && telegram_state.claim_sticky_action(
-                msg.chat.id.0,
-                super::state::TelegramState::STICKY_STACK_MIN_INTERVAL,
-            ) {
+            // Gate the claim on a tracked card (in-memory only — cheap): a
+            // cardless settle must not spend the sticky budget, or the
+            // flow-block restick starves for 15s after EVERY settle (#62).
+            if telegram_state.plan_card_cached(session_id).await.is_some()
+                && telegram_state.claim_sticky_action(
+                    msg.chat.id.0,
+                    super::state::TelegramState::STICKY_STACK_MIN_INTERVAL,
+                )
+            {
                 super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
                     .await;
             }
