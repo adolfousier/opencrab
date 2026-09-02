@@ -56,8 +56,16 @@ pub(crate) fn build_enqueue_callback(
                 );
                 return;
             }
-            let Some(bot) = state.bot().await else {
-                tracing::warn!("[bg-resume] telegram: bot not available; dropping resume");
+            // Bounded wait, not a drop (#1242). At boot this callback and
+            // the bot's own connect run concurrently with nothing ordering
+            // them, so "not connected" here usually means "not connected
+            // yet" — and answering it with a return lost the wake forever.
+            let Some(bot) =
+                crate::channels::transport_ready::await_transport("telegram", session_id, || {
+                    state.bot()
+                })
+                .await
+            else {
                 return;
             };
             let Some(agent) = agent_holder

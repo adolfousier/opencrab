@@ -1284,25 +1284,19 @@ async fn cmd_chat_inner(
                             let agent = agent.clone();
                             let tg = tg.clone();
                             tokio::spawn(async move {
-                                // Wait up to 30s for the Telegram bot to authenticate
-                                let bot = {
-                                    let mut attempts = 0;
-                                    loop {
-                                        if let Some(bot) = tg.bot().await {
-                                            break Some(bot);
-                                        }
-                                        attempts += 1;
-                                        if attempts >= 30 {
-                                            tracing::error!(
-                                                "Telegram resume: bot not available after 30s for session {}",
-                                                session_id
-                                            );
-                                            break None;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    }
-                                };
-                                let Some(bot) = bot else {
+                                // This path always knew the bot might not be
+                                // up yet and waited for it. The bg-resume
+                                // paths did not, and dropped the wake instead
+                                // (#1242). One definition now, so the two
+                                // startup flush paths cannot drift back into
+                                // disagreeing about what "ready" means.
+                                let Some(bot) = crate::channels::transport_ready::await_transport(
+                                    "telegram",
+                                    session_id,
+                                    || tg.bot(),
+                                )
+                                .await
+                                else {
                                     return;
                                 };
                                 let prompt = "[System: A restart just occurred while you were \
