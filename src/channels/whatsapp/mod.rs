@@ -7,6 +7,7 @@ mod agent;
 mod approval;
 mod followups;
 pub(crate) mod handler;
+mod onboarding_events;
 mod pairing;
 pub(crate) mod resume;
 pub(crate) mod store;
@@ -133,43 +134,6 @@ impl WhatsAppState {
     /// The chat JID a session was last handled in, if known (#731).
     pub async fn session_jid(&self, session_id: Uuid) -> Option<String> {
         self.session_jids.lock().await.get(&session_id).cloned()
-    }
-
-    /// Broadcast a connected event to any subscribed onboarding UI.
-    pub fn broadcast_connected(&self) {
-        let _ = self.connected_tx.send(());
-    }
-
-    /// Subscribe to QR code events (used by onboarding).
-    pub fn subscribe_qr(&self) -> tokio::sync::broadcast::Receiver<String> {
-        self.qr_tx.subscribe()
-    }
-
-    /// Subscribe to connection events (used by onboarding).
-    pub fn subscribe_connected(&self) -> tokio::sync::broadcast::Receiver<()> {
-        self.connected_tx.subscribe()
-    }
-
-    /// Broadcast an error to any subscribed onboarding UI.
-    pub fn broadcast_error(&self, msg: &str) {
-        let _ = self.error_tx.send(msg.to_string());
-    }
-
-    /// Subscribe to error events (used by onboarding).
-    pub fn subscribe_error(&self) -> tokio::sync::broadcast::Receiver<String> {
-        self.error_tx.subscribe()
-    }
-
-    /// Announce that a sent message id received a `Delivered` receipt. Called
-    /// from the agent event loop so the onboarding test can confirm real
-    /// delivery rather than mere transmission.
-    pub fn broadcast_delivered(&self, message_id: &str) {
-        let _ = self.delivered_tx.send(message_id.to_string());
-    }
-
-    /// Subscribe to delivered-message ids (used by the connection test).
-    pub fn subscribe_delivered(&self) -> tokio::sync::broadcast::Receiver<String> {
-        self.delivered_tx.subscribe()
     }
 
     /// Store the connected client and owner JID, then mark connected (which
