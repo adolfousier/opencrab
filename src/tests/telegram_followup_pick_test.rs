@@ -300,14 +300,14 @@ fn picked_button_flips_to_success_check_disabled() {
 }
 
 #[test]
-fn unpicked_buttons_disabled_keep_style_and_label() {
+fn unpicked_buttons_disabled_drop_style_and_label() {
     let marked = mark_picked_button(&shared_row_html(), 0);
     let second = marked.split("<tg-button ").nth(2).unwrap();
     let span = &second[..second.find("</tg-button>").unwrap()];
     assert!(span.contains(" disabled"), "sibling disabled: {span}");
     assert!(
-        span.contains("style=\"primary\""),
-        "sibling keeps primary: {span}"
+        !span.contains("style="),
+        "#71: sibling drops its style (style visually eats disabled): {span}"
     );
     assert!(!span.contains('\u{2713}'), "no check on siblings: {span}");
     assert!(span.ends_with(">Decline"), "label untouched: {span}");

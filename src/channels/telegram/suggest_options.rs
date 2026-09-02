@@ -288,12 +288,23 @@ pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
             let mut new_attrs = attrs.to_string();
             if picked {
                 // The picked button flips to success regardless of its
-                // original style; siblings keep theirs.
+                // original style.
                 if let Some(s) = new_attrs.find("style=\"")
                     && let Some(e) = new_attrs[s + "style=\"".len()..].find('"')
                 {
                     let style_end = s + "style=\"".len() + e;
                     new_attrs.replace_range(s + "style=\"".len()..style_end, "success");
+                }
+            } else {
+                // #71: a styled button still renders enabled-looking even
+                // with `disabled` (owner A/B: `style="primary" disabled`
+                // stays blue), so siblings drop their style attribute —
+                // bare `disabled` is the only form that renders grayed.
+                if let Some(s) = new_attrs.find(" style=\"")
+                    && let Some(e) = new_attrs[s + " style=\"".len()..].find('"')
+                {
+                    let style_end = s + " style=\"".len() + e + 1;
+                    new_attrs.replace_range(s..style_end, "");
                 }
             }
             if !new_attrs.contains("disabled") {
