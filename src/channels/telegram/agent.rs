@@ -516,7 +516,7 @@ impl TelegramAgent {
                                                     ) => bot_clone
                                                         .edit_message_text(chat_id, mid, &body)
                                                         .parse_mode(teloxide::types::ParseMode::Html)
-                                                        .reply_markup(empty_kb)
+                                                        .reply_markup(empty_kb.clone())
                                                         .await
                                                         .map(|_| ())
                                                         .map_err(|e| e.to_string()),
