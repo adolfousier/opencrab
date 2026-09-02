@@ -9,7 +9,7 @@
 //! integration points.
 
 use crate::channels::telegram::rich::api::{build_body, build_body_html};
-use crate::channels::telegram::rich::{contains_task_list, has_rich_structure};
+use crate::channels::telegram::rich::detect::{contains_task_list, has_rich_structure};
 use teloxide::types::{MessageId, ThreadId};
 
 // ── additional gate-function edge cases ─────────────────────────────

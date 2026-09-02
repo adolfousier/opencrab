@@ -307,7 +307,7 @@ fn notify_preview_truncates_the_first_line_only() {
 #[test]
 fn notify_receipt_card_parses_to_details_with_native_table_inside() {
     use crate::channels::telegram::rich::ast::Block;
-    use crate::channels::telegram::rich::parse_markdown;
+    use crate::channels::telegram::rich::parse::parse_markdown;
 
     let body = "| a | b |\n|---|---|\n| 1 | 2 |";
     let (md, _) = build_notify_receipt_card("Compiler", body);

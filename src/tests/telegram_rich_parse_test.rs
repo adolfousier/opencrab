@@ -4,9 +4,9 @@
 //! finalized separately against the Bot API field schema and tested there.
 
 use crate::channels::telegram::rich::ast::{Align, Block, Inline};
-use crate::channels::telegram::rich::{
-    contains_table, has_rich_structure, markdown_to_html, parse_markdown, prefers_rich_render,
-};
+use crate::channels::telegram::rich::detect::has_rich_structure;
+use crate::channels::telegram::rich::parse::parse_markdown;
+use crate::channels::telegram::rich::{contains_table, markdown_to_html, prefers_rich_render};
 
 fn text(s: &str) -> Inline {
     Inline::Text(s.to_string())
@@ -464,5 +464,7 @@ fn details_renders_html_fallback() {
 #[test]
 fn details_rich_structure_detected() {
     let md = "<details>\n<summary>Log</summary>\n\nContent\n\n</details>";
-    assert!(crate::channels::telegram::rich::has_rich_structure(md));
+    assert!(crate::channels::telegram::rich::detect::has_rich_structure(
+        md
+    ));
 }

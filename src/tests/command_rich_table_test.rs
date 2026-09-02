@@ -43,7 +43,7 @@ fn help_qualifies_for_native_rich_rendering() {
     // The table structure is what makes Telegram render it natively (real
     // bordered tables) instead of the HTML/`<pre>` fallback.
     assert!(
-        crate::channels::telegram::rich::has_rich_structure(&format_help()),
+        crate::channels::telegram::rich::detect::has_rich_structure(&format_help()),
         "help must contain a table/heading so it routes to native rich"
     );
 }

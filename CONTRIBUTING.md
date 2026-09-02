@@ -237,6 +237,7 @@ src/
 - **Constants**: `SCREAMING_SNAKE_CASE`
 - **Error handling**: `anyhow::Result` for application errors, `thiserror` for typed errors
 - **Async**: `tokio` runtime — never block in async functions
+- **`mod.rs` is for module declarations ONLY — functions NEVER live in `mod.rs`. Ever.** A `mod.rs` file may contain exactly: the module doc comment, `mod`/`pub mod`/`pub(crate) mod` declarations, and `pub(crate) use` re-exports of the submodule surface. Zero `fn` definitions. When a function grows in `mod.rs`, that is the signal it belongs in a named submodule (`detect.rs`, `gate.rs`, whatever the cohesion says) — create the file, move the fn, re-export it from `mod.rs` so call sites don't change. Reference implementation: `src/channels/telegram/rich/mod.rs`. If you find functions in a `mod.rs` while working on it, moving them out is part of your change — leaving the violation in place will fail review.
 
 ### What We Value
 
