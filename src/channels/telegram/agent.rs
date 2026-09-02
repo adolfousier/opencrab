@@ -720,8 +720,6 @@ impl TelegramAgent {
                                 crate::channels::telegram::keyboards::ack_callback(&bot, &query, "model page").await;
                                 let resp = crate::channels::commands::models_for_provider(&provider_name).await;
                                 if let Some(msg) = &query.message {
-                                    use teloxide::payloads::EditMessageTextSetters;
-                                    use teloxide::prelude::Requester;
                                     use teloxide::types::InlineKeyboardMarkup;
                                     use crate::channels::telegram::picker_limits as picker;
                                     let page = picker::page_of(&resp.models, page_num, filter.as_deref());
@@ -738,14 +736,15 @@ impl TelegramAgent {
                                             &page,
                                         ),
                                     );
-                                    if let Err(e) = bot
-                                        .edit_message_text(msg.chat().id, msg.id(), &text)
-                                        .parse_mode(teloxide::types::ParseMode::Html)
-                                        .reply_markup(keyboard)
-                                        .await
-                                    {
-                                        tracing::warn!("Telegram: model page update failed: {e}");
-                                    }
+                                    super::edit_retry::edit_text_ui(
+                                        bot.clone(),
+                                        msg.chat().id,
+                                        msg.id(),
+                                        text,
+                                        true,
+                                        Some(keyboard),
+                                        "model page update",
+                                    );
                                 }
                                 return ResponseResult::Ok(());
                             }
@@ -878,27 +877,80 @@ impl TelegramAgent {
                                             &page,
                                         ),
                                     );
-                                    if let Err(e) = bot
-                                        .edit_message_text(msg.chat().id, msg.id(), &text)
+                                    let chat = msg.chat().id;
+                                    let mid = msg.id();
+                                    match bot
+                                        .edit_message_text(chat, mid, &text)
                                         .parse_mode(teloxide::types::ParseMode::Html)
-                                        .reply_markup(keyboard)
+                                        .reply_markup(keyboard.clone())
                                         .await
                                     {
-                                        tracing::warn!("Telegram: callback UI update failed: {e}");
-                                        // Say something. This failing to a log line is why the
-                                        // picker looked like it was still loading forever.
-                                        let fallback = format!(
-                                            "Could not show the model list for {}: {e}\n\nSet one                                              directly with /models <name>.",
-                                            resp.provider_name
-                                        );
-                                        if let Err(e2) = bot
-                                            .edit_message_text(msg.chat().id, msg.id(), fallback)
-                                            .await
-                                        {
-                                            tracing::warn!(
-                                                "Telegram: could not report the picker failure either: {e2}"
-                                            );
-                                        }
+                                        Ok(_) => {}
+                                        Err(e) => match super::edit_retry::classify(&e) {
+                                            super::edit_retry::EditErr::RetryAfter(wait) => {
+                                                // Deferred identical retry first (#68);
+                                                // the legacy fallback runs only on
+                                                // exhaustion — safely outside the 429
+                                                // window that killed the old immediate
+                                                // fallback.
+                                                super::edit_retry::spawn_deferred(
+                                                    wait,
+                                                    {
+                                                        let bot = bot.clone();
+                                                        let text = text.clone();
+                                                        let keyboard = keyboard.clone();
+                                                        move || async move {
+                                                            bot.edit_message_text(chat, mid, &text)
+                                                                .parse_mode(
+                                                                    teloxide::types::ParseMode::Html,
+                                                                )
+                                                                .reply_markup(keyboard)
+                                                                .await
+                                                                .map(|_| ())
+                                                        }
+                                                    },
+                                                    {
+                                                        let bot = bot.clone();
+                                                        let provider = resp.provider_name.clone();
+                                                        move || async move {
+                                                            // Say something. This failing to a
+                                                            // log line is why the picker looked
+                                                            // like it was still loading forever.
+                                                            let fallback = format!(
+                                                                "Could not show the model list for {provider}: still rate-limited after a deferred retry\n\nSet one directly with /models <name>."
+                                                            );
+                                                            if let Err(e2) = bot
+                                                                .edit_message_text(chat, mid, fallback)
+                                                                .await
+                                                            {
+                                                                tracing::warn!(
+                                                                    "Telegram: could not report the picker failure either: {e2}"
+                                                                );
+                                                            }
+                                                        }
+                                                    },
+                                                );
+                                            }
+                                            super::edit_retry::EditErr::Fatal(e) => {
+                                                tracing::warn!(
+                                                    "Telegram: callback UI update failed: {e}"
+                                                );
+                                                // Say something. This failing to a log line is why the
+                                                // picker looked like it was still loading forever.
+                                                let fallback = format!(
+                                                    "Could not show the model list for {}: {e}\n\nSet one                                              directly with /models <name>.",
+                                                    resp.provider_name
+                                                );
+                                                if let Err(e2) = bot
+                                                    .edit_message_text(chat, mid, fallback)
+                                                    .await
+                                                {
+                                                    tracing::warn!(
+                                                        "Telegram: could not report the picker failure either: {e2}"
+                                                    );
+                                                }
+                                            }
+                                        },
                                     }
                                 }
                                 return ResponseResult::Ok(());
@@ -1015,16 +1067,15 @@ impl TelegramAgent {
                                     ]]);
                                 }
                                 if let Some(msg) = &query.message {
-                                    use teloxide::payloads::EditMessageTextSetters;
-                                    use teloxide::prelude::Requester;
-                                    if let Err(e) = bot
-                                        .edit_message_text(msg.chat().id, msg.id(), &display_text)
-                                        .parse_mode(teloxide::types::ParseMode::Html)
-                                        .reply_markup(switch_markup)
-                                        .await
-                                    {
-                                        tracing::warn!("Telegram: callback UI update failed: {e}");
-                                    }
+                                    super::edit_retry::edit_text_ui(
+                                        bot.clone(),
+                                        msg.chat().id,
+                                        msg.id(),
+                                        display_text.clone(),
+                                        true,
+                                        Some(switch_markup),
+                                        "callback UI update",
+                                    );
                                 }
                                 if !switch_ok {
                                     tracing::warn!("Telegram model switch failed: {}", display_text);
@@ -1080,28 +1131,21 @@ impl TelegramAgent {
                                         tracing::warn!("Telegram: callback UI update failed: {e}");
                                     }
                                     if let Some(msg) = &query.message {
-                                        use teloxide::payloads::EditMessageTextSetters;
-                                        use teloxide::prelude::Requester;
-                                        if let Err(e) = bot
-                                            .edit_message_text(
-                                                msg.chat().id,
-                                                msg.id(),
-                                                {
-                                                    let display = match session_svc.get_session(new_id).await {
-                                                        Ok(Some(s)) => s.title.unwrap_or_else(|| session_id_str[..8.min(session_id_str.len())].to_string()),
-                                                        _ => session_id_str[..8.min(session_id_str.len())].to_string(),
-                                                    };
-                                                    format!("✅ Switched to session <code>{}</code>", display)
-                                                },
-                                            )
-                                            .parse_mode(teloxide::types::ParseMode::Html)
-                                            .reply_markup(
-                                                teloxide::types::InlineKeyboardMarkup::default(),
-                                            )
-                                            .await
-                                        {
-                                            tracing::warn!("Telegram: callback UI update failed: {e}");
-                                        }
+                                        let display = match session_svc.get_session(new_id).await {
+                                            Ok(Some(s)) => s.title.unwrap_or_else(|| session_id_str[..8.min(session_id_str.len())].to_string()),
+                                            _ => session_id_str[..8.min(session_id_str.len())].to_string(),
+                                        };
+                                        let switched =
+                                            format!("✅ Switched to session <code>{}</code>", display);
+                                        super::edit_retry::edit_text_ui(
+                                            bot.clone(),
+                                            msg.chat().id,
+                                            msg.id(),
+                                            switched,
+                                            true,
+                                            Some(teloxide::types::InlineKeyboardMarkup::default()),
+                                            "callback UI update",
+                                        );
                                     }
                                 } else {
                                     if let Err(e) = bot
@@ -1191,17 +1235,16 @@ impl TelegramAgent {
                                     state.clear_dir_browser(chat_id, topic_id).await;
                                     // Edit the message to confirm
                                     if let Some(msg) = &query.message {
-                                        use teloxide::payloads::EditMessageTextSetters;
-                                        use teloxide::prelude::Requester;
                                         let confirm_text = format!("✅ Working directory set to:\n<code>{}</code>", current_path);
-                                        if let Err(e) = bot
-                                            .edit_message_text(msg.chat().id, msg.id(), &confirm_text)
-                                            .parse_mode(teloxide::types::ParseMode::Html)
-                                            .reply_markup(teloxide::types::InlineKeyboardMarkup::default())
-                                            .await
-                                        {
-                                            tracing::warn!("cd:here: failed to edit message: {}", e);
-                                        }
+                                        super::edit_retry::edit_text_ui(
+                                            bot.clone(),
+                                            msg.chat().id,
+                                            msg.id(),
+                                            confirm_text,
+                                            true,
+                                            Some(teloxide::types::InlineKeyboardMarkup::default()),
+                                            "cd:here",
+                                        );
                                     }
                                     return ResponseResult::Ok(());
                                 } else if let Some(idx_str) = data.strip_prefix("cd:sel:") {
@@ -1258,17 +1301,16 @@ impl TelegramAgent {
                                     let rows = crate::channels::telegram::handler::build_cd_keyboard(&resp);
                                     let keyboard = teloxide::types::InlineKeyboardMarkup::new(rows);
                                     if let Some(msg) = &query.message {
-                                        use teloxide::payloads::EditMessageTextSetters;
-                                        use teloxide::prelude::Requester;
                                         let html = crate::channels::telegram::handler::md_to_html(&resp.text);
-                                        if let Err(e) = bot
-                                            .edit_message_text(msg.chat().id, msg.id(), &html)
-                                            .parse_mode(teloxide::types::ParseMode::Html)
-                                            .reply_markup(keyboard)
-                                            .await
-                                        {
-                                            tracing::warn!("cd:navigate: failed to edit message: {}", e);
-                                        }
+                                        super::edit_retry::edit_text_ui(
+                                            bot.clone(),
+                                            msg.chat().id,
+                                            msg.id(),
+                                            html,
+                                            true,
+                                            Some(keyboard),
+                                            "cd:navigate",
+                                        );
                                     }
                                 }
                                 return ResponseResult::Ok(());
@@ -1320,17 +1362,16 @@ impl TelegramAgent {
 
                                         let keyboard = InlineKeyboardMarkup::new(rows);
                                         if let Some(msg) = &query.message {
-                                            use teloxide::payloads::EditMessageTextSetters;
-                                            use teloxide::prelude::Requester;
                                             let html = crate::channels::telegram::handler::md_to_html(&text);
-                                            if let Err(e) = bot
-                                                .edit_message_text(msg.chat().id, msg.id(), &html)
-                                                .parse_mode(teloxide::types::ParseMode::Html)
-                                                .reply_markup(keyboard)
-                                                .await
-                                            {
-                                                tracing::warn!("prof:sel: failed to edit message: {}", e);
-                                            }
+                                            super::edit_retry::edit_text_ui(
+                                                bot.clone(),
+                                                msg.chat().id,
+                                                msg.id(),
+                                                html,
+                                                true,
+                                                Some(keyboard),
+                                                "prof:sel",
+                                            );
                                         }
                                     }
                                     return ResponseResult::Ok(());
@@ -1380,17 +1421,16 @@ impl TelegramAgent {
                                         )],
                                     ]);
                                     if let Some(msg) = &query.message {
-                                        use teloxide::payloads::EditMessageTextSetters;
-                                        use teloxide::prelude::Requester;
                                         let html = crate::channels::telegram::handler::md_to_html(&text);
-                                        if let Err(e) = bot
-                                            .edit_message_text(msg.chat().id, msg.id(), &html)
-                                            .parse_mode(teloxide::types::ParseMode::Html)
-                                            .reply_markup(keyboard)
-                                            .await
-                                        {
-                                            tracing::warn!("prof:migrate: failed to edit message: {}", e);
-                                        }
+                                        super::edit_retry::edit_text_ui(
+                                            bot.clone(),
+                                            msg.chat().id,
+                                            msg.id(),
+                                            html,
+                                            true,
+                                            Some(keyboard),
+                                            "prof:migrate",
+                                        );
                                     }
                                     return ResponseResult::Ok(());
                                 }
@@ -1406,31 +1446,30 @@ impl TelegramAgent {
                                                 files.len(), active, name, name
                                             );
                                             if let Some(msg) = &query.message {
-                                                use teloxide::payloads::EditMessageTextSetters;
-                                                use teloxide::prelude::Requester;
                                                 let html = crate::channels::telegram::handler::md_to_html(&text);
-                                                if let Err(e) = bot
-                                                    .edit_message_text(msg.chat().id, msg.id(), &html)
-                                                    .parse_mode(teloxide::types::ParseMode::Html)
-                                                    .reply_markup(InlineKeyboardMarkup::default())
-                                                    .await
-                                                {
-                                                    tracing::warn!("Telegram: callback UI update failed: {e}");
-                                                }
+                                                super::edit_retry::edit_text_ui(
+                                                    bot.clone(),
+                                                    msg.chat().id,
+                                                    msg.id(),
+                                                    html,
+                                                    true,
+                                                    Some(InlineKeyboardMarkup::default()),
+                                                    "callback UI update",
+                                                );
                                             }
                                         }
                                         Err(e) => {
                                             let text = format!("❌ Migration failed: {}", e);
                                             if let Some(msg) = &query.message {
-                                                use teloxide::payloads::EditMessageTextSetters;
-                                                use teloxide::prelude::Requester;
-                                                if let Err(e2) = bot
-                                                    .edit_message_text(msg.chat().id, msg.id(), &text)
-                                                    .reply_markup(InlineKeyboardMarkup::default())
-                                                    .await
-                                                {
-                                                    tracing::warn!("prof:confirm_migrate: failed to edit: {}", e2);
-                                                }
+                                                super::edit_retry::edit_text_ui(
+                                                    bot.clone(),
+                                                    msg.chat().id,
+                                                    msg.id(),
+                                                    text,
+                                                    false,
+                                                    Some(InlineKeyboardMarkup::default()),
+                                                    "prof:confirm_migrate",
+                                                );
                                             }
                                         }
                                     }
@@ -1456,17 +1495,16 @@ impl TelegramAgent {
                                         )],
                                     ]);
                                     if let Some(msg) = &query.message {
-                                        use teloxide::payloads::EditMessageTextSetters;
-                                        use teloxide::prelude::Requester;
                                         let html = crate::channels::telegram::handler::md_to_html(&text);
-                                        if let Err(e) = bot
-                                            .edit_message_text(msg.chat().id, msg.id(), &html)
-                                            .parse_mode(teloxide::types::ParseMode::Html)
-                                            .reply_markup(keyboard)
-                                            .await
-                                        {
-                                            tracing::warn!("prof:del: failed to edit message: {}", e);
-                                        }
+                                        super::edit_retry::edit_text_ui(
+                                            bot.clone(),
+                                            msg.chat().id,
+                                            msg.id(),
+                                            html,
+                                            true,
+                                            Some(keyboard),
+                                            "prof:del",
+                                        );
                                     }
                                     return ResponseResult::Ok(());
                                 }
@@ -1476,31 +1514,30 @@ impl TelegramAgent {
                                         Ok(()) => {
                                             let text = format!("✅ Profile `{}` deleted.", name);
                                             if let Some(msg) = &query.message {
-                                                use teloxide::payloads::EditMessageTextSetters;
-                                                use teloxide::prelude::Requester;
                                                 let html = crate::channels::telegram::handler::md_to_html(&text);
-                                                if let Err(e) = bot
-                                                    .edit_message_text(msg.chat().id, msg.id(), &html)
-                                                    .parse_mode(teloxide::types::ParseMode::Html)
-                                                    .reply_markup(InlineKeyboardMarkup::default())
-                                                    .await
-                                                {
-                                                    tracing::warn!("Telegram: callback UI update failed: {e}");
-                                                }
+                                                super::edit_retry::edit_text_ui(
+                                                    bot.clone(),
+                                                    msg.chat().id,
+                                                    msg.id(),
+                                                    html,
+                                                    true,
+                                                    Some(InlineKeyboardMarkup::default()),
+                                                    "callback UI update",
+                                                );
                                             }
                                         }
                                         Err(e) => {
                                             let text = format!("❌ Delete failed: {}", e);
                                             if let Some(msg) = &query.message {
-                                                use teloxide::payloads::EditMessageTextSetters;
-                                                use teloxide::prelude::Requester;
-                                                if let Err(e) = bot
-                                                    .edit_message_text(msg.chat().id, msg.id(), &text)
-                                                    .reply_markup(InlineKeyboardMarkup::default())
-                                                    .await
-                                                {
-                                                    tracing::warn!("Telegram: callback UI update failed: {e}");
-                                                }
+                                                super::edit_retry::edit_text_ui(
+                                                    bot.clone(),
+                                                    msg.chat().id,
+                                                    msg.id(),
+                                                    text,
+                                                    false,
+                                                    Some(InlineKeyboardMarkup::default()),
+                                                    "callback UI update",
+                                                );
                                             }
                                         }
                                     }
@@ -1513,17 +1550,16 @@ impl TelegramAgent {
                                     let rows = crate::channels::telegram::handler::build_profiles_keyboard(&resp);
                                     let keyboard = InlineKeyboardMarkup::new(rows);
                                     if let Some(msg) = &query.message {
-                                        use teloxide::payloads::EditMessageTextSetters;
-                                        use teloxide::prelude::Requester;
                                         let html = crate::channels::telegram::handler::md_to_html(&resp.text);
-                                        if let Err(e) = bot
-                                            .edit_message_text(msg.chat().id, msg.id(), &html)
-                                            .parse_mode(teloxide::types::ParseMode::Html)
-                                            .reply_markup(keyboard)
-                                            .await
-                                        {
-                                            tracing::warn!("prof:back: failed to edit message: {}", e);
-                                        }
+                                        super::edit_retry::edit_text_ui(
+                                            bot.clone(),
+                                            msg.chat().id,
+                                            msg.id(),
+                                            html,
+                                            true,
+                                            Some(keyboard),
+                                            "prof:back",
+                                        );
                                     }
                                     return ResponseResult::Ok(());
                                 }
@@ -1659,12 +1695,37 @@ impl TelegramAgent {
                                         {
                                             tracing::warn!("Telegram: callback UI update failed: {e}");
                                         }
-                                        if let Some(mid) = kb_msg_id
-                                            && let Err(e) = bot
-                                                .edit_message_reply_markup(chat_id, mid)
-                                                .await
-                                        {
-                                            tracing::warn!("Telegram: callback UI update failed: {e}");
+                                        if let Some(mid) = kb_msg_id {
+                                            // Used-button strip: defer through the #68
+                                            // machinery. A post-strip failure is benign —
+                                            // the #1226 dead-keyboard sweep may have
+                                            // stripped the same block mid-wait — so the
+                                            // exhaustion path warns without alarm.
+                                            let bot2 = bot.clone();
+                                            match bot.edit_message_reply_markup(chat_id, mid).await {
+                                                Ok(_) => {}
+                                                Err(e) => match super::edit_retry::classify(&e) {
+                                                    super::edit_retry::EditErr::RetryAfter(wait) => {
+                                                        super::edit_retry::spawn_deferred(
+                                                            wait,
+                                                            move || {
+                                                                let bot = bot2.clone();
+                                                                async move {
+                                                                    bot.edit_message_reply_markup(chat_id, mid).await.map(|_| ())
+                                                                }
+                                                            },
+                                                            || async move {
+                                                                tracing::warn!(
+                                                                    "Telegram: plan-approve markup strip deferred retry failed (benign — sweep race)"
+                                                                );
+                                                            },
+                                                        );
+                                                    }
+                                                    super::edit_retry::EditErr::Fatal(msg) => {
+                                                        tracing::warn!("Telegram: callback UI update failed: {msg}");
+                                                    }
+                                                },
+                                            }
                                         }
                                         crate::channels::telegram::send::best_effort_note(
                                             &bot,
@@ -1884,15 +1945,15 @@ impl TelegramAgent {
                                     _ => String::new(),
                                 };
                                 let updated = format!("{}{}", original_text, label);
-                                use teloxide::payloads::EditMessageTextSetters;
-                                use teloxide::prelude::Requester;
-                                if let Err(e) = bot
-                                    .edit_message_text(msg.chat().id, msg.id(), &updated)
-                                    .reply_markup(teloxide::types::InlineKeyboardMarkup::default())
-                                    .await
-                                {
-                                    tracing::error!("Telegram: failed to edit approval message: {}", e);
-                                }
+                                super::edit_retry::edit_text_ui(
+                                    bot.clone(),
+                                    msg.chat().id,
+                                    msg.id(),
+                                    updated,
+                                    false,
+                                    Some(teloxide::types::InlineKeyboardMarkup::default()),
+                                    "approval message",
+                                );
                             } else {
                                 tracing::warn!("Telegram: callback query has no message — cannot edit");
                             }

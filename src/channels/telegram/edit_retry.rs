@@ -17,6 +17,11 @@
 use std::future::Future;
 use std::time::Duration;
 
+use teloxide::Bot;
+use teloxide::payloads::EditMessageTextSetters;
+use teloxide::prelude::Requester;
+use teloxide::types::{ChatId, InlineKeyboardMarkup, MessageId, ParseMode};
+
 /// Hard ceiling on a server-instructed deferral. Nothing user-facing is
 /// blocked while the deferred task sleeps (the tap flow and the turn
 /// continue), so this only bounds how stale a decoration may get — chosen
@@ -91,6 +96,52 @@ where
                 );
                 exhausted().await;
             }
+        }
+    });
+}
+
+/// The dominant callback-UI edit shape (#62 fold): editMessageText with
+/// optional HTML parse mode and reply markup, warn on death. Attempt now;
+/// on Retry-After defer ONE identical retry past the window (the #68
+/// model); Fatal or exhausted retry → warn with the site label. Fire and
+/// forget — the callback ack and the handler flow are never blocked.
+pub fn edit_text_ui(
+    bot: Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    text: String,
+    parse_html: bool,
+    markup: Option<InlineKeyboardMarkup>,
+    label: &'static str,
+) {
+    let fire = move || {
+        let bot = bot.clone();
+        let text = text.clone();
+        let markup = markup.clone();
+        async move {
+            let mut req = bot.edit_message_text(chat_id, message_id, &text);
+            if parse_html {
+                req = req.parse_mode(ParseMode::Html);
+            }
+            if let Some(kb) = markup {
+                req = req.reply_markup(kb);
+            }
+            req.await.map(|_| ())
+        }
+    };
+    tokio::spawn(async move {
+        match fire().await {
+            Ok(()) => {}
+            Err(e) => match classify(&e) {
+                EditErr::RetryAfter(wait) => spawn_deferred(wait, fire, move || async move {
+                    tracing::warn!(
+                        "Telegram: {label} deferred retry exhausted (still rate-limited)"
+                    );
+                }),
+                EditErr::Fatal(msg) => {
+                    tracing::warn!("Telegram: {label} failed: {msg}");
+                }
+            },
         }
     });
 }
