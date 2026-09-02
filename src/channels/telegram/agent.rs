@@ -305,21 +305,83 @@ impl TelegramAgent {
                                                  (consumed or superseded — #1217 guard)"
                                             );
                                             // Stale shell (#1226): the picker behind this
-                                            // keyboard was consumed or lost to a deploy.
-                                            // Strip the dead keyboard so the bubble stops
-                                            // silently eating taps.
+                                            // keyboard was consumed or lost to a deploy
+                                            // or to a #597 clear. Strip the dead keyboard
+                                            // so the bubble stops silently eating taps.
+                                            // #59: the strip is HOST-AWARE — the #597
+                                            // clear rescues the merged-host record, so the
+                                            // shape is known: rich hosts carry the buttons
+                                            // INSIDE the body (a markup strip there is a
+                                            // guaranteed "message is not modified" no-op —
+                                            // the zombie); classic/unknown hosts carry a
+                                            // reply-markup.
                                             if let Some(msg) = query
                                                 .message
                                                 .as_ref()
                                                 .and_then(|m| m.regular_message())
-                                                && let Err(e) = bot
-                                                    .edit_message_reply_markup(msg.chat.id, msg.id)
-                                                    .await
                                             {
-                                                tracing::warn!(
-                                                    "Telegram followup tap: stale keyboard strip \
-                                                     failed: {e}"
-                                                );
+                                                let stale_host =
+                                                    state.peek_stale_host(&cb_token).await;
+                                                let strip = match &stale_host {
+                                                    Some(h) if h.rich => {
+                                                        // Rich host: rewrite the body without
+                                                        // the button rows; no reply-markup
+                                                        // ever existed on this bubble.
+                                                        let body =
+                                                            super::suggest_options::strip_button_rows(&h.html);
+                                                        super::rich::api::edit_rich_html(
+                                                            bot.api_url().as_str(),
+                                                            bot.token(),
+                                                            msg.chat.id.0,
+                                                            msg.id.0,
+                                                            &body,
+                                                            None,
+                                                            "stale-strip",
+                                                            "#59 stale rich strip",
+                                                        )
+                                                        .await
+                                                        .map_err(|e| e.to_string())
+                                                    }
+                                                    _ => {
+                                                        // Classic/unknown: markup strip.
+                                                        // Unknown = pre-#59 record (or none):
+                                                        // keep the #1226 blind strip as the
+                                                        // last resort — it is the correct
+                                                        // move whenever markup exists.
+                                                        bot.edit_message_reply_markup(
+                                                                msg.chat.id, msg.id)
+                                                            .reply_markup(
+                                                                super::suggest_options::
+                                                                    empty_keyboard(),
+                                                            )
+                                                            .await
+                                                            .map(|_| ())
+                                                            .map_err(|e| e.to_string())
+                                                    }
+                                                };
+                                                match strip {
+                                                    Ok(_) => {
+                                                        state.forget_stale_host(&cb_token).await;
+                                                        // #1226: the strip used to ride bare
+                                                        // rich_edit telemetry with nothing
+                                                        // naming it — log the outcome so a
+                                                        // stale-shell tap is re-derivable.
+                                                        tracing::info!(
+                                                            "Telegram followup tap: stripped \
+                                                             dead keyboard from msg {} \
+                                                             (expired token {cb_token}, \
+                                                             #59 host-matched={}, #1226)",
+                                                            msg.id,
+                                                            stale_host.is_some()
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!(
+                                                            "Telegram followup tap: stale \
+                                                             keyboard strip failed: {e}"
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                         // (session, chosen text, merged host). The host is
@@ -403,13 +465,6 @@ impl TelegramAgent {
                                         let mut echo_deferred = false;
                                         let recorded = match prompt_msg_id {
                                             Some(mid) => {
-                                                // Merged keyboard (#tg-suggest-merge): the
-                                                // buttons live ON the answer bubble, so a
-                                                // whole-text replace would ERASE the answer.
-                                                // When this bubble is the recorded host,
-                                                // keep its HTML and append the pick record
-                                                // instead — and strip the now-dead buttons
-                                                // with an empty markup.
                                                 // Merged keyboard (#tg-suggest-merge): the
                                                 // buttons live ON the answer bubble, so a
                                                 // whole-text replace would ERASE the answer.
@@ -2042,7 +2097,6 @@ type PendingEdits = Arc<Mutex<HashMap<(ChatId, MessageId), (u64, Message)>>>;
 /// Cloneable bundle of everything `handle_message` needs, so the message,
 /// edited-message, and settle paths can dispatch without threading nine
 /// arguments through each.
-#[derive(Clone)]
 /// Re-fire a tap pick-record edit exactly as attempt 1 fired it (#68).
 /// HEAD adaptation of fork's `TapRetry` plumbing: the `PickRewrite` payload is
 /// already in scope at the failure site and is `Clone`, so the deferred retry
@@ -2089,6 +2143,7 @@ async fn refire_pick_edit(
     }
 }
 
+#[derive(Clone)]
 struct DispatchDeps {
     agent: Arc<AgentService>,
     session_svc: SessionService,
