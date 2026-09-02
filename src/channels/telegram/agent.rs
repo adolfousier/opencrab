@@ -415,46 +415,51 @@ impl TelegramAgent {
                                                     InlineKeyboardMarkup::new(
                                                         Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
                                                     );
-                                                let outcome: Result<(), String> = match host_info {
-                                                    Some((full, true)) => {
-                                                        super::rich::api::edit_rich_html(
-                                                            bot_clone.api_url().as_str(),
-                                                            bot_clone.token(),
-                                                            chat_id.0,
-                                                            mid.0,
-                                                            &format!("{full}\n\n{picked}"),
-                                                            Some(&serde_json::json!(empty_kb)),
-                                                            "turn",
-                                                            "-",
-                                                        )
+                                                // #39: the pick record is baked into the body
+                                                // BEFORE any transport arm runs — one format
+                                                // site, so no arm can drop the choice again
+                                                // (the classic merged host used to edit the
+                                                // answer HTML alone and lose the record).
+                                                let rewrite =
+                                                    super::suggest_options::pick_rewrite(
+                                                        host_info
+                                                            .as_ref()
+                                                            .map(|(full, rich)| (full.as_str(), *rich)),
+                                                        picked,
+                                                    );
+                                                let outcome: Result<(), String> = match rewrite {
+                                                    super::suggest_options::PickRewrite::RichHost(
+                                                        body,
+                                                    ) => super::rich::api::edit_rich_html(
+                                                        bot_clone.api_url().as_str(),
+                                                        bot_clone.token(),
+                                                        chat_id.0,
+                                                        mid.0,
+                                                        &body,
+                                                        Some(&serde_json::json!(empty_kb)),
+                                                        "turn",
+                                                        "-",
+                                                    )
+                                                    .await
+                                                    .map(|_| ())
+                                                    .map_err(|e| e.to_string()),
+                                                    super::suggest_options::PickRewrite::ClassicHost(
+                                                        body,
+                                                    ) => bot_clone
+                                                        .edit_message_text(chat_id, mid, &body)
+                                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                                        .reply_markup(empty_kb)
                                                         .await
                                                         .map(|_| ())
-                                                        .map_err(|e| e.to_string())
-                                                    }
-                                                    host_info => {
-                                                        let req = match host_info {
-                                                            Some((full, _)) => bot_clone
-                                                                .edit_message_text(
-                                                                    chat_id, mid, &full,
-                                                                )
-                                                                .parse_mode(
-                                                                    teloxide::types::ParseMode::
-                                                                        Html,
-                                                                )
-                                                                .reply_markup(empty_kb),
-                                                            None => bot_clone
-                                                                .edit_message_text(
-                                                                    chat_id, mid, &picked,
-                                                                )
-                                                                .parse_mode(
-                                                                    teloxide::types::ParseMode::
-                                                                        Html,
-                                                                ),
-                                                        };
-                                                        req.await
-                                                            .map(|_| ())
-                                                            .map_err(|e| e.to_string())
-                                                    }
+                                                        .map_err(|e| e.to_string()),
+                                                    super::suggest_options::PickRewrite::Standalone(
+                                                        body,
+                                                    ) => bot_clone
+                                                        .edit_message_text(chat_id, mid, &body)
+                                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                                        .await
+                                                        .map(|_| ())
+                                                        .map_err(|e| e.to_string()),
                                                 };
                                                 if let Err(e) = outcome {
                                                     tracing::warn!(
@@ -1037,9 +1042,14 @@ impl TelegramAgent {
                                     // Confirm directory — set as working dir
                                     let session_id = resolve_callback_session(&query, &state, &shared_session).await;
                                     if let Some(sid) = session_id {
-                                        // Update runtime working directory
-                                        let wd = agent.shared_working_directory();
-                                        *wd.write().expect("working_directory lock poisoned") = std::path::PathBuf::from(&current_path);
+                                        // Move THIS chat's own cwd handle (#703). Writing the
+                                        // global instead left the chat that ran /cd on its old
+                                        // directory — its handle already existed — while every
+                                        // other chat and the TUI silently moved.
+                                        agent.set_session_only_working_directory(
+                                            sid,
+                                            std::path::PathBuf::from(&current_path),
+                                        );
                                         // Persist to session DB
                                         let svc = crate::services::SessionService::new(agent.context().clone());
                                         if let Err(e) = svc.update_session_working_directory(sid, Some(current_path.clone())).await {
@@ -1977,10 +1987,22 @@ async fn resolve_callback_session(
     // Try to get the session registered for this chat, scoped to the forum
     // topic the button was pressed in (#215) so a callback inside a topic
     // resolves that topic's session, not the base one.
+    //
+    // #1248: this MUST compose the topic id exactly like message ingress —
+    // through `session_topic_for_event`, which applies the #1220 General-topic
+    // normalization. Calling `topic_session_id` alone resolved General to
+    // `None` here while ingress bound the session under
+    // `Some(GENERAL_TOPIC_ID)`, so button presses in a forum's General topic
+    // acted on the stale base session instead of the live one.
     if let Some(msg) = &query.message {
         let chat_id = msg.chat().id.0;
+        let known_forum = state.is_known_forum(chat_id).await;
         let topic_id = msg.regular_message().and_then(|m| {
-            super::session_resolve::topic_session_id(m.is_topic_message, m.thread_id.map(|t| t.0.0))
+            super::session_resolve::session_topic_for_event(
+                m.is_topic_message,
+                m.thread_id.map(|t| t.0.0),
+                known_forum,
+            )
         });
         if let Some(session_id) = state.chat_session(chat_id, topic_id).await {
             return Some(session_id);

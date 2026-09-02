@@ -151,7 +151,8 @@ impl AgentService {
             "Streaming call served: session={} {} model='{}'",
             session_id,
             provider.provenance_label(),
-            model_name,
+            // The model that RAN, not the one asked for (#1254).
+            provider.served_model(&model_name),
         );
 
         Ok(AgentStreamResponse {

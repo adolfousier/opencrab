@@ -537,9 +537,9 @@ pub async fn create_provider_with_warning(
 /// - Candidates that fail to construct (missing API key, unknown name,
 ///   etc.) are logged and skipped — they don't fail the whole wrap.
 /// - If at least one usable fallback resolves, wraps the primary in
-///   `FallbackProvider::new_with_health` so health-aware startup
-///   semantics and sticky-promotion are applied identically to the
-///   main path.
+///   `FallbackProvider::new`. The chain always starts on the user's
+///   primary: a provider is never skipped on the strength of past
+///   failures, only on a failure observed in the current turn (#1251).
 pub(crate) async fn wrap_with_fallback_chain(
     config: &Config,
     primary: Arc<dyn Provider>,
@@ -583,9 +583,7 @@ pub(crate) async fn wrap_with_fallback_chain(
         primary_name,
         providers.len()
     );
-    Ok(Arc::new(super::FallbackProvider::new_with_health(
-        primary, providers,
-    )))
+    Ok(Arc::new(super::FallbackProvider::new(primary, providers)))
 }
 
 /// Force-enable a built-in provider's section in a CLONED config so a

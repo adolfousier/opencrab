@@ -91,7 +91,7 @@ pub(crate) fn push_result(
     use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
     let msg = completion_message(label, agent_id, outcome);
-    match deliver_to_session(parent_session_id, msg) {
+    match deliver_to_session(parent_session_id, msg, true) {
         Delivery::Delivered => {
             tracing::info!(
                 "Sub-agent {agent_id} reported its result to session {parent_session_id}"
@@ -110,6 +110,26 @@ pub(crate) fn push_result(
             tracing::warn!(
                 "Sub-agent {agent_id}'s result had nowhere to go for session \
                  {parent_session_id}; the parent will not hear about it"
+            );
+        }
+        Delivery::RefusedInFlight => {
+            // Unreachable by construction: interrupt=true is passed above and
+            // the fork #13 gate refuses only when interrupt is unset. Arm kept
+            // explicit so a future call-site change cannot drop the outcome
+            // silently (port seam: upstream's match has no catch-all).
+            tracing::warn!(
+                "Sub-agent {agent_id}'s result was refused by the interrupt gate \
+                 for session {parent_session_id}; the parent will not hear about it"
+            );
+        }
+        Delivery::RefusedChannelOccupied { occupant } => {
+            // The parent was replaced on its channel while the sub-agent ran
+            // (fork #17). interrupt=true does not override that gate, so say
+            // out loud where the outcome went instead of dropping it quietly.
+            tracing::warn!(
+                "Sub-agent {agent_id}'s result was refused for session {parent_session_id}: \
+                 its channel is occupied by session {occupant}; the parent will not hear \
+                 about it"
             );
         }
     }

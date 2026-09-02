@@ -197,6 +197,17 @@ completion_claims = [
 line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|oke|baik|siap|okeh)\\s*,?\\s+)?(?:sekarang\\s+)?(?:biar\\s+(?:gue|aku|saya)|gue|aku|saya\\s+akan|saya\\s+perlu|saya\\s+harus|mari\\s+kita|coba\\s+(?:gue|aku|saya))\\s+\\w"
 
 work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:(?:dan\\s+)?lalu|(?:dan\\s+)?kemudian|setelah\\s+itu|terus|dan)[,]?\\s+)?(?:(?:ok|oke|baik|siap|okeh)[,.!:]?\\s+)?(?:sekarang\\s+|biar\\s+(?:gue|aku|saya)\\s+)?(?:sedang\\s+)?(?:menjalankan|mengecek|memeriksa|membaca|membuat|memperbarui|memperbaiki|menghapus|mengganti|menambah|mengubah|mengirim|meng-commit|meng-push|meng-deploy|meng-install|mengunduh|mengunggah|menyimpan|menyelesaikan|menganalisis|menginvestigasi|mengumpulkan|mengambil|mengunduh)\\b[^.!?:\\n]{0,60}?(?:\\s+(?:sekarang|saat\\s+ini)(?:[.!…,:]+|\\s*$)|\\.{3}|…|:\\s*$)"
+# Gerund-led plan announcement carrying NO imminence marker — "Setting up the
+# plan, then mapping every call site before touching anything." Two reasons
+# the patterns above cannot see it (#1261): the verb is a PREPARATION verb
+# (mapping, planning, drafting, listing) that work_announcement_re never
+# enumerated, and the clause is sequenced with then / before instead of ending
+# in now / … / :, which that pattern requires and gerund_re expects at the
+# front. Scanned by the zero-tool gate only: once a tool has run, the same
+# shape can be a legitimate recap ("Updating the config fixed it, then the
+# build passed").
+plan_announcement_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|oke|baik)[,.!:]?\\s+)?(?:saya\\s+|sedang\\s+|pertama\\s+|sekarang\\s+)?(?:menyiapkan|menyusun|memetakan|merencanakan|mempersiapkan|meninjau|mendaftar|mendokumentasikan|membuat|memperbarui|memeriksa|membaca|menjalankan|menganalisis|menyelidiki)\\b[^.!?\\n]{0,120}?\\b(?:lalu|kemudian|sebelum|setelah\\s+itu)\\b"
+
 
 gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:sekarang\\s+)?(?:sedang\\s+)?(?:menjalankan|mengecek|memeriksa|membaca|membuat|memperbarui|memperbaiki|menghapus|mengganti|menambah|mengubah|mengirim|meng-commit|meng-push|meng-deploy|meng-install|mengunduh|mengunggah|menyimpan|menyelesaikan|menganalisis|menginvestigasi|mengumpulkan|mengambil)\\b"
 
@@ -324,4 +335,57 @@ intent_verb_exclusions = [
     "tunjukkan",
     "bagikan",
     "sebutkan",
+]
+
+
+# Context that turns a BARE tool name into a claim of tool usage (#1262).
+# Multi-word names (`load_brain_file`) are unmistakable on their own, but
+# `plan`, `bash`, `grep` and `ls` are ordinary words, so naming one proves
+# nothing by itself. It proves something when the name is the OBJECT of an
+# action the model attributes to itself: "Setting up the plan" in a turn that
+# called no tool is a tool use that never happened. A marker must sit
+# immediately before the name, optionally across one determiner, so an
+# instruction addressed to the user ("run it in bash") stays untouched.
+tool_use_markers = [
+    "menggunakan",
+    "gunakan",
+    "pakai",
+    "memakai",
+    "menjalankan",
+    "jalankan",
+    "memanggil",
+    "panggil",
+    "membuat",
+    "buat",
+    "menyiapkan",
+    "siapkan",
+    "menyusun",
+    "memperbarui",
+    "perbarui",
+    "membaca",
+    "baca",
+    "menulis",
+    "tulis",
+    "memeriksa",
+    "periksa",
+    "membuka",
+    "buka",
+    "memulai",
+    "mulai",
+    "lewat",
+    "via",
+]
+
+# Nouns that mark the preceding word as a tool by name ("the plan tool").
+tool_nouns = [
+    "alat",
+    "tool",
+    "perkakas",
+]
+
+# Determiners allowed between a marker and the tool name, so "setting up THE
+# plan" reads the same as "setting up plan". At most one, and only these:
+# anything else between the two words means the name is not the marker's
+# object. Empty for languages without articles.
+tool_name_determiners = [
 ]

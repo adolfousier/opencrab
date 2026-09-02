@@ -8,6 +8,7 @@ use super::TelegramState;
 #[allow(unused_imports)]
 use super::handler::*;
 use super::send::{best_effort_delete, fire_chat_action};
+use crate::a2a::handler::notify::CLI_SENDER_PREFIX;
 use crate::brain::agent::service::background_tasks;
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
 use crate::config::Config;
@@ -36,8 +37,37 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: no chat for session {session_id}; dropping");
                 return;
             };
-            let Some(bot) = state.bot().await else {
-                tracing::warn!("[bg-resume] telegram: bot not available; dropping resume");
+            // Channel-ownership guard (fork #17): this callback is ALSO
+            // reached by paths that bypass deliver_to_session's gate —
+            // background-task completions resolve their route directly
+            // (background_tasks.rs) — so the choke point checks too. A
+            // session replaced on its chat/topic must never be woken into
+            // the successor's conversation; refuse the wake. (Port seam:
+            // the fork parks the message here; upstream has no channel
+            // park primitive in this callback, so the completion is dropped
+            // with a loud warn — the gate's contract is refusing the wake,
+            // not preserving the message.)
+            if let crate::brain::agent::service::session_routes::ChannelOwnership::Occupied {
+                occupant,
+            } = state.channel_ownership_of(session_id)
+            {
+                tracing::warn!(
+                    "[bg-resume] telegram: session {session_id} no longer owns chat {chat_id} — \
+                     occupied by session {occupant}; refusing to wake it into the successor's \
+                     conversation"
+                );
+                return;
+            }
+            // Bounded wait, not a drop (#1242). At boot this callback and
+            // the bot's own connect run concurrently with nothing ordering
+            // them, so "not connected" here usually means "not connected
+            // yet" — and answering it with a return lost the wake forever.
+            let Some(bot) =
+                crate::channels::transport_ready::await_transport("telegram", session_id, || {
+                    state.bot()
+                })
+                .await
+            else {
                 return;
             };
             let Some(agent) = agent_holder
@@ -87,15 +117,20 @@ pub(crate) fn build_enqueue_callback(
                 // `[session-notify from=<uuid>]` header — the raw id is
                 // replaced with a human label (topic name for same-chat
                 // pushes, chat name / chat+topic for cross-chat, per
-                // Alexey's rule).
+                // Alexey's rule). The CLI lane (#1258) stamps
+                // `from=cli:<label>` instead — no sender session exists,
+                // so the carried label renders verbatim, zero lookups.
                 let (echo_md, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
                     build_bg_receipt_card(&meta)
                 } else {
                     let (sender, body) = split_bg_echo_parts(&msg.context_text);
                     match sender {
-                        Some(s) => {
+                        Some(NotifySender::Session(s)) => {
                             let label = sender_label(&state, &bot, s, chat_id).await;
                             build_notify_receipt_card(&label, &body)
+                        }
+                        Some(NotifySender::CliTooling(label)) => {
+                            build_notify_receipt_card(label, &body)
                         }
                         // Defensive: a BackgroundTask push without meta
                         // (parked by an older binary, #1242 redelivery) keeps
@@ -318,7 +353,9 @@ pub(crate) async fn resume_session_inner(
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         // Telegram: positive chat id = private/DM, negative = group (#677).
         is_dm: chat_id.0 > 0,
+        compacting: false,
         pending_suggestions: None,
+        pending_trailer: None,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: Vec::new(),
@@ -380,15 +417,27 @@ pub(crate) async fn resume_session_inner(
         let bot_typing = bot.clone();
         let chat_typing = chat_id;
         Arc::new(move |_sid, event| match event {
-            // Auto-compaction silent window — immediate typing refresh.
+            // Auto-compaction silent window — immediate typing refresh plus
+            // the visible start line in the flow body (#29).
             // See handle_message for the full rationale.
-            ProgressEvent::Compacting => {
+            ProgressEvent::Compacting {
+                usage_pct,
+                predicted,
+            } => {
                 let bot = bot_typing.clone();
                 let chat = chat_typing;
                 tokio::spawn(async move {
                     fire_chat_action(&bot, chat, thread_id, ChatAction::Typing, "resume typing")
                         .await;
                 });
+                if let Ok(mut s) = st.lock() {
+                    s.compacting = true;
+                    s.header_preview = Some(COMPACTING_HEADER_TEXT.to_string());
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacting_flow_line(
+                            usage_pct, predicted,
+                        )));
+                }
             }
             ProgressEvent::ReasoningChunk { text } => {
                 if let Ok(mut s) = st.lock() {
@@ -472,7 +521,7 @@ pub(crate) async fn resume_session_inner(
             ProgressEvent::SelfHealingAlert { message } => {
                 if let Ok(mut s) = st.lock() {
                     s.display_queue
-                        .push(DisplayItem::Intermediate(format!("🔧 {}", message)));
+                        .push(DisplayItem::System(format!("🔧 {}", message)));
                 }
             }
             ProgressEvent::RetryAttempt {
@@ -481,7 +530,7 @@ pub(crate) async fn resume_session_inner(
                 reason,
             } => {
                 if let Ok(mut s) = st.lock() {
-                    s.display_queue.push(DisplayItem::Intermediate(format!(
+                    s.display_queue.push(DisplayItem::System(format!(
                         "⏳ Retry {}/{} — {}",
                         attempt, max, reason
                     )));
@@ -491,7 +540,7 @@ pub(crate) async fn resume_session_inner(
                 to_name, to_model, ..
             } => {
                 if let Ok(mut s) = st.lock() {
-                    s.display_queue.push(DisplayItem::Intermediate(format!(
+                    s.display_queue.push(DisplayItem::System(format!(
                         "🔄 Now using {}/{}",
                         to_name, to_model
                     )));
@@ -505,6 +554,23 @@ pub(crate) async fn resume_session_inner(
                 // keyboard ABOVE the final answer on resumed turns.
                 if let Ok(mut s) = st.lock() {
                     s.pending_suggestions = Some(options);
+                }
+            }
+            // Compaction finished — definitive completion receipt (#29).
+            // See the handle_message progress callback for the rationale.
+            ProgressEvent::CompactionSummary {
+                before_pct,
+                after_pct,
+                elapsed,
+                ..
+            } => {
+                if let Ok(mut s) = st.lock() {
+                    s.compacting = false;
+                    s.header_preview = None;
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacted_flow_line(
+                            before_pct, after_pct, elapsed,
+                        )));
                 }
             }
             _ => {}
@@ -670,9 +736,11 @@ pub(crate) async fn resume_session_inner(
         .pending_suggestions
         .take();
     if let Some(options) = suggestions {
-        let merge_host = {
+        // #31: the sign-off trailer rides to render_suggestions with the
+        // merge host — same last-out-of-the-flow ordering as handle_message.
+        let (merge_host, trailer) = {
             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            s.final_bubble.take()
+            (s.final_bubble.take(), s.pending_trailer.take())
         };
         super::suggest_options::render_suggestions(
             &bot,
@@ -682,6 +750,7 @@ pub(crate) async fn resume_session_inner(
             thread_id,
             options,
             merge_host,
+            trailer,
         )
         .await;
     }
@@ -693,9 +762,27 @@ pub(crate) async fn resume_session_inner(
 /// chars; header, tags and Telegram's own margin eat the rest of the budget.
 const BG_ECHO_BODY_CAP_CHARS: usize = 3200;
 
+/// Producer stamped into a `[session-notify from=…]` header.
+///
+/// Cross-session pushes name the real sender session uuid (the agent tool,
+/// #1203) — the echo humanizes it via [`sender_label`]. The CLI lane (#23)
+/// has NO sender session (the verb runs as a separate process), so it
+/// stamps `cli:<label>` ([`CLI_SENDER_PREFIX`]); the echo renders the
+/// carried label verbatim instead of a session lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotifySender<'a> {
+    /// A real sender session (`from=<uuid>`).
+    Session(Uuid),
+    /// The CLI lane (`from=cli:<label>`, #23): the label renders verbatim.
+    CliTooling(&'a str),
+}
+
 /// Split the mechanical `[session-notify from=<uuid>]` header (#1203) off a
 /// push's context text. Absent or malformed header → `(None, whole text)`.
-pub(crate) fn split_notify_header(context_text: &str) -> (Option<Uuid>, &str) {
+/// A `cli:`-prefixed sender (#23) yields [`NotifySender::CliTooling`]
+/// carrying the label after the prefix; an EMPTY label is malformed and
+/// falls through to `(None, whole text)`.
+pub(crate) fn split_notify_header(context_text: &str) -> (Option<NotifySender<'_>>, &str) {
     let trimmed = context_text.trim_start();
     let Some(after_open) = trimmed.strip_prefix("[session-notify from=") else {
         return (None, trimmed);
@@ -704,8 +791,15 @@ pub(crate) fn split_notify_header(context_text: &str) -> (Option<Uuid>, &str) {
         return (None, trimmed);
     };
     let rest = after_open[close + 1..].trim_start();
-    match Uuid::parse_str(&after_open[..close]) {
-        Ok(sender) => (Some(sender), rest),
+    let candidate = &after_open[..close];
+    if let Some(label) = candidate.strip_prefix(CLI_SENDER_PREFIX) {
+        let label = label.trim();
+        if !label.is_empty() {
+            return (Some(NotifySender::CliTooling(label)), rest);
+        }
+    }
+    match Uuid::parse_str(candidate) {
+        Ok(sender) => (Some(NotifySender::Session(sender)), rest),
         Err(_) => (None, trimmed),
     }
 }
@@ -732,7 +826,7 @@ pub(crate) fn strip_system_framing(text: &str) -> &str {
 /// is the real payload. Strip the wrapper, keep inner content + tail (#1225
 /// leftover: the squash shipped tests asserting this shape but the old
 /// whole-string-only strip could never satisfy them).
-pub(crate) fn split_bg_echo_parts(context_text: &str) -> (Option<Uuid>, String) {
+pub(crate) fn split_bg_echo_parts(context_text: &str) -> (Option<NotifySender<'_>>, String) {
     let (sender, rest) = split_notify_header(context_text);
     (sender, strip_push_scaffolding(rest))
 }
@@ -821,7 +915,7 @@ pub(crate) fn build_bg_receipt_card(meta: &crate::brain::agent::BgTaskMeta) -> (
     let duration = background_tasks::format_elapsed(meta.elapsed_secs);
     let fence = receipt_fence(&meta.tail);
     let markdown = format!(
-        "<details><summary><sub>{icon} `{label}` 🕒 {duration}</sub></summary>\n\n\
+        "<details>\n<summary><sub>{icon} `{label}` 🕒 {duration}</sub></summary>\n\n\
          {fence}\n{tail}\n{fence}\n\n</details>",
         tail = meta.tail
     );
@@ -866,7 +960,7 @@ pub(crate) fn build_notify_receipt_card(sender_label: &str, body: &str) -> (Stri
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
     let suffix = if truncated { " (truncated)" } else { "" };
     let markdown = format!(
-        "<details><summary><sub>📨 From <b>{sender}</b>: {preview}</sub></summary>\n\n\
+        "<details>\n<summary><sub>📨 From <b>{sender}</b>: {preview}</sub></summary>\n\n\
          {body}{suffix}\n\n</details>"
     );
     let flat_title = format!("📨 From {sender}: {preview}");
@@ -956,6 +1050,71 @@ async fn local_topic_name(chat_id: i64, thread_id: i32) -> Option<String> {
 /// list's short-id prefix display).
 fn short_session_id(uuid: Uuid) -> String {
     uuid.simple().to_string()[..8].to_owned()
+}
+
+/// How recently (seconds) a Telegram-bound session must have been active to
+/// appear in the boot-time wake log (#1227).
+///
+/// Kept short on purpose: a back-to-back dev restart (the recurring case on
+/// the ops box, 10+/day) must not flood the log with every recently-active
+/// session each time. Only sessions that touched their topic inside this
+/// window are recorded.
+pub const WAKE_RECENT_SECS: i64 = 600;
+
+/// Log every Telegram-bound session that was active shortly before boot but
+/// is not currently being resumed, so the stranded set is auditable (#1227).
+///
+/// The on-disk journal only rescues turns that were literally mid-loop at the
+/// kill instant; between-turn sessions have no row (#1224 re-registers their
+/// delivery routes, which drains parked reports, but that happens quietly).
+/// This pass names them in the log instead: it runs no turn, re-executes
+/// nothing, and sends no message — the former "I'm back" bubble was removed
+/// per #34 (owner direction 2026-08-29: remove the UX message, leave
+/// logging), because it promised resumption the feature does not yet deliver
+/// and was never persisted in `channel_messages`, so it could not be audited.
+///
+/// Sessions whose ids are in `already_resumed` are skipped: those were roused
+/// by a full continuation prompt via `resume_session` already. Returns how
+/// many sessions landed in the log.
+pub async fn wake_recently_active(
+    pool: crate::db::Pool,
+    already_resumed: &std::collections::HashSet<Uuid>,
+) -> usize {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let since_epoch = now.saturating_sub(WAKE_RECENT_SECS);
+    let repo = crate::db::SessionBindingRepository::new(pool);
+    let Ok(bindings) = repo.recent_for_channel("telegram", since_epoch).await else {
+        tracing::warn!(target: "telegram", "Boot wake could not read recent session bindings");
+        return 0;
+    };
+
+    let mut stranded: Vec<String> = Vec::new();
+    for b in bindings {
+        let Ok(sid) = Uuid::parse_str(&b.session_id) else {
+            continue;
+        };
+        if already_resumed.contains(&sid) {
+            continue;
+        }
+        stranded.push(short_session_id(sid));
+    }
+
+    let scheduled = stranded.len();
+    if scheduled > 0 {
+        tracing::info!(
+            target: "telegram",
+            "Boot wake pass (log-only, #34): recently-active sessions not resumed: [{}]",
+            stranded.join(",")
+        );
+        tracing::info!(
+            target: "telegram",
+            "Scheduled boot wake for {scheduled} recently-active session(s) (#1227)"
+        );
+    }
+    scheduled
 }
 
 #[cfg(test)]

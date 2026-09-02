@@ -98,4 +98,47 @@ impl SessionBindingRepository {
             .context("Failed to list session bindings")?;
         Ok(mapped)
     }
+
+    /// Bindings for one channel whose `updated_at` is at least `since_epoch`
+    /// (unix seconds), least-recently-changed first.
+    ///
+    /// The boot-time wake pass (#1227) uses this to find sessions that were
+    /// active around a restart, so it can ping their topics that the platform
+    /// survived — without waking every historical session. The INNER JOIN
+    /// against `sessions` drops bindings whose session was deleted, matching
+    /// [`Self::all_for_channel`] (#1224).
+    pub async fn recent_for_channel(
+        &self,
+        channel: &str,
+        since_epoch: i64,
+    ) -> Result<Vec<SessionBinding>> {
+        let ch = channel.to_string();
+        let mapped = self
+            .pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.prepare(
+                    "SELECT b.session_id, b.channel, b.chat_id, b.thread_id \
+                     FROM session_bindings b \
+                     JOIN sessions s ON s.id = b.session_id \
+                     WHERE b.channel = ?1 AND b.updated_at >= ?2 \
+                     ORDER BY b.updated_at ASC",
+                )?
+                .query_map(params![ch, since_epoch], |row| {
+                    Ok(SessionBinding {
+                        session_id: row.get("session_id")?,
+                        channel: row.get("channel")?,
+                        chat_id: row.get("chat_id")?,
+                        thread_id: row.get("thread_id")?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to list recent session bindings")?;
+        Ok(mapped)
+    }
 }

@@ -157,6 +157,7 @@ async fn resume_shape_loop_edits_tools_in_place_and_never_reacts() {
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         is_dm: true,
         pending_suggestions: None,
+        pending_trailer: None,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: vec![ToolMsg {
@@ -179,6 +180,7 @@ async fn resume_shape_loop_edits_tools_in_place_and_never_reacts() {
         dirty: false,
         recreate: false,
         header_preview: None,
+        compacting: false,
         sections: Default::default(),
         retained_goal: None,
         tool_round_count: 0,

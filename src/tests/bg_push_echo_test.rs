@@ -6,8 +6,8 @@
 
 use crate::brain::agent::BgTaskMeta;
 use crate::channels::telegram::resume::{
-    background_task_title, build_bg_echo_bubble, build_bg_receipt_card, build_notify_receipt_card,
-    split_bg_echo_parts, split_notify_header, strip_system_framing,
+    NotifySender, background_task_title, build_bg_echo_bubble, build_bg_receipt_card,
+    build_notify_receipt_card, split_bg_echo_parts, split_notify_header, strip_system_framing,
 };
 use uuid::Uuid;
 
@@ -17,8 +17,38 @@ const SENDER: &str = "6c1c9cb9-8243-4def-abe5-d926d0ca8bed";
 fn strips_notify_header_and_returns_sender() {
     let ctx = format!("[session-notify from={SENDER}]\n\nhello from the other topic");
     let (sender, body) = split_bg_echo_parts(&ctx);
-    assert_eq!(sender, Some(Uuid::parse_str(SENDER).unwrap()));
+    assert_eq!(
+        sender,
+        Some(NotifySender::Session(Uuid::parse_str(SENDER).unwrap()))
+    );
     assert_eq!(body, "hello from the other topic");
+}
+
+#[test]
+fn cli_sender_label_is_carried_verbatim() {
+    // #23 (owner amendment "Overridable"): the CLI lane stamps
+    // `from=cli:<label>` — no sender session exists, so the label rides the
+    // header verbatim and the echo renders it without a session lookup.
+    let ctx = "[session-notify from=cli:oc-deploy]\n\nbuild green";
+    let (sender, body) = split_bg_echo_parts(ctx);
+    assert_eq!(sender, Some(NotifySender::CliTooling("oc-deploy")));
+    assert_eq!(body, "build green");
+}
+
+#[test]
+fn cli_label_survives_surrounding_whitespace() {
+    let ctx = "[session-notify from=cli: CI runner ]\n\nbody";
+    let (sender, body) = split_notify_header(ctx);
+    assert_eq!(sender, Some(NotifySender::CliTooling("CI runner")));
+    assert_eq!(body, "body");
+}
+
+#[test]
+fn empty_cli_label_is_malformed_framing() {
+    let ctx = "[session-notify from=cli:]\n\nbody";
+    let (sender, body) = split_notify_header(ctx);
+    assert_eq!(sender, None, "an empty cli: label is not a sender");
+    assert_eq!(body, ctx, "malformed header passes whole text through");
 }
 
 #[test]
@@ -180,7 +210,7 @@ fn bg_receipt_card_matches_the_locked_p3f_shape() {
     ));
     assert!(
         md.starts_with(
-            "<details><summary><sub>✅ `gh run watch 33117665576` 🕒 27m 26s</sub></summary>"
+            "<details>\n<summary><sub>✅ `gh run watch 33117665576` 🕒 27m 26s</sub></summary>"
         ),
         "summary = icon + monospace roster label + clock + duration, whole line subbed: {md}"
     );
@@ -199,7 +229,7 @@ fn bg_receipt_card_matches_the_locked_p3f_shape() {
 #[test]
 fn bg_receipt_card_failure_uses_the_cross_icon() {
     let (md, _) = build_bg_receipt_card(&meta(false, "cargo test", 3.0, "boom"));
-    assert!(md.starts_with("<details><summary><sub>❌ `cargo test` 🕒 3s</sub></summary>"));
+    assert!(md.starts_with("<details>\n<summary><sub>❌ `cargo test` 🕒 3s</sub></summary>"));
 }
 
 #[test]
@@ -228,7 +258,7 @@ fn notify_receipt_card_matches_the_locked_n4_shape() {
     let (md, classic) = build_notify_receipt_card("Compiler", body);
     assert!(
         md.starts_with(
-            "<details><summary><sub>📨 From <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
+            "<details>\n<summary><sub>📨 From <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
              verified, a…</sub></summary>"
         ),
         "summary = 📨 + From + bold sender + colon + 45-char first-line preview, whole line subbed: {md}"
@@ -266,4 +296,29 @@ fn notify_preview_truncates_the_first_line_only() {
         md.contains("second line stays in the body"),
         "the full body survives inside the fold"
     );
+}
+
+/// Parser-level end-to-end for the #15 receipt-card envelope — the wire
+/// shape the #1259 outbox architecture actually sends. The #1234
+/// markdown-ladder variant and its parse test are gone with the ladder;
+/// the contract they proved survives here, retargeted at the production
+/// envelope: the card must parse into ONE Details block whose body keeps
+/// a NATIVE table for the server-side rich route.
+#[test]
+fn notify_receipt_card_parses_to_details_with_native_table_inside() {
+    use crate::channels::telegram::rich::ast::Block;
+    use crate::channels::telegram::rich::parse_markdown;
+
+    let body = "| a | b |\n|---|---|\n| 1 | 2 |";
+    let (md, _) = build_notify_receipt_card("Compiler", body);
+    let blocks = parse_markdown(&md);
+    match blocks.as_slice() {
+        [Block::Details { blocks, .. }] => {
+            assert!(
+                blocks.iter().any(|b| matches!(b, Block::Table { .. })),
+                "card body keeps a native table block, got {blocks:?}"
+            );
+        }
+        other => panic!("card must parse as one Details block, got {other:?}"),
+    }
 }

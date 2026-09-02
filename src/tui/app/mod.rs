@@ -2,6 +2,7 @@
 
 pub(crate) mod background_session;
 mod dialogs;
+pub(crate) mod dropped_path;
 pub(crate) mod duplicate_submit;
 pub(crate) mod input;
 mod messaging;

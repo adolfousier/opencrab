@@ -69,6 +69,12 @@ pub fn has_phantom_tool_intent_no_tools(text: &str) -> bool {
         if matches_now_gerund(window) {
             return true;
         }
+        // Sequenced plan announcement ("Setting up the plan, then mapping
+        // every call site before touching anything.") — no imminence marker
+        // at either end, so neither pattern above sees it (#1261).
+        if matches_plan_announcement(window) {
+            return true;
+        }
         if too_short_for_phrases {
             continue;
         }
@@ -223,15 +229,21 @@ fn strip_inline_directives(text: &str) -> String {
 /// Language-agnostic phantom tell (#463): the text names a REAL registered
 /// tool while the turn executed zero tool calls. Models hallucinate tool
 /// usage by naming the tool ("loaded via load_brain_file"), in ANY language,
-/// so this catches narration the phrase lists cannot. Only multi-word
-/// (underscore) tool names count: bare names like "bash" or "plan" are
-/// ordinary prose words and would false-positive constantly.
+/// so this catches narration the phrase lists cannot.
+///
+/// A multi-word (underscore) name is unmistakable and counts wherever it
+/// appears. A BARE name — `plan`, `bash`, `grep`, `ls` — is an ordinary word
+/// and used to be skipped outright, which cost a turn its self-heal: asked to
+/// use the plan feature, the model answered "Setting up the plan, …", called
+/// nothing, and the one check written for exactly that claim had excluded the
+/// name for being a single word (#1262). A bare name now counts when the text
+/// puts it in a tool-use frame (see [`bare_name_in_tool_context`]), so a claim
+/// of usage is caught while an instruction addressed to the user ("run it in
+/// bash and plan accordingly") stays untouched.
 pub fn mentions_registered_tool(text: &str, tool_names: &[String]) -> bool {
     let lower = text.to_lowercase();
     for name in tool_names {
-        if !name.contains('_') {
-            continue;
-        }
+        let bare = !name.contains('_');
         let mut from = 0;
         while let Some(rel) = lower[from..].find(name.as_str()) {
             let start = from + rel;
@@ -246,13 +258,76 @@ pub fn mentions_registered_tool(text: &str, tool_names: &[String]) -> bool {
                     .chars()
                     .next()
                     .is_some_and(|c| c.is_alphanumeric() || c == '_');
-            if before_ok && after_ok {
+            if before_ok && after_ok && (!bare || bare_name_in_tool_context(&lower, start, end)) {
                 return true;
             }
             from = end;
         }
     }
     false
+}
+
+/// Does the text around a BARE tool name claim the model USED it (#1262)?
+///
+/// Naming `plan` proves nothing; being the object of the model's own action
+/// does. Four frames count, and nothing else:
+///
+/// * a marker immediately before it, across at most one determiner —
+///   "setting up the plan", "running bash", "usando a ferramenta"
+/// * a tool noun immediately after it — "the plan tool"
+/// * backticked — "`plan`" is a name, not a word
+/// * slash-prefixed — "/plan" is an invocation
+///
+/// The one-determiner limit is what separates a claim from an instruction:
+/// "run it in bash" puts `it in` between the marker and the name, so the name
+/// is not what the marker acts on and the text is left alone. Markers,
+/// determiners and tool nouns are read across `all_langs()`, never from a
+/// detected language: a model narrating in French inside an English session
+/// is the same phantom.
+fn bare_name_in_tool_context(lower: &str, start: usize, end: usize) -> bool {
+    let before = &lower[..start];
+    // "`plan`" / "/plan" — the name is written as a name.
+    if matches!(before.chars().next_back(), Some('`') | Some('/')) {
+        return true;
+    }
+
+    let after = lower[end..].trim_start();
+    let next_word: String = after.chars().take_while(|c| c.is_alphanumeric()).collect();
+    let words: Vec<String> = before
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| !w.is_empty())
+        .rev()
+        .take(3)
+        .map(str::to_string)
+        .collect();
+
+    phantom_lang::all_langs().iter().any(|lang| {
+        // "the plan tool"
+        if !next_word.is_empty() && lang.tool_nouns.iter().any(|n| n == &next_word) {
+            return true;
+        }
+        let is_marker = |single: Option<&String>, pair_tail: Option<&String>| -> bool {
+            let Some(w) = single else { return false };
+            if lang.tool_use_markers.iter().any(|m| m == w) {
+                return true;
+            }
+            // Two-word markers ("setting up", "mise en place" reduced to its
+            // two-word head) are stored whole, so rebuild the pair.
+            pair_tail.is_some_and(|prev| {
+                let pair = format!("{prev} {w}");
+                lang.tool_use_markers.iter().any(|m| m == &pair)
+            })
+        };
+        // Directly before the name...
+        if is_marker(words.first(), words.get(1)) {
+            return true;
+        }
+        // ...or one determiner before it.
+        words
+            .first()
+            .is_some_and(|w| lang.tool_name_determiners.iter().any(|d| d == w))
+            && is_marker(words.get(1), words.get(2))
+    })
 }
 
 /// High-stakes side-effect categories whose truthful use REQUIRES a tool call:
@@ -664,6 +739,31 @@ pub(crate) fn matches_now_gerund(text: &str) -> bool {
         !lang.gerund_re.is_empty()
             && Regex::new(&lang.gerund_re)
                 .map(|re| re.is_match(&text))
+                .unwrap_or(false)
+    })
+}
+
+/// Does `text` announce the PREPARATION for work, sequenced rather than
+/// imminent, in ANY supported language (`plan_announcement_re`)?
+///
+/// "Setting up the plan, then mapping every call site before touching
+/// anything." is a promise of steps, and in a turn that emitted zero tool
+/// calls it is a promise already broken. It escaped every existing tell on
+/// two counts: `work_announcement_re` enumerates execution verbs and never
+/// carried the preparation ones (mapping, planning, drafting, listing), and
+/// both it and `gerund_re` key on an imminence marker (trailing now / … / :,
+/// or a leading "Now") that a sequenced clause does not carry.
+///
+/// Zero-tool path only. After a tool has run, "Updating the config fixed it,
+/// then the build passed" is the same shape as a legitimate recap, and the
+/// ambiguity that the zero-tool count resolves is no longer there.
+pub(crate) fn matches_plan_announcement(text: &str) -> bool {
+    let text = strip_inline_directives(text);
+    let text = text.trim();
+    phantom_lang::all_langs().iter().any(|lang| {
+        !lang.plan_announcement_re.is_empty()
+            && Regex::new(&lang.plan_announcement_re)
+                .map(|re| re.is_match(text))
                 .unwrap_or(false)
     })
 }

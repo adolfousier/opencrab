@@ -260,6 +260,17 @@ line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|okay|bon|d'accord|bien|oui)\\s*,?\
 # nominal « <nom> en cours ». Exige un marqueur d'imminence (maintenant / en
 # cours / … / : ).
 work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:(?:et\\s+)?puis|(?:et\\s+)?ensuite|apr[èe]s\\s+[çc]a|et)[,]?\\s+)?(?:(?:ok|okay|bon|d['’]accord|bien|oui)[,.!:]?\\s+)?(?:(?:je\\s+|j['’])(?:lance|relance|vérifie|exécute|teste|compile|construis|installe|recherche|cherche|lis|écris|crée|génère|corrige|analyse|inspecte|déploie|télécharge|mets à jour)\\b[^.!?:\\n]{0,60}?(?:\\s+maintenant(?:[.!…,:]+|\\s*$)|\\.{3}|…|:\\s*$)|(?:lancement|vérification|exécution|compilation|installation|recherche|analyse|déploiement|téléchargement|mise à jour|tests?)\\s+en\\s+cours(?:[.!…,:]+|\\s*$))"
+# Gerund-led plan announcement carrying NO imminence marker — "Setting up the
+# plan, then mapping every call site before touching anything." Two reasons
+# the patterns above cannot see it (#1261): the verb is a PREPARATION verb
+# (mapping, planning, drafting, listing) that work_announcement_re never
+# enumerated, and the clause is sequenced with then / before instead of ending
+# in now / … / :, which that pattern requires and gerund_re expects at the
+# front. Scanned by the zero-tool gate only: once a tool has run, the same
+# shape can be a legitimate recap ("Updating the config fixed it, then the
+# build passed").
+plan_announcement_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|d['’]accord)[,.!:]?\\s+)?(?:je\\s+vais\\s+|je\\s+|d['’]abord\\s+|maintenant\\s+)?(?:mise\\s+en\\s+place|mets\\s+en\\s+place|cartographie|cartographier|planification|planifie|planifier|préparation|prépare|préparer|révise|réviser|liste|lister|documente|documenter|crée|créer|mets\\s+à\\s+jour|vérifie|vérifier|lecture|lis|lire|analyse|analyser|inspecte|inspecter)\\b[^.!?\\n]{0,120}?\\b(?:puis|ensuite|avant\\s+de|avant\\s+d['’]|après\\s+quoi)\\b"
+
 
 gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:maintenant|déjà)\\s+(?:vérifiant|mettant à jour|modifiant|corrigeant|réparant|créant|ajoutant|supprimant|exécutant|lisant|cherchant)\\b"
 
@@ -391,4 +402,87 @@ intent_verb_exclusions = [
     "décrire",
     "mentionner",
     "confirmer",
+]
+
+
+# Context that turns a BARE tool name into a claim of tool usage (#1262).
+# Multi-word names (`load_brain_file`) are unmistakable on their own, but
+# `plan`, `bash`, `grep` and `ls` are ordinary words, so naming one proves
+# nothing by itself. It proves something when the name is the OBJECT of an
+# action the model attributes to itself: "Setting up the plan" in a turn that
+# called no tool is a tool use that never happened. A marker must sit
+# immediately before the name, optionally across one determiner, so an
+# instruction addressed to the user ("run it in bash") stays untouched.
+tool_use_markers = [
+    "utilisant",
+    "utilise",
+    "utiliser",
+    "utilisé",
+    "exécutant",
+    "exécute",
+    "exécuter",
+    "exécuté",
+    "lançant",
+    "lance",
+    "lancer",
+    "lancé",
+    "appelant",
+    "appelle",
+    "appeler",
+    "appelé",
+    "invoquant",
+    "invoque",
+    "invoquer",
+    "créant",
+    "crée",
+    "créer",
+    "créé",
+    "configurant",
+    "configure",
+    "configurer",
+    "préparant",
+    "prépare",
+    "préparer",
+    "lisant",
+    "lis",
+    "lire",
+    "lu",
+    "écrivant",
+    "écris",
+    "écrire",
+    "vérifiant",
+    "vérifie",
+    "vérifier",
+    "ouvrant",
+    "ouvre",
+    "ouvrir",
+    "mise en place",
+    "mets en place",
+    "via",
+]
+
+# Nouns that mark the preceding word as a tool by name ("the plan tool").
+tool_nouns = [
+    "outil",
+    "outils",
+]
+
+# Determiners allowed between a marker and the tool name, so "setting up THE
+# plan" reads the same as "setting up plan". At most one, and only these:
+# anything else between the two words means the name is not the marker's
+# object. Empty for languages without articles.
+tool_name_determiners = [
+    "le",
+    "la",
+    "les",
+    "l",
+    "un",
+    "une",
+    "mon",
+    "notre",
+    "ce",
+    "cet",
+    "cette",
+    "du",
+    "des",
 ]

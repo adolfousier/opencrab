@@ -141,7 +141,7 @@ fn a_sub_agent_result_for_a_revived_session_parks_too() {
     let session = Uuid::new_v4();
 
     expect_channel_route(session);
-    let outcome = deliver_to_session(session, msg("sub-agent result"));
+    let outcome = deliver_to_session(session, msg("sub-agent result"), false);
 
     assert_eq!(
         outcome,

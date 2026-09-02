@@ -250,6 +250,17 @@ line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:vale|bien|ok|okey|sí|claro)\\s*,?\\s
 # herramienta — "Ejecutando las pruebas ahora.", "Verificando…". Requiere
 # gerundio de acción + marcador de inmediatez (ahora / … / : ).
 work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:(?:y\\s+)?luego|(?:y\\s+)?despu[ée]s|(?:y\\s+)?entonces|a\\s+continuaci[óo]n|y)[,]?\\s+)?(?:(?:vale|bien|ok|okey|sí|claro)[,.!:]?\\s+)?(?:estoy\\s+|ahora\\s+)?(?:ejecutando|corriendo|verificando|revisando|comprobando|construyendo|compilando|probando|buscando|leyendo|escribiendo|creando|generando|actualizando|modificando|instalando|aplicando|desplegando|descargando|subiendo|eliminando|borrando|arreglando|corrigiendo|analizando|investigando)\\b[^.!?:\\n]{0,60}?(?:\\s+ahora(?:[.!…,:]+|\\s*$)|\\.{3}|…|:\\s*$)"
+# Gerund-led plan announcement carrying NO imminence marker — "Setting up the
+# plan, then mapping every call site before touching anything." Two reasons
+# the patterns above cannot see it (#1261): the verb is a PREPARATION verb
+# (mapping, planning, drafting, listing) that work_announcement_re never
+# enumerated, and the clause is sequenced with then / before instead of ending
+# in now / … / :, which that pattern requires and gerund_re expects at the
+# front. Scanned by the zero-tool gate only: once a tool has run, the same
+# shape can be a legitimate recap ("Updating the config fixed it, then the
+# build passed").
+plan_announcement_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|vale|bien|claro)[,.!:]?\\s+)?(?:voy\\s+a\\s+|estoy\\s+|primero\\s+|ahora\\s+)?(?:configurando|configurar|mapeando|mapear|planificando|planificar|preparando|preparar|revisando|revisar|listando|listar|documentando|documentar|creando|crear|actualizando|actualizar|verificando|verificar|leyendo|leer|ejecutando|ejecutar|analizando|analizar|investigando|investigar)\\b[^.!?\\n]{0,120}?\\b(?:luego|después|despues|entonces|antes\\s+de|a\\s+continuación|a\\s+continuacion)\\b"
+
 
 gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:ahora|ya)\\s+(?:actualizando|modificando|corrigiendo|arreglando|creando|añadiendo|agregando|eliminando|borrando|ejecutando|leyendo|buscando)\\b"
 
@@ -386,4 +397,84 @@ intent_verb_exclusions = [
     "describir",
     "mencionar",
     "confirmar",
+]
+
+
+# Context that turns a BARE tool name into a claim of tool usage (#1262).
+# Multi-word names (`load_brain_file`) are unmistakable on their own, but
+# `plan`, `bash`, `grep` and `ls` are ordinary words, so naming one proves
+# nothing by itself. It proves something when the name is the OBJECT of an
+# action the model attributes to itself: "Setting up the plan" in a turn that
+# called no tool is a tool use that never happened. A marker must sit
+# immediately before the name, optionally across one determiner, so an
+# instruction addressed to the user ("run it in bash") stays untouched.
+tool_use_markers = [
+    "usando",
+    "usar",
+    "uso",
+    "usé",
+    "utilizando",
+    "utilizar",
+    "ejecutando",
+    "ejecutar",
+    "ejecuté",
+    "corriendo",
+    "correr",
+    "llamando",
+    "llamar",
+    "llamé",
+    "invocando",
+    "invocar",
+    "invoqué",
+    "creando",
+    "crear",
+    "creé",
+    "configurando",
+    "configurar",
+    "configuré",
+    "preparando",
+    "preparar",
+    "actualizando",
+    "actualizar",
+    "actualicé",
+    "leyendo",
+    "leer",
+    "leí",
+    "escribiendo",
+    "escribir",
+    "verificando",
+    "verificar",
+    "verifiqué",
+    "abriendo",
+    "abrir",
+    "abrí",
+    "iniciando",
+    "iniciar",
+    "vía",
+    "via",
+]
+
+# Nouns that mark the preceding word as a tool by name ("the plan tool").
+tool_nouns = [
+    "herramienta",
+    "herramientas",
+]
+
+# Determiners allowed between a marker and the tool name, so "setting up THE
+# plan" reads the same as "setting up plan". At most one, and only these:
+# anything else between the two words means the name is not the marker's
+# object. Empty for languages without articles.
+tool_name_determiners = [
+    "el",
+    "la",
+    "los",
+    "las",
+    "un",
+    "una",
+    "mi",
+    "nuestro",
+    "nuestra",
+    "este",
+    "esta",
+    "del",
 ]

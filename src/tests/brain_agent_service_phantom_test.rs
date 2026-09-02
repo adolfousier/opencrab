@@ -153,7 +153,11 @@ fn registered_tool_mention_detected_word_boundary() {
         "the loader_read_filesystem module handles this",
         &names
     ));
-    // Single-word tool names are ordinary prose words: never matched.
+    // A bare name in ordinary prose is still not a claim: here `it in` sits
+    // between the marker and the name, so the name is not what the marker
+    // acts on, and `plan accordingly` follows a conjunction. Bare names DO
+    // count when the text makes them the object of the model's own action
+    // (#1262) — see phantom_bare_tool_name_test.
     assert!(!mentions_registered_tool(
         "run it in bash and plan accordingly",
         &names

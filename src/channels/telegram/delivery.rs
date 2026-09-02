@@ -5,8 +5,9 @@
 
 use super::TelegramState;
 use super::flow::{
-    DisplayItem, FlowEntry, StreamingState, append_intermediate_to_flow, append_tool_group,
-    folded_duplicates_final, take_folded_final,
+    DisplayItem, StreamingState, append_intermediate_to_flow, append_system_to_flow,
+    append_tool_group, folded_duplicates_final, last_folded_text, settle_options_reclaim,
+    take_folded_final,
 };
 use super::handler::{fire_reaction, map_to_allowed_reaction};
 use super::intermediates::send_html_or_plain;
@@ -36,6 +37,19 @@ use uuid::Uuid;
 /// content channel holds, so it is not a parameter here.
 pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
     text_after_directive.trim().is_empty()
+}
+
+/// Whether the turn ends on a suggest_options surface (#1226 K): the
+/// progress handler stashes the options mid-turn (progress.rs), so by
+/// delivery time a Some here means an option surface is armed and the
+/// flow block ends on the suggest_options Tool entry — the reclaim calls
+/// below must then look BEFORE that trailing tool for the answer.
+fn options_pending(streaming: &Arc<std::sync::Mutex<StreamingState>>) -> bool {
+    streaming
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pending_suggestions
+        .is_some()
 }
 
 /// True when a rich-send failure means Telegram could not fetch the embedded
@@ -213,19 +227,46 @@ pub(crate) async fn deliver_final_response(
             // that predicate deliberately only matches prefix overlap. So
             // when suppression happened, strip the folded copy from the
             // block silently — it is already delivered.
+            //
+            // #31: tracks whether THIS block already reclaimed the answer, so
+            // the main reclaim below can tell "nothing left to reclaim" from
+            // "the reclaim found nothing that was ever there" in its K warn.
+            let mut pre_reclaimed = false;
             let text_only = if text_only.trim().is_empty() {
                 if suppressed_final {
-                    if let Some(discarded) = take_folded_final(bot, chat_id, streaming).await {
+                    let (discarded, discarded_trailer) =
+                        take_folded_final(bot, chat_id, streaming, options_pending(streaming))
+                            .await;
+                    if discarded.is_some() || discarded_trailer.is_some() {
                         tracing::info!(
-                            "Telegram: final suppressed by dedup — dropping {} folded \
+                            "Telegram: final suppressed by dedup — dropping {}(+{}) folded \
                              chars already delivered as intermediates (#1152)",
-                            discarded.len()
+                            discarded.as_ref().map(|t| t.len()).unwrap_or(0),
+                            discarded_trailer.as_ref().map(|t| t.len()).unwrap_or(0),
                         );
                     }
                     text_only
                 } else {
-                    match take_folded_final(bot, chat_id, streaming).await {
+                    let (reclaimed, trailer) =
+                        take_folded_final(bot, chat_id, streaming, options_pending(streaming))
+                            .await;
+                    if let Some(t) = trailer {
+                        let trailer_len = t.len();
+                        // #31: the post-halt sign-off rides AFTER the buttons —
+                        // stash it for render_suggestions (keep-never-discard).
+                        streaming
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .pending_trailer = Some(t);
+                        tracing::info!(
+                            "Telegram: stashed {} trailer chars reclaimed before the react \
+                             decision (#31)",
+                            trailer_len
+                        );
+                    }
+                    match reclaimed {
                         Some(reclaimed) => {
+                            pre_reclaimed = true;
                             tracing::info!(
                                 "Telegram: reclaimed folded final ({} chars) before react \
                                  decision (#478)",
@@ -418,6 +459,14 @@ pub(crate) async fn deliver_final_response(
                 ctx_max,
                 response.tokens_per_second,
             );
+            // Quiet ❕ while the #909 pressure hint is active (#29): the
+            // settled footer mirrors the nudge that's in the prompt. Cleared
+            // on compaction success; re-arms below the 55% floor.
+            let footer = if !footer.is_empty() && agent.pressure_warning_active(session_id) {
+                format!("{footer} ❕")
+            } else {
+                footer
+            };
             {
                 let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 s.sections.ctx = (!footer.is_empty()).then(|| footer.clone());
@@ -533,58 +582,71 @@ pub(crate) async fn deliver_final_response(
             // reclaim it. For other providers (or CLI turns where the answer stayed
             // in content), if the same text ended up both folded and in the final
             // response, remove the folded copy to avoid showing it twice.
-            let text_only = if text_only.trim().is_empty() {
+            //
+            // #31: with options pending the reclaim returns BOTH runs — the
+            // answer as host, the post-halt sign-off run as trailer — and
+            // `settle_options_reclaim` arbitrates. The options arm runs FIRST:
+            // the stock trailing-duplicate strip used to pop the trailer run
+            // and drop the host with it (the smoke-v4 abandonment).
+            let (text_only, reclaimed_trailer) = if text_only.trim().is_empty() {
                 // CLI provider case: no separate answer, reclaim the folded final
-                take_folded_final(bot, chat_id, streaming)
-                    .await
-                    .unwrap_or(text_only)
+                let (host, trailer) =
+                    take_folded_final(bot, chat_id, streaming, options_pending(streaming)).await;
+                settle_options_reclaim(text_only, host, trailer)
+            } else if options_pending(streaming) {
+                // #1226 flow-fold (K) + #31 trailer: the turn halted on the
+                // suggest_options surface — the substantive pre-options answer
+                // is the Text run BEFORE the Tool entry, the sign-off ack the
+                // run AFTER it. Reclaim both; the answer becomes the final
+                // bubble, the ack rides after the buttons.
+                let (host, trailer) = take_folded_final(bot, chat_id, streaming, true).await;
+                if host.is_none() && trailer.is_none() && !pre_reclaimed {
+                    tracing::warn!(
+                        "Telegram: options pending but flow reclaim returned nothing — \
+                         answer stuck in flow block (#1226 K)"
+                    );
+                }
+                let (text, trailer) = settle_options_reclaim(text_only, host, trailer);
+                if let Some(t) = &trailer {
+                    tracing::info!(
+                        "Telegram: options reclaim settled — {} trailer chars ride after \
+                         the buttons (#31)",
+                        t.len()
+                    );
+                }
+                (text, trailer)
             } else {
                 // Non-CLI case: check if the trailing folded text matches the final
                 // answer and remove it to prevent duplication
-                let mut final_text = text_only;
                 let trailing_matches = {
                     let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    match s.flow_entries.last() {
-                        Some(FlowEntry::Text(folded)) => {
-                            folded_duplicates_final(folded, &final_text)
-                        }
-                        _ => false,
+                    // Past any chrome appended after the answer (#1253): a
+                    // provider switch landing late must not hide the folded
+                    // copy and let it render twice.
+                    match last_folded_text(&s.flow_entries) {
+                        Some(folded) => folded_duplicates_final(folded, &text_only),
+                        None => false,
                     }
                 };
                 if trailing_matches {
                     // Remove the duplicate from the block
-                    take_folded_final(bot, chat_id, streaming).await;
-                    final_text
+                    take_folded_final(bot, chat_id, streaming, options_pending(streaming)).await;
+                    (text_only, None)
                 } else {
-                    // #1226 flow-fold: a turn ending at the suggest_options
-                    // surface halts with its substantive pre-options answer
-                    // folded inside the flow block (thin narration folds, #582;
-                    // sent_intermediates stays empty, so dedup never sees it)
-                    // while response.content carries a short closing pointer.
-                    // When suggestions are pending, promote any REMAINING
-                    // trailing folded run into the final bubble — otherwise the
-                    // answer lives only inside the collapsed processing log and
-                    // the buttons merge onto the thin pointer. Trailing Text
-                    // after the last tool IS the final answer (flow.rs
-                    // invariant), so interstitial narration cannot be promoted.
-                    // Norm-equal / prefix duplicates were already popped above.
-                    let options_pending = {
-                        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                        s.pending_suggestions.is_some()
-                    };
-                    if options_pending
-                        && let Some(folded) = take_folded_final(bot, chat_id, streaming).await
-                    {
-                        tracing::info!(
-                            "Telegram: promote {} folded chars into final bubble \
-                                 (suggestions pending, #1226)",
-                            folded.len()
-                        );
-                        final_text = format!("{folded}\n\n{final_text}");
-                    }
-                    final_text
+                    (text_only, None)
                 }
             };
+
+            // #31: hand the trailer to render_suggestions — rich merges it as
+            // a paragraph after the in-body button rows, classic delivers it
+            // as its own bubble. Stashed here so both render sites (handler
+            // turn end + resume) pick it up identically.
+            if let Some(trailer) = reclaimed_trailer {
+                streaming
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .pending_trailer = Some(trailer);
+            }
 
             // #690: re-expand any table the model collapsed onto one line so it
             // renders (native rich or <pre> grid) instead of raw pipes. Applied
@@ -883,9 +945,10 @@ pub(crate) async fn deliver_final_response(
                                     "Telegram: edit final failed ({e}), falling back to delete+send"
                                 );
                                 best_effort_delete(bot, chat_id, mid, "edit-final fallback").await;
-                                if let Ok(sent) =
-                                    send_html_or_plain(bot, chat_id, thread_id, &chunks[0], "turn", None)
-                                        .await
+                                if let Ok(sent) = send_html_or_plain(
+                                    bot, chat_id, thread_id, &chunks[0], "turn", None,
+                                )
+                                .await
                                 {
                                     sent_reply_id = Some(sent.0);
                                     final_bubble = Some(super::state::MergeBubble {
@@ -903,7 +966,8 @@ pub(crate) async fn deliver_final_response(
                         for chunk in &chunks {
                             // Last chunk wins — that's the bubble a user replies to.
                             if let Ok(sent) =
-                                send_html_or_plain(bot, chat_id, thread_id, chunk, "turn", None).await
+                                send_html_or_plain(bot, chat_id, thread_id, chunk, "turn", None)
+                                    .await
                             {
                                 sent_reply_id = Some(sent.0);
                                 final_bubble = Some(super::state::MergeBubble {
@@ -1083,6 +1147,17 @@ pub(crate) async fn drain_remaining_display(
                     fire_reaction(bot, chat, target, emoji).await;
                 }
                 append_intermediate_to_flow(bot, chat, thread_id, streaming, &text).await;
+            }
+            DisplayItem::System(text) => {
+                // Chrome folds into the same block, in order, but skips the
+                // model pipeline: it is our own text, so there is no artifact
+                // to strip, no image marker, and no react directive to fire.
+                // Secrets are still scrubbed — a self-healing alert embeds a
+                // raw upstream error string (#1253).
+                append_tool_group(bot, chat, thread_id, streaming, &tool_buffer).await;
+                tool_buffer.clear();
+                let text = redact_secrets(&text);
+                append_system_to_flow(bot, chat, thread_id, streaming, &text).await;
             }
         }
     }

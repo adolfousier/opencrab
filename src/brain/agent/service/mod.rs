@@ -5,8 +5,9 @@
 
 pub(crate) mod announcement_loop;
 pub(crate) mod background_tasks;
+pub(crate) mod boot_report;
 mod builder;
-mod compaction;
+pub(crate) mod compaction;
 pub(crate) mod compaction_prompts;
 pub(crate) mod context;
 pub(crate) mod detached_status;
@@ -26,6 +27,7 @@ pub(crate) mod phantom_lang;
 pub(crate) mod plan_mode_provider;
 pub(crate) mod repetition;
 pub(crate) mod restart_recovery;
+pub(crate) mod session_cwd;
 pub(crate) mod session_routes;
 pub(crate) mod tool_loop;
 pub(crate) mod tool_repeat;

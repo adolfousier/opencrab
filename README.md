@@ -629,6 +629,94 @@ OpenCrabs runs in one of two modes. Pick the one that fits the machine, and **fo
   - **macOS:** System Settings → General → Login Items → add a small `.command` script that runs `opencrabs` (or one that tells Terminal to open it).
   - **VPS over SSH:** a TUI needs a live terminal, so run it inside `tmux`/`screen` and reattach — e.g. a `@reboot` cron or user service that runs `tmux new-session -d -s crab 'opencrabs'`, then `tmux attach -t crab` when you SSH in. On a headless VPS you usually want the daemon, not the TUI.
 
+#### Dropping files into a TUI running on a VPS
+
+Dragging a file onto your terminal inserts **text**: the path as your *local*
+machine sees it. When the TUI runs over SSH that path names a file on your
+laptop while the process is on the server, so there is nothing local to attach.
+
+**If OpenCrabs is only installed on the server**, you get a ready-to-run `scp`
+line instead, addressed to that host with the path quoted so it survives
+spaces. That works from every OS with nothing extra installed, and is the
+honest floor:
+
+```
+scp '/Users/you/Screenshot 2026-09-01 at 18.18.16.png' root@188.166.147.13:~/.opencrabs/tmp/
+```
+
+**If you also have OpenCrabs on the machine you drag from**, it can pull the
+file across **the SSH connection you already opened**, with no copy step. Two
+steps, once:
+
+**1. On the machine you drag files from** (this needs the OpenCrabs binary
+there — it is the one part of this that is not server-side), run the agent and
+leave it running:
+
+```bash
+opencrabs drop-agent
+```
+
+**2. Add a reverse forward to how you connect.** If you use an alias, change it
+once and forget it:
+
+```bash
+# before
+alias son='ssh root@188.166.147.13'
+# after
+alias son='ssh -R 8765:localhost:8765 root@188.166.147.13'
+```
+
+That is it. Drop a file into the remote TUI and it attaches like any local
+file.
+
+**Where it lands** follows the same rules as every other share:
+
+- `<home>/tmp/`, beside pasted clipboard images, since that is what it is: an
+  ephemeral share rather than a chat-channel file. `<home>` is
+  profile-resolved, so a `-p` profile keeps its own.
+- **If the session belongs to a project**, it is then copied into
+  `<home>/projects/<slug>/files/` with the project's other artifacts, exactly
+  as a clipboard paste or a forwarded Telegram file would be.
+
+It does **not** go in `channel_attachments/`, which holds files sent or
+forwarded through a chat channel and is keyed by platform.
+
+**Why the forward is needed.** A process on the server has no handle on the
+SSH connection it arrived over; sshd hands it a pty and nothing else. `-R`
+opens a real channel on that same connection, which the agent answers.
+
+**Works everywhere.** `ssh -R` is standard on Windows (built-in OpenSSH),
+Linux and macOS, and the agent is an OpenCrabs subcommand, so any client OS
+works. It never touches the terminal escape stream, so it also works from any
+terminal emulator **and through `tmux`/`screen`** — unlike kitty's transfer or
+zmodem, which the multiplexer swallows.
+
+**What the agent will and will not serve.** It hands files to whatever holds
+the far end of the tunnel, so it is deliberately narrow:
+
+| | |
+|---|---|
+| Serves from | `Desktop`, `Downloads`, `Pictures`, `Documents`, `Movies` |
+| Listens on | `127.0.0.1` only, reachable solely through your forward |
+| Refuses | anything outside those roots, `..` traversal, symlinks pointing out of a root, directories, files over 64 MB |
+| Logs | every path served **and every path refused** |
+
+Serve somewhere else with `--root`, repeatable:
+
+```bash
+opencrabs drop-agent --root ~/work/screenshots --root ~/Desktop
+```
+
+The default is not `$HOME` on purpose: a server that asked for
+`~/.ssh/id_ed25519` is refused by construction rather than by you having
+remembered to restrict it. Note that the forwarded port is reachable by other
+users on that server, so only use this on a box you trust — which is already
+true, since you are running a shell there.
+
+Sending the file through a connected chat channel (Telegram, Discord, Slack)
+also puts it on the server, which is often quickest on a headless box and
+needs nothing installed locally either.
+
 ### Daemon & Service
 
 Run profiles as background services:
@@ -4178,7 +4266,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (6,997 tests across 694 test modules; 32 slower tests are
+# Run tests (7,290 tests across 735 test modules; 32 slower tests are
 # #[ignore]d to keep the default run fast — profile tests that touch
 # ~/.opencrabs, browser end-to-end tests, and opencode provider tests.
 # Opt in with `cargo test --all-features -- --ignored` when needed)
@@ -4248,6 +4336,18 @@ The chain becomes a **majority-vote judge panel** (variance reduction + cross-mo
 #### Memory Search (in-tree store — FTS5 + Vector Embeddings)
 
 Hybrid semantic search: FTS5 BM25 keyword matching + vector embeddings combined via Reciprocal Rank Fusion. Three modes: local GGUF (default, no API key), OpenAI-compatible API, or FTS5-only (VPS-friendly).
+
+**External index paths (knowledge base):** `[memory] extra_paths` indexes directories of markdown/text outside your profile. Search them with `memory_search scope="external"` — ranked excerpts with file paths, quotable verbatim. Pair with `web_scrape` sitemap export to index an entire docs site at zero AI/API cost:
+
+```toml
+[memory]
+extra_paths = [
+  "~/knowledge/product-docs",
+  { path = "scrapes/docs.example.com", pattern = "**/*.md" },  # web_scrape --sitemap export output
+]
+# external_allowed_in_shared = false   # default: external results are owner-session-only
+# sweep_interval_secs = 300            # freshness sweep; changed files also caught lazily at search
+```
 
 
 Benchmarked with `cargo bench --bench memory` on release builds:

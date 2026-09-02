@@ -49,67 +49,6 @@ impl FallbackProvider {
         }
     }
 
-    /// Create a FallbackProvider with health-aware startup.
-    /// If the primary has recent failures and a fallback has recent success,
-    /// advances the active index to skip the dead primary immediately.
-    /// This persists sticky fallbacks across process restarts.
-    pub fn new_with_health(primary: Arc<dyn Provider>, fallbacks: Vec<Arc<dyn Provider>>) -> Self {
-        let start_idx = Self::compute_health_start_index(&primary, &fallbacks);
-        Self {
-            primary,
-            fallbacks,
-            active: AtomicUsize::new(start_idx),
-            pending_swap: Mutex::new(None),
-        }
-    }
-
-    /// Check provider health and compute the starting active index.
-    /// Returns 0 (primary) if healthy, or the index of the healthiest fallback.
-    fn compute_health_start_index(
-        primary: &Arc<dyn Provider>,
-        fallbacks: &[Arc<dyn Provider>],
-    ) -> usize {
-        // Only skip primary if it has consecutive failures AND a fallback is healthier
-        let primary_health = crate::config::health::get_health(primary.name());
-        let primary_fails = primary_health
-            .as_ref()
-            .map(|h| h.consecutive_failures)
-            .unwrap_or(0);
-
-        // Require at least 2 consecutive failures to skip primary on startup
-        if primary_fails < 2 {
-            return 0;
-        }
-
-        // Find the fallback with most recent success
-        let mut best_idx: Option<usize> = None;
-        let mut best_ts: u64 = 0;
-
-        for (i, fb) in fallbacks.iter().enumerate() {
-            if let Some(health) = crate::config::health::get_health(fb.name())
-                && let Some(ts) = health.last_success
-                && ts > best_ts
-                && health.consecutive_failures < primary_fails
-            {
-                best_ts = ts;
-                best_idx = Some(i + 1); // +1 because index 0 is primary
-            }
-        }
-
-        if let Some(idx) = best_idx {
-            tracing::info!(
-                "Health-aware startup: skipping unhealthy primary '{}' ({} failures), \
-                 starting at fallback index {}",
-                primary.name(),
-                primary_fails,
-                idx
-            );
-            idx
-        } else {
-            0
-        }
-    }
-
     /// Get the currently-active provider (primary or a sticky fallback).
     fn active_provider(&self) -> Arc<dyn Provider> {
         let idx = self.active.load(Ordering::Acquire);
@@ -166,12 +105,23 @@ impl FallbackProvider {
         }
     }
 
+    /// The model `provider` will actually run for `requested`: its own
+    /// default when it does not carry the requested one. An empty
+    /// `supported_models()` means "unknown", so the request passes through.
+    fn model_for(provider: &dyn Provider, requested: &str) -> String {
+        let supported = provider.supported_models();
+        if !supported.is_empty() && !supported.iter().any(|m| m == requested) {
+            provider.default_model().to_string()
+        } else {
+            requested.to_string()
+        }
+    }
+
     /// Build a request for a fallback provider, remapping the model if needed.
     fn remap_request_for_fallback(fb: &dyn Provider, request: &LLMRequest) -> LLMRequest {
         let mut fb_request = request.clone();
-        let supported = fb.supported_models();
-        if !supported.is_empty() && !supported.iter().any(|m| m == &fb_request.model) {
-            let new_model = fb.default_model().to_string();
+        let new_model = Self::model_for(fb, &fb_request.model);
+        if new_model != fb_request.model {
             tracing::info!(
                 "Fallback '{}': model '{}' not supported — remapping to '{}'",
                 fb.name(),
@@ -186,32 +136,18 @@ impl FallbackProvider {
     /// Decide whether an error justifies trying the next provider in the
     /// chain. Beyond transient errors (rate-limit, 5xx, timeout), we also
     /// fall through on model/parameter mismatches — the fallback provider
-    /// may support the request after model remapping.
-    /// Auth errors (401/403) also trigger fallback — for OAuth providers
-    /// like Qwen, a 401 after refresh failure means the token is dead and
-    /// the provider is unusable until re-authenticated.
+    /// may support the request after model remapping. Auth errors (401/403)
+    /// also trigger fallback: for OAuth providers like Qwen, a 401 after a
+    /// failed refresh means the token is dead and the provider is unusable
+    /// until re-authenticated.
+    ///
+    /// Delegates to the shared policy in `provider::error` (#1247) so this
+    /// chain, the tool loop's walk and compaction cannot disagree about what
+    /// is fatal. Notably it now falls through on hard quota / 402 billing
+    /// errors, which this function used to treat as terminal because it gated
+    /// on `is_retryable` alone.
     fn should_try_next(err: &ProviderError) -> bool {
-        if err.is_retryable() {
-            return true;
-        }
-        match err {
-            // Model not supported by this provider — fallback may have it
-            ProviderError::ModelNotFound(_) => true,
-            // Invalid parameter / unsupported model returned as 400 —
-            // often means the model or parameter isn't valid for this
-            // specific provider but a fallback with remapping may work
-            ProviderError::ApiError { status: 400, .. } => true,
-            // Auth failure (401/403) — provider is dead (expired OAuth,
-            // revoked key, etc.). Fall to next provider rather than
-            // surfacing a cryptic auth error to the user.
-            ProviderError::ApiError {
-                status: 401 | 403, ..
-            }
-            | ProviderError::InvalidApiKey => true,
-            // InvalidRequest covers parsed model/param errors
-            ProviderError::InvalidRequest(_) => true,
-            _ => false,
-        }
+        super::error::should_try_next_provider(err)
     }
 
     /// Final error when every chain entry failed: log the ledger and attach
@@ -229,7 +165,6 @@ impl FallbackProvider {
             primary_name,
             &super::error::short_error_reason(&err),
             tried,
-            &[],
         );
         tracing::error!("Fallback chain exhausted: {summary}");
         super::error::with_chain_summary(err, summary)
@@ -504,6 +439,18 @@ impl Provider for FallbackProvider {
             format!("primary '{}'", self.primary.name())
         } else {
             format!("fallback #{} '{}'", idx, self.fallbacks[idx - 1].name())
+        }
+    }
+
+    /// Mirrors `remap_request_for_fallback`: the primary always runs the
+    /// model as requested (nothing remaps it), a fallback runs its own
+    /// default when it does not carry that model.
+    fn served_model(&self, requested: &str) -> String {
+        let idx = self.active.load(Ordering::Acquire);
+        if idx == 0 {
+            requested.to_string()
+        } else {
+            Self::model_for(self.fallbacks[idx - 1].as_ref(), requested)
         }
     }
 }

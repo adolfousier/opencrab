@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::flow::{
-    DisplayItem, StreamingState, append_intermediate_to_flow, append_tool_group,
-    restick_flow_if_buried,
+    DisplayItem, StreamingState, append_intermediate_to_flow, append_system_to_flow,
+    append_tool_group, restick_flow_if_buried,
 };
 use super::handler::{fire_reaction, thinking_status_excerpt};
 use super::markdown::markdown_to_telegram_html;
@@ -205,6 +205,23 @@ pub(crate) fn spawn_edit_loop(
                                         )
                                         .await;
                                     }
+                                }
+                                DisplayItem::System(text) => {
+                                    // Chrome folds into the same block, in
+                                    // order, but skips the model pipeline: it
+                                    // is our own text, so there is no artifact
+                                    // to strip, no rich report to promote, and
+                                    // no react directive to fire. Secrets are
+                                    // still scrubbed — a self-healing alert
+                                    // embeds a raw upstream error string
+                                    // (#1253).
+                                    append_tool_group(&bot, chat, thread_id, &st, &tool_buffer)
+                                        .await;
+                                    tool_buffer.clear();
+                                    let text =
+                                        crate::utils::redact_secrets_scoped(text, is_dm);
+                                    append_system_to_flow(&bot, chat, thread_id, &st, &text)
+                                        .await;
                                 }
                             }
                         }

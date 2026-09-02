@@ -49,6 +49,31 @@ pub struct LangConfig {
     /// `let me know` addresses the user, `I'll be happy to` is not an action.
     #[serde(default)]
     pub intent_verb_exclusions: Vec<String>,
+    /// Gerund-led plan announcement with NO imminence marker, sequenced
+    /// with then / before — "Setting up the plan, then mapping every call
+    /// site before touching anything." `work_announcement_re` enumerates
+    /// execution verbs and demands a trailing now / … / :, `gerund_re`
+    /// demands a leading "Now"; a turn that announces the PREPARATION for
+    /// work satisfied neither and was delivered as if it were an answer
+    /// (#1261). Consumed by the zero-tool gate only.
+    #[serde(default)]
+    pub plan_announcement_re: String,
+    /// Verbs and prepositions that make a following BARE tool name the
+    /// object of an action the model attributes to itself: "setting up the
+    /// plan", "running bash". A multi-word name proves tool usage on its
+    /// own; `plan` / `bash` / `grep` / `ls` are ordinary words and prove it
+    /// only in this frame (#1262).
+    #[serde(default)]
+    pub tool_use_markers: Vec<String>,
+    /// Nouns that name the preceding word as a tool ("the plan tool").
+    #[serde(default)]
+    pub tool_nouns: Vec<String>,
+    /// Determiners allowed between a marker and the name. At most one:
+    /// anything else in between means the name is not the marker's object,
+    /// which is what keeps "run it in bash" (an instruction to the user)
+    /// out. Empty for languages without articles.
+    #[serde(default)]
+    pub tool_name_determiners: Vec<String>,
     #[serde(default)]
     pub gerund_re: String,
     #[serde(default)]

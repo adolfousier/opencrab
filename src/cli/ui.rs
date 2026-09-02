@@ -678,7 +678,7 @@ async fn cmd_chat_inner(
                 }
                 ProgressEvent::Thinking => return, // spinner handles this already
                 // Compaction is now fully silent — summary goes to memory log only
-                ProgressEvent::Compacting => return,
+                ProgressEvent::Compacting { .. } => return,
                 ProgressEvent::CompactionSummary { .. } => return,
                 ProgressEvent::BuildLine(line) => progress_sender.send(TuiEvent::BuildLine(line)),
                 ProgressEvent::RestartReady {
@@ -1183,7 +1183,12 @@ async fn cmd_chat_inner(
     // agent reads context and picks up naturally — no loops, no leaking restart signals.
     // Routes responses back to the originating channel (TUI, Telegram, Discord, etc.).
     let resume_event_sender = app.event_sender();
+    // Sessions roused by the resume path below (see the wake pass, #1227) so
+    // they are not nudged a second time by it.
+    let mut resumed_session_ids: std::collections::HashSet<uuid::Uuid> =
+        std::collections::HashSet::new();
     {
+        use crate::brain::agent::service::boot_report;
         let pending_repo = crate::db::PendingRequestRepository::new(db.pool().clone());
         match pending_repo.get_interrupted().await {
             Ok(requests) if !requests.is_empty() => {
@@ -1201,9 +1206,15 @@ async fn cmd_chat_inner(
                 let mut seen = std::collections::HashSet::new();
                 for req in requests {
                     if let Ok(session_id) = uuid::Uuid::parse_str(&req.session_id) {
+                        // Every row is a session that was mid-turn when the
+                        // previous process died, duplicate rows included; the
+                        // ledger dedups, so the summary counts sessions.
+                        boot_report::record_interrupted(session_id);
                         if !seen.insert(session_id) {
                             continue;
                         }
+                        resumed_session_ids.insert(session_id);
+                        boot_report::record_resumed(session_id);
                         // Restore the session's saved working directory before
                         // resuming so the agent runs tools in the right CWD.
                         // Note: agent_service shares one global WD lock across
@@ -1279,25 +1290,25 @@ async fn cmd_chat_inner(
                             let agent = agent.clone();
                             let tg = tg.clone();
                             tokio::spawn(async move {
-                                // Wait up to 30s for the Telegram bot to authenticate
-                                let bot = {
-                                    let mut attempts = 0;
-                                    loop {
-                                        if let Some(bot) = tg.bot().await {
-                                            break Some(bot);
-                                        }
-                                        attempts += 1;
-                                        if attempts >= 30 {
-                                            tracing::error!(
-                                                "Telegram resume: bot not available after 30s for session {}",
-                                                session_id
-                                            );
-                                            break None;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    }
-                                };
-                                let Some(bot) = bot else {
+                                // This path always knew the bot might not be
+                                // up yet and waited for it. The bg-resume
+                                // paths did not, and dropped the wake instead
+                                // (#1242). One definition now, so the two
+                                // startup flush paths cannot drift back into
+                                // disagreeing about what "ready" means.
+                                let Some(bot) = crate::channels::transport_ready::await_transport(
+                                    "telegram",
+                                    session_id,
+                                    || tg.bot(),
+                                )
+                                .await
+                                else {
+                                    // The channel never came up inside the
+                                    // grace window: this wake is not slow,
+                                    // it is gone (#1242). Count it so the
+                                    // boot summary names the session that
+                                    // never resumed instead of silence.
+                                    boot_report::record_failed();
                                     return;
                                 };
                                 let prompt = "[System: A restart just occurred while you were \
@@ -1328,16 +1339,20 @@ async fn cmd_chat_inner(
                                         .await
                                     }
                                 };
-                                if let Err(e) = crate::channels::telegram::handler::resume_session(
+                                match crate::channels::telegram::handler::resume_session(
                                     bot, chat, thread_id, session_id, prompt, agent, tg,
                                 )
                                 .await
                                 {
-                                    tracing::error!(
-                                        "Telegram resume failed for session {}: {}",
-                                        session_id,
-                                        e
-                                    );
+                                    Ok(()) => boot_report::record_delivered(),
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Telegram resume failed for session {}: {}",
+                                            session_id,
+                                            e
+                                        );
+                                        boot_report::record_failed();
+                                    }
                                 }
                             });
                             continue;
@@ -1374,6 +1389,7 @@ async fn cmd_chat_inner(
                                         channel,
                                         response.content.len()
                                     );
+                                    boot_report::record_delivered();
                                     match channel.as_str() {
                                         "tui" => {
                                             let _ = ev_tx.send(
@@ -1451,6 +1467,7 @@ async fn cmd_chat_inner(
                                         session_id,
                                         e
                                     );
+                                    boot_report::record_failed();
                                     if channel == "tui" {
                                         let _ = ev_tx.send(crate::tui::events::TuiEvent::Error {
                                             session_id,
@@ -1467,6 +1484,28 @@ async fn cmd_chat_inner(
             Err(e) => tracing::warn!("Failed to check for interrupted requests: {}", e),
         }
     }
+
+    // One grace window past the last dispatch, every bounded wait in the pass
+    // above has resolved, so a resume still unaccounted for is genuinely
+    // missing rather than slow (#1242). The line logs even on boots with
+    // nothing to recover: that is the fact that makes its absence meaningful
+    // on the boots that did.
+    crate::brain::agent::service::boot_report::schedule_summary(
+        crate::brain::agent::service::restart_recovery::ROUTE_GRACE,
+    );
+
+    // Wake (#1227): recently-active bound sessions that were NOT mid-turn at
+    // boot have no journal row, so they look dead until someone pokes one.
+    // #1224 re-registers their routes (draining parked reports) at connect,
+    // but quietly. Log the stranded set so it is auditable; purely
+    // informational — it runs no turn, re-executes nothing, sends no message
+    // (the former "I'm back" bubble was removed per #34).
+    #[cfg(feature = "telegram")]
+    crate::channels::telegram::resume::wake_recently_active(
+        db.pool().clone(),
+        &resumed_session_ids,
+    )
+    .await;
 
     // Channel manager — handles dynamic spawn/stop of channel agents on config reload
     let channel_manager = Arc::new(crate::channels::ChannelManager::new(
@@ -1570,6 +1609,14 @@ async fn cmd_chat_inner(
                             );
                         }
                     }
+                    // #1249: the chain half of `[providers.fallback]` reloads
+                    // here too. Swapping only the primary above left a chain
+                    // frozen at process start, so a provider deleted from
+                    // `fallback_chain` kept receiving live traffic. Runs even
+                    // when the primary rebuild failed — the two are
+                    // independent, and a stale chain is exactly the state
+                    // being fixed.
+                    agent.reload_fallback_providers(&cfg).await;
                     // Fire AFTER the swap so the TUI refresh (commands, approval
                     // policy, and the context-budget footer) reads the new
                     // provider's context window, not the old one.

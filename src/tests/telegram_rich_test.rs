@@ -54,7 +54,12 @@ fn rich_structure_whitespace_only_false() {
 
 #[test]
 fn rich_request_body_with_thread_id() {
-    let body = build_body(99, Some(ThreadId(MessageId(42))), "| A |\n| - |\n| 1 |", None);
+    let body = build_body(
+        99,
+        Some(ThreadId(MessageId(42))),
+        "| A |\n| - |\n| 1 |",
+        None,
+    );
     assert_eq!(body["chat_id"], 99);
     assert_eq!(body["message_thread_id"], 42);
     assert_eq!(body["rich_message"]["markdown"], "| A |\n| - |\n| 1 |");

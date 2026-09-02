@@ -445,8 +445,9 @@ pub(crate) async fn handle_message(
     // groups, plain reply-threads — and, since #1220, NOT the General topic
     // of a known forum: there it normalizes to Some(GENERAL_TOPIC_ID), giving
     // General its own session bucket so bg-task/subagent pushes route home.
-    let topic_id = session_resolve::normalize_topic(
-        session_resolve::topic_session_id(msg.is_topic_message, raw_thread),
+    let topic_id = session_resolve::session_topic_for_event(
+        msg.is_topic_message,
+        raw_thread,
         telegram_state.is_known_forum(msg.chat.id.0).await,
     );
 
@@ -1855,6 +1856,30 @@ pub(crate) async fn handle_message(
         agent.message_enqueue_callback(),
     );
 
+    // Expose this session's turn state to the delivery gate (fork #13): a
+    // session_notify without interrupt=true must refuse while a turn is
+    // streaming instead of dropping a bare user message into it. The probe
+    // captures this state Arc, so it stays valid across route re-binds.
+    {
+        let probe_state = telegram_state.clone();
+        crate::brain::agent::service::session_routes::register_turn_probe(
+            session_id,
+            std::sync::Arc::new(move || probe_state.is_turn_active(session_id)),
+        );
+    }
+
+    // Expose this session's channel ownership to the delivery gate (fork
+    // #17): when this session gets REPLACED on its chat/topic (idle-timeout
+    // reset creates a successor), pushes must refuse to wake it into the
+    // successor's conversation instead of two sessions writing the same
+    // channel. Sync mirror read — TelegramState::channel_ownership_of.
+    {
+        let probe_state = telegram_state.clone();
+        crate::brain::agent::service::session_routes::register_channel_owner_probe(
+            session_id,
+            std::sync::Arc::new(move || probe_state.channel_ownership_of(session_id)),
+        );
+    }
     // Archive any shared images under the session's project files dir (when the
     // session is assigned to a project) so a project's media lives together and
     // survives the tmp purge. Rewrites the <<IMG:tmp>> marker to the archived
@@ -2392,7 +2417,9 @@ pub(crate) async fn handle_message(
     // ── Streaming setup ───────────────────────────────────────────────────────
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         is_dm,
+        compacting: false,
         pending_suggestions: None,
+        pending_trailer: None,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: Vec::new(),
@@ -2867,10 +2894,11 @@ pub(crate) async fn handle_message(
     if let Some(options) = suggestions {
         // Merge candidate (#tg-suggest-merge): the bubble the final response
         // landed in, captured by deliver_final_response. Attaching the
-        // keyboard THERE kills the separate "Suggested next" bubble.
-        let merge_host = {
+        // keyboard THERE kills the separate "Suggested next" bubble. The
+        // #31 sign-off trailer rides along — it renders after the buttons.
+        let (merge_host, trailer) = {
             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            s.final_bubble.take()
+            (s.final_bubble.take(), s.pending_trailer.take())
         };
         super::suggest_options::render_suggestions(
             &bot,
@@ -2880,6 +2908,7 @@ pub(crate) async fn handle_message(
             thread_id,
             options,
             merge_host,
+            trailer,
         )
         .await;
     }

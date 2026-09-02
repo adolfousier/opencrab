@@ -130,6 +130,35 @@ const QUOTA_EXHAUSTION_PHRASES: &[&str] = &[
     "try again next month",
 ];
 
+/// The user-facing text for a 429, with advice chosen from the upstream
+/// message rather than from the status code alone (#1254).
+///
+/// A 429 carrying `Insufficient balance … Please recharge` is a billing
+/// state, not a throttle: it will not clear on any retry timescale, so
+/// "please retry later" is advice that contradicts the sentence it is
+/// appended to. This text is not internal, the self-healing banner embeds
+/// it verbatim into the chat, so a whole group gets told to wait for
+/// something that only money or a different provider fixes.
+///
+/// An unrecognised 429 keeps the retry advice: the phrase list is
+/// deliberately conservative, and treating an unknown throttle as terminal
+/// is the more expensive mistake.
+pub fn rate_limit_message(upstream: &str, retry_after: Option<u64>) -> String {
+    if is_quota_exhausted_message(upstream) {
+        // A Retry-After header on a balance error is noise, so it is
+        // dropped here rather than offered as a countdown to nothing.
+        return format!(
+            "{} (quota or balance exhausted, not a temporary throttle: \
+             recharge the provider or use /models to switch)",
+            upstream
+        );
+    }
+    match retry_after {
+        Some(secs) => format!("{} (retry after {} seconds)", upstream, secs),
+        None => format!("{} (rate limited, please retry later)", upstream),
+    }
+}
+
 /// True when an error/message body describes a HARD quota or billing
 /// limit rather than a transient throttle (#952).
 pub fn is_quota_exhausted_message(msg: &str) -> bool {
@@ -315,6 +344,44 @@ impl ProviderError {
     }
 }
 
+/// Does this failure justify handing the request to the NEXT provider in a
+/// chain? The single policy shared by `FallbackProvider`, the tool loop's
+/// in-place walk, and compaction, so a request that would fail over during a
+/// chat turn fails over everywhere else too (#1247).
+///
+/// Note the deliberate split from [`ProviderError::is_retryable`]: the two
+/// answer different questions and a hard quota is exactly where they diverge.
+/// `is_retryable` says "retry the SAME provider", which for a monthly cap or
+/// an empty balance is pointless — so it returns false, as #952 intended.
+/// Chain traversal then read that false as "this error is fatal, stop" and
+/// aborted on the one class of error a chain exists to survive: the next
+/// provider bills a different account and would have answered fine.
+pub fn should_try_next_provider(err: &ProviderError) -> bool {
+    // Transient (rate limit, 5xx, timeout) — the next provider may be healthy.
+    if err.is_retryable() {
+        return true;
+    }
+    // Hard quota / billing cap. Never retried in place, always worth handing
+    // to a provider with its own budget.
+    if err.is_quota_exhausted() {
+        return true;
+    }
+    match err {
+        // Model not supported here — a fallback may carry it, and the caller
+        // remaps to the fallback's default model anyway.
+        ProviderError::ModelNotFound(_) => true,
+        // 400 invalid parameter/model, 401/403 dead credentials, 402 billing.
+        // All unrecoverable on THIS provider, all fine on the next one.
+        ProviderError::ApiError {
+            status: 400..=403, ..
+        }
+        | ProviderError::InvalidApiKey => true,
+        // Parsed model/param rejection.
+        ProviderError::InvalidRequest(_) => true,
+        _ => false,
+    }
+}
+
 /// One-line, user-facing classification of a provider failure for retry
 /// notices and fallback-chain summaries (#952): "quota exhausted",
 /// "rate limited", "auth error", "server error 502", "timeout", ...
@@ -342,23 +409,15 @@ pub fn short_error_reason(err: &ProviderError) -> String {
 
 /// User-facing summary for "every provider in the chain failed" (#952).
 /// Names the primary and each fallback attempted with its failure reason,
-/// plus providers skipped by the quota circuit breaker, and ends with an
+/// and ends with an
 /// actionable hint — instead of leaking the bare error string of whichever
 /// provider happened to die last.
-pub fn chain_exhausted_summary(
-    primary: &str,
-    primary_reason: &str,
-    tried: &[String],
-    skipped: &[String],
-) -> String {
+pub fn chain_exhausted_summary(primary: &str, primary_reason: &str, tried: &[String]) -> String {
     let mut lines = vec![format!(
         "All providers in the fallback chain failed. {primary}: {primary_reason}."
     )];
     for t in tried {
         lines.push(format!("Fallback {t}"));
-    }
-    if !skipped.is_empty() {
-        lines.push(format!("Skipped (quota-exhausted): {}", skipped.join(", ")));
     }
     lines.push(
         "Switch to a working provider via /models, or wait for the quota window to reset."

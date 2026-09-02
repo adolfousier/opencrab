@@ -482,7 +482,7 @@ impl AgentService {
         // a marker file in the profile home keeps it strictly one-shot.
         let user_message = super::fallback_suggest::maybe_inject(
             &crate::config::profile::resolve_profile_home(),
-            !self.fallback_providers.is_empty(),
+            self.has_fallback_provider(),
             user_message,
         );
 
@@ -1239,19 +1239,15 @@ impl AgentService {
                 &model_name,
                 cancel_token.as_ref(),
                 &progress_callback,
+                super::compaction::BudgetPhase::TurnStart,
             )
             .await
         };
 
-        if let Some(ref summary) = compaction_result {
+        if let Some(ref outcome) = compaction_result {
             // Persist compaction marker to DB so restarts load from this point
-            let compaction_marker = format!(
-                "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                 Below is a structured summary of everything before this point.]\n\n{}",
-                summary
-            );
             if let Err(e) = message_service
-                .create_message(session_id, "user".to_string(), compaction_marker)
+                .create_message(session_id, "user".to_string(), outcome.marker(""))
                 .await
             {
                 tracing::error!("Failed to persist compaction marker to DB: {}", e);
@@ -1264,6 +1260,36 @@ impl AgentService {
                 super::compaction_prompts::PlanRecovery::for_session(session_id).await,
             );
             context.add_message(Message::user(cont_text));
+        }
+
+        // Restore the directory `/cd` persisted for this session before the
+        // handle is created, otherwise the lazy seed hands a channel chat the
+        // directory the process was launched in and the DB row is ignored
+        // forever. Only the first turn of a session in this process can hit
+        // this: once the handle exists, a `cd` made since then wins.
+        if self.session_working_dir_unset(session_id) {
+            let persisted = crate::services::SessionService::new(self.context.clone())
+                .get_session(session_id)
+                .await;
+            match persisted {
+                Ok(Some(session)) => {
+                    if let Some(dir) =
+                        super::session_cwd::restorable_cwd(session.working_directory.as_deref())
+                    {
+                        tracing::info!(
+                            "Restored session {} working directory: {}",
+                            session_id,
+                            dir.display()
+                        );
+                        self.set_session_only_working_directory(session_id, dir);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "failed to load session {session_id} for working-directory restore"
+                ),
+            }
         }
 
         // Create tool execution context. The working directory is per-session
@@ -1379,6 +1405,12 @@ impl AgentService {
         // fallback to a different provider rather than giving up.
         let mut phantom_retries_used: u32 = 0;
         const MAX_PHANTOM_RETRIES: u32 = 5;
+        // #31: set when a suggest_options surface halts the turn (#1178 M1).
+        // The NEXT text-only iteration is then the model's sign-off, not a
+        // phantom threat — the ack-skip path keeps it, and this flag only
+        // tags that exemption surgically in the log (the skip itself fires
+        // 70+ times/day for ordinary acks and must not be disturbed).
+        let mut option_surface_halt_seen = false;
         // Consecutive identical tool rounds (#1030). Observes only; the
         // repeated call still runs and its result still reaches the model.
         // Reset on a provider swap below, because a fallback replays the
@@ -1658,7 +1690,7 @@ impl AgentService {
             // Enforce 65% budget before every API call. Skip ONLY when the
             // CLI manages its own session (claude-cli with --resume). Qwen
             // is spawned cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -1667,17 +1699,13 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
                 // Persist compaction marker to DB so restarts load from this point
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                     Below is a structured summary of everything before this point.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(session_id, "user".to_string(), outcome.marker(""))
                     .await
                 {
                     tracing::error!("Failed to persist mid-loop compaction marker to DB: {}", e);
@@ -1743,16 +1771,6 @@ impl AgentService {
                 .await
             {
                 Ok(resp) => {
-                    // #952: a successful primary response proves the provider
-                    // has recovered from any prior quota-exhaustion mark.
-                    // Clear the breaker instantly (no TTL wait) so future
-                    // fallback walks consider it again. Hard monthly-quota
-                    // providers do not fluke-succeed; a 200 here means
-                    // genuine recovery, so the streak reset below is correct.
-                    let ok_name = self.provider_name_for_session(session_id);
-                    if crate::brain::provider::health::is_exhausted(&ok_name) {
-                        crate::brain::provider::health::clear(&ok_name);
-                    }
                     // Primary succeeded on first try (no retry / no
                     // fallback rescue needed). Reset the consecutive-
                     // failure streak so a future hiccup starts fresh
@@ -2246,14 +2264,6 @@ impl AgentService {
                         Some(reason),
                     );
 
-                    // Quota circuit breaker (#952): a HARD quota never lifts
-                    // inside this turn. Mark the provider so the fallback
-                    // walk below skips it and future turns fast-fail instead
-                    // of burning backoff.
-                    if e.is_quota_exhausted() {
-                        crate::brain::provider::health::mark_exhausted(&primary_from_name);
-                    }
-
                     if let Some(ref cb) = progress_callback {
                         let prefix = if is_model_mismatch {
                             format!(
@@ -2273,7 +2283,7 @@ impl AgentService {
                                 primary_from_name, model_name
                             )
                         };
-                        let message = if self.fallback_providers.is_empty() {
+                        let message = if !self.has_fallback_provider() {
                             // #1006: a bare status teaches nobody anything —
                             // point at the exact config block that fixes it.
                             format!(
@@ -2292,32 +2302,20 @@ impl AgentService {
                     // swap may already have this session on opencode2 while
                     // `self.provider` still holds opencode).
                     let active_name = self.provider_name_for_session(session_id);
-                    // Quota circuit breaker (#952): never send a request to a
-                    // provider the breaker has marked exhausted. Skipped
-                    // names are reported in the final summary so the user
-                    // knows they exist but were not tried.
-                    let candidates: Vec<_> = self
-                        .fallback_providers
-                        .iter()
-                        .filter(|p| p.name() != active_name)
-                        .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
-                        .collect();
-                    let skipped: Vec<String> = self
-                        .fallback_providers
-                        .iter()
-                        .filter(|p| p.name() != active_name)
-                        .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
-                        .map(|p| p.name().to_string())
-                        .collect();
+                    // #1251: the whole configured chain is walked, in
+                    // configured order, every turn. A provider is never
+                    // dropped from the walk for failing earlier — the user
+                    // owns that decision, the agent only reports.
+                    let chain = self.fallback_chain_snapshot();
+                    let candidates: Vec<_> =
+                        chain.iter().filter(|p| p.name() != active_name).collect();
 
                     if candidates.is_empty() {
-                        // #952: every fallback was breaker-skipped — tell
-                        // the user WHY instead of dying with a bare error.
                         // #1006: with NO chain configured there is nothing to
                         // summarise, and "all providers in the chain failed"
                         // would be a lie — the alert above already carried
                         // the setup guidance, so skip the summary entirely.
-                        if !self.fallback_providers.is_empty()
+                        if self.has_fallback_provider()
                             && let Some(ref cb) = progress_callback
                         {
                             let reason = crate::brain::provider::error::short_error_reason(&e);
@@ -2328,7 +2326,6 @@ impl AgentService {
                                         &primary_from_name,
                                         &reason,
                                         &[],
-                                        &skipped,
                                     ),
                                 },
                             );
@@ -2443,13 +2440,6 @@ impl AgentService {
                                 // the next candidate iteration starts
                                 // clean.
                                 drop(restore_guard);
-                                // Quota circuit breaker (#952): a fallback
-                                // that dies on a hard quota is marked too,
-                                // so later walks in this turn and future
-                                // turns skip it.
-                                if fb_err.is_quota_exhausted() {
-                                    crate::brain::provider::health::mark_exhausted(&fb_name);
-                                }
                                 tried.push(format!(
                                     "{}/{}: {}",
                                     fb_name,
@@ -2540,10 +2530,8 @@ impl AgentService {
                                 session_id,
                                 progress_callback.as_ref(),
                             );
-                            // #952: human-readable chain-exhaustion
-                            // summary naming the dead primary, every
-                            // fallback tried, and the quota-skipped
-                            // providers.
+                            // Human-readable chain-exhaustion summary naming
+                            // the dead primary and every fallback tried.
                             if let Some(ref cb) = progress_callback {
                                 cb(
                                     session_id,
@@ -2553,7 +2541,6 @@ impl AgentService {
                                                 &primary_from_name,
                                                 &primary_reason,
                                                 &tried,
-                                                &skipped,
                                             ),
                                     },
                                 );
@@ -2749,26 +2736,16 @@ impl AgentService {
                         }
 
                         // Walk the entire fallback chain, skipping the active provider.
-                        // Quota circuit breaker (#952): skip providers the
-                        // breaker has marked exhausted.
                         let stream_active_name = self
                             .provider
                             .read()
                             .ok()
                             .map(|p| p.name().to_string())
                             .unwrap_or_default();
-                        let stream_candidates: Vec<_> = self
-                            .fallback_providers
+                        let chain = self.fallback_chain_snapshot();
+                        let stream_candidates: Vec<_> = chain
                             .iter()
                             .filter(|p| p.name() != stream_active_name)
-                            .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
-                            .collect();
-                        let stream_skipped: Vec<String> = self
-                            .fallback_providers
-                            .iter()
-                            .filter(|p| p.name() != stream_active_name)
-                            .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
-                            .map(|p| p.name().to_string())
                             .collect();
 
                         if stream_candidates.is_empty() {
@@ -2777,8 +2754,7 @@ impl AgentService {
                                 session_id,
                                 progress_callback.as_ref(),
                             );
-                            // #952: every fallback was breaker-skipped —
-                            // report the chain state instead of a bare error.
+                            // Report the chain state instead of a bare error.
                             if let Some(ref cb) = progress_callback {
                                 let reason =
                                     crate::brain::provider::error::short_error_reason(&last_err);
@@ -2790,7 +2766,6 @@ impl AgentService {
                                                 &stream_active_name,
                                                 &reason,
                                                 &[],
-                                                &stream_skipped,
                                             ),
                                     },
                                 );
@@ -2959,11 +2934,6 @@ impl AgentService {
                                         fb_name,
                                         fb_err
                                     );
-                                    // #952: mark a fallback that dies on a
-                                    // hard quota so future turns skip it.
-                                    if fb_err.is_quota_exhausted() {
-                                        crate::brain::provider::health::mark_exhausted(&fb_name);
-                                    }
                                     stream_tried.push(format!(
                                         "{fb_name}/{fb_model}: {}",
                                         crate::brain::provider::error::short_error_reason(&fb_err)
@@ -2998,7 +2968,6 @@ impl AgentService {
                                                 &stream_active_name,
                                                 &stream_primary_reason,
                                                 &stream_tried,
-                                                &stream_skipped,
                                             ),
                                         },
                                     );
@@ -3144,20 +3113,10 @@ impl AgentService {
                             .ok()
                             .map(|p| p.name().to_string())
                             .unwrap_or_default();
-                        // Quota circuit breaker (#952): skip providers the
-                        // breaker has marked exhausted.
-                        let stream_candidates: Vec<_> = self
-                            .fallback_providers
+                        let chain = self.fallback_chain_snapshot();
+                        let stream_candidates: Vec<_> = chain
                             .iter()
                             .filter(|p| p.name() != stream_active_name)
-                            .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
-                            .collect();
-                        let stream_skipped: Vec<String> = self
-                            .fallback_providers
-                            .iter()
-                            .filter(|p| p.name() != stream_active_name)
-                            .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
-                            .map(|p| p.name().to_string())
                             .collect();
 
                         if stream_candidates.is_empty() {
@@ -3166,8 +3125,7 @@ impl AgentService {
                                 session_id,
                                 progress_callback.as_ref(),
                             );
-                            // #952: every fallback was breaker-skipped —
-                            // report the chain state instead of a bare error.
+                            // Report the chain state instead of a bare error.
                             if let Some(ref cb) = progress_callback {
                                 let reason =
                                     crate::brain::provider::error::short_error_reason(&last_err);
@@ -3179,7 +3137,6 @@ impl AgentService {
                                                 &stream_active_name,
                                                 &reason,
                                                 &[],
-                                                &stream_skipped,
                                             ),
                                     },
                                 );
@@ -3320,11 +3277,6 @@ impl AgentService {
                                         fb_model,
                                         fb_err
                                     );
-                                    // #952: mark a fallback that dies on a
-                                    // hard quota so future turns skip it.
-                                    if fb_err.is_quota_exhausted() {
-                                        crate::brain::provider::health::mark_exhausted(&fb_name);
-                                    }
                                     stream_tried.push(format!(
                                         "{fb_name}/{fb_model}: {}",
                                         crate::brain::provider::error::short_error_reason(&fb_err)
@@ -3360,7 +3312,6 @@ impl AgentService {
                                                 &stream_active_name,
                                                 &stream_primary_reason,
                                                 &stream_tried,
-                                                &stream_skipped,
                                             ),
                                     },
                                 );
@@ -3386,30 +3337,9 @@ impl AgentService {
                         Some(&err_msg),
                     );
 
-                    // Quota circuit breaker (#952): a hard quota (e.g. HTTP
-                    // 402 Payment Required) reaches this catch-all because
-                    // the rate-limit arm only guards 429 + quota phrases.
-                    // Mark it so the fallback walk below and future turns
-                    // skip this provider instead of retrying it.
-                    if e.is_quota_exhausted() {
-                        crate::brain::provider::health::mark_exhausted(&active_name);
-                    }
-
-                    // Quota circuit breaker (#952): skip providers the
-                    // breaker has marked exhausted.
-                    let fallback_candidates: Vec<_> = self
-                        .fallback_providers
-                        .iter()
-                        .filter(|p| p.name() != active_name)
-                        .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
-                        .collect();
-                    let fallback_skipped: Vec<String> = self
-                        .fallback_providers
-                        .iter()
-                        .filter(|p| p.name() != active_name)
-                        .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
-                        .map(|p| p.name().to_string())
-                        .collect();
+                    let chain = self.fallback_chain_snapshot();
+                    let fallback_candidates: Vec<_> =
+                        chain.iter().filter(|p| p.name() != active_name).collect();
 
                     if fallback_candidates.is_empty() {
                         tracing::warn!(
@@ -3418,32 +3348,14 @@ impl AgentService {
                             active_name
                         );
                         if let Some(ref cb) = progress_callback {
-                            if fallback_skipped.is_empty() {
-                                cb(
-                                    session_id,
-                                    ProgressEvent::SelfHealingAlert {
-                                        message: "No fallback provider available. \
-                                             Configure one with /onboard:provider"
-                                            .to_string(),
-                                    },
-                                );
-                            } else {
-                                // #952: fallbacks EXIST but the breaker
-                                // skipped every one — say so explicitly.
-                                let reason = crate::brain::provider::error::short_error_reason(&e);
-                                cb(
-                                    session_id,
-                                    ProgressEvent::SelfHealingAlert {
-                                        message:
-                                            crate::brain::provider::error::chain_exhausted_summary(
-                                                &active_name,
-                                                &reason,
-                                                &[],
-                                                &fallback_skipped,
-                                            ),
-                                    },
-                                );
-                            }
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: "No fallback provider available. \
+                                         Configure one with /onboard:provider"
+                                        .to_string(),
+                                },
+                            );
                         }
                         return Err(AgentError::Provider(e));
                     }
@@ -3533,12 +3445,6 @@ impl AgentService {
                                     fb_model,
                                     fb_err
                                 );
-                                // #952: a fallback that dies on a hard quota
-                                // is marked so later walks + future turns
-                                // skip it instead of retrying.
-                                if fb_err.is_quota_exhausted() {
-                                    crate::brain::provider::health::mark_exhausted(&fb_name);
-                                }
                                 tried.push(format!(
                                     "{fb_name}/{fb_model}: {}",
                                     crate::brain::provider::error::short_error_reason(&fb_err)
@@ -3574,7 +3480,6 @@ impl AgentService {
                                         &active_name,
                                         &primary_reason,
                                         &tried,
-                                        &fallback_skipped,
                                     ),
                                 },
                             );
@@ -3900,7 +3805,7 @@ impl AgentService {
             // Post-calibration compaction check. Skip ONLY when the CLI
             // owns its session (claude-cli with --resume). Qwen is spawned
             // cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -3909,16 +3814,16 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted \
-                     after token calibration revealed high context usage.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(
+                        session_id,
+                        "user".to_string(),
+                        outcome.marker(" after token calibration revealed high context usage"),
+                    )
                     .await
                 {
                     tracing::error!(
@@ -4790,14 +4695,31 @@ impl AgentService {
                     );
                 }
                 if !phantom_eligible && tool_calls_completed_this_turn > 0 {
-                    tracing::info!(
-                        target: "phantom",
-                        tools_completed = tool_calls_completed_this_turn,
-                        text_len = iteration_text.len(),
-                        "phantom detection skipped: turn already produced successful tool calls \
-                         and the text-only iteration is a pure completion acknowledgement \
-                         (no forward-looking intent phrase)"
-                    );
+                    if option_surface_halt_seen {
+                        // #31: this text-only iteration follows a suggest_options
+                        // halt — it is the model's sign-off, not a phantom threat.
+                        // The ack-skip keeps its text as a trailing Text entry in
+                        // the flow (AFTER the option-surface Tool entry), where the
+                        // options-pending reclaim lifts it as the trailer. The text
+                        // preview closes the ~50-char truncation gap in forensics.
+                        tracing::info!(
+                            target: "phantom",
+                            tools_completed = tool_calls_completed_this_turn,
+                            text_len = iteration_text.len(),
+                            trailer_preview = %iteration_text.chars().take(160).collect::<String>(),
+                            "phantom ack classification exempted: text-only iteration follows an \
+                             option-surface halt — kept as trailing trailer entry (#31)"
+                        );
+                    } else {
+                        tracing::info!(
+                            target: "phantom",
+                            tools_completed = tool_calls_completed_this_turn,
+                            text_len = iteration_text.len(),
+                            "phantom detection skipped: turn already produced successful tool calls \
+                             and the text-only iteration is a pure completion acknowledgement \
+                             (no forward-looking intent phrase)"
+                        );
+                    }
                 }
                 let stuck_loop_now =
                     phantom_eligible && super::phantom::is_stuck_in_intent_loop(&iteration_text);
@@ -5322,48 +5244,21 @@ impl AgentService {
                         EMPTY_REASONING_MAX_NUDGES,
                     );
                     let active_name = self.provider_name_for_session(session_id);
-                    let candidates: Vec<_> = self
-                        .fallback_providers
-                        .iter()
-                        .filter(|p| p.name() != active_name)
-                        // Quota circuit breaker (#952): skip providers
-                        // the breaker has marked exhausted.
-                        .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
-                        .collect();
-                    let skipped: Vec<String> = self
-                        .fallback_providers
-                        .iter()
-                        .filter(|p| p.name() != active_name)
-                        .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
-                        .map(|p| p.name().to_string())
-                        .collect();
+                    let chain = self.fallback_chain_snapshot();
+                    let candidates: Vec<_> =
+                        chain.iter().filter(|p| p.name() != active_name).collect();
 
                     if candidates.is_empty() {
                         // No escape hatch configured. Surface a visible
                         // alert so the user knows to swap manually — do
                         // NOT exit silently.
                         if let Some(ref cb) = progress_callback {
-                            let message = if skipped.is_empty() {
-                                format!(
-                                    "Model '{}/{}' refused to answer after {} nudges \
-                                     and no fallback provider is configured. Use \
-                                     /models to switch.",
-                                    active_name, model_name, EMPTY_REASONING_MAX_NUDGES,
-                                )
-                            } else {
-                                // #952: fallbacks EXIST but the breaker
-                                // skipped every one — name them so the user
-                                // knows why no rescue happened.
-                                format!(
-                                    "Model '{}/{}' refused to answer after {} nudges. \
-                                     Fallback provider(s) {} are marked quota-exhausted \
-                                     and were skipped. Use /models to switch.",
-                                    active_name,
-                                    model_name,
-                                    EMPTY_REASONING_MAX_NUDGES,
-                                    skipped.join(", "),
-                                )
-                            };
+                            let message = format!(
+                                "Model '{}/{}' refused to answer after {} nudges \
+                                 and no fallback provider is configured. Use \
+                                 /models to switch.",
+                                active_name, model_name, EMPTY_REASONING_MAX_NUDGES,
+                            );
                             cb(session_id, ProgressEvent::SelfHealingAlert { message });
                         }
                         // Fall through: final_response = Some(response); break
@@ -5539,13 +5434,6 @@ impl AgentService {
                                             fb_name,
                                             fb_err,
                                         );
-                                        // #952: mark a fallback that dies on a
-                                        // hard quota so future walks skip it.
-                                        if fb_err.is_quota_exhausted() {
-                                            crate::brain::provider::health::mark_exhausted(
-                                                &fb_name,
-                                            );
-                                        }
                                         break;
                                     }
                                 }
@@ -6586,6 +6474,9 @@ impl AgentService {
                                     tracing::info!(
                                         "🛑 Turn halted by option-surface tool (suggest_options)"
                                     );
+                                    // #31: the following text-only iteration is the
+                                    // sign-off — tag it for the phantom-gate exemption.
+                                    option_surface_halt_seen = true;
                                     break;
                                 }
 
@@ -6873,6 +6764,9 @@ impl AgentService {
                 // Policy routes through ToolRegistry::halts_turn (Tool::halts_turn).
                 if halt_turn_requested {
                     tracing::info!("🛑 Turn halted by option-surface tool (suggest_options)");
+                    // #31: the following text-only iteration is the sign-off —
+                    // tag it for the phantom-gate exemption.
+                    option_surface_halt_seen = true;
                     break;
                 }
             }
@@ -7086,7 +6980,7 @@ impl AgentService {
             // Enforce 65% budget after tool results. Skip ONLY when the CLI
             // owns its session (claude-cli with --resume). Qwen is spawned
             // cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -7095,17 +6989,13 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
                 // Persist compaction marker to DB so restarts load from this point
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                     Below is a structured summary of everything before this point.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(session_id, "user".to_string(), outcome.marker(""))
                     .await
                 {
                     tracing::error!("Failed to persist post-tool compaction marker to DB: {}", e);

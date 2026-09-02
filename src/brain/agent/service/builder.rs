@@ -244,6 +244,24 @@ pub struct AgentService {
     /// below 55% so a fresh entry into the band warns again. Keeps the
     /// transient nudge to once-per-entry instead of every turn.
     pub(super) session_pressure_warned: std::sync::RwLock<HashMap<Uuid, bool>>,
+    /// Observed wall-clock duration of each session's last SUCCESSFUL
+    /// compaction (#29 E2). Feeds the `predicted` ETA hint on the next
+    /// `Compacting` event — grounded in what actually happened instead of a
+    /// static guess. Written at CompactionSummary emit, read at Compacting
+    /// emit; same per-session map pattern as `session_pressure_warned`.
+    pub(super) last_compaction_elapsed: std::sync::RwLock<HashMap<Uuid, std::time::Duration>>,
+
+    /// Mirrors `[agent] background_compaction` from config.toml. Default true.
+    pub(super) background_compaction: bool,
+    /// Summariser tasks running against a snapshot of a session's context
+    /// while that session keeps taking turns. At most one per session: a
+    /// second would summarise a conversation the first is about to replace.
+    ///
+    /// Entries are taken OUT of the map to be awaited, never awaited under
+    /// the lock. Nothing in here is ever cancelled to make room — see
+    /// `super::compaction::PendingCompaction`.
+    pub(super) pending_compactions:
+        std::sync::Mutex<HashMap<Uuid, super::compaction::PendingCompaction>>,
 
     /// Per-session ring buffer of outgoing assistant texts (#957). The
     /// cross-turn announcement guard: near-identical turn-final texts that
@@ -358,10 +376,18 @@ pub struct AgentService {
     pub(super) session_updated_tx:
         Option<tokio::sync::mpsc::UnboundedSender<super::types::ChannelSessionEvent>>,
 
-    /// Fallback providers for rate-limit recovery (built from config on startup).
-    /// When the primary provider hits a rate/account limit mid-stream, these are
-    /// tried in order.
-    pub(super) fallback_providers: Vec<Arc<dyn Provider>>,
+    /// Fallback providers for rate-limit recovery, built from
+    /// `[providers.fallback]`. When the primary provider hits a rate/account
+    /// limit mid-stream, these are tried in order.
+    ///
+    /// Behind a lock since #1249: the chain used to be built once at
+    /// construction and never touched again, so editing `fallback_chain` in
+    /// config.toml had no effect until a full restart. The ConfigWatcher
+    /// hot-swapped the PRIMARY provider and left this list frozen, which is how
+    /// a provider deleted from the chain kept serving turns for hours. Read
+    /// through [`AgentService::fallback_chain_snapshot`]; replace through
+    /// [`AgentService::reload_fallback_providers`].
+    pub(super) fallback_providers: std::sync::RwLock<Vec<Arc<dyn Provider>>>,
 
     /// Tracks spawned sub-agents. Shared with the subagent tools; stored here
     /// so compaction can inject running agent IDs into the post-compaction
@@ -396,6 +422,7 @@ impl AgentService {
             session_primary_failure_streak: std::sync::RwLock::new(HashMap::new()),
             active_skills: std::sync::RwLock::new(HashMap::new()),
             session_pressure_warned: std::sync::RwLock::new(HashMap::new()),
+            last_compaction_elapsed: std::sync::RwLock::new(HashMap::new()),
             session_outgoing_text_ring: std::sync::RwLock::new(HashMap::new()),
             context,
             tool_registry: Arc::new(ToolRegistry::new()),
@@ -416,6 +443,8 @@ impl AgentService {
                 &config.agent.approval_policy,
             ),
             silent_compaction: config.agent.silent_compaction,
+            background_compaction: config.agent.background_compaction,
+            pending_compactions: std::sync::Mutex::new(HashMap::new()),
             lazy_tools: config.agent.lazy_tools,
             max_concurrent: (config.agent.max_concurrent as usize).max(1),
             context_limit: config.agent.context_limit,
@@ -433,7 +462,9 @@ impl AgentService {
             )),
             brain_path: None,
             session_updated_tx: None,
-            fallback_providers: Self::build_fallback_providers(config).await,
+            fallback_providers: std::sync::RwLock::new(
+                Self::build_fallback_providers(config).await,
+            ),
             subagent_manager: None,
             plan_session_override: None,
         }
@@ -464,7 +495,63 @@ impl AgentService {
     /// mutate this field after construction.
     #[doc(hidden)]
     pub fn set_fallback_providers_for_test(&mut self, providers: Vec<Arc<dyn Provider>>) {
-        self.fallback_providers = providers;
+        *self
+            .fallback_providers
+            .write()
+            .expect("fallback_providers lock poisoned") = providers;
+    }
+
+    /// Snapshot of the configured fallback chain.
+    ///
+    /// Returns a clone (a `Vec` of `Arc`s, so cheap) rather than a guard on
+    /// purpose: every caller walks the chain across `.await` points, and a
+    /// live guard would both pin a stale list and make the future non-`Send`.
+    pub fn fallback_chain_snapshot(&self) -> Vec<Arc<dyn Provider>> {
+        self.fallback_providers
+            .read()
+            .expect("fallback_providers lock poisoned")
+            .clone()
+    }
+
+    /// Rebuild the fallback chain from a freshly loaded config (#1249).
+    ///
+    /// Called by the ConfigWatcher next to `swap_provider`, so a
+    /// `fallback_chain` edit takes effect on the running process the same way
+    /// a primary-provider edit already did. Without this the two halves of the
+    /// same config block reloaded at different speeds: the primary
+    /// immediately, the chain never — a provider removed from the chain kept
+    /// being handed live traffic until the next restart.
+    ///
+    /// Providers that fail to construct are skipped by
+    /// `build_fallback_providers`, exactly as at startup. An empty result is
+    /// applied as-is: clearing `fallback_chain` MUST clear the runtime chain,
+    /// otherwise removal is unrepresentable.
+    pub async fn reload_fallback_providers(&self, config: &crate::config::Config) {
+        let rebuilt = Self::build_fallback_providers(config).await;
+        let names: Vec<String> = rebuilt.iter().map(|p| p.name().to_string()).collect();
+        match self.fallback_providers.write() {
+            Ok(mut slot) => {
+                let previous: Vec<String> = slot.iter().map(|p| p.name().to_string()).collect();
+                *slot = rebuilt;
+                if previous == names {
+                    tracing::debug!(
+                        "ConfigWatcher: fallback chain unchanged ([{}])",
+                        names.join(", ")
+                    );
+                } else {
+                    tracing::info!(
+                        "ConfigWatcher: fallback chain reloaded — [{}] (was [{}])",
+                        names.join(", "),
+                        previous.join(", ")
+                    );
+                }
+            }
+            Err(e) => tracing::warn!(
+                "ConfigWatcher: fallback chain NOT reloaded, lock poisoned: {e} — \
+                 the running chain stays [{}]",
+                names.join(", ")
+            ),
+        }
     }
 
     /// Get the service context
@@ -862,6 +949,33 @@ impl AgentService {
             .write()
             .expect("session working_directory lock poisoned") = path.clone();
         self.set_working_directory(path);
+    }
+
+    /// True when this session has no cwd handle yet, i.e. the next
+    /// `working_dir_handle_for_session` call would seed it from the global
+    /// directory. Restore reads this to know whether the persisted
+    /// `sessions.working_directory` still has a say, so a `cd` made later in
+    /// the same process is never overwritten by a stale DB row.
+    pub fn session_working_dir_unset(&self, session_id: Uuid) -> bool {
+        !self
+            .session_working_dirs
+            .read()
+            .expect("session_working_dirs lock poisoned")
+            .contains_key(&session_id)
+    }
+
+    /// Set ONLY this session's working directory, leaving the global untouched.
+    ///
+    /// `set_working_directory_for_session` also moves the global so a new
+    /// foreground session seeds from the last directory the operator picked.
+    /// Restoring a background chat's persisted directory must not do that: a
+    /// Telegram group waking up in its own repo would otherwise drag the TUI
+    /// and every other chat along with it.
+    pub fn set_session_only_working_directory(&self, session_id: Uuid, path: std::path::PathBuf) {
+        *self
+            .working_dir_handle_for_session(session_id)
+            .write()
+            .expect("session working_directory lock poisoned") = path;
     }
 
     /// Set the brain path (~/.opencrabs/)
@@ -1301,10 +1415,9 @@ impl AgentService {
             // dead endpoint immediately on cascade.
             let new_name = new_provider.name().to_string();
             let chain: Vec<Arc<dyn Provider>> = self
-                .fallback_providers
-                .iter()
+                .fallback_chain_snapshot()
+                .into_iter()
                 .filter(|p| p.name() != new_name)
-                .cloned()
                 .collect();
             if chain.is_empty() {
                 // No fallbacks configured (or all of them collide with
@@ -1659,7 +1772,11 @@ impl AgentService {
 
     /// Check if any fallback providers are configured
     pub fn has_fallback_provider(&self) -> bool {
-        !self.fallback_providers.is_empty()
+        !self
+            .fallback_providers
+            .read()
+            .expect("fallback_providers lock poisoned")
+            .is_empty()
     }
 
     /// Get the next fallback provider that isn't the currently active one.
@@ -1671,10 +1788,9 @@ impl AgentService {
             .ok()
             .map(|p| p.name().to_string())
             .unwrap_or_default();
-        self.fallback_providers
-            .iter()
+        self.fallback_chain_snapshot()
+            .into_iter()
             .find(|p| p.name() != active_name)
-            .cloned()
     }
 
     /// Record that a skill has been activated for a session. Called when

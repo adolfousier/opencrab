@@ -158,7 +158,8 @@ pub(crate) async fn handle_channel_command(
                     // A short delivery finishes publicly: dropping the tail
                     // would truncate the reply with nothing to show for it.
                     for chunk in chunks.iter().skip(delivered) {
-                        send_html_or_plain(bot, msg.chat.id, thread_id, chunk, "turn", None).await?;
+                        send_html_or_plain(bot, msg.chat.id, thread_id, chunk, "turn", None)
+                            .await?;
                     }
                     return Ok(CommandOutcome::Handled);
                 }

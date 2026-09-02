@@ -45,7 +45,11 @@ fn archive_as_stemmed(json_path: &std::path::Path, stamp: &str, title: &str) {
     let dir = json_path.parent().unwrap().join("archive");
     std::fs::create_dir_all(&dir).unwrap();
     let stem = json_path.file_stem().and_then(|s| s.to_str()).unwrap();
-    std::fs::write(dir.join(format!("{stem}-{stamp}.json")), finished_plan_json(title)).unwrap();
+    std::fs::write(
+        dir.join(format!("{stem}-{stamp}.json")),
+        finished_plan_json(title),
+    )
+    .unwrap();
 }
 
 #[test]

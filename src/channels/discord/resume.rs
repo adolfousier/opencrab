@@ -24,8 +24,15 @@ pub(crate) fn build_enqueue_callback(
                 );
                 return;
             };
-            let Some(http) = state.http().await else {
-                tracing::warn!("[bg-resume] discord: http not available; dropping resume");
+            // Bounded wait rather than a drop (#1242): at boot the transport
+            // is usually seconds away, and returning here lost the wake for
+            // good.
+            let Some(http) =
+                crate::channels::transport_ready::await_transport("discord", session_id, || {
+                    state.http()
+                })
+                .await
+            else {
                 return;
             };
             let Some(agent) = bg_resume::upgrade(&agent_holder) else {
