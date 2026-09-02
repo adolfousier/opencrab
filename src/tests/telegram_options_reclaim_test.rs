@@ -238,7 +238,6 @@ fn settle_no_host_uses_content() {
 }
 
 #[test]
-#[test]
 fn trailer_promotes_to_answer_matrix() {
     // Pure threshold matrix (#58): a fence promotes at any size; no fence
     // promotes only past MAX_TRAILER_CHARS; the cap itself does NOT
