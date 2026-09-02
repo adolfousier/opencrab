@@ -121,18 +121,32 @@ fn zmodem_capable(env: &Env) -> bool {
     ) || env.has("ITERM_SESSION_ID")
 }
 
-/// The `scp` line for pulling `remote_path` from the client into `dest_dir`.
+/// The `scp` line that moves the file here, to be run ON THE CLIENT.
 ///
-/// `SSH_CONNECTION` is `client_ip client_port server_ip server_port`, so its
-/// first field is the machine holding the file. The user still supplies their
-/// own login name, which is why this is a hint rather than something run
-/// unattended.
+/// Direction matters and the obvious one is wrong. Pulling from here means
+/// this box opening an SSH connection back into the user's machine, which
+/// needs an sshd running there, a route through their NAT, and a key of ours
+/// they have authorised. On a laptop all three are normally false, and the
+/// last is a security downgrade nobody wants in order to attach a screenshot.
+///
+/// Pushing works, because the client already proved it can reach us: that is
+/// how the session exists at all. So the command is theirs to run, against
+/// the very address they connected to.
+///
+/// `SSH_CONNECTION` is `client_ip client_port server_ip server_port`, so the
+/// THIRD field is this host as the client addressed it. The login name is
+/// left as a placeholder because ours is not necessarily theirs.
 pub(crate) fn scp_hint(env: &Env, client_path: &str, dest_dir: &str) -> String {
-    let host = env
+    let here = env
         .get("SSH_CONNECTION")
-        .and_then(|c| c.split_whitespace().next())
-        .unwrap_or("<your-machine>");
-    format!("scp <you>@{host}:{} {dest_dir}/", shell_quote(client_path))
+        .and_then(|c| c.split_whitespace().nth(2))
+        .unwrap_or("<this-host>");
+    let user = env.get("USER").unwrap_or("<you>");
+    format!(
+        "scp {} {user}@{here}:{}/",
+        shell_quote(client_path),
+        dest_dir
+    )
 }
 
 /// Single-quote a path for a shell, escaping any embedded quote.
@@ -165,7 +179,7 @@ pub(crate) fn guidance(env: &Env, client_path: &str, dest_dir: &str) -> String {
     }
 
     let mut out = format!(
-        "{client_path} is on your machine, not this one. Copy it over with:\n  {}",
+        "{client_path} is on your machine, not this one. Run this ON YOUR MACHINE:\n  {}",
         scp_hint(env, client_path, dest_dir)
     );
 

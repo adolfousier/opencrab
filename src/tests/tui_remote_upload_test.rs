@@ -81,22 +81,37 @@ fn test_a_multiplexer_forces_the_hint_tier() {
 }
 
 #[test]
-fn test_the_scp_hint_names_the_client_host_and_survives_spaces() {
-    let e = env(&[SSH]);
+fn test_the_scp_hint_pushes_to_here_rather_than_pulling_from_the_client() {
+    // Direction is the whole point. Pulling from the client means this box
+    // opening SSH back into a laptop: needs sshd there, a route through NAT,
+    // and a key of ours they authorised. Pushing works because the client
+    // already proved it can reach us.
+    let e = env(&[SSH, ("USER", "root")]);
     let hint = scp_hint(
         &e,
         "/Users/me/Screenshot 2026-09-01 at 18.18.16.png",
         "/root/att",
     );
+
     assert!(
-        hint.contains("192.168.1.42"),
-        "the client is the first field of SSH_CONNECTION: {hint}"
+        hint.starts_with("scp '/Users/me/Screenshot"),
+        "the client's file is the SOURCE: {hint}"
     );
     assert!(
-        hint.contains("'/Users/me/Screenshot 2026-09-01 at 18.18.16.png'"),
-        "#1289: a spaced path must be quoted or the hint does not run: {hint}"
+        hint.ends_with("root@10.0.0.7:/root/att/"),
+        "#1289: destination is THIS host as the client addressed it: {hint}"
     );
-    assert!(hint.ends_with("/root/att/"));
+    assert!(
+        !hint.contains("192.168.1.42"),
+        "the client address must not appear at all: {hint}"
+    );
+}
+
+#[test]
+fn test_the_hint_falls_back_when_ssh_connection_is_absent() {
+    let hint = scp_hint(&env(&[("SSH_TTY", "/dev/pts/0")]), "/a.png", "/dest");
+    assert!(hint.contains("<this-host>"), "{hint}");
+    assert!(hint.contains("<you>"), "{hint}");
 }
 
 #[test]
