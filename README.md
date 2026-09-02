@@ -687,22 +687,29 @@ Dragging a file onto your terminal inserts **text**: the path as your *local*
 machine sees it. When the TUI runs over SSH that path names a file on your
 laptop while the process is on the server, so there is nothing local to attach.
 
+Either way the outcome is the same: **the file is copied onto the server,
+under the user you connected as, and attached from there.** It lands in
+`<home>/tmp/` under its own filename (`Screenshot 2026-09-02.png` stays
+`Screenshot 2026-09-02.png`; a timestamp is added only if that name is already
+taken), and the TUI prints a receipt naming the source, the size and where it
+landed. The model never sees your laptop path. What differs is who does the
+copy.
+
 **If OpenCrabs is only installed on the server**, you get a ready-to-run `scp`
-line instead, addressed to that host with the path quoted so it survives
-spaces. That works from every OS with nothing extra installed, and is the
-honest floor:
+line, addressed to that host with the path quoted so it survives spaces. That
+works from every OS with nothing extra installed, and is the honest floor:
 
 ```
-scp '/Users/you/Screenshot 2026-09-01 at 18.18.16.png' root@188.166.147.13:~/.opencrabs/tmp/
+scp '/Users/you/Screenshot 2026-09-02.png' root@188.166.147.13:~/.opencrabs/tmp/
 ```
 
-**If you also have OpenCrabs on the machine you drag from**, it can pull the
-file across **the SSH connection you already opened**, with no copy step. Two
-steps, once:
+**If you also have OpenCrabs on the machine you drag from**, the TUI pulls the
+file across **the SSH connection you already opened**, so the copy happens on
+its own. Two steps, once:
 
-**1. On the machine you drag files from** (this needs the OpenCrabs binary
-there — it is the one part of this that is not server-side), run the agent and
-leave it running:
+**1. On the machine you drag files from**, run the agent and leave it running.
+This needs the OpenCrabs binary there (it is the one part of this that is not
+server-side), but no config, keys or onboarding: it is a plain file server.
 
 ```bash
 opencrabs drop-agent
@@ -718,8 +725,12 @@ alias son='ssh root@188.166.147.13'
 alias son='ssh -R 8765:localhost:8765 root@188.166.147.13'
 ```
 
-That is it. Drop a file into the remote TUI and it attaches like any local
-file.
+That is it. Nothing to set on the server: over SSH the TUI probes
+`localhost:8765` for the agent on every remote drop and falls back to the `scp`
+line when nothing answers. If you forward a different port, tell the server
+side with `OPENCRABS_DROP_PORT=<port>` in that shell. When the variable is set
+the tunnel is required, so a pull that fails is reported instead of falling
+back.
 
 **Where it lands** follows the same rules as every other share:
 
@@ -740,7 +751,7 @@ opens a real channel on that same connection, which the agent answers.
 **Works everywhere.** `ssh -R` is standard on Windows (built-in OpenSSH),
 Linux and macOS, and the agent is an OpenCrabs subcommand, so any client OS
 works. It never touches the terminal escape stream, so it also works from any
-terminal emulator **and through `tmux`/`screen`** — unlike kitty's transfer or
+terminal emulator **and through `tmux`/`screen`**, unlike kitty's transfer or
 zmodem, which the multiplexer swallows.
 
 **What the agent will and will not serve.** It hands files to whatever holds
@@ -762,7 +773,7 @@ opencrabs drop-agent --root ~/work/screenshots --root ~/Desktop
 The default is not `$HOME` on purpose: a server that asked for
 `~/.ssh/id_ed25519` is refused by construction rather than by you having
 remembered to restrict it. Note that the forwarded port is reachable by other
-users on that server, so only use this on a box you trust — which is already
+users on that server, so only use this on a box you trust, which is already
 true, since you are running a shell there.
 
 Sending the file through a connected chat channel (Telegram, Discord, Slack)
