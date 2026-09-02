@@ -5,7 +5,7 @@
 //! wrapper tags stay intact).
 
 use crate::channels::telegram::resume::{
-    background_task_title, bg_echo_prefers_markdown_dialect, build_bg_echo_bubble,
+    NotifySender, background_task_title, bg_echo_prefers_markdown_dialect, build_bg_echo_bubble,
     build_bg_echo_bubble_rich, build_bg_echo_bubble_rich_markdown, split_bg_echo_parts,
     split_notify_header, strip_system_framing,
 };
@@ -17,8 +17,38 @@ const SENDER: &str = "6c1c9cb9-8243-4def-abe5-d926d0ca8bed";
 fn strips_notify_header_and_returns_sender() {
     let ctx = format!("[session-notify from={SENDER}]\n\nhello from the other topic");
     let (sender, body) = split_bg_echo_parts(&ctx);
-    assert_eq!(sender, Some(Uuid::parse_str(SENDER).unwrap()));
+    assert_eq!(
+        sender,
+        Some(NotifySender::Session(Uuid::parse_str(SENDER).unwrap()))
+    );
     assert_eq!(body, "hello from the other topic");
+}
+
+#[test]
+fn cli_sender_label_is_carried_verbatim() {
+    // #23 (owner amendment "Overridable"): the CLI lane stamps
+    // `from=cli:<label>` — no sender session exists, so the label rides the
+    // header verbatim and the echo renders it without a session lookup.
+    let ctx = "[session-notify from=cli:oc-deploy]\n\nbuild green";
+    let (sender, body) = split_bg_echo_parts(ctx);
+    assert_eq!(sender, Some(NotifySender::CliTooling("oc-deploy")));
+    assert_eq!(body, "build green");
+}
+
+#[test]
+fn cli_label_survives_surrounding_whitespace() {
+    let ctx = "[session-notify from=cli: CI runner ]\n\nbody";
+    let (sender, body) = split_notify_header(ctx);
+    assert_eq!(sender, Some(NotifySender::CliTooling("CI runner")));
+    assert_eq!(body, "body");
+}
+
+#[test]
+fn empty_cli_label_is_malformed_framing() {
+    let ctx = "[session-notify from=cli:]\n\nbody";
+    let (sender, body) = split_notify_header(ctx);
+    assert_eq!(sender, None, "an empty cli: label is not a sender");
+    assert_eq!(body, ctx, "malformed header passes whole text through");
 }
 
 #[test]
