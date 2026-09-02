@@ -11,7 +11,7 @@
 //! heuristics. This file is declarations only — no function definitions
 //! live here (CONTRIBUTING.md).
 
-mod config;
+pub(crate) mod config;
 mod detect;
 
 pub use config::LangConfig;
