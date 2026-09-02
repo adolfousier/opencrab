@@ -11,6 +11,7 @@ pub(crate) mod formatting_prompt;
 pub(crate) mod handler;
 pub(crate) mod reactions;
 pub(crate) mod resume;
+mod sessions;
 pub(crate) mod suggest_options;
 pub(crate) mod table_convert;
 pub(crate) mod tool_group;
@@ -131,19 +132,6 @@ impl SlackState {
     /// Drop this session's pending follow-up suggestions (user sent their own).
     pub async fn clear_pending_followups(&self, session_id: Uuid) {
         self.pending_followups.lock().await.remove(&session_id);
-    }
-
-    /// Record which channel_id corresponds to a given session.
-    pub async fn register_session_channel(&self, session_id: Uuid, channel_id: String) {
-        self.session_channels
-            .lock()
-            .await
-            .insert(session_id, channel_id);
-    }
-
-    /// Look up the channel_id for a session.
-    pub async fn session_channel(&self, session_id: Uuid) -> Option<String> {
-        self.session_channels.lock().await.get(&session_id).cloned()
     }
 
     /// Register a pending approval oneshot channel.
