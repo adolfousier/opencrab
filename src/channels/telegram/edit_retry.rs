@@ -54,8 +54,7 @@ pub fn classify(e: &teloxide::RequestError) -> EditErr {
 /// typed error into a `String` before returning (the tap pick-record arms
 /// map `e.to_string()`) lose the enum, so classification keys off the wire
 /// surfaces: teloxide renders `RequestError::RetryAfter` as
-/// `"Retry after <n>s"`, and the rich arm buries `"(429)"` (same marker
-/// [`suggest_options::classify_rich_err`] keys off).
+/// `"Retry after <n>s"`, and the rich arm buries `"(429)"`.
 pub fn classify_str(e: &str) -> EditErr {
     if let Some(rest) = e
         .strip_prefix("Retry after ")
