@@ -199,6 +199,11 @@ pub fn tunnel() -> Option<Tunnel> {
 
 /// The `ssh` invocation that opens the tunnel, for documentation and for the
 /// message shown when no tunnel is present.
+///
+/// The bind address is spelled out: a bare `-R port:...` leaves it to the
+/// server's `GatewayPorts` setting, and `yes` there would put the laptop's
+/// served folders on every interface of the VPS. `127.0.0.1` is honoured
+/// regardless, so the line we hand out is loopback-only by construction.
 pub fn ssh_hint(user_and_host: &str, port: u16) -> String {
-    format!("ssh -R {port}:localhost:{port} {user_and_host}")
+    format!("ssh -R 127.0.0.1:{port}:localhost:{port} {user_and_host}")
 }

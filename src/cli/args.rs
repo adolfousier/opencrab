@@ -145,7 +145,7 @@ pub enum Commands {
     /// Serve dropped files to a TUI running on another machine.
     ///
     /// Run this on the machine you drag files FROM, then connect with
-    /// `ssh -R 8765:localhost:8765 <you>@<host>`. Dropping a file into the
+    /// `ssh -R 127.0.0.1:8765:localhost:8765 <you>@<host>`. Dropping a file into the
     /// remote TUI then pulls it across the SSH connection you already made.
     DropAgent {
         /// Port to listen on. Must match the `-R` forward.

@@ -129,7 +129,10 @@ fn test_a_newline_in_a_reason_cannot_desync_the_stream() {
 #[test]
 fn test_the_ssh_hint_forwards_the_port_both_ways() {
     let hint = ssh_hint("root@example.com", DEFAULT_DROP_PORT);
-    assert_eq!(hint, "ssh -R 8765:localhost:8765 root@example.com");
+    assert_eq!(
+        hint, "ssh -R 127.0.0.1:8765:localhost:8765 root@example.com",
+        "the bind address must be explicit so GatewayPorts cannot widen it"
+    );
 }
 
 // ── End to end over a real socket ─────────────────────────────────────────

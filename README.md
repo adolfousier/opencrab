@@ -722,7 +722,7 @@ once and forget it:
 # before
 alias son='ssh root@188.166.147.13'
 # after
-alias son='ssh -R 8765:localhost:8765 root@188.166.147.13'
+alias son='ssh -R 127.0.0.1:8765:localhost:8765 root@188.166.147.13'
 ```
 
 That is it. Nothing to set on the server: over SSH the TUI probes
@@ -793,11 +793,9 @@ remembered to restrict it.
 - **Check `GatewayPorts` on the server.** By default sshd binds a reverse
   forward to loopback. With `GatewayPorts yes` in `sshd_config` it binds on
   every interface, and your served folders are reachable from the internet
-  through the VPS. Force loopback from your side regardless:
-
-  ```bash
-  ssh -R 127.0.0.1:8765:localhost:8765 root@188.166.147.13
-  ```
+  through the VPS. The `127.0.0.1:` in front of the port in the alias above
+  is what prevents that: an explicit bind address is honoured regardless of
+  `GatewayPorts`. Keep it.
 
 - **On your own machine** the listener is loopback only. Nothing off the
   laptop reaches it except through a forward you opened.

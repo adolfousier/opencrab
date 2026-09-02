@@ -195,7 +195,7 @@ fn test_guidance_names_the_drop_tunnel_for_ssh_sessions_only() {
     let g = guidance(&e, "/Users/me/a.png", "/root/.opencrabs/tmp");
     assert!(g.contains("opencrabs drop-agent"), "{g}");
     assert!(
-        g.contains("ssh -R 8765:localhost:8765 root@10.0.0.1"),
+        g.contains("ssh -R 127.0.0.1:8765:localhost:8765 root@10.0.0.1"),
         "the forward must be addressed to this host as the client reached it: {g}"
     );
 
