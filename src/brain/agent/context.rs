@@ -157,7 +157,7 @@ impl AgentContext {
     }
 
     /// Estimate tokens for a message
-    fn estimate_message_tokens(&self, message: &Message) -> usize {
+    pub(crate) fn estimate_message_tokens(&self, message: &Message) -> usize {
         let mut tokens = 0;
 
         for content in &message.content {
@@ -252,7 +252,7 @@ impl AgentContext {
     /// Returns true if a message consists entirely of ToolResult blocks.
     /// Such a message is "orphaned" if the preceding assistant(ToolUse) message
     /// was removed, and will cause the API to reject the conversation.
-    fn is_orphaned_tool_result_msg(msg: &Message) -> bool {
+    pub(crate) fn is_orphaned_tool_result_msg(msg: &Message) -> bool {
         msg.role == Role::User
             && !msg.content.is_empty()
             && msg

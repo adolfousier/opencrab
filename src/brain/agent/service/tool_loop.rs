@@ -1239,6 +1239,7 @@ impl AgentService {
                 &model_name,
                 cancel_token.as_ref(),
                 &progress_callback,
+                super::compaction::BudgetPhase::TurnStart,
             )
             .await
         };
@@ -1698,6 +1699,7 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
@@ -3812,6 +3814,7 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
@@ -6986,6 +6989,7 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
