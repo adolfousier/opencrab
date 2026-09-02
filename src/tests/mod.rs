@@ -169,6 +169,7 @@ pub mod compaction_fallback_chain_test;
 pub mod compaction_prompts_test;
 pub mod compaction_signal_test;
 pub mod compaction_test;
+mod compaction_truncation_marker_test;
 pub mod config_alias_merge_test;
 pub mod config_dotted_caps_test;
 pub mod config_guard_test;

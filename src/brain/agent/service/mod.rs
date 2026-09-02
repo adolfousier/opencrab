@@ -6,7 +6,7 @@
 pub(crate) mod announcement_loop;
 pub(crate) mod background_tasks;
 mod builder;
-mod compaction;
+pub(crate) mod compaction;
 pub(crate) mod compaction_prompts;
 pub(crate) mod context;
 pub(crate) mod detached_status;

@@ -18,6 +18,45 @@ use super::types::{ProgressCallback, ProgressEvent};
 use crate::brain::agent::context::AgentContext;
 use uuid::Uuid;
 
+/// What `enforce_context_budget` did to the context on this visit.
+///
+/// Both variants MUST be persisted as a DB marker row. The summarised case is
+/// obvious. The truncated case is the one that bit us: dropping the oldest
+/// messages without writing a marker leaves `messages_from_last_compaction`
+/// pointing at the same old anchor, so the next restart reloads the history
+/// that just overflowed and overflows again on the first turn. Two sessions
+/// died that way on 2026-05-05 (397% and 372% context, 793k tokens still in
+/// the DB, a fresh loop on every user message). A marker with no summary is
+/// lossy; no marker at all is unrecoverable.
+pub(crate) enum CompactionOutcome {
+    /// A summary was produced and swapped into the live context.
+    Summarised(String),
+    /// Every summariser attempt failed, so the oldest messages were dropped
+    /// to fit the window instead. Nothing before this point survives.
+    Truncated,
+}
+
+impl CompactionOutcome {
+    /// The marker row to persist. `trigger` names what prompted this
+    /// compaction (empty for the ordinary paths), so each call site keeps its
+    /// own wording without copying the marker text five times.
+    pub(crate) fn marker(&self, trigger: &str) -> String {
+        match self {
+            Self::Summarised(summary) => format!(
+                "[CONTEXT COMPACTION — The conversation was automatically compacted{trigger}. \
+                 Below is a structured summary of everything before this point.]\n\n{summary}"
+            ),
+            Self::Truncated => format!(
+                "[CONTEXT COMPACTION — The conversation was automatically compacted{trigger}. \
+                 No summary is available: every summariser attempt failed, so the oldest \
+                 messages were dropped to fit the window. Nothing before this point \
+                 survives. Ask the user to restate anything you need rather than guessing \
+                 at what was lost.]"
+            ),
+        }
+    }
+}
+
 impl AgentService {
     /// Enforce context budget with non-blocking compaction.
     ///
@@ -37,8 +76,9 @@ impl AgentService {
     /// the documented limit, around 75-80% in practice. 65% gives enough
     /// headroom to summarise without bumping into the actual ceiling.
     ///
-    /// Returns `Some(summary)` only on the visit where a previously-spawned
-    /// async task finished AND its summary was applied; otherwise `None`.
+    /// Returns `Some(outcome)` on any visit that changed the context, and the
+    /// caller MUST persist `outcome.marker(..)`. That includes the truncation
+    /// path: a context that shrank without a marker cannot be reloaded.
     pub(super) async fn enforce_context_budget(
         &self,
         session_id: Uuid,
@@ -46,7 +86,11 @@ impl AgentService {
         model_name: &str,
         cancel_token: Option<&tokio_util::sync::CancellationToken>,
         progress_callback: &Option<ProgressCallback>,
-    ) -> Option<String> {
+    ) -> Option<CompactionOutcome> {
+        // Set by every branch that drops messages. Read at each of the three
+        // exits: dropping messages without telling the DB is what turns a
+        // recoverable overflow into a restart loop.
+        let mut truncated = false;
         // Restored to the pre-0f052250 shape (the version that ran fine for
         // months before the async-compaction refactor). Logic, in order:
         //
@@ -96,8 +140,10 @@ impl AgentService {
             );
 
             let target = (effective_max as f64 * 0.80) as usize;
+            let before_len = context.messages.len();
             context.hard_truncate_to(target);
             context.trim_to_fit(0);
+            truncated |= context.messages.len() < before_len;
 
             if let Some(cb) = progress_callback {
                 cb(session_id, ProgressEvent::TokenCount(context.token_count));
@@ -132,7 +178,9 @@ impl AgentService {
             // pressure warning if usage is in the 55-64% band (#909), and
             // re-arm the throttle when usage has dropped below the floor.
             self.maybe_emit_pressure_warning(session_id, context, usage_pct);
-            return None;
+            // Tier 2 may have already dropped messages to get us here. The
+            // marker still has to land even though no summariser ran.
+            return truncated.then_some(CompactionOutcome::Truncated);
         }
 
         tracing::warn!(
@@ -225,8 +273,10 @@ impl AgentService {
                     context.token_count,
                     usage_pct,
                 );
+                let before_len = context.messages.len();
                 context.hard_truncate_to(safety_target);
                 context.trim_to_fit(0);
+                truncated |= context.messages.len() < before_len;
             }
         }
 
@@ -280,7 +330,11 @@ impl AgentService {
             }
         }
 
-        summary_result
+        match summary_result {
+            Some(summary) => Some(CompactionOutcome::Summarised(summary)),
+            None if truncated => Some(CompactionOutcome::Truncated),
+            None => None,
+        }
     }
 
     /// Pre-compaction pressure-warning gate (#909).
