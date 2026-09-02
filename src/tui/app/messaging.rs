@@ -2235,7 +2235,10 @@ impl App {
                             // absence: over SSH the file IS reachable, just
                             // not from here.
                             let env = crate::tui::remote_upload::Env::current();
-                            let dest = crate::channels::telegram::media::channel_attachments_dir();
+                            // Same destination a tunnel-pulled file lands in,
+                            // so copying by hand and copying automatically put
+                            // the file in the same place.
+                            let dest = crate::config::opencrabs_home().join("tmp");
                             let advice = crate::tui::remote_upload::guidance(
                                 &env,
                                 &path,

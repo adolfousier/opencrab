@@ -635,10 +635,22 @@ Dragging a file onto your terminal inserts **text**: the path as your *local*
 machine sees it. When the TUI runs over SSH that path names a file on your
 laptop while the process is on the server, so there is nothing local to attach.
 
-OpenCrabs can pull it across **the SSH connection you already opened**. Two
+**If OpenCrabs is only installed on the server**, you get a ready-to-run `scp`
+line instead, addressed to that host with the path quoted so it survives
+spaces. That works from every OS with nothing extra installed, and is the
+honest floor:
+
+```
+scp '/Users/you/Screenshot 2026-09-01 at 18.18.16.png' root@188.166.147.13:~/.opencrabs/tmp/
+```
+
+**If you also have OpenCrabs on the machine you drag from**, it can pull the
+file across **the SSH connection you already opened**, with no copy step. Two
 steps, once:
 
-**1. On the machine you drag files from**, run the agent and leave it running:
+**1. On the machine you drag files from** (this needs the OpenCrabs binary
+there — it is the one part of this that is not server-side), run the agent and
+leave it running:
 
 ```bash
 opencrabs drop-agent
@@ -701,16 +713,9 @@ remembered to restrict it. Note that the forwarded port is reachable by other
 users on that server, so only use this on a box you trust — which is already
 true, since you are running a shell there.
 
-**Without the agent** you get a ready-to-run `scp` line instead, addressed to
-this host and with the path quoted so it survives spaces in filenames:
-
-```
-scp '/Users/you/Screenshot 2026-09-01 at 18.18.16.png' root@188.166.147.13:~/.opencrabs/channel_attachments/
-```
-
 Sending the file through a connected chat channel (Telegram, Discord, Slack)
-also lands it in `channel_attachments/`, which is often quickest on a headless
-box.
+also puts it on the server, which is often quickest on a headless box and
+needs nothing installed locally either.
 
 ### Daemon & Service
 
