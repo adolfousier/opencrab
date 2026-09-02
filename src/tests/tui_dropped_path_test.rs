@@ -103,9 +103,13 @@ fn test_a_path_from_another_machine_is_marked_not_forwarded() {
         "#1288: the message must say the path is unreachable: {clean:?}"
     );
     assert!(
-        clean.contains("is not on this machine"),
-        "and say why: {clean:?}"
+        !clean.contains("Screenshot 2026-09-01 at 18.18.16.png can you"),
+        "the raw path must not simply be forwarded as prose: {clean:?}"
     );
+    // What the marker SAYS depends on the terminal and whether this is an SSH
+    // session (#1289), and asserting a specific wording here would make this
+    // test pass or fail on where it runs. The per-tier text is covered in
+    // tui_remote_upload_test with an injected environment.
     assert!(
         clean.contains("can you see this image"),
         "the question still stands: {clean:?}"
