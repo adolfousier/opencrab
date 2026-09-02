@@ -93,10 +93,25 @@ pub(crate) enum PickRewrite {
 /// `host` is `(html, rich)` of the merged host bubble when the tapped
 /// message IS it; merged host → answer HTML + pick record, standalone →
 /// pick record alone.
-pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRewrite {
+pub(crate) fn pick_rewrite(
+    host: Option<(&str, bool)>,
+    picked: String,
+    picked_idx: usize,
+) -> PickRewrite {
     match host {
         Some((full, rich)) => {
-            let body = format!("{full}\n\n{picked}");
+            let body = if rich {
+                // #67 tap-redraw: the rows must not survive as live
+                // controls — they are rewritten to the picked state
+                // (success+✓+disabled / disabled) instead of stripped, so
+                // the bubble keeps showing what was chosen.
+                format!("{}\n\n{picked}", mark_picked_button(full, picked_idx))
+            } else {
+                // Classic hosts keep their buttons as reply markup (not in
+                // the body) — the empty-markup arm strips those; nothing to
+                // rewrite here.
+                format!("{full}\n\n{picked}")
+            };
             if rich {
                 PickRewrite::RichHost(body)
             } else {
@@ -107,14 +122,118 @@ pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRe
     }
 }
 
+/// #67 tap-redraw: rewrite the follow-up button rows of a rich merged host
+/// to the post-tap state. The tapped button flips to success style, gains a
+/// ✓ and `disabled`; every sibling follow-up button loses its style (bare
+/// `disabled` is the only reliably grayed form — #71) and gains `disabled`.
+/// Non-follow-up markup passes through byte-identical.
+pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut rest = html;
+    while let Some(tag_start) = rest.find("<tg-button") {
+        let after_open = &rest[tag_start + "<tg-button".len()..];
+        // `<tg-button-row>` and any other `<tg-button…` lookalike that is
+        // not the button tag itself passes through untouched.
+        if !after_open.starts_with('>') && !after_open.starts_with(' ') {
+            out.push_str(&rest[..tag_start + "<tg-button".len()]);
+            rest = after_open;
+            continue;
+        }
+        let Some(attrs_rel) = after_open.find('>') else {
+            // Unterminated tag: emit the remainder verbatim.
+            out.push_str(rest);
+            return out;
+        };
+        let tag_open_len = "<tg-button".len();
+        let attrs = &after_open[..attrs_rel];
+        let after_attrs = &after_open[attrs_rel + 1..];
+        let body_rel = attrs_rel + 1;
+        let Some(label_rel) = after_attrs.find("</tg-button>") else {
+            // Unterminated label: emit through the tag opener verbatim.
+            out.push_str(&rest[..tag_start + tag_open_len + body_rel]);
+            rest = after_attrs;
+            continue;
+        };
+        let label = &after_attrs[..label_rel];
+        let tail = &after_attrs[label_rel + "</tg-button>".len()..];
+        let idx = attrs
+            .split("data=\"followup:")
+            .nth(1)
+            .and_then(|v| v.split('"').next())
+            .and_then(|v| v.rsplit(':').next())
+            .and_then(|v| v.parse::<usize>().ok());
+        let picked = idx == Some(picked_idx);
+        if picked || idx.is_some() {
+            let mut new_attrs = attrs.to_string();
+            if picked {
+                // The picked button flips to success regardless of its
+                // original style.
+                if let Some(s) = new_attrs.find("style=\"")
+                    && let Some(e) = new_attrs[s + "style=\"".len()..].find('"')
+                {
+                    let style_end = s + "style=\"".len() + e;
+                    new_attrs.replace_range(s + "style=\"".len()..style_end, "success");
+                }
+            } else {
+                // #71: a styled button still renders enabled-looking even
+                // with `disabled` (owner A/B: `style="primary" disabled`
+                // stays blue), so siblings drop their style attribute —
+                // bare `disabled` is the only form that renders grayed.
+                if let Some(s) = new_attrs.find(" style=\"")
+                    && let Some(e) = new_attrs[s + " style=\"".len()..].find('"')
+                {
+                    let style_end = s + " style=\"".len() + e + 1;
+                    new_attrs.replace_range(s..style_end, "");
+                }
+            }
+            if !new_attrs.contains("disabled") {
+                new_attrs.push_str(" disabled");
+            }
+            out.push_str(&rest[..tag_start]);
+            out.push_str("<tg-button");
+            out.push_str(&new_attrs);
+            out.push('>');
+            if picked {
+                out.push_str("\u{2713} ");
+            }
+            out.push_str(label);
+            out.push_str("</tg-button>");
+        } else {
+            // Not a follow-up button: emit the whole span verbatim.
+            out.push_str(&rest[..tag_start + tag_open_len + body_rel + label_rel]);
+            out.push_str("</tg-button>");
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Button-width calibration, measured 2026-08-25 on Alexey's client
 /// (`sendRichMessage` probes, messages 29975 + 29991): a single full-width
-/// button fits <=50 chars on one line and wraps by 54; shared rows only
-/// survive MICRO labels (Yes/No pairs fit; 11+8=19 chars total wraps).
+/// button fits <=50 chars on one line and wraps by 54. (The original
+/// "shared rows wrap at 11+8=19" claim was DISPROVEN by the 2026-08-31
+/// probes — see [`ROW_BUDGET_CHARS`] and fork issues #49/#52.)
 pub(crate) const MAX_BUTTON_CHARS: usize = 50;
-/// Longest label allowed to share one row with its siblings (measured:
-/// 3-7 char words sit side by side without wrapping).
-pub(crate) const SHARED_ROW_MAX_CHARS: usize = 8;
+/// Shared-row BUDGET model (owner-directed, fork issues #52/#53): a row of
+/// N buttons fits only if total label chars + BUTTON_PADDING_CHARS per
+/// button stay within ROW_BUDGET_CHARS. B=36/pad=1 was solved on the raw
+/// html plane (probes 2026-08-31, thread 30134): 4×8 (36) and 2×15 (32)
+/// shared; 2×18 (38), 3×12 (39), 3×15 (48) cut. The live rich-plane smoke
+/// matrix (#52 evidence, 8/8 verdicts) then showed rich is tighter at the
+/// same char cost: Latin 4×8 cut one label, Cyrillic 4×8 cut all four, and
+/// Cyrillic 2×17 clipped half a glyph per button — while Latin 2×17 fit.
+/// Owner call 2026-08-31: single-language model, no script factor, margin
+/// over density — PAD raised to 2 so the budget sits 2–4 cost-units below
+/// the measured rich wall. New boundaries: 4×7 and 2×16 (cost 36) share;
+/// 4×8 (40) and 2×17 (38) stack. Supersedes #49's per-label bump (8→12)
+/// — right observation, wrong axis. Known residual: bubble-width variance
+/// can still clip a legal row on narrow plain-html bodies.
+pub(crate) const ROW_BUDGET_CHARS: usize = 36;
+/// Per-button padding inside the shared-row budget. Raised 1→2 (#53) as
+/// the rich-plane margin: rich's keyboard gutter eats more than html's,
+/// and the wider Cyrillic glyphs ride the same margin — no script factor.
+pub(crate) const BUTTON_PADDING_CHARS: usize = 2;
 /// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
 /// than 4 per row, so every target stays big enough for a finger.
 pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
@@ -135,9 +254,11 @@ pub(crate) enum SuggestLayout {
 
 pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     let width = |o: &String| o.chars().count();
-    if options.len() <= MAX_NUMBERS_PER_ROW
-        && options.iter().all(|o| width(o) <= SHARED_ROW_MAX_CHARS)
-    {
+    let row_cost: usize = options
+        .iter()
+        .map(|o| width(o) + BUTTON_PADDING_CHARS)
+        .sum();
+    if options.len() <= MAX_NUMBERS_PER_ROW && row_cost <= ROW_BUDGET_CHARS {
         SuggestLayout::SharedRow
     } else if options.iter().all(|o| width(o) <= MAX_BUTTON_CHARS) {
         SuggestLayout::Column

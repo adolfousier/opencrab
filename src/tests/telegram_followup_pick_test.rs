@@ -114,6 +114,7 @@ fn classic_host_body_keeps_answer_and_pick() {
     let rewrite = pick_rewrite(
         Some(("<b>the answer</b>", false)),
         picked_block(CHOICE, None),
+        0,
     );
     let PickRewrite::ClassicHost(body) = rewrite else {
         panic!("a classic host must stay classic: {rewrite:?}")
@@ -131,6 +132,7 @@ fn rich_host_body_keeps_answer_and_pick() {
     let rewrite = pick_rewrite(
         Some(("<b>the answer</b>", true)),
         picked_block(CHOICE, None),
+        0,
     );
     let PickRewrite::RichHost(body) = rewrite else {
         panic!("a rich host must stay rich: {rewrite:?}")
@@ -146,7 +148,7 @@ fn rich_host_body_keeps_answer_and_pick() {
 fn standalone_body_is_the_pick_record_alone() {
     let record = picked_block(CHOICE, None);
     assert_eq!(
-        pick_rewrite(None, record.clone()),
+        pick_rewrite(None, record.clone(), 0),
         PickRewrite::Standalone(record)
     );
 }
@@ -156,8 +158,8 @@ fn the_rich_flag_decides_the_transport_not_the_body() {
     // Same host html, same pick — only the rich flag flips, so the two
     // bodies must match byte for byte; only the variant differs.
     let picked = picked_block(CHOICE, None);
-    let classic = pick_rewrite(Some(("host", false)), picked.clone());
-    let rich = pick_rewrite(Some(("host", true)), picked);
+    let classic = pick_rewrite(Some(("host", false)), picked.clone(), 0);
+    let rich = pick_rewrite(Some(("host", true)), picked, 0);
     fn body_of(r: &PickRewrite) -> &str {
         match r {
             PickRewrite::RichHost(b) | PickRewrite::ClassicHost(b) | PickRewrite::Standalone(b) => {
