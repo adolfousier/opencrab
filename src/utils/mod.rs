@@ -4,6 +4,8 @@ pub mod approval;
 pub mod command_label;
 pub(crate) mod config_reload_reason;
 pub mod config_watcher;
+pub mod drop_agent;
+pub mod drop_transfer;
 pub mod fd_suppress;
 pub mod file_extract;
 pub mod git_branch;

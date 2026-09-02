@@ -12,6 +12,7 @@ pub mod question_common;
 pub mod session_init;
 pub mod session_resolve;
 pub mod single_flight;
+pub(crate) mod transport_ready;
 pub(crate) mod typing_tick;
 
 pub mod voice;

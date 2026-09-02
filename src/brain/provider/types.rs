@@ -266,6 +266,13 @@ pub struct TokenUsage {
     pub input_tokens: u32,
     /// Output tokens
     pub output_tokens: u32,
+    /// Reasoning tokens billed inside `output_tokens` (provider
+    /// `usage.reasoning_tokens`). Zero for providers that don't split
+    /// reasoning out. Lets the tool loop reconcile billed output against
+    /// visible text — `output - reasoning ≈ visible tokens` — instead of
+    /// letting thinking-heavy turns fake a usage gap (#36).
+    #[serde(default)]
+    pub reasoning_tokens: u32,
     /// Cache creation input tokens (Anthropic-specific)
     #[serde(default)]
     pub cache_creation_tokens: u32,

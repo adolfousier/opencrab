@@ -1414,6 +1414,7 @@ impl Provider for ClaudeCliProvider {
                                     // Billing tokens (cumulative across rounds)
                                     billing_cache_creation,
                                     billing_cache_read,
+                                    ..Default::default()
                                 },
                             }))
                             .await;

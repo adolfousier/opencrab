@@ -8,7 +8,10 @@
 //! read live data as-is: the session plan JSON for title and checklist, and
 //! `GoalManager` for the active goal one-liner. Empty sections are omitted.
 
-use super::flow::{HeaderMarkup, StreamingState, humanize_duration, open_flow, refresh_flow};
+use super::flow::{
+    COMPACTING_HEADER_TEXT, HeaderMarkup, StreamingState, humanize_duration, open_flow,
+    refresh_flow, starts_with_icon,
+};
 use super::handler::escape_html;
 use crate::brain::agent::AgentService;
 use crate::brain::goal::GoalManager;
@@ -363,7 +366,15 @@ pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String
         {
             let act = act.trim_start_matches(['⚙', '\u{fe0f}']).trim_start();
             if !act.is_empty() {
-                live_activity = format!("⚙️ {}", esc(act));
+                // Gear is dropped when the activity already leads with its own
+                // icon (#29 fix round, owner directive): `✅ bash git status`
+                // and the `⏳ Compacting context — 66% full…` body entry render
+                // bare. Plain-text activity keeps the running cog.
+                live_activity = if starts_with_icon(act) {
+                    esc(act)
+                } else {
+                    format!("⚙️ {}", esc(act))
+                };
                 segs.push(live_activity.clone());
             }
         }
@@ -379,15 +390,19 @@ pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String
     // #498). Live turns show the count alone when the activity segment already
     // carries the cog, else the cog rides the count (#1052 split).
     if parts.has_log {
+        // Once another segment already leads with an icon, the standing gear
+        // has nothing left to signal (#29 fix round, owner directive): the
+        // count renders bare and the bare-cog fallback is dropped.
+        let gear_taken = segs.iter().any(|s| starts_with_icon(s));
         let mut seg2 = String::new();
         if parts.tool_count >= 1 {
             let count = format!("{} tool calls", parts.tool_count);
-            seg2 = if settled || !live_activity.is_empty() {
+            seg2 = if settled || !live_activity.is_empty() || gear_taken {
                 count
             } else {
                 format!("⚙️ {count}")
             };
-        } else if !settled && live_activity.is_empty() {
+        } else if !settled && live_activity.is_empty() && !gear_taken {
             // In-flight log with no tools and no activity preview yet: a bare
             // cog beats an empty segment so the footer still reads as active.
             seg2 = "⚙️".to_string();
@@ -755,6 +770,21 @@ pub(crate) async fn tick_flow_header(
     let open_block = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.open_group_msg_id
+    };
+    // Compaction pin (#29): while the summarizer runs, nothing streams, so
+    // pin the header to the dedicated compacting state instead of whatever
+    // stale preview the caller computed. The CompactionSummary arm clears
+    // the flag; the next tick recomputes normally.
+    let preview = {
+        let compacting = {
+            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            s.compacting
+        };
+        if compacting {
+            Some(COMPACTING_HEADER_TEXT.to_string())
+        } else {
+            preview
+        }
     };
     if open_block.is_some() {
         if show_status {

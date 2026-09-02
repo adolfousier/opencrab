@@ -21,6 +21,19 @@ fn short_id(id: uuid::Uuid) -> String {
     id.simple().to_string()[..8].to_string()
 }
 
+/// Redirect-acknowledgement text for a delivery steered to the channel's
+/// current owner (fork #19). Pure so tests can pin the wording: the sender
+/// must hear WHERE the message went without a second discovery round.
+fn redirect_message(target: uuid::Uuid, occupant: uuid::Uuid) -> String {
+    format!(
+        "Redirected: session {target} no longer owns its channel — the chat/topic it was \
+         bound to is now occupied by session {occupant} (a newer session replaced it, e.g. \
+         an idle-timeout reset took over the topic). The message was delivered to {occupant} \
+         instead, with provenance framing so the new owner can tell it apart from its own \
+         work."
+    )
+}
+
 #[async_trait]
 impl Tool for SessionNotifyTool {
     fn name(&self) -> &str {
@@ -30,9 +43,15 @@ impl Tool for SessionNotifyTool {
     fn description(&self) -> &str {
         "Push a message to another session's queue in this process. The target \
          drains it at its next tool-loop boundary, or wakes immediately if idle. \
-         Every delivery carries a mechanical header [session-notify from=<sender \
-         session id>]; to reply, call session_notify with target_session set to \
-         that id. Discover target ids via session_search list/query."
+         Refuses while the target is mid-turn unless interrupt=true — do not \
+         derail a working session by default. When the target no longer \
+         owns its channel (a newer session replaced it on its \
+         chat/topic), the message is REDIRECTED to the occupying session \
+         with provenance framing, and delivery reports the redirect; \
+         interrupt does NOT override that gate. Every delivery carries a \
+         mechanical header [session-notify from=<sender session id>]; to reply, \
+         call session_notify with target_session set to that id. Discover \
+         target ids via session_search list/query."
     }
 
     fn input_schema(&self) -> Value {
@@ -46,6 +65,10 @@ impl Tool for SessionNotifyTool {
                 "message": {
                     "type": "string",
                     "description": "Text to deliver to the target session"
+                },
+                "interrupt": {
+                    "type": "boolean",
+                    "description": "Deliver even if the target session is mid-turn. Default false: the tool REFUSES while the target is streaming, so a working session is never derailed. Set true only when the target must see this now; the message then queues for its next tool-loop boundary, framed as arrived-during-work."
                 }
             },
             "required": ["target_session", "message"]
@@ -85,11 +108,21 @@ impl Tool for SessionNotifyTool {
             context_text: format!("[session-notify from={from}]\n\n{message}"),
             display_text: format!("📨 notify from {}:\n{message}", short_id(from)),
             origin: crate::brain::agent::PushOrigin::SessionNotify,
+            bg_meta: None,
         };
+
+        // Failsafe default (fork #13): an unset interrupt must not derail a
+        // session that is mid-turn. The refusal names the remedy so the
+        // calling model learns the knob from the error itself — same pattern
+        // as the 429 RetryAfter help text.
+        let interrupt = input
+            .get("interrupt")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
-        match deliver_to_session(target, msg) {
+        match deliver_to_session(target, msg, interrupt) {
             Delivery::Delivered => Ok(ToolResult::success(format!(
                 "Delivered to session {target}. It will process the message on its next turn."
             ))),
@@ -101,11 +134,30 @@ impl Tool for SessionNotifyTool {
                  restart, so it will be delivered as soon as that channel next binds the \
                  session."
             ))),
+            Delivery::RefusedInFlight { redirected_to } => {
+                let who = match redirected_to {
+                    Some(to) => format!(
+                        "{to} (mid-turn — the message was redirected there because \
+                         {target} no longer owns its channel)"
+                    ),
+                    None => target.to_string(),
+                };
+                Ok(ToolResult::error(format!(
+                    "Refused: session {who} is mid-turn (a turn is streaming) and interrupt \
+                     was not set — delivering now would derail its current task. Retry when \
+                     the session goes idle, or resend with interrupt=true to queue the \
+                     message for its in-flight turn's next tool-loop boundary."
+                )))
+            }
             Delivery::NoRoute => Ok(ToolResult::error(format!(
                 "No live route for session {target} in this process — it has not messaged \
                  since boot, or belongs to another instance/profile. Use a2a_send for \
                  cross-instance targets."
             ))),
+            // The target no longer owns its channel (fork #17): the message
+            // was redirected to the session that owns it NOW (fork #19) — a
+            // success, not a refusal, and the reply names where it went.
+            Delivery::Redirected { to } => Ok(ToolResult::success(redirect_message(target, to))),
         }
     }
 }

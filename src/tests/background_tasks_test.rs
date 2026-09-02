@@ -4,8 +4,10 @@
 use crate::brain::agent::service::MessageEnqueueCallback;
 use crate::brain::agent::service::QueuedUserMessage;
 use crate::brain::agent::service::background_tasks::{
-    BackgroundTaskManager, CmdResult, completion_message, short_label, tail_lines,
+    BackgroundTaskManager, CmdResult, completion_message, format_elapsed, short_label, tail_lines,
 };
+use crate::brain::agent::service::restart_recovery;
+use crate::brain::agent::service::session_routes;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -31,11 +33,18 @@ fn completion_message_reflects_success_and_failure() {
             code: 0,
             output: "test result: ok. 5 passed".into(),
         },
+        12.0,
     );
     assert!(ok.context_text.contains("exit 0 (success)"));
     assert!(ok.context_text.contains("cargo test --all-features"));
     assert!(ok.context_text.contains("Do not re-run"));
     assert!(ok.display_text.contains("finished"));
+    // #15: the typed receipt payload rides along for the echo card.
+    let meta = ok.bg_meta.expect("bg completion carries BgTaskMeta");
+    assert!(meta.success);
+    assert_eq!(meta.label, "cargo test");
+    assert_eq!(meta.elapsed_secs, 12.0);
+    assert_eq!(meta.tail, "test result: ok. 5 passed");
 
     let fail = completion_message(
         "build",
@@ -45,9 +54,23 @@ fn completion_message_reflects_success_and_failure() {
             code: 101,
             output: "error[E0001]".into(),
         },
+        3.0,
     );
     assert!(fail.context_text.contains("exit 101 (failure)"));
     assert!(fail.display_text.contains("failed"));
+    let meta = fail.bg_meta.expect("failed completion still carries meta");
+    assert!(!meta.success);
+    assert_eq!(meta.elapsed_secs, 3.0);
+}
+
+#[test]
+fn format_elapsed_buckets_match_the_spec() {
+    assert_eq!(format_elapsed(0.4), "0s");
+    assert_eq!(format_elapsed(42.0), "42s");
+    assert_eq!(format_elapsed(59.6), "1m 0s"); // rounds up into the minute bucket
+    assert_eq!(format_elapsed(185.0), "3m 5s");
+    assert_eq!(format_elapsed(3599.4), "59m 59s");
+    assert_eq!(format_elapsed(3720.0), "1h 2m");
 }
 
 #[test]
@@ -57,7 +80,14 @@ fn short_label_takes_the_command_after_cd() {
 }
 
 #[tokio::test]
+// The test_guard serializes suites touching the process-global parked-queue
+// state; holding it across the polling `.await`s below is the entire point —
+// same shape as the session_notify suite (#22).
+#[allow(clippy::await_holding_lock)]
 async fn spawn_command_enqueues_on_completion() {
+    // register_session_route → claim_session touches the process-global
+    // parked-queue state, so serialize against other suites that do too.
+    let _guard = restart_recovery::test_guard();
     #[allow(clippy::type_complexity)]
     let recorded: Arc<Mutex<Vec<(Uuid, QueuedUserMessage)>>> = Arc::new(Mutex::new(Vec::new()));
     let rec = recorded.clone();
@@ -65,8 +95,13 @@ async fn spawn_command_enqueues_on_completion() {
         rec.lock().unwrap().push((sid, msg));
     });
 
-    let mgr = Arc::new(BackgroundTaskManager::new(enqueue));
+    let mgr = Arc::new(BackgroundTaskManager::new());
     let sid = Uuid::new_v4();
+    // The manager no longer carries its own route (fork #19 — delivery goes
+    // through the one gated route, which resolves the session's registered
+    // route), so claim the session the way a channel would: register the
+    // recording callback as its route.
+    session_routes::register_session_route(sid, enqueue);
     let cwd = std::env::temp_dir();
 
     mgr.clone().spawn_command(

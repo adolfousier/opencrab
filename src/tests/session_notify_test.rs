@@ -9,7 +9,10 @@ use uuid::Uuid;
 
 use crate::brain::agent::QueuedUserMessage;
 use crate::brain::agent::service::restart_recovery::{expect_channel_route, test_guard};
-use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
+use crate::brain::agent::service::session_routes::{
+    ChannelOwnership, Delivery, deliver_to_session, register_channel_owner_probe,
+    register_session_route, register_turn_probe,
+};
 use crate::brain::tools::subagent::SessionNotifyTool;
 use crate::brain::tools::r#trait::Tool;
 
@@ -18,6 +21,7 @@ fn msg() -> QueuedUserMessage {
         context_text: "[session-notify from=x]\n\nbody".to_string(),
         display_text: "notify".to_string(),
         origin: crate::brain::agent::PushOrigin::Other,
+        bg_meta: None,
     }
 }
 
@@ -86,7 +90,7 @@ fn test_a_parked_delivery_is_not_a_missing_route() {
 
     expect_channel_route(session);
 
-    let outcome = deliver_to_session(session, msg());
+    let outcome = deliver_to_session(session, msg(), false);
     assert_eq!(
         outcome,
         Delivery::Parked,
@@ -99,5 +103,278 @@ fn test_a_parked_delivery_is_not_a_missing_route() {
 fn test_an_unroutable_session_is_reported_as_such() {
     let _guard = test_guard();
     // No local route is registered in tests, so nothing can take it.
-    assert_eq!(deliver_to_session(Uuid::new_v4(), msg()), Delivery::NoRoute);
+    assert_eq!(
+        deliver_to_session(Uuid::new_v4(), msg(), false),
+        Delivery::NoRoute
+    );
+}
+
+// ── Channel-ownership gate (fork #17) + redirect (fork #19) ─────────────
+//
+// A session REPLACED on its chat/topic (idle-timeout reset creates a
+// successor) keeps its delivery route — routes are UUID-keyed and never
+// evicted. Without the gate any push wakes the replaced session into the
+// successor's conversation. The gate is the OUTERMOST check: it guards who
+// owns the channel, not the target's turn state, so `interrupt` does not
+// override it. Unknown ownership fails open, same posture as the turn gate.
+//
+// Occupied no longer REFUSES (#19): the message is REDIRECTED to the
+// occupant — the session that owns the channel now — with a provenance
+// frame on its context text, up to a 3-hop cap (cycle insurance), then
+// parked. The original `interrupt` flag is honored against the FINAL
+// target after redirecting.
+
+#[test]
+fn test_occupied_channel_redirects_delivery_to_occupant() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let occupant = Uuid::new_v4();
+    let captured: std::sync::Arc<std::sync::Mutex<Option<QueuedUserMessage>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sink = captured.clone();
+    register_channel_owner_probe(
+        session,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
+    );
+    register_session_route(
+        occupant,
+        std::sync::Arc::new(move |_id, queued| {
+            *sink.lock().unwrap() = Some(queued);
+        }),
+    );
+    let outcome = deliver_to_session(session, msg(), false);
+    assert_eq!(
+        outcome,
+        Delivery::Redirected { to: occupant },
+        "#19: an occupied channel redirects to the occupant — delivered, never refused"
+    );
+    let queued = captured
+        .lock()
+        .unwrap()
+        .take()
+        .expect("occupant got the message");
+    let frame = format!(
+        "[redirected — originally for session {session}, which no longer owns this channel]"
+    );
+    assert!(
+        queued.context_text.starts_with(&frame),
+        "#19: the successor must see the provenance frame: {}",
+        queued.context_text
+    );
+}
+
+#[test]
+fn test_occupied_channel_redirects_even_with_interrupt() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let occupant = Uuid::new_v4();
+    register_channel_owner_probe(
+        session,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
+    );
+    register_session_route(occupant, std::sync::Arc::new(|_id, _queued| {}));
+    assert_eq!(
+        deliver_to_session(session, msg(), true),
+        Delivery::Redirected { to: occupant },
+        "#19: interrupt overrides the TURN gate only — never channel ownership; \
+         the redirect still happens"
+    );
+}
+
+#[test]
+fn test_ownership_gate_outranks_turn_gate() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let occupant = Uuid::new_v4();
+    register_turn_probe(session, std::sync::Arc::new(|| true));
+    register_channel_owner_probe(
+        session,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
+    );
+    register_session_route(occupant, std::sync::Arc::new(|_id, _queued| {}));
+    // Mid-turn AND replaced: the redirect wins — the message goes to the
+    // occupant, whose own turn state (not the dead session's) gates it.
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::Redirected { to: occupant },
+        "#19: the ownership gate runs outside the turn gate"
+    );
+}
+
+#[test]
+fn test_redirect_honors_interrupt_against_occupant() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let occupant = Uuid::new_v4();
+    register_channel_owner_probe(
+        session,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
+    );
+    // The FINAL target (the occupant) is mid-turn: the sender's original
+    // `interrupt` flag gates IT, not the replaced session.
+    register_turn_probe(occupant, std::sync::Arc::new(|| true));
+    register_session_route(occupant, std::sync::Arc::new(|_id, _queued| {}));
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::RefusedInFlight {
+            redirected_to: Some(occupant)
+        },
+        "#19: a redirect landing on a mid-turn occupant is refused with the \
+         redirect context — the sender hears where the message WOULD have gone"
+    );
+    assert_eq!(
+        deliver_to_session(session, msg(), true),
+        Delivery::Redirected { to: occupant },
+        "#19: interrupt=true still delivers through the redirect"
+    );
+}
+
+#[test]
+fn test_redirect_hop_cap_parks_beyond_three() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let occ1 = Uuid::new_v4();
+    let occ2 = Uuid::new_v4();
+    let occ3 = Uuid::new_v4();
+    let occ4 = Uuid::new_v4();
+    // A replacing chain: each session's channel is occupied by the next.
+    register_channel_owner_probe(
+        session,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant: occ1 }),
+    );
+    register_channel_owner_probe(
+        occ1,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant: occ2 }),
+    );
+    register_channel_owner_probe(
+        occ2,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant: occ3 }),
+    );
+    register_channel_owner_probe(
+        occ3,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant: occ4 }),
+    );
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::Parked,
+        "#19: hop cap 3 is cycle insurance — past it the message is parked, \
+         never looped and never dropped"
+    );
+}
+
+#[test]
+fn test_owned_channel_passes_ownership_gate() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    expect_channel_route(session);
+    register_channel_owner_probe(session, std::sync::Arc::new(|| ChannelOwnership::Owned));
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::Parked,
+        "#17: an owning session passes the gate — parked here only because \
+         the expected route is unclaimed"
+    );
+}
+
+#[test]
+fn test_unknown_ownership_fails_open() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    expect_channel_route(session);
+    register_channel_owner_probe(session, std::sync::Arc::new(|| ChannelOwnership::Unknown));
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::Parked,
+        "#17: unknown ownership fails open — never refuse on missing semantics"
+    );
+}
+
+#[tokio::test]
+#[expect(clippy::await_holding_lock)]
+async fn test_tool_reports_redirect_to_occupant() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let occupant = Uuid::new_v4();
+    register_channel_owner_probe(
+        session,
+        std::sync::Arc::new(move || ChannelOwnership::Occupied { occupant }),
+    );
+    register_session_route(occupant, std::sync::Arc::new(|_id, _queued| {}));
+
+    let context = crate::brain::tools::r#trait::ToolExecutionContext::new(Uuid::new_v4());
+    let outcome = SessionNotifyTool
+        .execute(
+            serde_json::json!({"target_session": session.to_string(), "message": "ping"}),
+            &context,
+        )
+        .await;
+    let result = outcome.expect("tool executes");
+    assert!(result.success, "#19: a redirect is delivery, not failure");
+    let message = result.output;
+    assert!(!message.is_empty(), "#19: the outcome names where it went");
+    assert!(
+        message.contains(&occupant.to_string()),
+        "#19: must name the session that owns the channel now: {message}"
+    );
+    assert!(
+        message.contains("Redirected"),
+        "#19: must say it was redirected: {message}"
+    );
+}
+
+#[tokio::test]
+async fn test_ownership_mirror_tracks_channel_replacement() {
+    // The sync mirror behind the telegram probe (state.rs): binding a
+    // successor to the same (chat, topic) must flip the old session to
+    // Occupied naming the successor, while the successor reads Owned and a
+    // never-bound session reads Unknown.
+    use crate::channels::telegram::TelegramState;
+    let state = TelegramState::new();
+    let old = Uuid::new_v4();
+    let successor = Uuid::new_v4();
+    let (chat, topic) = (-100_123_456_i64, Some(42_i32));
+
+    assert_eq!(
+        state.channel_ownership_of(old),
+        ChannelOwnership::Unknown,
+        "#17: never-bound session — no binding recorded"
+    );
+
+    state.register_session_chat(old, chat, topic).await;
+    assert_eq!(state.channel_ownership_of(old), ChannelOwnership::Owned);
+
+    // Idle-timeout replacement: same channel, new session.
+    state.register_session_chat(successor, chat, topic).await;
+    assert_eq!(
+        state.channel_ownership_of(old),
+        ChannelOwnership::Occupied {
+            occupant: successor
+        },
+        "#17: the replaced session must see its successor by name"
+    );
+    assert_eq!(
+        state.channel_ownership_of(successor),
+        ChannelOwnership::Owned,
+        "#17: the successor owns the channel it just bound"
+    );
+}
+
+#[tokio::test]
+async fn test_ownership_mirror_keys_dm_and_general_buckets_separately() {
+    // (chat, None) buckets — DMs / non-forum groups — are channels too: a
+    // replacement there must occupy exactly that bucket and no other.
+    use crate::channels::telegram::TelegramState;
+    let state = TelegramState::new();
+    let old = Uuid::new_v4();
+    let successor = Uuid::new_v4();
+    let chat = 777_i64;
+
+    state.register_session_chat(old, chat, None).await;
+    state.register_session_chat(successor, chat, None).await;
+    assert_eq!(
+        state.channel_ownership_of(old),
+        ChannelOwnership::Occupied {
+            occupant: successor
+        }
+    );
 }

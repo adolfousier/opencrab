@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use uuid::Uuid;
 
-use super::types::{MessageEnqueueCallback, PushOrigin, QueuedUserMessage};
+use super::types::{BgTaskMeta, PushOrigin, QueuedUserMessage};
 
 /// Result of a finished background command.
 #[derive(Debug, Clone)]
@@ -33,7 +33,6 @@ pub struct RunningTask {
 
 /// Manages background commands and resumes their sessions on completion.
 pub struct BackgroundTaskManager {
-    enqueue: MessageEnqueueCallback,
     /// In-flight background tasks per session.
     ///
     /// Holds the label and start time, not just a count, because a surface has
@@ -46,9 +45,8 @@ pub struct BackgroundTaskManager {
 use super::detached_status::{self, DetachedFinish};
 
 impl BackgroundTaskManager {
-    pub fn new(enqueue: MessageEnqueueCallback) -> Self {
+    pub fn new() -> Self {
         Self {
-            enqueue,
             running: Mutex::new(HashMap::new()),
         }
     }
@@ -143,6 +141,9 @@ impl BackgroundTaskManager {
             }
             let started = std::time::Instant::now();
             let result = run_detached(&command, &cwd).await;
+            // Capture ONCE: the log line, the status file and the receipt
+            // payload (#15) must all report the same runtime.
+            let elapsed_secs = started.elapsed().as_secs_f32();
             // Exit code and elapsed time, not just a boolean: how long a task
             // actually took is the only way to tell a correct detach from a
             // wasteful one, and it was nowhere in the log.
@@ -152,7 +153,7 @@ impl BackgroundTaskManager {
                  (success={}, exit={}, elapsed={:.1}s)",
                 result.success,
                 result.code,
-                started.elapsed().as_secs_f32()
+                elapsed_secs
             );
             // Gap 2 (#1160): rewrite the status file with exit info, so any
             // reader between process-exit and session-resume sees the
@@ -165,11 +166,11 @@ impl BackgroundTaskManager {
                 DetachedFinish {
                     success: result.success,
                     code: result.code,
-                    elapsed_secs: started.elapsed().as_secs_f32(),
+                    elapsed_secs,
                     output_bytes: result.output.len(),
                 },
             );
-            let msg = completion_message(&label, &command, &result);
+            let msg = completion_message(&label, &command, &result, elapsed_secs);
             if let Some(repo) = task_repo()
                 && let Err(e) = repo.clear(task_id).await
             {
@@ -191,12 +192,54 @@ impl BackgroundTaskManager {
             // Only touches the in-memory map, so moving it earlier cannot
             // affect what gets delivered.
             this.mark_finished(session_id, &label);
-            // Deliver to the surface that OWNS the session, not to whichever
-            // one executed the command. A channel session driven from the TUI
-            // runs on the TUI's service, so `this.enqueue` would answer into
-            // the TUI and leave the channel that asked for the work waiting on
-            // a reply that never comes (#940).
-            super::session_routes::resolve_route(session_id, &this.enqueue)(session_id, msg);
+            // Deliver through the ONE gated route (fork #19): the same
+            // `deliver_to_session` that sub-agent completions and the
+            // session_notify tool use, so channel-ownership, mid-turn and
+            // redirect decisions live in exactly one place instead of being
+            // re-derived per surface. Resolves the owner by SESSION, never by
+            // whichever service executed the command — a channel session
+            // driven from the TUI runs on the TUI's service, and the old
+            // direct-resolve would answer into the TUI and leave the channel
+            // that asked for the work waiting on a reply that never comes
+            // (#940). interrupt=true: a completion is the origin's own
+            // awaited work, exactly like a sub-agent's; it must reach it even
+            // mid-turn (fork #13).
+            let outcome = super::session_routes::deliver_to_session(session_id, msg, true);
+            match outcome {
+                super::session_routes::Delivery::Redirected { to } => {
+                    tracing::info!(
+                        target: "background_task",
+                        "Background task '{label}' completion for session {session_id} was \
+                         redirected to session {to}, which now owns its channel"
+                    );
+                }
+                super::session_routes::Delivery::Parked => {
+                    tracing::info!(
+                        target: "background_task",
+                        "Background task '{label}' completion for session {session_id} is \
+                         parked until its channel claims the session"
+                    );
+                }
+                super::session_routes::Delivery::NoRoute => {
+                    tracing::warn!(
+                        target: "background_task",
+                        "Background task '{label}' completion for session {session_id} had \
+                         nowhere to go; the session will not hear about it"
+                    );
+                }
+                super::session_routes::Delivery::RefusedInFlight { .. } => {
+                    // Unreachable by construction: interrupt=true is passed
+                    // above, so the fork #13 gate cannot refuse. Kept explicit
+                    // so a future change to the flag cannot drop the outcome
+                    // silently (port seam: upstream's match has no catch-all).
+                    tracing::warn!(
+                        target: "background_task",
+                        "Background task '{label}' completion for session {session_id} was \
+                         refused by the mid-turn gate despite interrupt=true"
+                    );
+                }
+                super::session_routes::Delivery::Delivered => {}
+            }
         });
     }
 }
@@ -273,11 +316,15 @@ pub(crate) fn tail_lines(text: &str, n: usize) -> String {
 }
 
 /// Build the resume message from a finished background command (#722). Pure so
-/// the framing is unit-testable without spawning anything.
+/// the framing is unit-testable without spawning anything. `elapsed_secs` is
+/// the detached command's wall-clock runtime; it rides along in the typed
+/// `BgTaskMeta` payload (#15) so the receipt card renders a duration without
+/// parsing the context text.
 pub(crate) fn completion_message(
     label: &str,
     command: &str,
     result: &CmdResult,
+    elapsed_secs: f32,
 ) -> QueuedUserMessage {
     let status = if result.success {
         "exit 0 (success)".to_string()
@@ -301,5 +348,26 @@ pub(crate) fn completion_message(
     let mut msg = QueuedUserMessage::system(context, display);
     // #1221: marks this delivery for the Telegram collapsible echo bubble.
     msg.origin = PushOrigin::BackgroundTask;
+    // #15: typed receipt payload — the echo renders the card from this,
+    // never from the `[System: ...]` context text.
+    msg.bg_meta = Some(BgTaskMeta {
+        success: result.success,
+        label: label.to_string(),
+        elapsed_secs,
+        tail,
+    });
     msg
+}
+
+/// Human duration for the receipt card (#15): `42s`, `3m 5s`, `1h 12m`.
+/// Rounds to whole seconds; sub-second tasks show `0s`.
+pub(crate) fn format_elapsed(secs: f32) -> String {
+    let total = secs.max(0.0).round() as u64;
+    if total < 60 {
+        format!("{total}s")
+    } else if total < 3600 {
+        format!("{}m {}s", total / 60, total % 60)
+    } else {
+        format!("{}h {}m", total / 3600, (total % 3600) / 60)
+    }
 }

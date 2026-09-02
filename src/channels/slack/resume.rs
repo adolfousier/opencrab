@@ -34,9 +34,19 @@ pub(crate) fn build_enqueue_callback(
             else {
                 return;
             };
-            let (Some(token_val), Some(client)) = (state.bot_token().await, state.client().await)
+            // Bounded wait rather than a drop (#1242). Like WhatsApp, this
+            // check sits AFTER the turn, so returning threw away a completed
+            // answer and the provider call behind it. Slack needs both halves
+            // to post, so the pair is what readiness means here.
+            let Some((token_val, client)) =
+                crate::channels::transport_ready::await_transport("slack", session_id, || async {
+                    match (state.bot_token().await, state.client().await) {
+                        (Some(token), Some(client)) => Some((token, client)),
+                        _ => None,
+                    }
+                })
+                .await
             else {
-                tracing::warn!("[bg-resume] slack: client/token not available; dropping delivery");
                 return;
             };
             let api_token = SlackApiToken::new(SlackApiTokenValue::from(token_val));

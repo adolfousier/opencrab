@@ -66,6 +66,7 @@ pub(crate) fn completion_message(
         context_text,
         display_text,
         origin: crate::brain::agent::PushOrigin::SubAgent,
+        bg_meta: None,
     }
 }
 
@@ -90,7 +91,7 @@ pub(crate) fn push_result(
     use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
     let msg = completion_message(label, agent_id, outcome);
-    match deliver_to_session(parent_session_id, msg) {
+    match deliver_to_session(parent_session_id, msg, true) {
         Delivery::Delivered => {
             tracing::info!(
                 "Sub-agent {agent_id} reported its result to session {parent_session_id}"
@@ -109,6 +110,26 @@ pub(crate) fn push_result(
             tracing::warn!(
                 "Sub-agent {agent_id}'s result had nowhere to go for session \
                  {parent_session_id}; the parent will not hear about it"
+            );
+        }
+        Delivery::RefusedInFlight { redirected_to } => {
+            // Unreachable by construction: interrupt=true is passed above and
+            // the fork #13 gate refuses only when interrupt is unset. Arm kept
+            // explicit so a future call-site change cannot drop the outcome
+            // silently (port seam: upstream's match has no catch-all).
+            tracing::warn!(
+                "Sub-agent {agent_id}'s result was refused by the interrupt gate \
+                 for session {parent_session_id} (redirected to {redirected_to:?}); the \
+                 parent will not hear about it"
+            );
+        }
+        Delivery::Redirected { to } => {
+            // The parent was replaced on its channel while the sub-agent ran
+            // (fork #17), so the result was REDIRECTED to the session that
+            // owns the channel now (fork #19) — delivered, not dropped.
+            tracing::info!(
+                "Sub-agent {agent_id}'s result was redirected from session \
+                 {parent_session_id} to session {to}, which now owns its channel"
             );
         }
     }

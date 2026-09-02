@@ -12,7 +12,7 @@
 //! unrelated concerns shared one file and one set of locks to reason about.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use uuid::Uuid;
 
@@ -61,7 +61,10 @@ pub fn register_session_route(session_id: Uuid, enqueue: MessageEnqueueCallback)
 /// session, falling back to `executing` when nothing did.
 ///
 /// The whole fix in one line — pick by session, never by who ran the command —
-/// so it is a pure function and directly testable.
+/// so it is a pure function and directly testable. Test-only since fork #19:
+/// production delivery now flows through [`deliver_to_session`], but the
+/// pre-#19 routing suites still exercise these semantics directly (#22).
+#[cfg(test)]
 pub fn resolve_route(
     session_id: Uuid,
     executing: &MessageEnqueueCallback,
@@ -105,6 +108,106 @@ pub fn register_local_route(enqueue: MessageEnqueueCallback) {
     }
 }
 
+/// Is `session_id` mid-turn right now?
+///
+/// Channels that expose turn state (telegram's #501/#845 gate) register a
+/// probe beside their delivery route; surfaces without one simply don't,
+/// which the gate below reads as "unknown" and fails open — a headless
+/// session must stay notifyable. The probe captures an `Arc` of the channel
+/// state, so it stays valid across route re-binds and reconnects.
+pub type TurnProbe = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// Per-session in-flight probes, keyed like [`SESSION_ROUTES`].
+static TURN_PROBES: Mutex<Option<HashMap<Uuid, TurnProbe>>> = Mutex::new(None);
+
+/// Register (or replace) the in-flight probe for `session_id`.
+pub fn register_turn_probe(session_id: Uuid, probe: TurnProbe) {
+    match TURN_PROBES.lock() {
+        Ok(mut guard) => {
+            guard
+                .get_or_insert_with(HashMap::new)
+                .insert(session_id, probe);
+        }
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not register the in-flight probe for session {session_id}: {e}"
+            );
+        }
+    }
+}
+
+/// The session's in-flight probe, if its channel registered one.
+fn turn_probe(session_id: Uuid) -> Option<TurnProbe> {
+    match TURN_PROBES.lock() {
+        Ok(guard) => guard.as_ref()?.get(&session_id).cloned(),
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not read the in-flight probe for session {session_id}: {e}"
+            );
+            None
+        }
+    }
+}
+
+/// Does the session still own the channel it was bound to?
+///
+/// A channel session can be REPLACED on its chat/topic — the idle-timeout
+/// reset archives the old session and creates a successor for the same
+/// topic — while its delivery route stays registered (routes are keyed by
+/// session UUID and never evicted). Without a gate, any push then wakes the
+/// replaced session and it posts into a conversation a different session now
+/// owns (fork #17). Channels that track ownership register a probe beside
+/// their delivery route; surfaces without one simply don't, which the gate
+/// below reads as "unknown" and fails open — same posture as the in-flight
+/// probe: the gate must never make a surface unnotifyable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelOwnership {
+    /// The session's bound chat/topic still resolves back to it.
+    Owned,
+    /// A DIFFERENT session now occupies the bound chat/topic.
+    Occupied { occupant: Uuid },
+    /// No binding recorded (or the channel does not track ownership).
+    Unknown,
+}
+
+pub type ChannelOwnerProbe = Arc<dyn Fn() -> ChannelOwnership + Send + Sync>;
+
+/// Per-session channel-ownership probes, keyed like [`SESSION_ROUTES`].
+static CHANNEL_OWNER_PROBES: Mutex<Option<HashMap<Uuid, ChannelOwnerProbe>>> = Mutex::new(None);
+
+/// Register (or replace) the channel-ownership probe for `session_id`.
+pub fn register_channel_owner_probe(session_id: Uuid, probe: ChannelOwnerProbe) {
+    match CHANNEL_OWNER_PROBES.lock() {
+        Ok(mut guard) => {
+            guard
+                .get_or_insert_with(HashMap::new)
+                .insert(session_id, probe);
+        }
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not register the channel-ownership probe for session {session_id}: {e}"
+            );
+        }
+    }
+}
+
+/// The session's channel-ownership probe, if its channel registered one.
+fn channel_owner_probe(session_id: Uuid) -> Option<ChannelOwnerProbe> {
+    match CHANNEL_OWNER_PROBES.lock() {
+        Ok(guard) => guard.as_ref()?.get(&session_id).cloned(),
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not read the channel-ownership probe for session {session_id}: {e}"
+            );
+            None
+        }
+    }
+}
+
 /// What happened to a message handed to [`deliver_to_session`].
 ///
 /// A bare bool used to be enough, because the only two outcomes were "went
@@ -120,20 +223,118 @@ pub enum Delivery {
     Parked,
     /// Nothing can receive it and nothing is holding it.
     NoRoute,
+    /// The target is mid-turn and the caller did not ask to interrupt
+    /// (fork #13). Nothing was delivered; the sender retries when the
+    /// target goes idle, or resends with `interrupt` set. When the
+    /// refusal follows a redirect (fork #19), `redirected_to` names the
+    /// occupant that is mid-turn — the message WOULD have gone there, and
+    /// will once it goes idle or `interrupt` is set.
+    RefusedInFlight { redirected_to: Option<Uuid> },
+    /// The target no longer owns its channel — a different session now
+    /// occupies the chat/topic it was bound to (fork #17). Instead of
+    /// refusing, the message was REDIRECTED to the occupant `to`, with a
+    /// provenance frame so the successor does not adopt a dead session's
+    /// task as its own (fork #19).
+    Redirected { to: Uuid },
 }
 
 /// Deliver `msg` to whoever owns `session_id`, falling back to the booting
 /// surface, parking it when a channel owns the session but has not claimed it.
-pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> Delivery {
-    if let Some(route) = session_route(session_id) {
-        route(session_id, msg);
-        return Delivery::Delivered;
+///
+/// `interrupt` is the failsafe valve (fork #13): a push into a streaming turn
+/// arrives in the receiver's context as a bare user message — receivers
+/// task-switch or skim past it. Unless the sender explicitly asked to
+/// interrupt, delivery is refused while the target is mid-turn. Unknown turn
+/// state (no probe registered) delivers: the gate must never make a surface
+/// unnotifyable.
+///
+/// The channel-ownership gate runs OUTERMOST (fork #17): it guards WHO owns
+/// the conversation, not the target's turn state, so `interrupt` does not
+/// override it. Unknown ownership (no probe, or no binding recorded) fails
+/// open, same posture as the turn gate.
+///
+/// Occupied no longer REFUSES (fork #19): the replaced session's message is
+/// nobody's fault, and retrying a session that no longer owns its channel
+/// never fixes it. Instead the message is REDIRECTED to the occupant — the
+/// session that owns the channel now — with a provenance frame prefixed to
+/// its context text so the successor does not mistake it for its own task.
+/// The redirect follows the occupant chain up to a hop cap (cycle insurance:
+/// an occupant can itself be replaced mid-flight) and parks past the cap —
+/// held, never dropped. The original `interrupt` flag is then honored
+/// against the FINAL target: a redirect landing on a mid-turn occupant is
+/// still gated by the sender's original intent.
+pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage, interrupt: bool) -> Delivery {
+    // Channel-ownership gate, outermost (fork #17). Occupied → redirect to
+    // the occupant (fork #19), with provenance framing once per chain and a
+    // hop cap so a replacing chain (A replaced B replaced C…) cannot loop.
+    const REDIRECT_HOP_CAP: usize = 3;
+    let mut target = session_id;
+    let mut hops: usize = 0;
+    let mut msg = msg;
+    loop {
+        if let Some(probe) = channel_owner_probe(target)
+            && let ChannelOwnership::Occupied { occupant } = probe()
+        {
+            if hops >= REDIRECT_HOP_CAP {
+                // Cycle insurance exhausted: park rather than loop. The
+                // message is safe and leaves when a channel claims it.
+                tracing::warn!(
+                    target: "background_task",
+                    "Redirect cap hit for session {session_id}: its channel-owner chain \
+                     (ending at session {occupant}) did not stabilise after {hops} hops; \
+                     parking instead of delivering"
+                );
+                super::restart_recovery::parking_route()(target, msg);
+                return Delivery::Parked;
+            }
+            hops += 1;
+            tracing::info!(
+                target: "background_task",
+                "Redirecting delivery for session {target}: its channel is occupied by \
+                 session {occupant} (hop {hops}); delivering to the new owner"
+            );
+            if hops == 1 {
+                // Provenance framing (#19): the successor must know this
+                // message was written for the session that lost the
+                // channel, not for itself. Framed once, against the ORIGINAL
+                // target, so a multi-hop chain does not stack frames.
+                msg.context_text = format!(
+                    "[redirected — originally for session {session_id}, which no longer \
+                     owns this channel] {}",
+                    msg.context_text
+                );
+            }
+            target = occupant;
+            continue;
+        }
+        break;
+    }
+    // Mid-turn gate (fork #13), honored against the FINAL target: a redirect
+    // can land on an occupant that is mid-turn, and the sender's original
+    // `interrupt` flag travels with the message. Refuse with the redirect
+    // context attached so the sender hears where the message WOULD have gone.
+    if !interrupt && turn_probe(target).is_some_and(|probe| probe()) {
+        tracing::info!(
+            target: "background_task",
+            "Refusing delivery to session {target}: mid-turn and interrupt not set"
+        );
+        return Delivery::RefusedInFlight {
+            redirected_to: (hops > 0).then_some(target),
+        };
+    }
+    if let Some(route) = session_route(target) {
+        route(target, msg);
+        return if hops > 0 {
+            Delivery::Redirected { to: target }
+        } else {
+            Delivery::Delivered
+        };
     }
     // Same reasoning as `resolve_route`: an unclaimed session that recovery
     // knows came from a channel must wait for that channel, not be handed to
     // whatever this process booted on (#1206).
-    if super::restart_recovery::awaits_channel_route(session_id) {
-        super::restart_recovery::parking_route()(session_id, msg);
+    if super::restart_recovery::awaits_channel_route(target) {
+        super::restart_recovery::parking_route()(target, msg);
         return Delivery::Parked;
     }
     let local = match LOCAL_ROUTE.lock() {
@@ -141,20 +342,24 @@ pub fn deliver_to_session(session_id: Uuid, msg: QueuedUserMessage) -> Delivery 
         Err(e) => {
             tracing::error!(
                 target: "background_task",
-                "Could not read the local delivery route for session {session_id}: {e}"
+                "Could not read the local delivery route for session {target}: {e}"
             );
             None
         }
     };
     match local {
         Some(route) => {
-            route(session_id, msg);
-            Delivery::Delivered
+            route(target, msg);
+            if hops > 0 {
+                Delivery::Redirected { to: target }
+            } else {
+                Delivery::Delivered
+            }
         }
         None => {
             tracing::error!(
                 target: "background_task",
-                "Nothing can receive a message for session {session_id}; it is dropped: {}",
+                "Nothing can receive a message for session {target}; it is dropped: {}",
                 msg.display_text
             );
             Delivery::NoRoute

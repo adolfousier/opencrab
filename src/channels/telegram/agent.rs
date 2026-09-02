@@ -288,6 +288,13 @@ impl TelegramAgent {
                                 let parsed = rest.rsplit_once(':').and_then(|(tok, i)| {
                                     Some((tok.to_string(), i.parse::<usize>().ok()?))
                                 });
+                                // The tapped token, for the mid-turn re-arm below
+                                // (#1226 G): the busy guard fires after the stash
+                                // was consumed, so the token must be re-registered
+                                // under its original value for a retry tap to work.
+                                let tapped_token = parsed
+                                    .as_ref()
+                                    .map(|(tok, _)| tok.clone());
                                 let taken = match parsed {
                                     Some((cb_token, idx)) => {
                                         let t = state.take_pending_followup(&cb_token, idx).await;
@@ -333,7 +340,9 @@ impl TelegramAgent {
                                         None
                                     }
                                 };
-                                if let Some((sid, text, merged_host)) = taken {
+                                if let Some((entry, text)) = taken {
+                                    let sid = entry.session_id;
+                                    let merged_host = entry.host.clone();
                                     let (chat_id, thread_id, prompt_msg_id) = query
                                         .message
                                         .as_ref()
@@ -366,6 +375,8 @@ impl TelegramAgent {
                                     let agent_clone = agent.clone();
                                     let bot_clone = bot.clone();
                                     let state_clone = state.clone();
+                                    let rearm_token = tapped_token.clone();
+                                    let query_id = query.id.clone();
                                     tokio::spawn(async move {
                                         // Record the pick ON the suggestion block
                                         // rather than posting a new message.
@@ -415,46 +426,51 @@ impl TelegramAgent {
                                                     InlineKeyboardMarkup::new(
                                                         Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
                                                     );
-                                                let outcome: Result<(), String> = match host_info {
-                                                    Some((full, true)) => {
-                                                        super::rich::api::edit_rich_html(
-                                                            bot_clone.api_url().as_str(),
-                                                            bot_clone.token(),
-                                                            chat_id.0,
-                                                            mid.0,
-                                                            &format!("{full}\n\n{picked}"),
-                                                            Some(&serde_json::json!(empty_kb)),
-                                                            "turn",
-                                                            "-",
-                                                        )
+                                                // #39: the pick record is baked into the body
+                                                // BEFORE any transport arm runs — one format
+                                                // site, so no arm can drop the choice again
+                                                // (the classic merged host used to edit the
+                                                // answer HTML alone and lose the record).
+                                                let rewrite =
+                                                    super::suggest_options::pick_rewrite(
+                                                        host_info
+                                                            .as_ref()
+                                                            .map(|(full, rich)| (full.as_str(), *rich)),
+                                                        picked,
+                                                    );
+                                                let outcome: Result<(), String> = match rewrite {
+                                                    super::suggest_options::PickRewrite::RichHost(
+                                                        body,
+                                                    ) => super::rich::api::edit_rich_html(
+                                                        bot_clone.api_url().as_str(),
+                                                        bot_clone.token(),
+                                                        chat_id.0,
+                                                        mid.0,
+                                                        &body,
+                                                        Some(&serde_json::json!(empty_kb)),
+                                                        "turn",
+                                                        "-",
+                                                    )
+                                                    .await
+                                                    .map(|_| ())
+                                                    .map_err(|e| e.to_string()),
+                                                    super::suggest_options::PickRewrite::ClassicHost(
+                                                        body,
+                                                    ) => bot_clone
+                                                        .edit_message_text(chat_id, mid, &body)
+                                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                                        .reply_markup(empty_kb)
                                                         .await
                                                         .map(|_| ())
-                                                        .map_err(|e| e.to_string())
-                                                    }
-                                                    host_info => {
-                                                        let req = match host_info {
-                                                            Some((full, _)) => bot_clone
-                                                                .edit_message_text(
-                                                                    chat_id, mid, &full,
-                                                                )
-                                                                .parse_mode(
-                                                                    teloxide::types::ParseMode::
-                                                                        Html,
-                                                                )
-                                                                .reply_markup(empty_kb),
-                                                            None => bot_clone
-                                                                .edit_message_text(
-                                                                    chat_id, mid, &picked,
-                                                                )
-                                                                .parse_mode(
-                                                                    teloxide::types::ParseMode::
-                                                                        Html,
-                                                                ),
-                                                        };
-                                                        req.await
-                                                            .map(|_| ())
-                                                            .map_err(|e| e.to_string())
-                                                    }
+                                                        .map_err(|e| e.to_string()),
+                                                    super::suggest_options::PickRewrite::Standalone(
+                                                        body,
+                                                    ) => bot_clone
+                                                        .edit_message_text(chat_id, mid, &body)
+                                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                                        .await
+                                                        .map(|_| ())
+                                                        .map_err(|e| e.to_string()),
                                                 };
                                                 if let Err(e) = outcome {
                                                     tracing::warn!(
@@ -500,10 +516,42 @@ impl TelegramAgent {
                                             match state_clone.try_begin_turn(sid) {
                                                 Some(g) => g,
                                                 None => {
+                                                    // #1226 G: the stash was already
+                                                    // consumed above, so a silent drop
+                                                    // would eat the choice while the
+                                                    // keyboard stays rendered with a
+                                                    // dead token. Re-arm the SAME token
+                                                    // (buttons keep working, the retry
+                                                    // tap resolves normally) and tell
+                                                    // the tapper what happened. The
+                                                    // keyboard is NOT stripped: the
+                                                    // choice stays valid once idle.
                                                     tracing::warn!(
                                                         "Telegram followup tap: session {sid} \
-                                                         already mid-turn, dropping"
+                                                         mid-turn — re-arming token, choice \
+                                                         not delivered (#1226 G)"
                                                     );
+                                                    if let Some(tok) = rearm_token.as_ref() {
+                                                        state_clone
+                                                            .restore_pending_followup(
+                                                                tok, entry,
+                                                            )
+                                                            .await;
+                                                    }
+                                                    use teloxide::prelude::Requester;
+                                                    if let Err(e) = bot_clone
+                                                        .answer_callback_query(query_id)
+                                                        .text(
+                                                            "Still working on the previous \
+                                                             answer — pick again in a moment",
+                                                        )
+                                                        .await
+                                                    {
+                                                        tracing::warn!(
+                                                            "Telegram followup tap: busy-toast \
+                                                             ack failed: {e}"
+                                                        );
+                                                    }
                                                     return;
                                                 }
                                             };

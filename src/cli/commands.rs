@@ -1611,6 +1611,26 @@ pub(crate) async fn cmd_session(
             }
             Ok(())
         }
+        SessionCommands::Notify {
+            id,
+            text,
+            title,
+            sender,
+            interrupt,
+            format,
+        } => {
+            crate::cli::session_notify::run(
+                config,
+                &id,
+                &text,
+                title.as_deref(),
+                sender.as_deref(),
+                interrupt,
+                format,
+            )
+            .await?;
+            Ok(())
+        }
     }
 }
 

@@ -76,6 +76,13 @@ pub(crate) struct StreamingState {
     /// the options here and render them once, after the final delivery. Only the
     /// latest set is kept if the tool fires more than once.
     pub(crate) pending_suggestions: Option<Vec<String>>,
+    /// Trailing text reclaimed from the flow AFTER the option-surface Tool
+    /// entry (#31): the model's post-halt sign-off iteration. Stashed by the
+    /// options-pending reclaim in `deliver_final_response`, rendered by
+    /// `render_suggestions` — rich: paragraph after the in-body button rows;
+    /// classic: its own bubble. Keep-never-discard: the ack must neither leak
+    /// into the answer bubble nor vanish with the flow block.
+    pub(crate) pending_trailer: Option<String>,
     /// Response/thinking message (always at bottom)
     pub(crate) msg_id: Option<MessageId>,
     /// Reasoning/thinking text — streamed live, cleared before tool calls or response
@@ -122,6 +129,12 @@ pub(crate) struct StreamingState {
     /// legacy pre-block status bubble is gone, so early-turn status rides
     /// here from the first activity tick.
     pub(crate) header_preview: Option<String>,
+    /// Auto-compaction in flight (#29): while set, `tick_flow_header` pins
+    /// the header to `COMPACTING_HEADER_TEXT` regardless of the computed
+    /// preview — no streaming chunks arrive during the silent window, so
+    /// the ordinary preview would go stale. Cleared by the CompactionSummary
+    /// arm; the next tick recomputes from live data.
+    pub(crate) compacting: bool,
     /// Always-visible flow sections (plan title, checklist progress, active
     /// goal, ctx footer). Rolled by the edit loop from live data; ctx is set
     /// once at final delivery.
@@ -394,6 +407,7 @@ pub(crate) fn render_flow_html_chrome(
         FOLDED_NARRATION_CAP,
         elapsed_secs,
         None,
+        false,
     )
 }
 
@@ -475,6 +489,7 @@ fn flow_body_entries(lines: &[FlowLine], narration_cap: usize) -> (Vec<String>, 
 /// `<blockquote expandable>` (full body, no summary line above it — Decision
 /// 11/12); the merged footer is the plain final line (Decision 3).
 /// `elapsed_secs` drives the footer clock (Decision 13).
+#[allow(clippy::too_many_arguments)] // chrome-pref signature keeps render knobs explicit (#29 adds compacting)
 pub(crate) fn render_flow_html_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
@@ -483,10 +498,21 @@ pub(crate) fn render_flow_html_chrome_pref(
     narration_cap: usize,
     elapsed_secs: u64,
     bg: Option<&str>,
+    compacting: bool,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
     let has_log = !out.is_empty();
-    let activity = latest_activity_preview(lines);
+    // Dedupe (#29): during the silent window the newest log line IS the ⏳
+    // body entry while the pinned header_preview carries the dedicated
+    // compacting state — rendering both doubles the compaction text in the
+    // footer (the owner-sighted live-fire bug). Suppress the activity-derived
+    // segment while the flag is set; the pinned constant stays the sole
+    // compaction string, and the #1052 split moves the gear onto the count.
+    let activity = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let footer = super::flow_chrome::merged_footer(
         &footer_parts(
             header,
@@ -571,6 +597,7 @@ pub(crate) fn render_flow_details_chrome(
         FOLDED_NARRATION_CAP,
         elapsed_secs,
         None,
+        false,
     )
 }
 
@@ -581,6 +608,7 @@ pub(crate) fn render_flow_details_chrome(
 /// when the log has entries that `<sub>` becomes the processing-log `<summary>`
 /// with the full entry list as the collapsed body (Decision 12). `elapsed_secs`
 /// drives the footer clock.
+#[allow(clippy::too_many_arguments)] // same as html chrome-pref (#29 adds compacting)
 pub(crate) fn render_flow_details_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
@@ -589,10 +617,18 @@ pub(crate) fn render_flow_details_chrome_pref(
     narration_cap: usize,
     elapsed_secs: u64,
     bg: Option<&str>,
+    compacting: bool,
 ) -> String {
     let (out, tool_count) = flow_body_entries(lines, narration_cap);
     let has_log = !out.is_empty();
-    let activity = latest_activity_preview(lines);
+    // Dedupe (#29): same suppression as the classic renderer — the footer
+    // join must never drift between surfaces (ADR 0005 Decision 12), so the
+    // compacting flag kills the activity segment here too.
+    let activity = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let footer = super::flow_chrome::merged_footer(
         &footer_parts(
             header,
@@ -641,7 +677,11 @@ pub(crate) fn render_flow_details_chrome_pref(
 // collapse); kept because #420 reuses this renderer once RichBlockDetails
 // serialization lands, and its tests pin the markdown contract meanwhile.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) -> String {
+pub(crate) fn render_flow_rich(
+    lines: &[FlowLine],
+    live_status: Option<&str>,
+    compacting: bool,
+) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -682,8 +722,14 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
     }
     // Same latest-activity preview as the HTML renderer (#405), leading the
     // header status-first (#509); this markdown path is always live. Raw text,
-    // no escaping — the markdown dialect keeps narration verbatim.
-    let status_msg = latest_activity_preview(lines);
+    // no escaping — the markdown dialect keeps narration verbatim. Dedupe
+    // (#29): while the compacting flag is set the newest line is the ⏳ body
+    // entry — suppress it here too so the three renderers never drift.
+    let status_msg = if compacting {
+        None
+    } else {
+        latest_activity_preview(lines)
+    };
     let header = flow_header_text(
         tool_count,
         &FlowHeader::Live(live_status),
@@ -705,6 +751,49 @@ pub(crate) fn humanize_duration(secs: u64) -> String {
     } else {
         format!("{} min {}s", secs / 60, secs % 60)
     }
+}
+
+/// Header text pinned for the whole silent window (#29). No percentage on
+/// purpose: compaction progress is unknowable (one summarizer call), so a
+/// number here would read as a fake progress bar. The START line carries the
+/// fill level instead — that IS knowable.
+pub(crate) const COMPACTING_HEADER_TEXT: &str = "⏳ Compacting context…";
+
+/// Flow-block body line posted when auto-compaction starts (#29). The
+/// percentage is the context FILL LEVEL at trigger time — a "how full was
+/// it" fact, never a progress indicator. The ETA hint, when present, is the
+/// duration the session's PREVIOUS compaction actually took (E2) — grounded
+/// in observation, never a static guess: the old `≈10–60s` constant was
+/// retired because it was never right (observed live range 10s → 29 min),
+/// so a session with no compaction history renders no parenthetical at all.
+pub(crate) fn compacting_flow_line(
+    usage_pct: f64,
+    predicted: Option<std::time::Duration>,
+) -> String {
+    match predicted {
+        Some(d) => format!(
+            "⏳ Compacting context — {:.0}% full (≈{})…",
+            usage_pct,
+            humanize_duration(d.as_secs().max(1))
+        ),
+        None => format!("⏳ Compacting context — {:.0}% full…", usage_pct),
+    }
+}
+
+/// Flow-block body line posted when compaction finishes (#29). Doubles as
+/// the definitive completion signal: arrival means the silent window is
+/// over, so a FAILED compaction never emits one (no false ✅).
+pub(crate) fn compacted_flow_line(
+    before_pct: f64,
+    after_pct: f64,
+    elapsed: std::time::Duration,
+) -> String {
+    format!(
+        "✅ Compacted: {:.0}% → {:.0}% in {}",
+        before_pct,
+        after_pct,
+        humanize_duration(elapsed.as_secs().max(1))
+    )
 }
 
 /// Terminal state of a turn, shown in the settled flow-block header (#480).
@@ -853,6 +942,19 @@ fn strip_leading_gear(s: &str) -> &str {
     s.trim_start_matches(['⚙', '\u{fe0f}']).trim_start()
 }
 
+/// True when `s` starts with an icon glyph (emoji / symbol / dingbat) rather
+/// than a word character. The standing `⚙️` chrome prefix is dropped before
+/// such text — the gear never fronts another icon (#29 fix round, owner
+/// directive). Detection is deliberately simple: a non-ASCII first char that
+/// is not alphanumeric reads as an icon — covers ⏳ ✅ ❌ ⚙ ⏱ ❕ and friends
+/// while Latin, Cyrillic, and CJK text keeps the gear.
+pub(crate) fn starts_with_icon(s: &str) -> bool {
+    match s.chars().next() {
+        Some(c) => !c.is_ascii() && !c.is_alphanumeric(),
+        None => false,
+    }
+}
+
 /// Build the fully-styled header shared by all three renderers so the classic
 /// HTML, rich-details, and rich-markdown headers can never drift (#480, #509).
 /// The live header leads with the status message (bold), then the tool-call
@@ -881,19 +983,30 @@ pub(crate) fn flow_header_text(
             // Ordered live header: status message FIRST (bold), then the count,
             // then the duration (both italic), all `•`-separated (#509).
             let mut segs: Vec<String> = Vec::new();
+            let mut icon_led = false;
             if let Some(status) = status_msg {
                 // The header already prints one live gear; strip a leading
                 // running-gear from the status message so the bare-tool fallback
                 // ("⚙️ bash …") does not render a double gear (#509 follow-up).
                 // Settled ✅/❌ tool icons are left alone: they read as the tool's
                 // own outcome, not a duplicate of the header gear.
-                segs.push(markup.bold(strip_leading_gear(status)));
+                let status = strip_leading_gear(status);
+                icon_led = starts_with_icon(status);
+                segs.push(markup.bold(status));
             }
             segs.push(markup.italic(&base));
             if let Some(dur) = duration {
                 segs.push(markup.italic(dur));
             }
-            format!("⚙️ {}", segs.join(" • "))
+            // The standing gear is dropped when the status already leads with
+            // an icon (#29 fix round, owner directive) — the pinned
+            // `⏳ Compacting context…` header and icon-led tool activity render
+            // bare, never `⚙️ ⏳ …`.
+            if icon_led {
+                segs.join(" • ")
+            } else {
+                format!("⚙️ {}", segs.join(" • "))
+            }
         }
         FlowHeader::Settled {
             icon,
@@ -957,6 +1070,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
                 narration_cap,
                 elapsed,
                 s.bg_indicator.as_deref(),
+                false, // settled renders drop the activity segment regardless
             )
         }
         None => render_flow_html_chrome_pref(
@@ -967,6 +1081,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
             narration_cap,
             elapsed,
             s.bg_indicator.as_deref(),
+            s.compacting,
         ),
     }
 }
@@ -992,6 +1107,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
                 narration_cap,
                 elapsed,
                 s.bg_indicator.as_deref(),
+                false, // settled renders drop the activity segment regardless
             )
         }
         None => render_flow_details_chrome_pref(
@@ -1002,6 +1118,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
             narration_cap,
             elapsed,
             s.bg_indicator.as_deref(),
+            s.compacting,
         ),
     }
 }
@@ -1692,26 +1809,58 @@ pub(crate) async fn restick_flow_if_buried(
 /// without it (header-only when it empties), and returns the text.
 /// Returns `None` when the flow ended on a tool call — then the answer is in
 /// `response.content` and the normal delivery path handles it.
+///
+/// `options_pending`: the turn ends on a `suggest_options` surface (#1226 K).
+/// The substantive answer then sits in the Text run BEFORE the trailing Tool
+/// entry — the halted turn never moves it into `response.content`, so the
+/// stock "flow ended on a tool -> answer is in content" invariant breaks.
+/// The popper lifts the trailing Tool run aside, reclaims that Text run, and
+/// restores the Tool run on top: only the answer text leaves the block, the
+/// tool history stays.
+///
+/// #31: a text-only iteration AFTER the halt leaves its sign-off run as a
+/// Text entry past the Tool — the popper returns BOTH runs as
+/// `(host, trailer)` and nothing is discarded. The host is the answer, the
+/// trailer rides after the buttons; when both are `None` the entries are
+/// untouched.
 pub(crate) async fn take_folded_final(
     bot: &Bot,
     chat: ChatId,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
-) -> Option<String> {
-    let text = {
+    options_pending: bool,
+) -> (Option<String>, Option<String>) {
+    let (host, trailer, none_kind): (Option<String>, Option<String>, Option<&'static str>) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        pop_trailing_folded_texts(&mut s.flow_entries)
+        let (host, trailer) = pop_trailing_folded_texts(&mut s.flow_entries, options_pending);
+        // #1226: a None here used to be silent, which made the K failure mode
+        // (answer stranded in the collapsed flow) undiagnosable from logs.
+        // Name what the flow ended on.
+        let kind = (host.is_none() && trailer.is_none()).then(|| match s.flow_entries.last() {
+            Some(FlowEntry::Tool(_)) => "Tool",
+            Some(FlowEntry::Text(_)) => "Text",
+            Some(FlowEntry::System(_)) => "System",
+            None => "empty",
+        });
+        (host, trailer, kind)
     };
-    text.as_ref()?;
-    // Re-render the block without the promoted answer. An emptied block is
-    // NOT deleted anymore: the flow message is the turn's chrome surface
-    // (header, sections, ctx) and settles header-only at turn end, same as a
-    // no-tool long turn.
-    refresh_flow(bot, chat, streaming, super::governor::EditClass::Final).await;
-    text
+    if let Some(kind) = none_kind {
+        tracing::info!(
+            "Telegram: take_folded_final reclaimed nothing (flow ended on {kind}, \
+             options_pending={options_pending}) (#1226)"
+        );
+    }
+    if host.is_some() || trailer.is_some() {
+        // Re-render the block without the promoted runs. An emptied block is
+        // NOT deleted anymore: the flow message is the turn's chrome surface
+        // (header, sections, ctx) and settles header-only at turn end, same as a
+        // no-tool long turn.
+        refresh_flow(bot, chat, streaming, super::governor::EditClass::Final).await;
+    }
+    (host, trailer)
 }
 
-/// Pop the trailing run of folded model `Text` entries and join them
-/// (#478). Mid-turn narration is always followed by more tool calls, so
+/// Pop the trailing folded `Text` runs, split into host and trailer runs
+/// (#478, #31). Mid-turn narration is always followed by more tool calls, so
 /// the trailing text run after the last tool IS the final answer — and
 /// since #475 keeps ONE block across queued follow-ups, that answer can
 /// be multi-part. Popping only the last entry left earlier parts
@@ -1724,25 +1873,95 @@ pub(crate) async fn take_folded_final(
 /// behind a provider switch produced: the banner became the answer, and
 /// because the answer then read as non-empty, the react-only path never
 /// ran and the reaction was never sent either.
-pub(crate) fn pop_trailing_folded_texts(entries: &mut Vec<FlowEntry>) -> Option<String> {
-    // The candidate run is everything after the last tool call.
-    let run_start = entries
-        .iter()
-        .rposition(|e| matches!(e, FlowEntry::Tool(_)))
-        .map_or(0, |i| i + 1);
-    let mut parts: Vec<String> = Vec::new();
-    let mut chrome: Vec<FlowEntry> = Vec::new();
-    for entry in entries.drain(run_start..) {
-        match entry {
-            FlowEntry::Text(t) => parts.push(t),
-            other => chrome.push(other),
+///
+/// `options_pending` (#1226 K): the turn halted on a `suggest_options`
+/// call, so a Tool entry sits LAST and the answer is the Text run
+/// immediately BEFORE it. Lift the trailing Tool run aside, pop that Text
+/// run, then restore the Tool run in its original order — the block keeps
+/// its tool history; only the answer text is reclaimed. When no Text run
+/// precedes the tools nothing is popped and the entries are untouched.
+///
+/// #31: when the model's text-only iteration FOLLOWED the halt, its
+/// sign-off run sits AFTER the Tool entry as the trailer. That run is
+/// popped FIRST, then the K lift runs — the return is `(host, trailer)`
+/// and nothing is discarded. `trailer` is always `None` without
+/// `options_pending` (the stock pop never looks past a Tool entry).
+pub(crate) fn pop_trailing_folded_texts(
+    entries: &mut Vec<FlowEntry>,
+    options_pending: bool,
+) -> (Option<String>, Option<String>) {
+    if !options_pending {
+        // The candidate run is everything after the last tool call.
+        let run_start = entries
+            .iter()
+            .rposition(|e| matches!(e, FlowEntry::Tool(_)))
+            .map_or(0, |i| i + 1);
+        let mut parts: Vec<String> = Vec::new();
+        let mut chrome: Vec<FlowEntry> = Vec::new();
+        for entry in entries.drain(run_start..) {
+            match entry {
+                FlowEntry::Text(t) => parts.push(t),
+                other => chrome.push(other),
+            }
+        }
+        entries.extend(chrome);
+        if parts.is_empty() {
+            return (None, None);
+        }
+        return (Some(parts.join("\n\n")), None);
+    }
+
+    // #31: the post-halt trailer run sits AFTER the trailing Tool entry —
+    // pop it first, then run the K lift for the host run.
+    let join = |mut parts: Vec<String>| {
+        parts.reverse();
+        parts.join("\n\n")
+    };
+    let mut trailer_parts: Vec<String> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
+        match entries.pop() {
+            Some(FlowEntry::Text(t)) => trailer_parts.push(t),
+            other => {
+                if let Some(e) = other {
+                    entries.push(e);
+                }
+                break;
+            }
         }
     }
-    entries.extend(chrome);
-    if parts.is_empty() {
-        return None;
+    let mut aside: Vec<FlowEntry> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Tool(_))) {
+        if let Some(e) = entries.pop() {
+            aside.push(e);
+        }
     }
-    Some(parts.join("\n\n"))
+    let mut host_parts: Vec<String> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
+        match entries.pop() {
+            Some(FlowEntry::Text(t)) => host_parts.push(t),
+            other => {
+                if let Some(e) = other {
+                    entries.push(e);
+                }
+                break;
+            }
+        }
+    }
+    let had_trailing_tools = !aside.is_empty();
+    while let Some(e) = aside.pop() {
+        entries.push(e);
+    }
+
+    if !had_trailing_tools {
+        // No Tool entry trailed the run — the gate's precondition (flow ends
+        // on the suggest Tool) does not hold, so the popped run is just the
+        // stock trailing answer. Return it as the host, never as a trailer.
+        let host = (!trailer_parts.is_empty()).then(|| join(trailer_parts));
+        return (host, None);
+    }
+    let host = (!host_parts.is_empty()).then(|| join(host_parts));
+    let trailer = (!trailer_parts.is_empty()).then(|| join(trailer_parts));
+    (host, trailer)
 }
 
 /// The last model-authored folded text, looking past any system chrome
@@ -1788,4 +2007,43 @@ pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
     }
     let overlap = norm_folded.len().min(norm_final.len());
     overlap >= 20 && (norm_final.starts_with(&norm_folded) || norm_folded.starts_with(&norm_final))
+}
+
+/// Settle the options-pending reclaim into `(final text, trailer)` (#31).
+///
+/// `content` is the response.content text — with an option-surface halt the
+/// trailing text-only iteration usually leaks its sign-off ack here. `host`
+/// is the reclaimed answer run (before the trailing Tool), `trailer` the
+/// reclaimed post-halt run (after it). Pure so the #31 arbitration is unit-
+/// testable without a Bot or a session.
+///
+/// Rules, per the owner-approved design:
+/// - The host WINS the content slot. The old prepend (`host\n\ncontent`)
+///   shipped the ack inside the answer bubble; the answer must not stay
+///   imprisoned in the flow block and the ack must not ride inside it.
+/// - The trailer survives unless it duplicates the final text (provider
+///   double-copy observed inferhub-side in smoke v4/S4) — no double-send.
+/// - Keep-never-discard: when the popper found no trailer run but content
+///   carries a non-duplicate leftover (the ack never folded into the flow),
+///   the content text BECOMES the trailer instead of vanishing.
+pub(crate) fn settle_options_reclaim(
+    content: String,
+    host: Option<String>,
+    trailer: Option<String>,
+) -> (String, Option<String>) {
+    let text = match &host {
+        Some(h) => h.clone(),
+        None => content.clone(),
+    };
+    let trailer = match trailer {
+        Some(t) if folded_duplicates_final(&t, &text) => None,
+        Some(t) => Some(t),
+        None => match host {
+            Some(_) if !content.trim().is_empty() && !folded_duplicates_final(&content, &text) => {
+                Some(content)
+            }
+            _ => None,
+        },
+    };
+    (text, trailer)
 }

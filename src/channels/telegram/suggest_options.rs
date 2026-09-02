@@ -8,15 +8,33 @@
 //! available and just starts a normal turn; there is no oneshot and no timeout.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use teloxide::payloads::{EditMessageTextSetters, SendMessageSetters};
-use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, ThreadId};
+use teloxide::types::{
+    ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, ThreadId,
+};
 use uuid::Uuid;
 
 use super::TelegramState;
 
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
+
+/// Body for the standalone fallback bubble (#1226 item 4). Prose mode keeps
+/// just the folded list (it has no buttons, nothing can expire); button
+/// modes carry the bare lamp plus an expiry marker — this fallback fires
+/// when the merge lost a rate-limit race, so the bubble is subject to the
+/// stale-shell lifecycle and operators kept reading dead fallbacks as
+/// fresh, answerable questions (msgs 30997 / 31010: one was tapped 32
+/// minutes after its choices were consumed).
+pub(crate) fn standalone_fallback_body(layout: &SuggestLayout, options: &[String]) -> String {
+    if *layout == SuggestLayout::NumberedProse {
+        folded_list_html(options).trim_start().to_string()
+    } else {
+        String::from("\u{1f4a1} <i>(choices may have expired)</i>")
+    }
+}
 
 /// What the suggestion block becomes once one of its options is tapped.
 ///
@@ -47,6 +65,45 @@ pub(crate) fn echo_fallback(text: &str, chooser: Option<&str>) -> String {
             format!("> \u{25b6}\u{fe0f} {} \u{2014} {text}", name.trim())
         }
         _ => format!("> \u{25b6}\u{fe0f} {text}"),
+    }
+}
+
+/// What a tapped suggestion block is rewritten into (#39).
+///
+/// The pick record is baked into the body BEFORE any transport arm runs,
+/// so no arm can drop it: a merged host — rich or classic — keeps its
+/// answer HTML and gains the pick record; a standalone block becomes the
+/// pick record. Before this shape the append lived inside the rich arm
+/// only, and the classic merged host silently lost the choice (owner
+/// report 2026-08-29 23:51Z).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PickRewrite {
+    /// Rich merged host: body rides `edit_rich_html`, empty markup strips
+    /// the dead buttons.
+    RichHost(String),
+    /// Classic merged host: body rides `edit_message_text` + empty markup
+    /// to strip the dead buttons.
+    ClassicHost(String),
+    /// Standalone suggestion block: body rides plain `edit_message_text`.
+    Standalone(String),
+}
+
+/// The single construction site for a post-tap body (#39).
+///
+/// `host` is `(html, rich)` of the merged host bubble when the tapped
+/// message IS it; merged host → answer HTML + pick record, standalone →
+/// pick record alone.
+pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRewrite {
+    match host {
+        Some((full, rich)) => {
+            let body = format!("{full}\n\n{picked}");
+            if rich {
+                PickRewrite::RichHost(body)
+            } else {
+                PickRewrite::ClassicHost(body)
+            }
+        }
+        None => PickRewrite::Standalone(picked),
     }
 }
 
@@ -172,6 +229,7 @@ pub(crate) fn suggestion_rows_rich_html(options: &[String], token: &str) -> Stri
     }
 }
 
+#[allow(clippy::too_many_arguments)] // #31: trailer rides the existing arg set
 pub(crate) async fn render_suggestions(
     bot: &teloxide::Bot,
     state: &Arc<TelegramState>,
@@ -185,10 +243,20 @@ pub(crate) async fn render_suggestions(
     // instead of two, no "Suggested next" header. None or failed edit =
     // standalone fallback below.
     merge_host: Option<super::state::MergeBubble>,
+    // #31: the post-halt sign-off run reclaimed from the flow (after the
+    // suggest_options Tool entry). Rich merge: embedded as a paragraph AFTER
+    // the in-body button rows (one message, never removed). Every other
+    // shape: its own bubble after placement — content, not chrome, so it
+    // ships even when the buttons die.
+    trailer: Option<String>,
 ) {
-    use teloxide::prelude::Requester;
-
     if options.is_empty() {
+        // Stash cleared between delivery and render (mid-turn tap, newer
+        // turn) — the trailer still ships (#31); there is nothing to
+        // register and no keyboard to place.
+        if let Some(t) = &trailer {
+            send_trailer_bubble(bot, chat_id, thread_id, t).await;
+        }
         return;
     }
 
@@ -239,9 +307,10 @@ pub(crate) async fn render_suggestions(
     // mode appends the numbered list under the answer text; button modes add
     // nothing on the classic surface (the buttons carry everything). Rich
     // bubbles additionally get native <tg-button-row> controls INSIDE the
-    // message body.
-    let mut placed = false;
-    if let Some(host) = merge_host {
+    // message body. Both placement payloads are built ONCE — before the first
+    // attempt — so a Retry-After deferral (#30) re-sends byte-identical
+    // content instead of re-deriving it.
+    let merge_payload: Option<MergePayload> = merge_host.map(|host| {
         let mid = host.message_id;
         // Base body + surface: classic bubbles keep their exact delivered
         // HTML; rich bubbles re-render from the captured markdown. Table-
@@ -265,44 +334,257 @@ pub(crate) async fn render_suggestions(
         if rich {
             new_html.push('\n');
             new_html.push_str(&suggestion_rows_rich_html(&options, &token));
+            // #31: the sign-off paragraph rides AFTER the button rows — one
+            // message carries answer + controls + trailer, in that order.
+            if let Some(t) = &trailer {
+                new_html.push('\n');
+                new_html.push_str(&super::rich::markdown_to_html_p(t));
+            }
         }
-        let outcome: Result<(), String> = if rich {
+        MergePayload {
+            message_id: mid,
+            new_html,
+            rich,
+        }
+    });
+
+    // Standalone fallback (no merge candidate, or the edit lost a race / grew
+    // too old): the header sentence is still gone per #tg-suggest-merge —
+    // prose mode shows just the numbered list, button modes need SOME text
+    // for the Bot API to accept the message, so they degrade to the bare 💡.
+    let standalone_body = standalone_fallback_body(&layout, &options);
+
+    let option_count = options.len();
+    match place_once(
+        bot,
+        state,
+        chat_id,
+        thread_id,
+        &token,
+        option_count,
+        &keyboard,
+        merge_payload.as_ref(),
+        &standalone_body,
+    )
+    .await
+    {
+        Ok(()) => {
+            // #31: send the trailer bubble only if it wasn't already embedded
+            // in a rich merge. The followup host is attached only on merge
+            // success, so peek_followup_host tells us if the merge landed.
+            // If it did and was rich, the trailer is already in the HTML.
+            let embedded = state
+                .peek_followup_host(&token)
+                .await
+                .map(|h| h.rich && trailer.is_some())
+                .unwrap_or(false);
+            if !embedded && let Some(t) = &trailer {
+                send_trailer_bubble(bot, chat_id, thread_id, t).await;
+            }
+        }
+        Err(PlaceErr::Fatal(e)) => {
+            tracing::warn!("Telegram suggest_options: send failed: {e}");
+            // The buttons never landed — drop the stash so a stale entry can't
+            // swallow an unrelated future tap.
+            state.drop_pending_followup(&token).await;
+        }
+        Err(PlaceErr::RetryAfter(wait)) => {
+            // #30: a 429 here used to drop the stash at once — but BOTH arms
+            // die inside the same flood window (the standalone send followed
+            // the merge edit by 22ms into the same 41s ban), and the buttons
+            // were lost forever. Keep the stash instead and re-place after
+            // the TRUE Retry-After, budget-capped.
+            tracing::warn!(
+                "Telegram suggest_options: placement hit Retry-After {}s (token {token}) — \
+                 stash kept, deferring",
+                wait.as_secs()
+            );
+            let bot = bot.clone();
+            let state = state.clone();
+            let token = token.clone();
+            let keyboard = keyboard.clone();
+            let trailer = trailer.clone();
+            tokio::spawn(async move {
+                let mut wait = wait;
+                for attempt in 1..=MAX_DEFERRED_PLACEMENT_ATTEMPTS {
+                    use rand::Rng;
+                    // Jitter so several placements deferred by the same ban
+                    // don't all re-hit Telegram on the same second.
+                    let jitter = Duration::from_millis(rand::rng().random_range(0..=2000));
+                    tokio::time::sleep(wait + jitter).await;
+                    match place_once(
+                        &bot,
+                        &state,
+                        chat_id,
+                        thread_id,
+                        &token,
+                        option_count,
+                        &keyboard,
+                        merge_payload.as_ref(),
+                        &standalone_body,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            tracing::info!(
+                                "Telegram suggest_options: deferred placement {attempt}/\
+                                 {MAX_DEFERRED_PLACEMENT_ATTEMPTS} landed (token {token})"
+                            );
+                            // #31: send the trailer bubble only if it wasn't
+                            // already embedded in a rich merge.
+                            let embedded = state
+                                .peek_followup_host(&token)
+                                .await
+                                .map(|h| h.rich && trailer.is_some())
+                                .unwrap_or(false);
+                            if !embedded && let Some(t) = &trailer {
+                                send_trailer_bubble(&bot, chat_id, thread_id, t).await;
+                            }
+                            return;
+                        }
+                        Err(PlaceErr::Fatal(e)) => {
+                            tracing::warn!(
+                                "Telegram suggest_options: deferred placement {attempt} \
+                                 failed permanently: {e}"
+                            );
+                            state.drop_pending_followup(&token).await;
+                            return;
+                        }
+                        Err(PlaceErr::RetryAfter(w)) => {
+                            tracing::warn!(
+                                "Telegram suggest_options: deferred placement {attempt} hit \
+                                 Retry-After {}s again (token {token})",
+                                w.as_secs()
+                            );
+                            wait = w;
+                        }
+                    }
+                }
+                tracing::warn!(
+                    "Telegram suggest_options: placement budget spent after \
+                     {MAX_DEFERRED_PLACEMENT_ATTEMPTS} deferred attempts (token {token}) — dropping"
+                );
+                state.drop_pending_followup(&token).await;
+            });
+        }
+    }
+}
+
+/// Pre-built merge-edit payload (#30): computed ONCE per suggestion block so
+/// a deferred re-placement after a Retry-After re-sends byte-identical
+/// content. `rich` picks the wire: rich bubbles edit via the rich API with
+/// in-body button rows, classic bubbles via editMessageText + reply_markup.
+#[derive(Clone)]
+struct MergePayload {
+    message_id: MessageId,
+    new_html: String,
+    rich: bool,
+}
+
+/// Placement error class (#30): decides whether the stash survives the
+/// failure.
+enum PlaceErr {
+    /// Telegram answered 429 with a Retry-After — the placement may succeed
+    /// once the window passes, so the stash MUST survive the wait.
+    RetryAfter(Duration),
+    /// Anything else: retrying cannot fix it; the stash drops as before.
+    Fatal(String),
+}
+
+/// Deferred placement attempts after a Retry-After, on top of the inline
+/// first pass (#30). Two deferrals cap the chase at roughly two flood
+/// windows while comfortably covering the 31–42s windows observed in the
+/// #30 ledger.
+const MAX_DEFERRED_PLACEMENT_ATTEMPTS: u32 = 2;
+
+/// Wait used when only the rich arm's stringified "(429)" survives — see
+/// [`classify_rich_err`].
+const RICH_429_FALLBACK_WAIT_SECS: u64 = 30;
+
+fn classify_request_err(e: teloxide::RequestError) -> PlaceErr {
+    match e {
+        teloxide::RequestError::RetryAfter(secs) => PlaceErr::RetryAfter(secs.duration()),
+        other => PlaceErr::Fatal(other.to_string()),
+    }
+}
+
+/// The rich arm buries Telegram's exact retry_after inside its own internal
+/// retry loop (`post_rich`) and surfaces only an anyhow string, so
+/// classification keys off the status marker. The wait is a middle-of-the-
+/// road default: the rich path already slept out the true value
+/// RICH_MAX_RETRIES times before bailing, and the observed flood windows
+/// run 31–42s (#30 ledger).
+fn classify_rich_err(e: &str) -> PlaceErr {
+    if e.contains("(429)") {
+        PlaceErr::RetryAfter(Duration::from_secs(RICH_429_FALLBACK_WAIT_SECS))
+    } else {
+        PlaceErr::Fatal(e.to_string())
+    }
+}
+
+/// One placement pass (#30): merge onto the answer bubble when a payload
+/// exists, standalone otherwise. RetryAfter-class errors bubble up so the
+/// caller can defer with the stash intact; anything else is Fatal.
+#[allow(clippy::too_many_arguments)]
+async fn place_once(
+    bot: &teloxide::Bot,
+    state: &Arc<TelegramState>,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    token: &str,
+    option_count: usize,
+    keyboard: &InlineKeyboardMarkup,
+    merge: Option<&MergePayload>,
+    standalone_body: &str,
+) -> Result<(), PlaceErr> {
+    use teloxide::prelude::Requester;
+
+    if let Some(mp) = merge {
+        let mid = mp.message_id;
+        let outcome: Result<(), PlaceErr> = if mp.rich {
             super::rich::api::edit_rich_html(
                 bot.api_url().as_str(),
                 bot.token(),
                 chat_id.0,
                 mid.0,
-                &new_html,
+                &mp.new_html,
                 None,
                 "turn",
                 "-",
             )
             .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| classify_rich_err(&e.to_string()))
         } else {
-            bot.edit_message_text(chat_id, mid, &new_html)
+            bot.edit_message_text(chat_id, mid, &mp.new_html)
                 .parse_mode(ParseMode::Html)
                 .reply_markup(keyboard.clone())
                 .await
                 .map(|_| ())
-                .map_err(|e| e.to_string())
+                .map_err(classify_request_err)
         };
         match outcome {
             Ok(()) => {
-                placed = true;
+                // Name the arm, the host message and the token so any tap can
+                // be mapped back to its panel from logs alone.
+                tracing::info!(
+                    "Telegram suggest_options: keyboard merged onto msg {mid} \
+                     ({} host, token {token}, {option_count} options)",
+                    if mp.rich { "rich" } else { "classic" }
+                );
                 state
                     .attach_followup_host(
-                        &token,
+                        token,
                         super::state::MergedHost {
                             message_id: mid,
-                            html: new_html,
-                            rich,
+                            html: mp.new_html.clone(),
+                            rich: mp.rich,
                         },
                     )
                     .await;
+                return Ok(());
             }
-            Err(e) => {
+            Err(PlaceErr::RetryAfter(wait)) => return Err(PlaceErr::RetryAfter(wait)),
+            Err(PlaceErr::Fatal(e)) => {
                 tracing::warn!(
                     "Telegram suggest_options: merge onto msg {mid} failed ({e}) — standalone fallback"
                 );
@@ -310,26 +592,65 @@ pub(crate) async fn render_suggestions(
         }
     }
 
-    // Fallback (no merge candidate, or the edit lost a race / grew too old):
-    // standalone block. The header sentence is still gone per #tg-suggest-merge
-    // — prose mode shows just the numbered list, button modes need SOME text
-    // for the Bot API to accept the message, so they degrade to the bare 💡.
-    if !placed {
-        let body = if layout == SuggestLayout::NumberedProse {
-            folded_list_html(&options).trim_start().to_string()
-        } else {
-            String::from("\u{1f4a1}")
-        };
-        let mut req = bot.send_message(chat_id, body).reply_markup(keyboard);
-        req = req.parse_mode(ParseMode::Html);
-        if let Some(tid) = thread_id {
-            req = req.message_thread_id(tid);
+    let mut req = bot
+        .send_message(chat_id, standalone_body)
+        .reply_markup(keyboard.clone());
+    req = req.parse_mode(ParseMode::Html);
+    if let Some(tid) = thread_id {
+        req = req.message_thread_id(tid);
+    }
+    match req.await {
+        Ok(msg) => {
+            tracing::info!(
+                "Telegram suggest_options: standalone block msg {} \
+                 (token {token}, {option_count} options)",
+                msg.id
+            );
+            Ok(())
         }
-        if let Err(e) = req.await {
-            tracing::warn!("Telegram suggest_options: send failed: {e}");
-            // The buttons never landed — drop the stash so a stale entry can't
-            // swallow an unrelated future tap.
-            state.drop_pending_followup(&token).await;
+        Err(e) => Err(classify_request_err(e)),
+    }
+}
+
+/// The #31 sign-off trailer as its own bubble: Markdown rendered with the
+/// same HTML wire as every other telegram bubble, thread-routed, with a
+/// plain-text retry when the parse-mode send is rejected — a malformed
+/// markdown construct must degrade the sign-off, never discard it
+/// (keep-never-discard is the whole point of #31).
+async fn send_trailer_bubble(
+    bot: &teloxide::Bot,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    trailer: &str,
+) {
+    use teloxide::prelude::Requester;
+
+    let html = super::markdown::markdown_to_telegram_html(trailer);
+    let mut req = bot.send_message(chat_id, html).parse_mode(ParseMode::Html);
+    if let Some(tid) = thread_id {
+        req = req.message_thread_id(tid);
+    }
+    match req.await {
+        Ok(msg) => {
+            tracing::info!("Telegram: #31 trailer bubble delivered as msg {}", msg.id);
+        }
+        Err(e) => {
+            tracing::warn!("Telegram: #31 trailer bubble HTML send failed ({e}) — retrying plain");
+            let mut plain = bot.send_message(chat_id, trailer);
+            if let Some(tid) = thread_id {
+                plain = plain.message_thread_id(tid);
+            }
+            match plain.await {
+                Ok(msg) => {
+                    tracing::info!(
+                        "Telegram: #31 trailer bubble delivered plain as msg {}",
+                        msg.id
+                    );
+                }
+                Err(e2) => {
+                    tracing::warn!("Telegram: #31 trailer bubble dropped after plain retry: {e2}");
+                }
+            }
         }
     }
 }

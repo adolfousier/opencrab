@@ -8,6 +8,8 @@ use super::TelegramState;
 #[allow(unused_imports)]
 use super::handler::*;
 use super::send::{best_effort_delete, fire_chat_action};
+use crate::a2a::handler::notify::CLI_SENDER_PREFIX;
+use crate::brain::agent::service::background_tasks;
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
@@ -35,8 +37,37 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: no chat for session {session_id}; dropping");
                 return;
             };
-            let Some(bot) = state.bot().await else {
-                tracing::warn!("[bg-resume] telegram: bot not available; dropping resume");
+            // Channel-ownership guard (fork #17): this callback is ALSO
+            // reached by paths that bypass deliver_to_session's gate —
+            // background-task completions resolve their route directly
+            // (background_tasks.rs) — so the choke point checks too. A
+            // session replaced on its chat/topic must never be woken into
+            // the successor's conversation; refuse the wake. (Port seam:
+            // the fork parks the message here; upstream has no channel
+            // park primitive in this callback, so the completion is dropped
+            // with a loud warn — the gate's contract is refusing the wake,
+            // not preserving the message.)
+            if let crate::brain::agent::service::session_routes::ChannelOwnership::Occupied {
+                occupant,
+            } = state.channel_ownership_of(session_id)
+            {
+                tracing::warn!(
+                    "[bg-resume] telegram: session {session_id} no longer owns chat {chat_id} — \
+                     occupied by session {occupant}; refusing to wake it into the successor's \
+                     conversation"
+                );
+                return;
+            }
+            // Bounded wait, not a drop (#1242). At boot this callback and
+            // the bot's own connect run concurrently with nothing ordering
+            // them, so "not connected" here usually means "not connected
+            // yet" — and answering it with a return lost the wake forever.
+            let Some(bot) =
+                crate::channels::transport_ready::await_transport("telegram", session_id, || {
+                    state.bot()
+                })
+                .await
+            else {
                 return;
             };
             let Some(agent) = agent_holder
@@ -77,44 +108,55 @@ pub(crate) fn build_enqueue_callback(
                 crate::brain::agent::PushOrigin::BackgroundTask
                     | crate::brain::agent::PushOrigin::SessionNotify
             ) {
+                // #15: receipt cards. A bg completion carries the typed
+                // payload (icon/label/duration/tail) in `bg_meta` — the card
+                // renders from it, never by parsing the `[System: ...]`
+                // context text. Notify pushes carry no meta: the card is
+                // built from the sender label + markdown body (N4 shape).
                 // #1225: session_notify pushes carry a mechanical
-                // `[session-notify from=<uuid>]` header — replace the raw id
-                // with a human label (topic name for same-chat pushes, chat
-                // name / chat+topic for cross-chat, per Alexey's rule), so the
-                // bubble reads "📨 From: Ops / Push to session", not a UUID
-                // spray. Background-task pushes have no sender: the title
-                // names the task from the producer's display line instead of
-                // the generic "⚙️ background task result" (Alexey 2026-08-26).
-                let (sender, body) = split_bg_echo_parts(&msg.context_text);
-                let title = if let Some(s) = sender {
-                    format!("📨 {}", sender_label(&state, &bot, s, chat_id).await)
-                } else if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask {
-                    // Borrow: `msg` is moved wholesale later in this callback.
-                    background_task_title(&msg.display_text)
+                // `[session-notify from=<uuid>]` header — the raw id is
+                // replaced with a human label (topic name for same-chat
+                // pushes, chat name / chat+topic for cross-chat, per
+                // Alexey's rule). The CLI lane (#1258) stamps
+                // `from=cli:<label>` instead — no sender session exists,
+                // so the carried label renders verbatim, zero lookups.
+                let (echo_md, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
+                    build_bg_receipt_card(&meta)
                 } else {
-                    "⚙️ background task result".to_owned()
+                    let (sender, body) = split_bg_echo_parts(&msg.context_text);
+                    match sender {
+                        Some(NotifySender::Session(s)) => {
+                            let label = sender_label(&state, &bot, s, chat_id).await;
+                            build_notify_receipt_card(&label, &body)
+                        }
+                        Some(NotifySender::CliTooling(label)) => {
+                            build_notify_receipt_card(label, &body)
+                        }
+                        // Defensive: a BackgroundTask push without meta
+                        // (parked by an older binary, #1242 redelivery) keeps
+                        // the #1234 flat bold-title shape. Borrow note:
+                        // `msg` is moved wholesale later in this callback.
+                        None if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask => {
+                            let title = background_task_title(&msg.display_text);
+                            build_bg_echo_bubble(&body, &title)
+                        }
+                        None => build_bg_echo_bubble(&body, "⚙️ background task result"),
+                    }
                 };
-                let (_, classic_html) = build_bg_echo_bubble(&body, &title);
-                // Rich dialect needs the RICH envelope: `<details><summary>`
-                // collapsibles (RichBlockDetails, Bot API 10.1) — the same card
-                // component plan_card renders. The classic
-                // `<blockquote expandable>` markup is the sendMessage dialect;
-                // under sendRichMessage it renders as a flat quote, not a rich
-                // card (user-verified 2026-08-26).
-                let rich_html = build_bg_echo_bubble_rich(&body, &title);
-
-                // Rich-first: route the echo bubble through the same canonical
-                // rich send plan_card uses. Any send failure degrades to the
-                // classic HTML blockquote below.
-                let sent_rich = match super::rich::api::send_rich_html_id(
-                    bot.api_url().as_str(),
-                    bot.token(),
-                    chat_id,
+                // #1234/#15: the card rides the CANONICAL markdown→rich
+                // outbox (the same pipeline as every cron/kanal message);
+                // the native-rich route renders the <details> collapse, the
+                // fenced tail and pipe tables server-side. The classic
+                // blockquote above is the degraded-path source: computed up
+                // front, only touched if the outbox send fails.
+                let sent_rich = match super::send::send_markdown_outbox(
+                    &bot,
+                    teloxide::types::ChatId(chat_id),
                     thread_id,
-                    &rich_html,
-                    None,
+                    &echo_md,
                     "bg-resume",
                     "-",
+                    None,
                 )
                 .await
                 {
@@ -311,7 +353,9 @@ pub(crate) async fn resume_session_inner(
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         // Telegram: positive chat id = private/DM, negative = group (#677).
         is_dm: chat_id.0 > 0,
+        compacting: false,
         pending_suggestions: None,
+        pending_trailer: None,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: Vec::new(),
@@ -373,15 +417,27 @@ pub(crate) async fn resume_session_inner(
         let bot_typing = bot.clone();
         let chat_typing = chat_id;
         Arc::new(move |_sid, event| match event {
-            // Auto-compaction silent window — immediate typing refresh.
+            // Auto-compaction silent window — immediate typing refresh plus
+            // the visible start line in the flow body (#29).
             // See handle_message for the full rationale.
-            ProgressEvent::Compacting => {
+            ProgressEvent::Compacting {
+                usage_pct,
+                predicted,
+            } => {
                 let bot = bot_typing.clone();
                 let chat = chat_typing;
                 tokio::spawn(async move {
                     fire_chat_action(&bot, chat, thread_id, ChatAction::Typing, "resume typing")
                         .await;
                 });
+                if let Ok(mut s) = st.lock() {
+                    s.compacting = true;
+                    s.header_preview = Some(COMPACTING_HEADER_TEXT.to_string());
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacting_flow_line(
+                            usage_pct, predicted,
+                        )));
+                }
             }
             ProgressEvent::ReasoningChunk { text } => {
                 if let Ok(mut s) = st.lock() {
@@ -498,6 +554,23 @@ pub(crate) async fn resume_session_inner(
                 // keyboard ABOVE the final answer on resumed turns.
                 if let Ok(mut s) = st.lock() {
                     s.pending_suggestions = Some(options);
+                }
+            }
+            // Compaction finished — definitive completion receipt (#29).
+            // See the handle_message progress callback for the rationale.
+            ProgressEvent::CompactionSummary {
+                before_pct,
+                after_pct,
+                elapsed,
+                ..
+            } => {
+                if let Ok(mut s) = st.lock() {
+                    s.compacting = false;
+                    s.header_preview = None;
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(compacted_flow_line(
+                            before_pct, after_pct, elapsed,
+                        )));
                 }
             }
             _ => {}
@@ -663,9 +736,11 @@ pub(crate) async fn resume_session_inner(
         .pending_suggestions
         .take();
     if let Some(options) = suggestions {
-        let merge_host = {
+        // #31: the sign-off trailer rides to render_suggestions with the
+        // merge host — same last-out-of-the-flow ordering as handle_message.
+        let (merge_host, trailer) = {
             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            s.final_bubble.take()
+            (s.final_bubble.take(), s.pending_trailer.take())
         };
         super::suggest_options::render_suggestions(
             &bot,
@@ -675,6 +750,7 @@ pub(crate) async fn resume_session_inner(
             thread_id,
             options,
             merge_host,
+            trailer,
         )
         .await;
     }
@@ -686,9 +762,27 @@ pub(crate) async fn resume_session_inner(
 /// chars; header, tags and Telegram's own margin eat the rest of the budget.
 const BG_ECHO_BODY_CAP_CHARS: usize = 3200;
 
+/// Producer stamped into a `[session-notify from=…]` header.
+///
+/// Cross-session pushes name the real sender session uuid (the agent tool,
+/// #1203) — the echo humanizes it via [`sender_label`]. The CLI lane (#23)
+/// has NO sender session (the verb runs as a separate process), so it
+/// stamps `cli:<label>` ([`CLI_SENDER_PREFIX`]); the echo renders the
+/// carried label verbatim instead of a session lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotifySender<'a> {
+    /// A real sender session (`from=<uuid>`).
+    Session(Uuid),
+    /// The CLI lane (`from=cli:<label>`, #23): the label renders verbatim.
+    CliTooling(&'a str),
+}
+
 /// Split the mechanical `[session-notify from=<uuid>]` header (#1203) off a
 /// push's context text. Absent or malformed header → `(None, whole text)`.
-pub(crate) fn split_notify_header(context_text: &str) -> (Option<Uuid>, &str) {
+/// A `cli:`-prefixed sender (#23) yields [`NotifySender::CliTooling`]
+/// carrying the label after the prefix; an EMPTY label is malformed and
+/// falls through to `(None, whole text)`.
+pub(crate) fn split_notify_header(context_text: &str) -> (Option<NotifySender<'_>>, &str) {
     let trimmed = context_text.trim_start();
     let Some(after_open) = trimmed.strip_prefix("[session-notify from=") else {
         return (None, trimmed);
@@ -697,8 +791,15 @@ pub(crate) fn split_notify_header(context_text: &str) -> (Option<Uuid>, &str) {
         return (None, trimmed);
     };
     let rest = after_open[close + 1..].trim_start();
-    match Uuid::parse_str(&after_open[..close]) {
-        Ok(sender) => (Some(sender), rest),
+    let candidate = &after_open[..close];
+    if let Some(label) = candidate.strip_prefix(CLI_SENDER_PREFIX) {
+        let label = label.trim();
+        if !label.is_empty() {
+            return (Some(NotifySender::CliTooling(label)), rest);
+        }
+    }
+    match Uuid::parse_str(candidate) {
+        Ok(sender) => (Some(NotifySender::Session(sender)), rest),
         Err(_) => (None, trimmed),
     }
 }
@@ -725,7 +826,7 @@ pub(crate) fn strip_system_framing(text: &str) -> &str {
 /// is the real payload. Strip the wrapper, keep inner content + tail (#1225
 /// leftover: the squash shipped tests asserting this shape but the old
 /// whole-string-only strip could never satisfy them).
-pub(crate) fn split_bg_echo_parts(context_text: &str) -> (Option<Uuid>, String) {
+pub(crate) fn split_bg_echo_parts(context_text: &str) -> (Option<NotifySender<'_>>, String) {
     let (sender, rest) = split_notify_header(context_text);
     (sender, strip_push_scaffolding(rest))
 }
@@ -775,23 +876,96 @@ pub(crate) fn build_bg_echo_bubble(body: &str, title: &str) -> (String, String) 
     (markdown, html)
 }
 
-/// RICH dialect envelope for the echo bubble: `<details><summary>` collapsible
-/// — the exact card component plan_card renders via `send_rich_html_id`
-/// (Bot API 10.1 RichBlockDetails). The classic
-/// `<blockquote expandable>` markup from [`build_bg_echo_bubble`] belongs to
-/// the sendMessage dialect and renders flat under `sendRichMessage`.
-/// Mirrors plan_card.rs `CollapsibleStyle::DetailsSummary`:
-/// `<details><summary><b>{title}</b></summary>{body}</details>`.
-pub(crate) fn build_bg_echo_bubble_rich(body: &str, title: &str) -> String {
+/// The bg-receipt tail fence (#15): three backticks normally, but ONE MORE
+/// than the longest backtick run when the tail itself carries a ``` run, so
+/// raw output can never escape the code block and corrupt the card.
+fn receipt_fence(tail: &str) -> String {
+    let (mut longest, mut run) = (0usize, 0usize);
+    for ch in tail.chars() {
+        if ch == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    "`".repeat(if longest >= 3 { longest + 1 } else { 3 })
+}
+
+/// Background-task receipt card (#15, owner-locked shape P3f): ONE collapsed
+/// `<details>`. Summary = `<sub>{✅|❌} `{label}` 🕒 {duration}</sub>` — icon
+/// by exit 0 / non-zero as the sole outcome signal (no exit code, no
+/// wording), label = the roster `short_label` form in inline code. Body =
+/// ONE fenced code block with the output tail verbatim. Returns (rich
+/// markdown, classic HTML fallback). The markdown leg feeds
+/// [`super::send::send_markdown_outbox`], whose native-rich route renders
+/// the collapsible + code block server-side — the shape the owner-approved
+/// prototypes proved on screen (topic 31847).
+pub(crate) fn build_bg_receipt_card(meta: &crate::brain::agent::BgTaskMeta) -> (String, String) {
+    let icon = if meta.success { "✅" } else { "❌" };
+    // The label sits inside an inline-code span: backticks would escape the
+    // span and break the summary, so they are stripped.
+    let stripped = meta.label.replace('`', "");
+    let label = stripped.trim();
+    let label = if label.is_empty() {
+        "background task"
+    } else {
+        label
+    };
+    let duration = background_tasks::format_elapsed(meta.elapsed_secs);
+    let fence = receipt_fence(&meta.tail);
+    let markdown = format!(
+        "<details>\n<summary><sub>{icon} `{label}` 🕒 {duration}</sub></summary>\n\n\
+         {fence}\n{tail}\n{fence}\n\n</details>",
+        tail = meta.tail
+    );
+    // Degraded path: same content as a classic blockquote (non-collapsible
+    // on this wire), computed up front and only touched if the outbox send
+    // fails (#1234 fallback discipline).
+    let flat_title = format!("{icon} {label} 🕒 {duration}");
+    let fenced_body = format!("{fence}\n{tail}\n{fence}", tail = meta.tail);
+    let (_, classic_html) = build_bg_echo_bubble(&fenced_body, &flat_title);
+    (markdown, classic_html)
+}
+
+/// The notify-card peek (#15 amendment): the body's first line, truncated
+/// ~45 chars + ellipsis. Deterministic at compose time — no new metadata.
+fn first_line_preview(body: &str) -> String {
+    let line = body.lines().next().unwrap_or("").trim();
+    if line.chars().count() > 45 {
+        format!("{}…", crate::utils::string::truncate_chars(line, 45))
+    } else {
+        line.to_string()
+    }
+}
+
+/// Session-notify receipt card (#15 amendment, owner-locked shape N4): ONE
+/// collapsed `<details>`. Summary = `<sub>📨 From <b>{sender}</b>: {preview}</sub>`
+/// — fixed 📨 (notifies carry no success/failure semantics), sender label in
+/// bold, preview = truncated first line of the body. Body = the notify
+/// content as rendered markdown: prose and pipe tables stay native for the
+/// rich parser — no code fence, a notify is a document, not a log.
+pub(crate) fn build_notify_receipt_card(sender_label: &str, body: &str) -> (String, String) {
+    // The sender sits inside a <b> tag: angle brackets are neutralized so a
+    // label containing '<' cannot open a tag and corrupt the summary.
+    let sanitized = sender_label.replace('<', "‹").replace('>', "›");
+    let sender = sanitized.trim();
+    let sender = if sender.is_empty() {
+        "session notify"
+    } else {
+        sender
+    };
+    let preview = first_line_preview(body);
     let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
     let suffix = if truncated { " (truncated)" } else { "" };
-    format!(
-        "<details><summary><b>{}{}</b></summary>{}</details>",
-        super::markdown::escape_html(title),
-        suffix,
-        super::rich::markdown_to_html(body),
-    )
+    let markdown = format!(
+        "<details>\n<summary><sub>📨 From <b>{sender}</b>: {preview}</sub></summary>\n\n\
+         {body}{suffix}\n\n</details>"
+    );
+    let flat_title = format!("📨 From {sender}: {preview}");
+    let (_, classic_html) = build_bg_echo_bubble(&format!("{body}{suffix}"), &flat_title);
+    (markdown, classic_html)
 }
 
 /// Bubble header for a background-task echo: reuse the producer's display
@@ -809,10 +983,16 @@ pub(crate) fn background_task_title(display_text: &str) -> String {
 }
 
 /// Human-readable sender label for a session_notify push (Alexey's rule):
-/// sender chat == recipient chat → the sender's topic name; a different
-/// non-forum chat → chat name; a different forum → chat + topic name.
-/// Best-effort: any lookup failure falls back to the short session id
-/// (the same prefix `session_search list` displays).
+/// sender chat == recipient chat → the sender's topic name; a DM session
+/// (positive chat id) → the BOT's username from the startup get_me cache
+/// (the reader IS the chat's human side — handing their own name back as
+/// the sender is useless); a different non-forum chat → chat name; a
+/// different forum → chat + topic name. The card summary renders it as
+/// `From <name>:`. Topic names come from the local
+/// `channel_messages.topic_name` store (the Bot API has no method to query
+/// them), chat names from `getChat`. Best-effort: any lookup failure falls
+/// back to the short session id (the same prefix `session_search list`
+/// displays).
 async fn sender_label(
     state: &TelegramState,
     bot: &teloxide::Bot,
@@ -826,34 +1006,22 @@ async fn sender_label(
     let label = match sender_chat {
         None => None,
         Some(sc) if sc == recipient_chat => match sender_topic {
-            Some(tid) => {
-                super::titles::topic_title(
-                    &api_url,
-                    &token,
-                    teloxide::types::ChatId(sc),
-                    teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
-                )
-                .await
-            }
+            Some(tid) => local_topic_name(sc, tid).await,
             None => None,
         },
+        // DM with the bot (positive chat id = private chat): label the bot
+        // itself from the startup get_me cache — zero network. An empty
+        // cache (shouldn't happen post-boot) falls through to the short-id
+        // fallback below.
+        Some(sc) if sc > 0 => state.bot_username().await,
         Some(sc) => {
             let chat =
                 super::titles::chat_title(&api_url, &token, teloxide::types::ChatId(sc)).await;
             match (chat, sender_topic) {
-                (Some(c), Some(tid)) => {
-                    match super::titles::topic_title(
-                        &api_url,
-                        &token,
-                        teloxide::types::ChatId(sc),
-                        teloxide::types::ThreadId(teloxide::types::MessageId(tid)),
-                    )
-                    .await
-                    {
-                        Some(t) => Some(format!("{c} / {t}")),
-                        None => Some(c),
-                    }
-                }
+                (Some(c), Some(tid)) => match local_topic_name(sc, tid).await {
+                    Some(t) => Some(format!("{c} / {t}")),
+                    None => Some(c),
+                },
                 (Some(c), None) => Some(c),
                 (None, _) => None,
             }
@@ -862,8 +1030,126 @@ async fn sender_label(
     label.unwrap_or_else(|| short_session_id(sender))
 }
 
+/// Forum-topic display name, resolved LOCALLY: the Bot API has no method to
+/// query a topic's title (`getForumTopic` does not exist — bots can only
+/// learn names passively; telegram-bot-api issues #634/#356). The handler
+/// already stores every observed topic name in `channel_messages.topic_name`,
+/// so the card builder reads the newest one for (chat, thread). Any miss —
+/// DB unavailable, topic never observed, empty name — feeds the short-id
+/// fallback in `sender_label` like every other lookup failure.
+async fn local_topic_name(chat_id: i64, thread_id: i32) -> Option<String> {
+    let pool = crate::db::global_pool()?;
+    let repo = ChannelMessageRepository::new(pool.clone());
+    repo.latest_topic_name("telegram", &chat_id.to_string(), &thread_id.to_string())
+        .await
+        .ok()
+        .flatten()
+}
+
 /// Short session id: first 8 hex chars of the uuid (matches `session_search`
 /// list's short-id prefix display).
 fn short_session_id(uuid: Uuid) -> String {
     uuid.simple().to_string()[..8].to_owned()
+}
+
+/// How recently (seconds) a Telegram-bound session must have been active to
+/// appear in the boot-time wake log (#1227).
+///
+/// Kept short on purpose: a back-to-back dev restart (the recurring case on
+/// the ops box, 10+/day) must not flood the log with every recently-active
+/// session each time. Only sessions that touched their topic inside this
+/// window are recorded.
+pub const WAKE_RECENT_SECS: i64 = 600;
+
+/// Log every Telegram-bound session that was active shortly before boot but
+/// is not currently being resumed, so the stranded set is auditable (#1227).
+///
+/// The on-disk journal only rescues turns that were literally mid-loop at the
+/// kill instant; between-turn sessions have no row (#1224 re-registers their
+/// delivery routes, which drains parked reports, but that happens quietly).
+/// This pass names them in the log instead: it runs no turn, re-executes
+/// nothing, and sends no message — the former "I'm back" bubble was removed
+/// per #34 (owner direction 2026-08-29: remove the UX message, leave
+/// logging), because it promised resumption the feature does not yet deliver
+/// and was never persisted in `channel_messages`, so it could not be audited.
+///
+/// Sessions whose ids are in `already_resumed` are skipped: those were roused
+/// by a full continuation prompt via `resume_session` already. Returns how
+/// many sessions landed in the log.
+pub async fn wake_recently_active(
+    pool: crate::db::Pool,
+    already_resumed: &std::collections::HashSet<Uuid>,
+) -> usize {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let since_epoch = now.saturating_sub(WAKE_RECENT_SECS);
+    let repo = crate::db::SessionBindingRepository::new(pool);
+    let Ok(bindings) = repo.recent_for_channel("telegram", since_epoch).await else {
+        tracing::warn!(target: "telegram", "Boot wake could not read recent session bindings");
+        return 0;
+    };
+
+    let mut stranded: Vec<String> = Vec::new();
+    for b in bindings {
+        let Ok(sid) = Uuid::parse_str(&b.session_id) else {
+            continue;
+        };
+        if already_resumed.contains(&sid) {
+            continue;
+        }
+        stranded.push(short_session_id(sid));
+    }
+
+    let scheduled = stranded.len();
+    if scheduled > 0 {
+        tracing::info!(
+            target: "telegram",
+            "Boot wake pass (log-only, #34): recently-active sessions not resumed: [{}]",
+            stranded.join(",")
+        );
+        tracing::info!(
+            target: "telegram",
+            "Scheduled boot wake for {scheduled} recently-active session(s) (#1227)"
+        );
+    }
+    scheduled
+}
+
+#[cfg(test)]
+mod sender_label_dm_tests {
+    use super::*;
+
+    /// Owner ruling 2026-08-28: a session sitting in a DM with the bot must
+    /// be labelled with the BOT's username, never the reader's own name —
+    /// the reader IS the chat's human side, so handing it back as the
+    /// sender is useless.
+    #[tokio::test]
+    async fn dm_session_labels_the_bot_not_the_reader() {
+        let state = TelegramState::new();
+        state.set_bot_username("test_bot".to_owned()).await;
+        let sender = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        state.register_session_chat(sender, 12345, None).await;
+        let bot = teloxide::Bot::new("42:TEST");
+        assert_eq!(
+            sender_label(&state, &bot, sender, -100_999).await,
+            "test_bot"
+        );
+    }
+
+    /// Empty get_me cache (shouldn't happen post-boot): the DM arm must
+    /// degrade to the short session id, never to a getChat lookup that
+    /// would return the reader's own profile.
+    #[tokio::test]
+    async fn dm_session_without_cached_bot_username_falls_back_to_short_id() {
+        let state = TelegramState::new();
+        let sender = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        state.register_session_chat(sender, 12345, None).await;
+        let bot = teloxide::Bot::new("42:TEST");
+        assert_eq!(
+            sender_label(&state, &bot, sender, -100_999).await,
+            short_session_id(sender)
+        );
+    }
 }

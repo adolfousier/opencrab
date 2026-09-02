@@ -1239,19 +1239,15 @@ impl AgentService {
                 &model_name,
                 cancel_token.as_ref(),
                 &progress_callback,
+                super::compaction::BudgetPhase::TurnStart,
             )
             .await
         };
 
-        if let Some(ref summary) = compaction_result {
+        if let Some(ref outcome) = compaction_result {
             // Persist compaction marker to DB so restarts load from this point
-            let compaction_marker = format!(
-                "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                 Below is a structured summary of everything before this point.]\n\n{}",
-                summary
-            );
             if let Err(e) = message_service
-                .create_message(session_id, "user".to_string(), compaction_marker)
+                .create_message(session_id, "user".to_string(), outcome.marker(""))
                 .await
             {
                 tracing::error!("Failed to persist compaction marker to DB: {}", e);
@@ -1409,6 +1405,12 @@ impl AgentService {
         // fallback to a different provider rather than giving up.
         let mut phantom_retries_used: u32 = 0;
         const MAX_PHANTOM_RETRIES: u32 = 5;
+        // #31: set when a suggest_options surface halts the turn (#1178 M1).
+        // The NEXT text-only iteration is then the model's sign-off, not a
+        // phantom threat — the ack-skip path keeps it, and this flag only
+        // tags that exemption surgically in the log (the skip itself fires
+        // 70+ times/day for ordinary acks and must not be disturbed).
+        let mut option_surface_halt_seen = false;
         // Consecutive identical tool rounds (#1030). Observes only; the
         // repeated call still runs and its result still reaches the model.
         // Reset on a provider swap below, because a fallback replays the
@@ -1699,7 +1701,7 @@ impl AgentService {
             // Enforce 65% budget before every API call. Skip ONLY when the
             // CLI manages its own session (claude-cli with --resume). Qwen
             // is spawned cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -1708,17 +1710,13 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
                 // Persist compaction marker to DB so restarts load from this point
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                     Below is a structured summary of everything before this point.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(session_id, "user".to_string(), outcome.marker(""))
                     .await
                 {
                     tracing::error!("Failed to persist mid-loop compaction marker to DB: {}", e);
@@ -3818,7 +3816,7 @@ impl AgentService {
             // Post-calibration compaction check. Skip ONLY when the CLI
             // owns its session (claude-cli with --resume). Qwen is spawned
             // cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -3827,16 +3825,16 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted \
-                     after token calibration revealed high context usage.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(
+                        session_id,
+                        "user".to_string(),
+                        outcome.marker(" after token calibration revealed high context usage"),
+                    )
                     .await
                 {
                     tracing::error!(
@@ -4708,14 +4706,31 @@ impl AgentService {
                     );
                 }
                 if !phantom_eligible && tool_calls_completed_this_turn > 0 {
-                    tracing::info!(
-                        target: "phantom",
-                        tools_completed = tool_calls_completed_this_turn,
-                        text_len = iteration_text.len(),
-                        "phantom detection skipped: turn already produced successful tool calls \
-                         and the text-only iteration is a pure completion acknowledgement \
-                         (no forward-looking intent phrase)"
-                    );
+                    if option_surface_halt_seen {
+                        // #31: this text-only iteration follows a suggest_options
+                        // halt — it is the model's sign-off, not a phantom threat.
+                        // The ack-skip keeps its text as a trailing Text entry in
+                        // the flow (AFTER the option-surface Tool entry), where the
+                        // options-pending reclaim lifts it as the trailer. The text
+                        // preview closes the ~50-char truncation gap in forensics.
+                        tracing::info!(
+                            target: "phantom",
+                            tools_completed = tool_calls_completed_this_turn,
+                            text_len = iteration_text.len(),
+                            trailer_preview = %iteration_text.chars().take(160).collect::<String>(),
+                            "phantom ack classification exempted: text-only iteration follows an \
+                             option-surface halt — kept as trailing trailer entry (#31)"
+                        );
+                    } else {
+                        tracing::info!(
+                            target: "phantom",
+                            tools_completed = tool_calls_completed_this_turn,
+                            text_len = iteration_text.len(),
+                            "phantom detection skipped: turn already produced successful tool calls \
+                             and the text-only iteration is a pure completion acknowledgement \
+                             (no forward-looking intent phrase)"
+                        );
+                    }
                 }
                 let stuck_loop_now =
                     phantom_eligible && super::phantom::is_stuck_in_intent_loop(&iteration_text);
@@ -5489,6 +5504,7 @@ impl AgentService {
                     && super::truncation::try_emit_truncation_continue(
                         &iteration_text,
                         reasoning_text.as_ref(),
+                        &response.usage,
                         &mut context,
                         session_id,
                         &progress_callback,
@@ -5502,6 +5518,22 @@ impl AgentService {
                     // Mark the next iteration so the stream-error path skips
                     // cross-provider fallback for the continuation request.
                     current_iter_is_truncation_continue = true;
+                    self.record_provider_feedback(
+                        session_id,
+                        "truncation_retry",
+                        "stream-integrity",
+                        Some(&format!(
+                            "mid-sentence cut (tail {:?}); corrective continuation attempted (#36)",
+                            iteration_text
+                                .chars()
+                                .rev()
+                                .take(60)
+                                .collect::<String>()
+                                .chars()
+                                .rev()
+                                .collect::<String>()
+                        )),
+                    );
                     continue;
                 }
 
@@ -6524,6 +6556,9 @@ impl AgentService {
                                     tracing::info!(
                                         "🛑 Turn halted by option-surface tool (suggest_options)"
                                     );
+                                    // #31: the following text-only iteration is the
+                                    // sign-off — tag it for the phantom-gate exemption.
+                                    option_surface_halt_seen = true;
                                     break;
                                 }
 
@@ -6811,6 +6846,9 @@ impl AgentService {
                 // Policy routes through ToolRegistry::halts_turn (Tool::halts_turn).
                 if halt_turn_requested {
                     tracing::info!("🛑 Turn halted by option-surface tool (suggest_options)");
+                    // #31: the following text-only iteration is the sign-off —
+                    // tag it for the phantom-gate exemption.
+                    option_surface_halt_seen = true;
                     break;
                 }
             }
@@ -7024,7 +7062,7 @@ impl AgentService {
             // Enforce 65% budget after tool results. Skip ONLY when the CLI
             // owns its session (claude-cli with --resume). Qwen is spawned
             // cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -7033,17 +7071,13 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
                 // Persist compaction marker to DB so restarts load from this point
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                     Below is a structured summary of everything before this point.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(session_id, "user".to_string(), outcome.marker(""))
                     .await
                 {
                     tracing::error!("Failed to persist post-tool compaction marker to DB: {}", e);
@@ -7167,8 +7201,8 @@ impl AgentService {
             match super::truncation::join_continuation(partial, &final_text) {
                 Continuation::Extended(joined) => {
                     tracing::info!(
-                        "Truncation continue: joined {} char partial with {} char continuation \
-                         into {} chars",
+                        "[TRUNCATION] verdict=recovered: joined {} char partial with {} char \
+                         continuation into {} chars",
                         partial.chars().count(),
                         final_text.chars().count(),
                         joined.chars().count()
@@ -7182,10 +7216,20 @@ impl AgentService {
                     // is as complete as it will get. Delivering it unmarked told
                     // the user a sentence ending at a colon was finished (#956).
                     tracing::warn!(
-                        "Truncation continue FAILED: {} char continuation added nothing to the \
-                         {} char partial (model echoed the tail) — delivering it marked incomplete",
+                        "[TRUNCATION] verdict=unrecovered: {} char continuation added nothing \
+                         to the {} char partial (model echoed the tail) — delivering it marked \
+                         incomplete",
                         final_text.chars().count(),
                         partial.chars().count(),
+                    );
+                    self.record_provider_feedback(
+                        session_id,
+                        "truncation_unrecovered",
+                        "stream-integrity",
+                        Some(
+                            "continuation echoed the tail; answer delivered with incomplete \
+                             marker (#36)",
+                        ),
                     );
                     final_text = format!("{still_partial}{}", super::truncation::INCOMPLETE_MARKER);
                 }

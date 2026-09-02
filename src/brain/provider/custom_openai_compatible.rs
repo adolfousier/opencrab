@@ -3784,6 +3784,28 @@ impl Provider for OpenAIProvider {
             /// marker. Holding back a short suffix bridges the split,
             /// mirroring `think_carry`'s role for `<think>` tag detection.
             marker_carry: String,
+            /// TEXT_ACCUM journal (#36): number of TextDelta events emitted
+            /// to the consumer this turn. Paired with `text_chars` and
+            /// `response_text_accum` so the terminal `[STREAM_RECONCILE]`
+            /// line can reconcile billed usage against what actually
+            /// arrived — the discriminator for silent upstream/relay
+            /// truncation, which inferhub's metadata-only retention can
+            /// never settle after the fact.
+            text_delta_count: usize,
+            /// Char count of emitted text, maintained incrementally (O(1)
+            /// per delta instead of recounting the growing accumulator).
+            text_chars: usize,
+            /// Reasoning content emitted this turn (think-tag promotions +
+            /// `reasoning_content` field), chars and delta count — needed
+            /// to reconcile `usage.output - usage.reasoning ≈ visible`.
+            reasoning_chars: usize,
+            reasoning_delta_count: usize,
+            /// True once a chunk carrying `finish_reason` has been
+            /// processed. Distinguishes provider-declared stops from the
+            /// harness's EndTurn default (#694): `stop_source=default` at
+            /// a terminal path means the provider never said why the
+            /// stream ended.
+            saw_finish_reason: bool,
         }
 
         // Tool-call marker filtering runs for ALL OpenAI-compatible providers.
@@ -3809,6 +3831,11 @@ impl Provider for OpenAIProvider {
             tool_capture_buffer: String::new(),
             tool_block_active: false,
             marker_carry: String::new(),
+            text_delta_count: 0,
+            text_chars: 0,
+            reasoning_chars: 0,
+            reasoning_delta_count: 0,
+            saw_finish_reason: false,
         }));
 
         let event_stream = byte_stream
@@ -3878,6 +3905,28 @@ impl Provider for OpenAIProvider {
                                         .pending_stop_reason
                                         .take()
                                         .unwrap_or(crate::brain::provider::types::StopReason::EndTurn);
+                                    // Usage-vs-received reconciliation (#36): what the consumer
+                                    // actually got (chars/deltas/tail) against what the stream
+                                    // declared. `[DONE]` carries no usage, so output/reasoning
+                                    // are 0 here — the inline/usage-only paths carry real counts.
+                                    // Sanitize the tail for logging: mid-turn text ends in paragraph
+                                    // breaks (`\n\n` before a tool call) and the log writer does NOT
+                                    // escape embedded newlines — a raw tail splits the log line and
+                                    // orphans every field after it (caught in post-swap smoke).
+                                    let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r");
+                                    let stop_source = if st.saw_finish_reason { "provider" } else { "default" };
+                                    tracing::info!(
+                                        "[STREAM_RECONCILE] text_chars={}, text_deltas={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output=0, usage_reasoning=0, text_tail={}",
+                                        st.text_chars,
+                                        st.text_delta_count,
+                                        st.reasoning_chars,
+                                        st.reasoning_delta_count,
+                                        st.saw_finish_reason,
+                                        stop_reason,
+                                        stop_source,
+                                        total_input_tokens,
+                                        reconc_tail
+                                    );
                                     tracing::info!("[STREAM_USAGE] Final usage (fallback on DONE): input={}, output=0, stop_reason={:?}", total_input_tokens, stop_reason);
                                     events.push(Ok(StreamEvent::MessageDelta {
                                         delta: crate::brain::provider::types::MessageDelta {
@@ -4331,6 +4380,16 @@ impl Provider for OpenAIProvider {
                                                     }
 
                                                     st.response_text_accum.push_str(&display_text);
+                                                    st.text_delta_count += 1;
+                                                    st.text_chars += display_text.chars().count();
+                                                    tracing::debug!(
+                                                        "[TEXT_ACCUM] text_len={}, text_delta_count={}, text_tail={}",
+                                                        st.text_chars,
+                                                        st.text_delta_count,
+                                                        // Sanitized: raw tails carry embedded newlines
+                                                        // that split log lines (see STREAM_RECONCILE note).
+                                                        st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r")
+                                                    );
                                                     events.push(Ok(StreamEvent::ContentBlockDelta {
                                                         index: 0,
                                                         delta: ContentDelta::TextDelta {
@@ -4369,6 +4428,8 @@ impl Provider for OpenAIProvider {
                                                     content_block: ContentBlock::Text { text: String::new() },
                                                 }));
                                             }
+                                            st.reasoning_delta_count += 1;
+                                            st.reasoning_chars += rc.chars().count();
                                             events.push(Ok(StreamEvent::ContentBlockDelta {
                                                 index: 0,
                                                 delta: ContentDelta::ReasoningDelta {
@@ -4383,6 +4444,10 @@ impl Provider for OpenAIProvider {
                                         // final usage-only chunk AFTER this one. We handle
                                         // MessageStop on [DONE] or the usage-only chunk below.
                                         if let Some(reason) = finish_reason_str {
+                                            // The provider declared why the stream ended —
+                                            // distinguishes this stop from the harness's EndTurn
+                                            // default at the terminal paths (#36, #694).
+                                            st.saw_finish_reason = true;
                                             // If we were still withholding a leak-probe buffer
                                             // waiting to confirm/deny a tool_calls envelope and
                                             // the turn is ending without it ever matching, flush
@@ -4412,6 +4477,8 @@ impl Provider for OpenAIProvider {
                                                             content_block: ContentBlock::Text { text: String::new() },
                                                         }));
                                                     }
+                                                    st.reasoning_delta_count += 1;
+                                                    st.reasoning_chars += reasoning_from_think.chars().count();
                                                     events.push(Ok(StreamEvent::ContentBlockDelta {
                                                         index: 0,
                                                         delta: ContentDelta::ReasoningDelta {
@@ -4428,6 +4495,16 @@ impl Provider for OpenAIProvider {
                                                         }));
                                                     }
                                                     st.response_text_accum.push_str(&filtered);
+                                                    st.text_delta_count += 1;
+                                                    st.text_chars += filtered.chars().count();
+                                                    tracing::debug!(
+                                                        "[TEXT_ACCUM] text_len={}, text_delta_count={}, text_tail={}",
+                                                        st.text_chars,
+                                                        st.text_delta_count,
+                                                        // Sanitized: raw tails carry embedded newlines
+                                                        // that split log lines (see STREAM_RECONCILE note).
+                                                        st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r")
+                                                    );
                                                     events.push(Ok(StreamEvent::ContentBlockDelta {
                                                         index: 0,
                                                         delta: ContentDelta::TextDelta { text: filtered },
@@ -4511,6 +4588,11 @@ impl Provider for OpenAIProvider {
                                             } else {
                                                 (0, 0, 0, 0)
                                             };
+                                            let raw_reasoning = chunk
+                                                .usage
+                                                .as_ref()
+                                                .map(|u| u.reasoning_tokens())
+                                                .unwrap_or(0);
 
                                             let stop_reason = Some(match reason.as_str() {
                                                 "stop" => crate::brain::provider::types::StopReason::EndTurn,
@@ -4522,6 +4604,22 @@ impl Provider for OpenAIProvider {
                                             // If this chunk already carries real usage (some
                                             // providers inline it), emit immediately + stop.
                                             if raw_input > 0 || raw_output > 0 {
+                                                let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r");
+                                                let stop_source = if st.saw_finish_reason { "provider" } else { "default" };
+                                                tracing::info!(
+                                                    "[STREAM_RECONCILE] text_chars={}, text_deltas={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output={}, usage_reasoning={}, text_tail={}",
+                                                    st.text_chars,
+                                                    st.text_delta_count,
+                                                    st.reasoning_chars,
+                                                    st.reasoning_delta_count,
+                                                    st.saw_finish_reason,
+                                                    stop_reason,
+                                                    stop_source,
+                                                    raw_input,
+                                                    raw_output,
+                                                    raw_reasoning,
+                                                    reconc_tail
+                                                );
                                                 tracing::info!(
                                                     "[STREAM_USAGE] Final usage (inline): input={}, output={}, cache_read={}, cache_create={}",
                                                     raw_input, raw_output, raw_cache_read, raw_cache_create
@@ -4534,6 +4632,7 @@ impl Provider for OpenAIProvider {
                                                     usage: crate::brain::provider::types::TokenUsage {
                                                         input_tokens: raw_input,
                                                         output_tokens: raw_output,
+                                                        reasoning_tokens: raw_reasoning,
                                                         cache_creation_tokens: raw_cache_create,
                                                         cache_read_tokens: raw_cache_read,
                                                         ..Default::default()
@@ -4558,26 +4657,44 @@ impl Provider for OpenAIProvider {
                                                 let cache_create = usage.cache_creation_input_tokens.unwrap_or(0);
                                                 let reasoning = usage.reasoning_tokens();
                                                 if input > 0 || output > 0 {
+                                                    // The usage-only chunk is the provider's FINAL
+                                                    // chunk — the turn is complete. Default to
+                                                    // EndTurn when no finish_reason set a
+                                                    // stop_reason, so a finished turn terminates
+                                                    // instead of retrying forever
+                                                    // (qwen3.8-max-preview, #694).
+                                                    let final_stop_reason = st.pending_stop_reason.take().unwrap_or(
+                                                        crate::brain::provider::types::StopReason::EndTurn,
+                                                    );
+                                                    let reconc_tail: String = st.response_text_accum.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>().replace('\n', "\\n").replace('\r', "\\r");
+                                                    let stop_source = if st.saw_finish_reason { "provider" } else { "default" };
+                                                    tracing::info!(
+                                                        "[STREAM_RECONCILE] text_chars={}, text_deltas={}, reasoning_chars={}, reasoning_deltas={}, saw_finish_reason={}, stop_reason={:?}, stop_source={}, usage_input={}, usage_output={}, usage_reasoning={}, text_tail={}",
+                                                        st.text_chars,
+                                                        st.text_delta_count,
+                                                        st.reasoning_chars,
+                                                        st.reasoning_delta_count,
+                                                        st.saw_finish_reason,
+                                                        final_stop_reason,
+                                                        stop_source,
+                                                        input,
+                                                        output,
+                                                        reasoning,
+                                                        reconc_tail
+                                                    );
                                                     tracing::info!(
                                                         "[STREAM_USAGE] Final usage: input={}, output={}, cache_read={}, cache_create={}, reasoning={}",
                                                         input, output, cache_read, cache_create, reasoning
                                                     );
                                                     events.push(Ok(StreamEvent::MessageDelta {
                                                         delta: crate::brain::provider::types::MessageDelta {
-                                                            // The usage-only chunk is the provider's
-                                                            // FINAL chunk — the turn is complete.
-                                                            // Default to EndTurn when no finish_reason
-                                                            // set a stop_reason, so a finished turn
-                                                            // terminates instead of retrying forever
-                                                            // (qwen3.8-max-preview, #694).
-                                                            stop_reason: Some(st.pending_stop_reason.take().unwrap_or(
-                                                                crate::brain::provider::types::StopReason::EndTurn,
-                                                            )),
+                                                            stop_reason: Some(final_stop_reason),
                                                             stop_sequence: None,
                                                         },
                                                         usage: crate::brain::provider::types::TokenUsage {
                                                             input_tokens: input,
                                                             output_tokens: output,
+                                                            reasoning_tokens: reasoning,
                                                             cache_creation_tokens: cache_create,
                                                             cache_read_tokens: cache_read,
                                                             ..Default::default()
