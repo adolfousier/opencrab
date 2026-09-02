@@ -10,7 +10,7 @@
 //! It becomes possible the moment the user's `ssh` opens a reverse forward:
 //!
 //! ```text
-//! ssh -R 8765:localhost:8765 root@vps
+//! ssh -R 127.0.0.1:8765:localhost:8765 root@vps
 //! ```
 //!
 //! That is a real channel on the SAME connection, tunnelling back to a small
@@ -173,7 +173,7 @@ pub struct Tunnel {
 ///
 /// [`DROP_PORT_VAR`] set to a port declares the tunnel. Absent (or
 /// unparseable) over an SSH session means probe [`DEFAULT_DROP_PORT`], which
-/// is what the documented `ssh -R 8765:localhost:8765` opens: nobody should
+/// is what the documented `ssh -R 127.0.0.1:8765:localhost:8765` opens: nobody should
 /// have to export a variable on the server for the documented flow to work.
 /// Off SSH there is nothing to dial.
 pub fn tunnel_from(var: impl Fn(&str) -> Option<String>) -> Option<Tunnel> {
