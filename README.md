@@ -654,8 +654,20 @@ alias son='ssh root@188.166.147.13'
 alias son='ssh -R 8765:localhost:8765 root@188.166.147.13'
 ```
 
-That is it. Drop a file into the remote TUI and it arrives in
-`channel_attachments/dropped/` and attaches like any local file.
+That is it. Drop a file into the remote TUI and it attaches like any local
+file.
+
+**Where it lands** follows the same rules as every other share:
+
+- `<home>/tmp/`, beside pasted clipboard images, since that is what it is: an
+  ephemeral share rather than a chat-channel file. `<home>` is
+  profile-resolved, so a `-p` profile keeps its own.
+- **If the session belongs to a project**, it is then copied into
+  `<home>/projects/<slug>/files/` with the project's other artifacts, exactly
+  as a clipboard paste or a forwarded Telegram file would be.
+
+It does **not** go in `channel_attachments/`, which holds files sent or
+forwarded through a chat channel and is keyed by platform.
 
 **Why the forward is needed.** A process on the server has no handle on the
 SSH connection it arrived over; sshd hands it a pty and nothing else. `-R`

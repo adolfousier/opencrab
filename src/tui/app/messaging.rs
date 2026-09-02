@@ -2015,17 +2015,35 @@ impl App {
     /// Pull a file from the client over the drop tunnel and store it where
     /// the rest of the attachment pipeline expects a path (#1289).
     ///
-    /// Written into the channel attachments dir under its own name, so it is
-    /// indistinguishable from a file that arrived through a chat channel.
-    fn pull_dropped_file(port: u16, client_path: &str) -> anyhow::Result<String> {
+    /// Lands in `<home>/tmp/`, beside pasted clipboard images, because that is
+    /// what this is: a TUI-side attachment materialised locally. NOT in
+    /// `channel_attachments/`, which the system prompt defines as files sent
+    /// or forwarded in a chat channel, and which is keyed by platform. A drop
+    /// is neither, and filing it there would tell the agent something untrue.
+    ///
+    /// Stamped on disk and named for display, mirroring `attach_clipboard_image`:
+    /// two screenshots called `Screenshot.png` must not clobber each other,
+    /// and `ImageAttachment` carries the display name separately anyway.
+    fn pull_dropped_file(port: u16, client_path: &str) -> anyhow::Result<(String, String)> {
         let bytes = crate::utils::drop_agent::fetch(port, client_path)?;
-        let dir = crate::channels::telegram::media::channel_attachments_dir().join("dropped");
+        let dir = crate::config::opencrabs_home().join("tmp");
         std::fs::create_dir_all(&dir)?;
-        let name = std::path::Path::new(client_path)
+
+        let source = std::path::Path::new(client_path);
+        let display = source
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "dropped-file".to_string());
-        let dest = dir.join(&name);
+        let ext = source
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+
+        let dest = dir.join(format!("dropped-{stamp}{ext}"));
         std::fs::write(&dest, &bytes)?;
         tracing::info!(
             "drop tunnel: pulled {} ({} bytes) to {}",
@@ -2033,7 +2051,7 @@ impl App {
             bytes.len(),
             dest.display()
         );
-        Ok(dest.to_string_lossy().to_string())
+        Ok((display, dest.to_string_lossy().to_string()))
     }
 
     pub(crate) fn extract_image_paths(text: &str) -> (String, Vec<ImageAttachment>) {
@@ -2186,14 +2204,10 @@ impl App {
                             let port = crate::utils::drop_transfer::tunnel_port()
                                 .expect("guarded by the match arm");
                             match Self::pull_dropped_file(port, &path) {
-                                Ok(local) => {
+                                Ok((name, local)) => {
                                     let lower = local.to_lowercase();
                                     let is_video =
                                         VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
-                                    let name = std::path::Path::new(&path)
-                                        .file_name()
-                                        .map(|n| n.to_string_lossy().to_string())
-                                        .unwrap_or_else(|| path.clone());
                                     attachments.push(ImageAttachment {
                                         name,
                                         path: local,
