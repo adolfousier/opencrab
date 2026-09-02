@@ -629,6 +629,47 @@ OpenCrabs runs in one of two modes. Pick the one that fits the machine, and **fo
   - **macOS:** System Settings → General → Login Items → add a small `.command` script that runs `opencrabs` (or one that tells Terminal to open it).
   - **VPS over SSH:** a TUI needs a live terminal, so run it inside `tmux`/`screen` and reattach — e.g. a `@reboot` cron or user service that runs `tmux new-session -d -s crab 'opencrabs'`, then `tmux attach -t crab` when you SSH in. On a headless VPS you usually want the daemon, not the TUI.
 
+#### Dropping files into a TUI running on a VPS
+
+Dragging a file onto your terminal inserts **text**: the path as your *local*
+machine sees it. When the TUI is running over SSH, that path names a file on
+your laptop while the process is on the VPS, so there is nothing local to
+attach. OpenCrabs detects this and tells you how to get the file across
+instead of passing a dead path to the agent.
+
+Whether it can pull the file in automatically depends on your **terminal
+emulator**, not on your SSH client. Regular `ssh` is fine.
+
+| Your terminal | In-band transfer | Install on the VPS |
+|---|---|---|
+| kitty | yes, kitty transfer protocol | `kitten` |
+| iTerm2, WezTerm, tabby | yes, zmodem | `lrzsz` (gives you `rz`) |
+| Alacritty, Terminal.app, GNOME Terminal, most others | no | nothing helps |
+
+**Two things that surprise people:**
+
+- Installing `kitten` or `lrzsz` on the VPS does nothing on its own. The
+  capability lives in the terminal you are sitting in front of. `kitten
+  transfer` needs kitty as your terminal; it is unrelated to `kitten ssh`.
+- **`tmux` and `screen` disable in-band transfer**, including for kitty and
+  iTerm2. They rewrite the escape stream, so the transfer negotiation is
+  swallowed. This is worth knowing because running the TUI inside `tmux` is
+  exactly what we recommend just above for a VPS.
+
+**`scp` is what you are always given**, because it is the one mechanism that
+works from every terminal, through `tmux`, with nothing extra installed. If
+your terminal can do better, OpenCrabs says so, but it still hands you the
+`scp` line. The client host is filled in from `SSH_CONNECTION` and the path is
+quoted, so it survives spaces in filenames:
+
+```
+scp <you>@203.0.113.9:'/Users/you/Screenshot 2026-09-01 at 18.18.16.png' ~/.opencrabs/channel_attachments/
+```
+
+Anything landing in `channel_attachments/` is readable by the agent. Sending
+the file through a connected chat channel (Telegram, Discord, Slack) also puts
+it there, which is usually the fastest route on a headless box.
+
 ### Daemon & Service
 
 Run profiles as background services:
