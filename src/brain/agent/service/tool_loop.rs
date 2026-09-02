@@ -474,7 +474,7 @@ impl AgentService {
         override_progress_callback: Option<ProgressCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
-        track_pending: bool,
+        track_origin: Option<PendingOrigin>,
     ) -> Result<AgentResponse> {
         // #1008: one-shot proactive fallback-chain setup suggestion. Rides
         // the first REAL user turn (never a [System: resume / background
@@ -487,14 +487,21 @@ impl AgentService {
         );
 
         // Track this request for restart recovery. Resume turns pass
-        // `track_pending == false`: a resume is a one-shot best-effort recovery,
+        // `track_origin == None`: a resume is a one-shot best-effort recovery,
         // so it must NOT re-insert its own pending row. Otherwise an interrupted
         // resume (cancel, crash, another restart) leaves a row that resumes the
         // same already-done session on every subsequent startup — a perpetual
         // loop with rows piling up (#729).
+        //
+        // Tracked turns record their origin (#12): user-initiated rows replay
+        // with the continuation prompt at boot; push-initiated rows (a
+        // session_notify / background-task completion woke the session) are
+        // re-delivered as the original push text instead, because replaying
+        // the LLM turn there could double-execute the interrupted tool call's
+        // side effects.
         let pending_repo = crate::db::PendingRequestRepository::new(self.context.pool());
         let request_id = Uuid::new_v4();
-        if track_pending
+        if let Some(origin) = track_origin
             && let Err(e) = pending_repo
                 .insert(
                     request_id,
@@ -502,6 +509,7 @@ impl AgentService {
                     &user_message,
                     channel,
                     channel_chat_id,
+                    origin.as_db_str(),
                 )
                 .await
         {
@@ -610,7 +618,9 @@ impl AgentService {
         // Request finished — delete the tracking row. Only PROCESSING rows
         // survive (meaning the process crashed/restarted mid-request).
         // Untracked (resume) turns never inserted a row, so nothing to clean up.
-        if track_pending && let Err(e) = pending_repo.delete(request_id).await {
+        if track_origin.is_some()
+            && let Err(e) = pending_repo.delete(request_id).await
+        {
             tracing::warn!("Failed to clean up pending request: {}", e);
         }
 
