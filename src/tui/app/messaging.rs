@@ -21,6 +21,14 @@ fn utf8_char_len(b: u8) -> usize {
     }
 }
 
+/// A file pulled across the drop tunnel and written locally (#1311).
+pub(crate) struct PulledDrop {
+    /// The client's filename, for display.
+    pub name: String,
+    /// Where it landed on this machine.
+    pub path: String,
+}
+
 impl App {
     /// Read the persisted approval policy from config.toml.
     /// Returns `(auto_session, auto_always)` flags.
@@ -2026,29 +2034,21 @@ impl App {
     /// or forwarded in a chat channel, and which is keyed by platform. A drop
     /// is neither, and filing it there would tell the agent something untrue.
     ///
-    /// Stamped on disk and named for display, mirroring `attach_clipboard_image`:
-    /// two screenshots called `Screenshot.png` must not clobber each other,
-    /// and `ImageAttachment` carries the display name separately anyway.
-    fn pull_dropped_file(port: u16, client_path: &str) -> anyhow::Result<(String, String)> {
+    /// Named after the client's file so the directory stays readable, with a
+    /// timestamp spliced in only on collision (#1311): two screenshots called
+    /// `Screenshot.png` must not clobber each other, but the ordinary case
+    /// should be a file you can recognise.
+    fn pull_dropped_file(port: u16, client_path: &str) -> anyhow::Result<PulledDrop> {
         let bytes = crate::utils::drop_agent::fetch(port, client_path)?;
         let dir = crate::config::opencrabs_home().join("tmp");
         std::fs::create_dir_all(&dir)?;
 
-        let source = std::path::Path::new(client_path);
-        let display = source
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "dropped-file".to_string());
-        let ext = source
-            .extension()
-            .map(|e| format!(".{}", e.to_string_lossy()))
-            .unwrap_or_default();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-
-        let dest = dir.join(format!("dropped-{stamp}{ext}"));
+        let dest =
+            crate::utils::drop_landing::landing_path(&dir, client_path, stamp, |p| p.exists());
         std::fs::write(&dest, &bytes)?;
         tracing::info!(
             "drop tunnel: pulled {} ({} bytes) to {}",
@@ -2056,7 +2056,10 @@ impl App {
             bytes.len(),
             dest.display()
         );
-        Ok((display, dest.to_string_lossy().to_string()))
+        Ok(PulledDrop {
+            name: crate::utils::drop_landing::client_file_name(client_path),
+            path: dest.to_string_lossy().to_string(),
+        })
     }
 
     pub(crate) fn extract_image_paths(text: &str) -> (String, Vec<ImageAttachment>) {
@@ -2209,13 +2212,13 @@ impl App {
                             let port = crate::utils::drop_transfer::tunnel_port()
                                 .expect("guarded by the match arm");
                             match Self::pull_dropped_file(port, &path) {
-                                Ok((name, local)) => {
-                                    let lower = local.to_lowercase();
+                                Ok(pulled) => {
+                                    let lower = pulled.path.to_lowercase();
                                     let is_video =
                                         VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
                                     attachments.push(ImageAttachment {
-                                        name,
-                                        path: local,
+                                        name: pulled.name,
+                                        path: pulled.path,
                                         is_video,
                                     });
                                     rewritten.replace_range(start..end, "");
