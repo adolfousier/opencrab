@@ -25,8 +25,8 @@ pub(crate) struct SubagentRow {
     pub id: String,
     pub label: String,
     pub state: String,
-    /// Path of the agent's JSON status file (unified `work_status.rs`
-    /// pattern, #26), so the model can read live progress directly.
+    /// Path of the agent's JSON status file (`subagent/status.rs` pattern),
+    /// so the model can read live progress directly.
     pub status_file: Option<String>,
 }
 
@@ -113,8 +113,7 @@ impl Tool for TasksListTool {
         let mut subagents = Vec::new();
         if let Some(mgr) = context.subagent_manager.as_ref() {
             for (id, label, state) in mgr.list() {
-                let sf = crate::brain::agent::service::work_status::status_dir()
-                    .join(format!("{id}.json"));
+                let sf = super::subagent::status::status_dir().join(format!("{id}.json"));
                 subagents.push(SubagentRow {
                     id,
                     label,
