@@ -2098,9 +2098,73 @@ impl App {
             }
         }
 
-        // Case 2: Mixed text — scan for image URLs (split by whitespace is fine for URLs)
-        // and absolute paths without spaces
+        // Case 2: Mixed text.
+        //
+        // A dropped path can contain spaces, and macOS names every screenshot
+        // that way, so the whitespace scan below can never see one: it
+        // shatters into fragments and the only one carrying the extension is
+        // tested as a relative path and fails (#1288). Anchor on the
+        // extension instead and pull those out first, longest-match wins.
         let mut attachments = Vec::new();
+        let mut text = std::borrow::Cow::Borrowed(text);
+        {
+            use super::dropped_path::{self, Dropped};
+            let media: Vec<&str> = IMAGE_EXTENSIONS
+                .iter()
+                .chain(VIDEO_EXTENSIONS.iter())
+                .copied()
+                .collect();
+
+            // Collect over the ORIGINAL text, then rewrite right-to-left so
+            // earlier byte ranges stay valid. Rewriting as we go would also
+            // let an "unavailable" marker match itself on the next pass.
+            let mut hits: Vec<(usize, usize, Dropped)> = Vec::new();
+            let mut from = 0usize;
+            while from < text.len() {
+                let Some(hit) = dropped_path::find(&text[from..], &media) else {
+                    break;
+                };
+                let (s, e) = hit.range();
+                hits.push((from + s, from + e, hit));
+                from += e;
+            }
+
+            if !hits.is_empty() {
+                let mut rewritten = text.to_string();
+                for (start, end, hit) in hits.into_iter().rev() {
+                    match hit {
+                        Dropped::Here { path, .. } => {
+                            let lower = path.to_lowercase();
+                            let is_video = VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
+                            let name = std::path::Path::new(&path)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.clone());
+                            attachments.push(ImageAttachment {
+                                name,
+                                path,
+                                is_video,
+                            });
+                            rewritten.replace_range(start..end, "");
+                        }
+                        // The path is real, just not on this machine — a drop
+                        // from a laptop into a session running over SSH. Say
+                        // so in the message itself: forwarding it as prose
+                        // sent the agent hunting through the attachments dir
+                        // and cost a whole turn before it worked that out.
+                        Dropped::Elsewhere { path, .. } => {
+                            rewritten.replace_range(
+                                start..end,
+                                &format!("[attachment unavailable: {path} is not on this machine]"),
+                            );
+                        }
+                    }
+                }
+                text = std::borrow::Cow::Owned(rewritten);
+            }
+        }
+        let text: &str = &text;
+
         let mut remaining_parts = Vec::new();
         let mut inlined_files: Vec<String> = Vec::new();
 
