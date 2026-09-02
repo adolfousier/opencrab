@@ -580,6 +580,11 @@ pub(crate) fn peek_just_archived_in_dir(dir: &std::path::Path, session_id: Uuid)
 
 /// Non-consuming check for the "just archived" stamp (#16).
 ///
+/// The settle restick gate re-checks every settle (per-turn restick, #62),
+/// so a consuming read there would starve every later turn — gate sites
+/// peek; the one-shot consumer that finalizes the completed card still
+/// calls [`take_plan_just_archived`].
+///
 /// Finalization consumes the flag itself, and only after the completed card's
 /// post/edit is confirmed landed (or terminally impossible), so a
 /// flood-interrupted finalize leaves the flag in place and the next settle
@@ -614,16 +619,6 @@ pub(crate) fn take_just_archived_in_dir(dir: &std::path::Path, session_id: Uuid)
 pub async fn take_plan_just_archived(session_id: Uuid) -> bool {
     let dir = archive_dir(session_id).await;
     take_just_archived_in_dir(&dir, session_id)
-}
-
-/// Peek the "just archived" stamp WITHOUT consuming it (#62).
-///
-/// The settle restick gate re-checks every settle (per-turn restick), so a
-/// consuming read there would starve every later turn. Gate sites peek; the
-/// one-shot consumer that finalizes the completed card still calls
-/// [`take_plan_just_archived`].
-pub async fn peek_plan_just_archived(session_id: Uuid) -> bool {
-    plan_just_archived_path(session_id).await.exists()
 }
 
 /// True when the newest file under this session's `archive/` was written
