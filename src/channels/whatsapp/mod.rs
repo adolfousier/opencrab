@@ -5,6 +5,7 @@
 
 mod agent;
 mod approval;
+mod cancel;
 mod connection;
 mod followups;
 pub(crate) mod handler;
@@ -135,43 +136,6 @@ impl WhatsAppState {
     /// The chat JID a session was last handled in, if known (#731).
     pub async fn session_jid(&self, session_id: Uuid) -> Option<String> {
         self.session_jids.lock().await.get(&session_id).cloned()
-    }
-
-    /// Store a cancel token for a session (before starting agent call).
-    /// If a token already exists for this session, cancel it first to abort the
-    /// previous in-flight agent call — prevents concurrent uncancellable agents.
-    pub async fn store_cancel_token(&self, session_id: Uuid, token: CancellationToken) {
-        let mut tokens = self.cancel_tokens.lock().await;
-        if let Some(old) = tokens.remove(&session_id) {
-            tracing::warn!(
-                "WhatsApp: cancelling previous in-flight agent call for session {}",
-                session_id
-            );
-            old.cancel();
-        }
-        tokens.insert(session_id, token);
-    }
-
-    /// Cancel and remove the token for a session. Returns true if a token existed.
-    pub async fn cancel_session(&self, session_id: Uuid) -> bool {
-        if let Some(token) = self.cancel_tokens.lock().await.remove(&session_id) {
-            token.cancel();
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Remove the cancel token after the agent call completes (cleanup).
-    /// Only removes if the stored token is already cancelled — prevents a
-    /// finishing old call from removing a newer call's live token.
-    pub async fn remove_cancel_token(&self, session_id: Uuid) {
-        let mut tokens = self.cancel_tokens.lock().await;
-        if let Some(token) = tokens.get(&session_id)
-            && token.is_cancelled()
-        {
-            tokens.remove(&session_id);
-        }
     }
 
     /// Buffer a photo marker for batching. Returns the current buffer size.
