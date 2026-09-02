@@ -77,6 +77,14 @@ fn render_block(block: &Block, wrap_p: bool) -> String {
         // super::mermaid so the escaping stays in one place.
         Block::Mermaid { source, result } => match result {
             MermaidResult::Image(url) => super::mermaid::image_html(url),
+            // Locally-rendered PNG bytes are delivered via the multipart
+            // markdown path, never through vector HTML `<img>` (Telegram
+            // rejects it). This arm is a defensive fallback — degrade
+            // legibly rather than leak raw binary.
+            MermaidResult::ImageBytes(_) => super::mermaid::failure_html(
+                "diagram rendered locally but could not be embedded in HTML",
+                source,
+            ),
             MermaidResult::Failed(err) | MermaidResult::ParseError(err) => {
                 super::mermaid::failure_html(err, source)
             }
