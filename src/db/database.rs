@@ -150,6 +150,13 @@ pub(crate) fn build_migrations() -> Migrations<'static> {
             "../migrations/20260826000001_add_session_bindings.sql"
         )),
         M::up(include_str!(
+            // FORK port (essential): prod DB user_version=37 is bound to THIS
+            // migration (2026-09-02 upstream merge). Slot number is load-bearing,
+            // do not renumber. Upstream's own #37 (add_pending_followups) shifts
+            // to slot 38 below; its content is untouched.
+            "../migrations/20260828000001_pending_requests_origin.sql"
+        )),
+        M::up(include_str!(
             "../migrations/20260902000001_add_pending_followups.sql"
         )),
     ])
@@ -359,7 +366,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    pub const MIGRATION_COUNT: usize = 37;
+    pub const MIGRATION_COUNT: usize = 38;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
