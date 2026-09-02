@@ -110,21 +110,43 @@ fn test_a_quote_in_the_path_cannot_break_out_of_the_hint() {
 }
 
 #[test]
-fn test_guidance_names_a_runnable_command_per_tier() {
+fn test_scp_is_always_the_command_given() {
+    // It is the one mechanism that works from every terminal, through tmux,
+    // with nothing installed. A better tier is mentioned, never substituted.
     let mut kitty = env(&[SSH, ("TERM", "xterm-kitty")]);
     kitty.has_kitten = true;
     let g = guidance(&kitty, "/Users/me/a b.png", "/root/att");
-    assert!(g.contains("kitten transfer"), "{g}");
-    assert!(g.contains("'/Users/me/a b.png'"), "{g}");
+    assert!(g.contains("scp"), "{g}");
+    assert!(
+        g.contains("'/Users/me/a b.png'"),
+        "spaces must survive: {g}"
+    );
+    assert!(
+        g.contains("kitten"),
+        "the better tier is still surfaced: {g}"
+    );
 
     let mut iterm = env(&[SSH, ("TERM_PROGRAM", "iTerm.app")]);
     iterm.has_rz = true;
     let g = guidance(&iterm, "/Users/me/a.png", "/root/att");
+    assert!(g.contains("scp"), "{g}");
     assert!(g.contains("rz"), "{g}");
-    assert!(g.contains("/root/att"), "{g}");
 
     let g = guidance(&env(&[SSH]), "/Users/me/a.png", "/root/att");
     assert!(g.contains("scp"), "{g}");
+}
+
+#[test]
+fn test_no_unverified_command_line_is_presented_as_runnable() {
+    // kitty's and zmodem's invocations are not exercised from this repo, so
+    // they are named as options, never handed over as a command to paste.
+    let mut kitty = env(&[SSH, ("TERM", "xterm-kitty")]);
+    kitty.has_kitten = true;
+    let g = guidance(&kitty, "/Users/me/a.png", "/root/att");
+    assert!(
+        g.contains("--help"),
+        "point at the terminal's own docs rather than asserting flags: {g}"
+    );
 }
 
 #[test]

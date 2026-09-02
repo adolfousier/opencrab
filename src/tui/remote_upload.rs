@@ -152,38 +152,34 @@ fn on_path(cmd: &str) -> bool {
 
 /// What to tell the user about a file that is on their machine, not this one.
 ///
-/// Every tier names a command they can run. None of them runs it: `kitten
-/// transfer` and `rz` both negotiate over the TTY, which this process is
-/// holding in raw mode on the alternate screen, so driving either from
-/// underneath the TUI would fight it for the terminal. Suspending and
-/// restoring the screen around a transfer is a separate facility that does
-/// not exist yet.
+/// `scp` is always the answer given, because it is the one mechanism that
+/// works from every terminal, through `tmux`, and with no extra install. A
+/// terminal that can do better gets a note saying so, deliberately WITHOUT a
+/// command line: kitty's and zmodem's invocations are not exercised from this
+/// repo, and handing someone a flag string that fails is worse than pointing
+/// them at their terminal's own documentation.
 pub(crate) fn guidance(env: &Env, client_path: &str, dest_dir: &str) -> String {
     if !is_remote(env) {
         // Not an SSH session, so the path is simply wrong rather than remote.
         return format!("{client_path} does not exist here.");
     }
-    let quoted = shell_quote(client_path);
+
+    let mut out = format!(
+        "{client_path} is on your machine, not this one. Copy it over with:\n  {}",
+        scp_hint(env, client_path, dest_dir)
+    );
+
     match choose(env) {
-        Channel::Kitty => format!(
-            "{client_path} is on your machine, not this one. Pull it across with:\n  \
-             kitten transfer --direction=receive {quoted} {dest_dir}/"
-        ),
-        Channel::Zmodem => format!(
-            "{client_path} is on your machine, not this one. Run `rz` here and your \
-             terminal will offer a file picker; the file lands in {dest_dir}/"
-        ),
-        Channel::ScpHint => {
-            let hint = scp_hint(env, client_path, dest_dir);
-            let why = if multiplexed(env) {
-                " (tmux/screen rewrites the escape stream, so an in-band transfer \
-                 would be swallowed)"
-            } else {
-                ""
-            };
-            format!(
-                "{client_path} is on your machine, not this one{why}. Copy it over with:\n  {hint}"
-            )
+        Channel::Kitty => {
+            out.push_str("\n(kitty can also transfer it in-band: see `kitten transfer --help`)")
         }
+        Channel::Zmodem => {
+            out.push_str("\n(your terminal also answers zmodem: run `rz` here for a file picker)")
+        }
+        Channel::ScpHint if multiplexed(env) => out.push_str(
+            "\n(tmux/screen rewrites the escape stream, so in-band transfer is unavailable)",
+        ),
+        Channel::ScpHint => {}
     }
+    out
 }
