@@ -109,6 +109,131 @@ fn test_an_unroutable_session_is_reported_as_such() {
     );
 }
 
+// ── In-flight gate (fork #13, shipped upstream as the failsafe valve) ────
+
+#[test]
+fn test_inflight_target_refuses_without_interrupt() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    expect_channel_route(session);
+    register_turn_probe(session, std::sync::Arc::new(|| true));
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::RefusedInFlight {
+            redirected_to: None
+        },
+        "#13: default-false must refuse a mid-turn target, not derail it"
+    );
+}
+
+#[test]
+fn test_interrupt_true_delivers_to_inflight_target() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    expect_channel_route(session);
+    register_turn_probe(session, std::sync::Arc::new(|| true));
+    // Parked, not delivered: the channel route is expected but unclaimed, so
+    // the point here is only that the gate let the message THROUGH.
+    assert_eq!(
+        deliver_to_session(session, msg(), true),
+        Delivery::Parked,
+        "#13: interrupt=true rides today's queue-for-boundary semantics"
+    );
+}
+
+#[test]
+fn test_idle_target_delivers_without_interrupt() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    expect_channel_route(session);
+    register_turn_probe(session, std::sync::Arc::new(|| false));
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::Parked,
+        "#13: idle target — the gate never engages"
+    );
+}
+
+#[test]
+fn test_no_probe_fails_open() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    expect_channel_route(session);
+    // No probe registered: a surface without turn state must stay notifyable.
+    assert_eq!(
+        deliver_to_session(session, msg(), false),
+        Delivery::Parked,
+        "#13: unknown turn state fails open — never refuse on missing semantics"
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn test_tool_reports_refusal_with_remedy() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    expect_channel_route(session);
+    register_turn_probe(session, std::sync::Arc::new(|| true));
+
+    let context = crate::brain::tools::r#trait::ToolExecutionContext::new(Uuid::new_v4());
+    let outcome = SessionNotifyTool
+        .execute(
+            serde_json::json!({"target_session": session.to_string(), "message": "ping"}),
+            &context,
+        )
+        .await;
+    let result = outcome.expect("tool executes");
+    assert!(
+        !result.success,
+        "#13: refusal must read as failure to the sender"
+    );
+    let error = result.error.expect("#13: refusal carries an explanation");
+    assert!(
+        error.contains("interrupt=true"),
+        "#13: the error must name the remedy so the sender learns the knob: {error}"
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn test_tool_interrupt_param_reaches_delivery() {
+    let _guard = test_guard();
+    let session = Uuid::new_v4();
+    let captured: std::sync::Arc<std::sync::Mutex<Option<QueuedUserMessage>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sink = captured.clone();
+    crate::brain::agent::service::session_routes::register_session_route(
+        session,
+        std::sync::Arc::new(move |_id, queued| {
+            *sink.lock().unwrap() = Some(queued);
+        }),
+    );
+    register_turn_probe(session, std::sync::Arc::new(|| true));
+
+    let context = crate::brain::tools::r#trait::ToolExecutionContext::new(Uuid::new_v4());
+    let outcome = SessionNotifyTool
+        .execute(
+            serde_json::json!({
+                "target_session": session.to_string(),
+                "message": "ping",
+                "interrupt": true
+            }),
+            &context,
+        )
+        .await;
+    assert!(
+        outcome.expect("tool executes").success,
+        "interrupt=true must deliver"
+    );
+    let queued = captured.lock().unwrap().take().expect("message enqueued");
+    assert!(
+        !queued
+            .context_text
+            .contains("queued while you were working"),
+        "framing is added by the channel queue branch, not by the tool"
+    );
+}
+
 // ── Channel-ownership gate (fork #17) + redirect (fork #19) ─────────────
 //
 // A session REPLACED on its chat/topic (idle-timeout reset creates a
