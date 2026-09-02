@@ -227,6 +227,25 @@ pub enum PushOrigin {
     Other,
 }
 
+/// Typed receipt payload for a background-task completion push (#15).
+///
+/// The rendering surface (Telegram resume echo) builds the collapsible
+/// receipt card from these fields instead of parsing `context_text` — the
+/// `[System: ...]` shape belongs to the LLM and must stay free to evolve
+/// without breaking the bubble.
+#[derive(Debug, Clone)]
+pub struct BgTaskMeta {
+    /// Exit 0 — the sole outcome signal the receipt card shows (the exit
+    /// code itself stays in the context text, for the model only).
+    pub success: bool,
+    /// Short roster label (`short_label` form: ≤60 chars + ellipsis).
+    pub label: String,
+    /// Wall-clock runtime of the detached command, seconds.
+    pub elapsed_secs: f32,
+    /// Last 50 lines of merged stdout+stderr, verbatim.
+    pub tail: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct QueuedUserMessage {
     /// Full text injected into the LLM context for the live turn.
@@ -235,6 +254,9 @@ pub struct QueuedUserMessage {
     pub display_text: String,
     /// Which producer built this message (#1221).
     pub origin: PushOrigin,
+    /// Receipt payload for BackgroundTask-origin pushes (#15); `None` for
+    /// every other producer.
+    pub bg_meta: Option<BgTaskMeta>,
 }
 
 impl QueuedUserMessage {
@@ -244,6 +266,7 @@ impl QueuedUserMessage {
             context_text: text.clone(),
             display_text: text,
             origin: PushOrigin::Other,
+            bg_meta: None,
         }
     }
 
@@ -255,6 +278,7 @@ impl QueuedUserMessage {
             context_text: context,
             display_text: display,
             origin: PushOrigin::Other,
+            bg_meta: None,
         }
     }
 
@@ -280,6 +304,9 @@ impl QueuedUserMessage {
             // #1221: a joined batch inherits the head message's origin — the
             // first-completed task dominates what the echo announces.
             origin: msgs[0].origin,
+            // #15: same dominance rule for the receipt payload — the head
+            // task's card is the one the echo renders.
+            bg_meta: msgs[0].bg_meta.clone(),
         })
     }
 }

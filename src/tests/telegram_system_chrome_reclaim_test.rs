@@ -28,8 +28,11 @@ fn a_banner_alone_is_never_reclaimed_as_the_answer() {
         "🔧 Switched to fallback/model — primary Rate limit exceeded".to_string(),
     )];
 
+    // Port union: the fork's pop takes options_pending (#1226/#31); `false`
+    // selects the stock pop these #1253 tests pin.
+    let (host, trailer) = pop_trailing_folded_texts(&mut entries, false);
     assert!(
-        pop_trailing_folded_texts(&mut entries).is_none(),
+        host.is_none() && trailer.is_none(),
         "a react-only turn must keep its empty final empty"
     );
     assert_eq!(entries.len(), 1, "the banner stays in the block");
@@ -44,10 +47,9 @@ fn chrome_landing_after_the_answer_stays_behind() {
         FlowEntry::System("🔄 Now using fallback/model".to_string()),
     ];
 
-    assert_eq!(
-        pop_trailing_folded_texts(&mut entries).as_deref(),
-        Some("the real answer")
-    );
+    let (host, trailer) = pop_trailing_folded_texts(&mut entries, false);
+    assert_eq!(host.as_deref(), Some("the real answer"));
+    assert!(trailer.is_none(), "stock pop returns no trailer");
     assert!(matches!(entries[0], FlowEntry::Tool(0)));
     assert!(
         matches!(&entries[1], FlowEntry::System(t) if t.contains("Now using")),
@@ -64,10 +66,9 @@ fn chrome_before_the_answer_does_not_block_the_reclaim() {
         FlowEntry::Text("answer written after the switch".to_string()),
     ];
 
-    assert_eq!(
-        pop_trailing_folded_texts(&mut entries).as_deref(),
-        Some("answer written after the switch")
-    );
+    let (host, trailer) = pop_trailing_folded_texts(&mut entries, false);
+    assert_eq!(host.as_deref(), Some("answer written after the switch"));
+    assert!(trailer.is_none(), "stock pop returns no trailer");
     assert_eq!(entries.len(), 1);
     assert!(matches!(entries[0], FlowEntry::System(_)));
 }
@@ -81,10 +82,9 @@ fn a_multipart_model_answer_is_still_joined_and_popped_whole() {
         FlowEntry::Text("part two".to_string()),
     ];
 
-    assert_eq!(
-        pop_trailing_folded_texts(&mut entries).as_deref(),
-        Some("part one\n\npart two")
-    );
+    let (host, trailer) = pop_trailing_folded_texts(&mut entries, false);
+    assert_eq!(host.as_deref(), Some("part one\n\npart two"));
+    assert!(trailer.is_none(), "stock pop returns no trailer");
     assert_eq!(entries.len(), 1, "only the tool row remains");
 }
 
@@ -98,10 +98,9 @@ fn the_reclaim_still_stops_at_the_last_tool_call() {
         FlowEntry::Text("closing answer".to_string()),
     ];
 
-    assert_eq!(
-        pop_trailing_folded_texts(&mut entries).as_deref(),
-        Some("closing answer")
-    );
+    let (host, trailer) = pop_trailing_folded_texts(&mut entries, false);
+    assert_eq!(host.as_deref(), Some("closing answer"));
+    assert!(trailer.is_none(), "stock pop returns no trailer");
     assert_eq!(
         entries.len(),
         3,

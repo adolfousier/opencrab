@@ -66,6 +66,7 @@ pub(crate) fn completion_message(
         context_text,
         display_text,
         origin: crate::brain::agent::PushOrigin::SubAgent,
+        bg_meta: None,
     }
 }
 

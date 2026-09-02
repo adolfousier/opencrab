@@ -181,6 +181,13 @@ pub struct TelegramState {
     /// surfaces built without a database, which keeps the old in-memory-only
     /// behaviour rather than failing.
     plan_card_store: Mutex<Option<crate::db::repository::PlanCardRepository>>,
+    /// Durable backing for `pending_followups` (#1226 item 3): rows are
+    /// written when a keyboard arms (and when its merge host attaches),
+    /// deleted on tap/drop/clear, and hydrated back into the map at boot so
+    /// keyboards that survived a restart keep resolving taps instead of
+    /// dying as unknown-token stale shells. `None` on surfaces built
+    /// without a database — old in-memory-only behaviour.
+    followup_store: Mutex<Option<crate::db::repository::PendingFollowupRepository>>,
     /// Session → when card writes may resume, after Telegram asked us to wait
     /// (#814). Without this the next refresh wrote immediately and renewed the
     /// flood-control window, so the countdown never elapsed.
@@ -322,6 +329,7 @@ impl TelegramState {
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
             plan_card_store: Mutex::new(None),
+            followup_store: Mutex::new(None),
             plan_card_backoff: Mutex::new(HashMap::new()),
             plan_card_locks: Mutex::new(HashMap::new()),
             plan_card_restick: Mutex::new(HashMap::new()),
@@ -691,27 +699,54 @@ impl TelegramState {
         options: Vec<String>,
     ) -> String {
         let token = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
-        self.pending_followups.lock().await.insert(
-            token.clone(),
-            PendingFollowupEntry {
-                session_id,
-                options,
-                host: None,
-            },
-        );
+        let entry = PendingFollowupEntry {
+            session_id,
+            options,
+            host: None,
+        };
+        self.pending_followups
+            .lock()
+            .await
+            .insert(token.clone(), entry.clone());
+        self.persist_followup(&token, &entry).await;
         token
     }
 
     /// Record the answer-bubble host after a successful merge-edit (#1217).
     pub(crate) async fn attach_followup_host(&self, token: &str, host: MergedHost) {
-        if let Some(entry) = self.pending_followups.lock().await.get_mut(token) {
-            entry.host = Some(host);
+        let updated = {
+            let mut map = self.pending_followups.lock().await;
+            match map.get_mut(token) {
+                Some(entry) => {
+                    entry.host = Some(host);
+                    Some(entry.clone())
+                }
+                None => None,
+            }
+        };
+        if let Some(entry) = updated {
+            self.persist_followup(token, &entry).await;
         }
+    }
+
+    /// Peek at the merged host WITHOUT consuming the stash (#31): the
+    /// trailer-send decision in render_suggestions needs to know whether the
+    /// RICH merge actually landed (the embedded trailer shipped with it) or
+    /// the placement fell back to standalone (no embed ever hit the wire).
+    /// `attach_followup_host` fires only on merge success, so Some(host) ==
+    /// "the merge path landed".
+    pub(crate) async fn peek_followup_host(&self, token: &str) -> Option<MergedHost> {
+        self.pending_followups
+            .lock()
+            .await
+            .get(token)
+            .and_then(|e| e.host.clone())
     }
 
     /// Forget an unused registration (buttons never landed).
     pub(crate) async fn drop_pending_followup(&self, token: &str) {
         self.pending_followups.lock().await.remove(token);
+        self.forget_followup(token).await;
     }
 
     /// Take a tapped follow-up suggestion by index, consuming the WHOLE set for
@@ -723,14 +758,24 @@ impl TelegramState {
         &self,
         token: &str,
         idx: usize,
-    ) -> Option<(Uuid, String, Option<MergedHost>)> {
+    ) -> Option<(PendingFollowupEntry, String)> {
         let entry = self.pending_followups.lock().await.remove(token)?;
-        let host = entry.host.clone();
-        entry
-            .options
-            .get(idx)
-            .cloned()
-            .map(|text| (entry.session_id, text, host))
+        self.forget_followup(token).await;
+        entry.options.get(idx).cloned().map(|text| (entry, text))
+    }
+
+    /// Re-arm a keyboard whose tap could not start a turn (#1226 G): the
+    /// busy-guard fires AFTER `take_pending_followup` consumed the stash,
+    /// so without this a mid-turn tap silently eats the choice while the
+    /// keyboard stays rendered with a dead token. Restores the entry under
+    /// its original token so the still-rendered buttons keep working and a
+    /// retry tap resolves normally.
+    pub(crate) async fn restore_pending_followup(&self, token: &str, entry: PendingFollowupEntry) {
+        self.persist_followup(token, &entry).await;
+        self.pending_followups
+            .lock()
+            .await
+            .insert(token.to_string(), entry);
     }
 
     /// Drop this session's pending follow-up suggestions (the user sent their
@@ -740,6 +785,12 @@ impl TelegramState {
             .lock()
             .await
             .retain(|_, e| e.session_id != session_id);
+        let guard = self.followup_store.lock().await;
+        if let Some(store) = guard.as_ref()
+            && let Err(e) = store.delete_session(&session_id.to_string()).await
+        {
+            tracing::warn!("Telegram followup store session-clear failed for {session_id}: {e}");
+        }
     }
 
     /// Store a cancel token for a session (before starting an agent call).
@@ -887,6 +938,83 @@ impl TelegramState {
         repo: crate::db::repository::PlanCardRepository,
     ) {
         *self.plan_card_store.lock().await = Some(repo);
+    }
+
+    /// Give the follow-up stash durable backing and hydrate what the last
+    /// process armed (#1226 item 3). Called once at startup. In-memory
+    /// entries win over rows (the map is authoritative); a hydration error
+    /// only degrades to the old restart-orphan behaviour.
+    pub(crate) async fn set_followup_store(
+        &self,
+        repo: crate::db::repository::PendingFollowupRepository,
+    ) {
+        match repo.load_all().await {
+            Ok(rows) => {
+                let mut restored = 0usize;
+                let mut map = self.pending_followups.lock().await;
+                for row in rows {
+                    let Ok(sid) = Uuid::parse_str(&row.session_id) else {
+                        continue;
+                    };
+                    let host = row.host.map(|h| MergedHost {
+                        message_id: MessageId(h.message_id as i32),
+                        html: h.html,
+                        rich: h.rich,
+                    });
+                    let token = row.token;
+                    let entry = PendingFollowupEntry {
+                        session_id: sid,
+                        options: row.options,
+                        host,
+                    };
+                    if let std::collections::hash_map::Entry::Vacant(slot) = map.entry(token) {
+                        slot.insert(entry);
+                        restored += 1;
+                    }
+                }
+                tracing::info!(
+                    target: "telegram",
+                    "Followup store hydrated: {restored} keyboard(s) restored"
+                );
+            }
+            Err(e) => tracing::warn!("Followup store hydration failed: {e}"),
+        }
+        *self.followup_store.lock().await = Some(repo);
+    }
+
+    /// Mirror one stash entry into the durable store. Storage failures are
+    /// logged and swallowed: the map stays authoritative, and a lost row can
+    /// only fall back to the stale-tap strip, never break a turn.
+    async fn persist_followup(&self, token: &str, entry: &PendingFollowupEntry) {
+        let row = crate::db::repository::PendingFollowup {
+            token: token.to_string(),
+            session_id: entry.session_id.to_string(),
+            options: entry.options.clone(),
+            host: entry
+                .host
+                .as_ref()
+                .map(|h| crate::db::repository::FollowupHost {
+                    message_id: i64::from(h.message_id.0),
+                    html: h.html.clone(),
+                    rich: h.rich,
+                }),
+        };
+        let guard = self.followup_store.lock().await;
+        if let Some(store) = guard.as_ref()
+            && let Err(e) = store.save(&row).await
+        {
+            tracing::warn!("Telegram followup store save failed for {token}: {e}");
+        }
+    }
+
+    /// Forget one token's durable row (tap consumed it or buttons never landed).
+    async fn forget_followup(&self, token: &str) {
+        let guard = self.followup_store.lock().await;
+        if let Some(store) = guard.as_ref()
+            && let Err(e) = store.delete(token).await
+        {
+            tracing::warn!("Telegram followup store delete failed for {token}: {e}");
+        }
     }
 
     /// Track the plan-card message id + its rendered signature for a session.

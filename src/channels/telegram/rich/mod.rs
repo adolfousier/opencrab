@@ -70,7 +70,10 @@ pub(crate) fn should_send_native_rich(text: &str) -> bool {
 
 /// Whether `text` contains block-level markdown structure that native rich
 /// rendering handles meaningfully better than plain/HTML: a table, ATX
-/// heading, list item, fenced code block, or block math. Plain prose (even
+/// heading, list item, fenced code block, block math, or a `<details>`
+/// collapse block — matched by `<details>` line prefix so the inline
+/// `<details><summary>` openers count too (the #15 receipt cards emitted that shape before the parser-safe block form).
+/// Plain prose (even
 /// with inline emphasis) returns false, so it stays on the existing path and
 /// is never reinterpreted by Telegram's markdown parser. Gates the native
 /// `sendRichMessage` path (together with the config flag).
@@ -88,14 +91,15 @@ pub(crate) fn has_rich_structure(text: &str) -> bool {
                 || list::is_item(t)
                 || t.starts_with("```")
                 || t == "$$"
-                || t == "<details>"
-                || t == "<details open>"
+                || t.starts_with("<details>")
                 || t.starts_with("<details ")
         })
 }
 
 /// A `# `..`###### ` ATX heading line (1-6 hashes followed by a space).
-fn is_atx_heading(t: &str) -> bool {
+/// Shared by the rich gate and the classic HTML ladder so the two parsers
+/// can never disagree on `#N`-style lines (#1257).
+pub(crate) fn is_atx_heading(t: &str) -> bool {
     let hashes = t.chars().take_while(|&c| c == '#').count();
     (1..=6).contains(&hashes) && t[hashes..].starts_with(' ')
 }

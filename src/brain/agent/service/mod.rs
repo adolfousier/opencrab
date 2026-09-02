@@ -5,8 +5,9 @@
 
 pub(crate) mod announcement_loop;
 pub(crate) mod background_tasks;
+pub(crate) mod boot_report;
 mod builder;
-mod compaction;
+pub(crate) mod compaction;
 pub(crate) mod compaction_prompts;
 pub(crate) mod context;
 pub(crate) mod detached_status;
@@ -44,7 +45,7 @@ pub use phantom::{
     is_delivery_intent, is_stuck_in_intent_loop, looks_truncated_mid_sentence,
 };
 pub use types::{
-    AgentResponse, AgentStreamResponse, ApprovalCallback, ChannelSessionEvent,
+    AgentResponse, AgentStreamResponse, ApprovalCallback, BgTaskMeta, ChannelSessionEvent,
     MessageEnqueueCallback, MessageQueueCallback, ProgressCallback, ProgressEvent, PushOrigin,
     QueuedUserMessage, SshPasswordCallback, SudoCallback, ToolApprovalInfo,
 };

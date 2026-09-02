@@ -2419,6 +2419,7 @@ pub(crate) async fn handle_message(
         is_dm,
         compacting: false,
         pending_suggestions: None,
+        pending_trailer: None,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: Vec::new(),
@@ -2893,10 +2894,11 @@ pub(crate) async fn handle_message(
     if let Some(options) = suggestions {
         // Merge candidate (#tg-suggest-merge): the bubble the final response
         // landed in, captured by deliver_final_response. Attaching the
-        // keyboard THERE kills the separate "Suggested next" bubble.
-        let merge_host = {
+        // keyboard THERE kills the separate "Suggested next" bubble. The
+        // #31 sign-off trailer rides along — it renders after the buttons.
+        let (merge_host, trailer) = {
             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            s.final_bubble.take()
+            (s.final_bubble.take(), s.pending_trailer.take())
         };
         super::suggest_options::render_suggestions(
             &bot,
@@ -2906,6 +2908,7 @@ pub(crate) async fn handle_message(
             thread_id,
             options,
             merge_host,
+            trailer,
         )
         .await;
     }
@@ -3060,6 +3063,7 @@ pub(crate) async fn handle_reaction(
                     context_text: midturn,
                     display_text: format!("[System: {user_name} reacted with {emoji} mid-turn]"),
                     origin: crate::brain::agent::PushOrigin::Ingress,
+                    bg_meta: None,
                 },
             );
             tracing::info!(
@@ -3305,6 +3309,7 @@ pub(crate) fn build_midturn_queued_message(
             ),
             display_text: invocation.to_string(),
             origin: crate::brain::agent::PushOrigin::Ingress,
+            bg_meta: None,
         },
         None => crate::brain::agent::QueuedUserMessage {
             context_text: format!(
@@ -3314,6 +3319,7 @@ pub(crate) fn build_midturn_queued_message(
             ),
             display_text: display_text.to_string(),
             origin: crate::brain::agent::PushOrigin::Ingress,
+            bg_meta: None,
         },
     }
 }

@@ -227,9 +227,13 @@ pub(crate) fn markdown_to_telegram_html(text: &str) -> String {
             continue;
         }
 
-        // Headers: # → bold
+        // Headers: # → bold. ATX semantics (1-6 hashes THEN a space), shared
+        // with the rich parser's gate so the two can never disagree on the
+        // same line (#1257). `starts_with('#')` alone swallowed the hashes of
+        // every `#1234` issue reference in a receipt line and bolded the rest,
+        // silently deleting the number the line existed to carry.
         let trimmed = line.trim_start();
-        if trimmed.starts_with('#') {
+        if crate::channels::telegram::rich::is_atx_heading(trimmed) {
             let content = trimmed.trim_start_matches('#').trim();
             let escaped = escape_html(content);
             result.push_str(&format!("<b>{}</b>\n", format_inline(&escaped)));

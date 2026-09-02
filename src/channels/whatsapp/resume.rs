@@ -38,8 +38,16 @@ pub(crate) fn build_enqueue_callback(
             else {
                 return;
             };
-            let Some(client) = state.client().await else {
-                tracing::warn!("[bg-resume] whatsapp: client not available; dropping delivery");
+            // Bounded wait rather than a drop (#1242). Worse here than on
+            // the surfaces that check first: the turn above has already run,
+            // so returning threw away a completed answer AND the provider
+            // call that produced it.
+            let Some(client) =
+                crate::channels::transport_ready::await_transport("whatsapp", session_id, || {
+                    state.client()
+                })
+                .await
+            else {
                 return;
             };
             let Ok(jid) = jid_str.parse::<wacore_binary::jid::Jid>() else {

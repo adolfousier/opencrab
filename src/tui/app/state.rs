@@ -1862,6 +1862,27 @@ impl App {
                         // Check if pasted text contains image paths — extract as attachments
                         let (clean_text, new_attachments) = Self::extract_image_paths(&filtered);
                         if !new_attachments.is_empty() {
+                            // Track them, exactly as a pasted clipboard image
+                            // is tracked just above. This is what routes the
+                            // file into `projects/<slug>/files/` when the
+                            // session belongs to a project: dropped files were
+                            // going straight into `attachments` and skipping
+                            // that entirely, so a drop never became a project
+                            // artifact the way every other share does.
+                            if let Some(session) = &self.current_session {
+                                for att in &new_attachments {
+                                    let file_svc = self.file_service.clone();
+                                    let sid = session.id;
+                                    let path = std::path::PathBuf::from(&att.path);
+                                    tokio::spawn(async move {
+                                        if let Err(e) =
+                                            file_svc.get_or_create_file(sid, path, None).await
+                                        {
+                                            tracing::warn!("Failed to track dropped file: {e}");
+                                        }
+                                    });
+                                }
+                            }
                             self.attachments.extend(new_attachments);
                             if !clean_text.trim().is_empty() {
                                 self.input_buffer

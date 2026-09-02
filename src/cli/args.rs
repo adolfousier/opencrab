@@ -142,6 +142,22 @@ pub enum Commands {
     /// Used by the systemd/LaunchAgent service installed during onboarding
     Daemon,
 
+    /// Serve dropped files to a TUI running on another machine.
+    ///
+    /// Run this on the machine you drag files FROM, then connect with
+    /// `ssh -R 8765:localhost:8765 <you>@<host>`. Dropping a file into the
+    /// remote TUI then pulls it across the SSH connection you already made.
+    DropAgent {
+        /// Port to listen on. Must match the `-R` forward.
+        #[arg(long, default_value_t = crate::utils::drop_transfer::DEFAULT_DROP_PORT)]
+        port: u16,
+
+        /// Directory to serve from. Repeatable. Defaults to Desktop,
+        /// Downloads, Pictures, Documents and Movies.
+        #[arg(long = "root")]
+        roots: Vec<std::path::PathBuf>,
+    },
+
     /// Manage profiles — isolated OpenCrabs instances with their own config, DB, and memory
     Profile {
         #[command(subcommand)]
@@ -339,6 +355,26 @@ pub enum SessionCommands {
         #[arg(long)]
         all: bool,
     },
+    /// Send a notification to a session (#23)
+    Notify {
+        /// Target session UUID
+        id: String,
+        /// Message text
+        #[arg(long)]
+        text: String,
+        /// Optional title header
+        #[arg(long)]
+        title: Option<String>,
+        /// Sender label shown to the recipient (default: "CLI tooling")
+        #[arg(long)]
+        sender: Option<String>,
+        /// Deliver even if the session is mid-turn (#13 failsafe)
+        #[arg(long)]
+        interrupt: bool,
+        /// CLI output format
+        #[arg(short, long, default_value = "text")]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -521,6 +557,7 @@ pub async fn run() -> Result<()> {
         Some(Commands::Session { operation }) => commands::cmd_session(&config, operation).await,
         Some(Commands::Service { operation }) => commands::cmd_service(operation).await,
         Some(Commands::Daemon) => ui::cmd_daemon(&config).await,
+        Some(Commands::DropAgent { port, roots }) => crate::utils::drop_agent::serve(port, roots),
         Some(Commands::Profile { operation }) => commands::cmd_profile(operation).await,
         Some(Commands::Cron { operation }) => cron::cmd_cron(&config, operation).await,
         Some(Commands::Completions { shell }) => {
