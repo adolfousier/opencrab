@@ -129,11 +129,19 @@ pub async fn send_approval_request(bot: &Bot, chat_id: ChatId) -> Result<usize, 
     }
     let text = format_proposal_message(&proposals);
     let keyboard = build_keyboard(&proposals);
-    crate::channels::telegram::send::message_in_thread(bot, chat_id, None, text)
-        .parse_mode(ParseMode::Html)
-        .reply_markup(keyboard)
-        .await
-        .map_err(|e| format!("send dedup approval: {e}"))?;
+    // Shared reactive ladder (#297 lineage): a 429 here waits out the
+    // server's window and retries instead of dropping the keyboard. Cron
+    // approval requests previously had no backstop at all.
+    crate::channels::telegram::intermediates::send_retrying_rate_limit(
+        "dedup approval request",
+        || {
+            crate::channels::telegram::send::message_in_thread(bot, chat_id, None, text.clone())
+                .parse_mode(ParseMode::Html)
+                .reply_markup(keyboard.clone())
+        },
+    )
+    .await
+    .map_err(|e| format!("send dedup approval: {e}"))?;
     Ok(proposals.len())
 }
 
