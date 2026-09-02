@@ -8,6 +8,7 @@ mod approval;
 pub(crate) mod blocks;
 mod connection;
 pub(crate) mod final_body;
+mod followups;
 pub(crate) mod formatting_prompt;
 pub(crate) mod handler;
 pub(crate) mod reactions;
@@ -114,25 +115,6 @@ impl SlackState {
         let group = map.get_mut(ts)?;
         group.expanded = !group.expanded;
         Some(group.clone())
-    }
-
-    /// Stash this session's optional follow-up suggestions (#599).
-    pub async fn set_pending_followups(&self, session_id: Uuid, options: Vec<String>) {
-        self.pending_followups
-            .lock()
-            .await
-            .insert(session_id, options);
-    }
-
-    /// Take a tapped follow-up suggestion by index, consuming the whole set.
-    pub async fn take_pending_followup(&self, session_id: Uuid, idx: usize) -> Option<String> {
-        let options = self.pending_followups.lock().await.remove(&session_id)?;
-        options.get(idx).cloned()
-    }
-
-    /// Drop this session's pending follow-up suggestions (user sent their own).
-    pub async fn clear_pending_followups(&self, session_id: Uuid) {
-        self.pending_followups.lock().await.remove(&session_id);
     }
 
     /// Store a cancel token for a session (before starting agent call).
