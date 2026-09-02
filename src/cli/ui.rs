@@ -1350,6 +1350,7 @@ async fn cmd_chat_inner(
                                 };
                                 match crate::channels::telegram::handler::resume_session(
                                     bot, chat, thread_id, session_id, prompt, agent, tg,
+                                    false, // boot replay of an EXISTING row: resume-of-resume must stay untracked (#729/#12)
                                 )
                                 .await
                                 {
