@@ -1481,6 +1481,12 @@ impl AgentService {
         // but the visible text ends mid-word ("Standard Get I"). One-shot
         // nudge to continue from where they left off.
         let mut truncated_mid_sentence_retry_used: bool = false;
+        // Tool-text leak (fork #66, ex-upstream adolfousier/opencrabs#1260):
+        // the provider stripped unrecoverable tool-call JSON and set
+        // tool_text_leak. One corrective retry with a structured-calls
+        // nudge; a second leak fails the turn clean instead of delivering
+        // raw internals as the final answer.
+        let mut tool_text_leak_retry_used: bool = false;
         // Mermaid regen attempts spent (#37): each spend echoes the broken
         // text as an assistant message and injects the renderer's error as
         // a user-role [System: ...] nudge — same shape as the empty-answer
@@ -5495,6 +5501,53 @@ impl AgentService {
                     }
                 }
 
+                // ── Tool-text leak: corrective retry, then fail clean ───
+                // (fork #66, ex-upstream adolfousier/opencrabs#1260) The
+                // provider flagged unrecoverable tool-call JSON as text.
+                // With tools available, give the model ONE structured-calls
+                // nudge; if it leaks again, fail the turn clean — never
+                // deliver raw internals as the final answer. Compaction-style
+                // requests without tools never reach this loop, and the
+                // parse layer already stripped the JSON from content.
+                if response.tool_text_leak && self.tool_registry.count() > 0 {
+                    if !tool_text_leak_retry_used {
+                        tool_text_leak_retry_used = true;
+                        tracing::warn!(
+                            "Tool-call JSON leaked as text — one corrective retry with \
+                             structured-calls nudge (iteration {})",
+                            iteration,
+                        );
+                        self.record_provider_feedback(
+                            session_id,
+                            "tool_text_leak_retry",
+                            "provider-integrity",
+                            Some("model returned tool requests as text; corrective retry"),
+                        );
+                        context.add_message(Message::user(
+                            "[System: Your previous response contained tool-call JSON as plain \
+                             text instead of executable calls. You have access to tools — invoke \
+                             them ONLY through the structured function-call API, never as text \
+                             or JSON in your reply. Re-issue your response using real tool_use \
+                             calls; if no tool is needed, answer in plain prose without any \
+                             JSON.]"
+                                .to_string(),
+                        ));
+                        continue;
+                    }
+                    let msg = "Model returned tool requests as text and recovery failed \
+                               after one retry — try a model with native function calling \
+                               (e.g. Claude, GPT-4, Gemini)."
+                        .to_string();
+                    tracing::warn!("Tool-text leak retry exhausted — failing clean: {}", msg);
+                    self.record_provider_feedback(
+                        session_id,
+                        "tool_text_leak_fail",
+                        "provider-integrity",
+                        Some("leak persisted after corrective retry; failing clean"),
+                    );
+                    return Err(AgentError::Provider(crate::brain::provider::ProviderError::StreamError(msg)));
+                }
+
                 // ── Mid-sentence truncation retry ────────────────────────
                 // Local reasoning models sometimes hit an internal EOS mid-
                 // sentence. The response stream closes cleanly (finish_reason
@@ -5937,7 +5990,8 @@ impl AgentService {
                             // Loud break (#32): append a user-visible breadcrumb so the turn
                             // does not end silent — the user sees the guard tripped, nothing
                             // is queued, and how to resume.
-                            let call_label = normalized_call.split(':').next().unwrap_or("tool");
+                            let call_label =
+                                normalized_call.split(':').next().unwrap_or("tool");
                             response.content.push(ContentBlock::Text {
                                 text: crate::brain::agent::service::nudge::loop_guard_breadcrumb(
                                     call_label,
@@ -7202,6 +7256,7 @@ impl AgentService {
                     // per-iteration LLMResponses; this top-level
                     // synthesis is for content/usage handoff only.
                     streaming_active_secs: None,
+                    tool_text_leak: false,
                 }
             }
             None => {
