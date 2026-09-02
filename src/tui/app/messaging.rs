@@ -2153,9 +2153,20 @@ impl App {
                         // sent the agent hunting through the attachments dir
                         // and cost a whole turn before it worked that out.
                         Dropped::Elsewhere { path, .. } => {
+                            // Name the transfer that actually works for this
+                            // terminal (#1289) rather than only reporting the
+                            // absence: over SSH the file IS reachable, just
+                            // not from here.
+                            let env = crate::tui::remote_upload::Env::current();
+                            let dest = crate::channels::telegram::media::channel_attachments_dir();
+                            let advice = crate::tui::remote_upload::guidance(
+                                &env,
+                                &path,
+                                &dest.to_string_lossy(),
+                            );
                             rewritten.replace_range(
                                 start..end,
-                                &format!("[attachment unavailable: {path} is not on this machine]"),
+                                &format!("[attachment unavailable: {advice}]"),
                             );
                         }
                     }
