@@ -13,6 +13,7 @@ mod onboarding_events;
 mod pairing;
 mod photos;
 pub(crate) mod resume;
+mod sessions;
 pub(crate) mod store;
 
 pub use agent::WhatsAppAgent;
@@ -126,16 +127,5 @@ impl WhatsAppState {
             photo_debounce: Mutex::new(HashMap::new()),
             session_jids: Mutex::new(HashMap::new()),
         }
-    }
-
-    /// Map a session to the chat JID it is being handled in, so a finished
-    /// background task can resume that chat (#731). Called on each turn.
-    pub async fn register_session_jid(&self, session_id: Uuid, jid: String) {
-        self.session_jids.lock().await.insert(session_id, jid);
-    }
-
-    /// The chat JID a session was last handled in, if known (#731).
-    pub async fn session_jid(&self, session_id: Uuid) -> Option<String> {
-        self.session_jids.lock().await.get(&session_id).cloned()
     }
 }
