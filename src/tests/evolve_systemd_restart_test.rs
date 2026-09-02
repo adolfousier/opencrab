@@ -21,7 +21,7 @@
 //! Construction + message shape is what we can pin portably; the
 //! end-to-end behaviour was validated empirically by the PR author.
 
-use crate::brain::tools::evolve::{
+use crate::brain::tools::evolve::systemd::{
     EVOLVE_UNIT_GLOB, SYSTEMD_UNIT_PATTERN, build_systemd_cleanup_command,
     build_systemd_restart_command,
 };
