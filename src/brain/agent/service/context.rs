@@ -365,6 +365,7 @@ impl AgentService {
             self.get_working_directory_for_session(session_id),
             self.auto_approve_tools,
             cancel,
+            self.compaction_attempt_deadline(session_id),
         )
         .await?;
 
@@ -420,12 +421,54 @@ impl AgentService {
     /// to each fallback's default when it doesn't carry the requested one,
     /// and report the whole ledger if everything dies.
     /// `pub(crate)` for the regression tests in `src/tests` — no caller outside
+    /// Bound on a single summariser attempt for a session with no compaction
+    /// history to scale from. Not a guess: it is the 300s every HTTP provider
+    /// in this codebase already enforces per request
+    /// (`anthropic.rs::DEFAULT_TIMEOUT`), extended to the CLI providers that
+    /// ship no timeout at all.
+    pub(crate) const COMPACTION_ATTEMPT_FLOOR: std::time::Duration =
+        std::time::Duration::from_secs(300);
+
+    /// One summariser attempt, bounded.
+    ///
+    /// HTTP providers already cap a single request at
+    /// `anthropic.rs::DEFAULT_TIMEOUT` (300s). CLI providers carry no timeout
+    /// at all, so a summariser that stopped answering held the session for as
+    /// long as the process felt like living, and the fallback chain below was
+    /// never reached because the first attempt never returned (#1255). This
+    /// extends the bound every HTTP provider already honours to the ones that
+    /// do not, and a provider that blows it is handed on rather than waited
+    /// out: `Timeout` is retryable, so `should_try_next_provider` walks.
+    async fn compaction_attempt(
+        provider: &Arc<dyn Provider>,
+        request: LLMRequest,
+        deadline: std::time::Duration,
+    ) -> std::result::Result<
+        crate::brain::provider::LLMResponse,
+        crate::brain::provider::ProviderError,
+    > {
+        match tokio::time::timeout(deadline, provider.complete(request)).await {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::warn!(
+                    "Compaction: provider '{}' produced nothing in {:?} — moving on",
+                    provider.name(),
+                    deadline,
+                );
+                Err(crate::brain::provider::ProviderError::Timeout(
+                    deadline.as_secs(),
+                ))
+            }
+        }
+    }
+
     /// compaction should send a summariser request.
     pub(crate) async fn complete_compaction_request(
         primary: &Arc<dyn Provider>,
         fallbacks: &[Arc<dyn Provider>],
         request: LLMRequest,
         cancel: &CancellationToken,
+        attempt_deadline: std::time::Duration,
     ) -> Result<crate::brain::provider::LLMResponse> {
         use crate::brain::provider::error as provider_error;
 
@@ -436,7 +479,7 @@ impl AgentService {
                 tracing::info!("Compaction cancelled before completion");
                 return Err(AgentError::Cancelled);
             }
-            r = primary.complete(request.clone()) => match r {
+            r = Self::compaction_attempt(primary, request.clone(), attempt_deadline) => match r {
                 Ok(response) => return Ok(response),
                 Err(e) => e,
             },
@@ -479,7 +522,7 @@ impl AgentService {
                     tracing::info!("Compaction cancelled while walking fallback chain");
                     return Err(AgentError::Cancelled);
                 }
-                r = fallback.complete(fb_request) => match r {
+                r = Self::compaction_attempt(fallback, fb_request, attempt_deadline) => match r {
                     Ok(response) => {
                         tracing::info!("Compaction served by fallback '{}'", name);
                         return Ok(response);
@@ -530,6 +573,7 @@ impl AgentService {
         working_directory: PathBuf,
         auto_approve_tools: bool,
         cancel: CancellationToken,
+        attempt_deadline: std::time::Duration,
     ) -> Result<String> {
         let remaining_budget = snapshot_max_tokens.saturating_sub(snapshot_token_count);
 
@@ -718,8 +762,14 @@ impl AgentService {
         // Non-streaming call so no compaction text leaks to the TUI in the
         // background-spawn case. `cancel` aborts the request mid-flight if the
         // caller signals (e.g. 90% hard-truncate firing on the same session).
-        let response =
-            Self::complete_compaction_request(&provider, &fallbacks, request, &cancel).await?;
+        let response = Self::complete_compaction_request(
+            &provider,
+            &fallbacks,
+            request,
+            &cancel,
+            attempt_deadline,
+        )
+        .await?;
 
         let summary = Self::extract_text_from_response(&response);
 

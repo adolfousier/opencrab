@@ -480,6 +480,20 @@ impl AgentService {
             .and_then(|map| map.get(&session_id).copied())
     }
 
+    /// How long one summariser attempt gets before the chain walks on.
+    ///
+    /// Scaled from what this session's compactions actually cost, tripled, so
+    /// a conversation that habitually takes four minutes is not declared hung
+    /// at five. A session with no history has nothing to scale from and gets
+    /// the floor, which is the per-request bound every HTTP provider already
+    /// enforces.
+    pub(super) fn compaction_attempt_deadline(&self, session_id: Uuid) -> std::time::Duration {
+        self.predicted_compaction_elapsed(session_id)
+            .map(|observed| observed * 3)
+            .unwrap_or(AgentService::COMPACTION_ATTEMPT_FLOOR)
+            .max(AgentService::COMPACTION_ATTEMPT_FLOOR)
+    }
+
     /// Take the session's in-flight summariser out of the map.
     ///
     /// Taken rather than borrowed because awaiting it needs ownership, and
@@ -605,6 +619,7 @@ impl AgentService {
         let working_dir = self.get_working_directory_for_session(session_id);
         let auto_approve = self.auto_approve_tools;
         let subagents = self.subagent_manager.clone();
+        let attempt_deadline = self.compaction_attempt_deadline(session_id);
         // Its own token: this task answers to session teardown, never to a
         // context that grew impatient.
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -623,6 +638,7 @@ impl AgentService {
                 working_dir,
                 auto_approve,
                 cancel,
+                attempt_deadline,
             )
             .await?;
             Ok(Self::decorate_compaction_summary(summary, session_id, subagents).await)
