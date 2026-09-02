@@ -31,6 +31,53 @@
 
 ---
 
+## Table of Contents
+
+- [📚 Documentation](#-documentation)
+- [Why OpenCrabs?](#why-opencrabs)
+- [📊 Benchmarks](#-benchmarks)
+- [🎬 Full onboard](#-full-onboard)
+- [🎬 Demo](#-demo)
+- [🖥️ Split Panes](#-split-panes)
+- [🎯 Core Features](#-core-features)
+- [🔄 Migrating from Other Tools](#-migrating-from-other-tools)
+- [🌐 Supported AI Providers](#-supported-ai-providers)
+- [🖼️ Image Generation & Vision](#-image-generation--vision)
+- [📄 Document Generation](#-document-generation)
+- [🤝 Agent-to-Agent (A2A) Protocol](#-agent-to-agent-a2a-protocol)
+- [🚀 Quick Start](#-quick-start)
+- [🧙 Onboarding Wizard](#-onboarding-wizard)
+- [🔑 API Keys (keys.toml)](#-api-keys-keystoml)
+- [🔐 Secret Sanitization & Redaction](#-secret-sanitization--redaction)
+- [🏠 Using Local LLMs](#-using-local-llms)
+- [📝 Configuration](#-configuration)
+- [🛠️ Configuration (config.toml)](#-configuration-configtoml)
+- [🧠 Epistemic Engine](#-epistemic-engine)
+- [🛡️ Safety Gates (~/.opencrabs/safety/)](#-safety-gates-opencrabssafety)
+- [📋 Commands (commands.toml)](#-commands-commandstoml)
+- [🔌 Dynamic Tools (tools.toml)](#-dynamic-tools-toolstoml)
+- [💰 Pricing Customization (usage_pricing.toml)](#-pricing-customization-usage_pricingtoml)
+- [🔧 Tool System](#-tool-system)
+- [⌨️ Keyboard Shortcuts](#-keyboard-shortcuts)
+- [🔍 Debug and Logging](#-debug-and-logging)
+- [🧠 Brain System & 3-Tier Memory](#-brain-system--3-tier-memory)
+- [🎯 /goal — Autonomous Goal Loop](#-goal--autonomous-goal-loop)
+- [⏰ Cron Jobs & Heartbeats](#-cron-jobs--heartbeats)
+- [🏗️ Architecture](#-architecture)
+- [📁 Project Structure](#-project-structure)
+- [🛠️ Development](#-development)
+- [🐛 Platform Notes](#-platform-notes)
+- [🔧 Troubleshooting](#-troubleshooting)
+- [🧩 Companion Tools](#-companion-tools)
+- [⚠️ Disclaimers](#-disclaimers)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+- [🙏 Acknowledgments](#-acknowledgments)
+- [📞 Support](#-support)
+- [✨ Stay Tuned](#-stay-tuned)
+
+---
+
 ## 📚 Documentation
 
 **Official docs:** [docs.opencrabs.com](https://docs.opencrabs.com) — comprehensive guides, architecture deep-dives, and reference material.
@@ -121,41 +168,46 @@ This isn't a privacy policy checkbox. It's an architectural decision. There is n
 
 ---
 
-## Table of Contents
+## 📊 Benchmarks
 
-- [Screenshots](#-screenshots)
-- [Why OpenCrabs?](#why-opencrabs)
-- [Core Features](#-core-features)
-- [CLI Commands](#cli)
-- [Migrating from Other Tools](#-migrating-from-other-tools)
-- [Supported AI Providers](#-supported-ai-providers)
-- [Agent-to-Agent (A2A) Protocol](#-agent-to-agent-a2a-protocol)
-- [Quick Start](#-quick-start)
-- [Onboarding Wizard](#-onboarding-wizard)
-- [API Keys (keys.toml)](#-api-keys-keystoml)
-- [Configuration (config.toml)](#-configuration-configtoml)
-- [Epistemic Engine](#-epistemic-engine)
-- [Safety Gates (~/.opencrabs/safety/)](#-safety-gates-opencrabssafety)
-- [Commands (commands.toml)](#-commands-commandstoml)
-- [Dynamic Tools (tools.toml)](#-dynamic-tools-toolstoml)
-- [Using Local LLMs](#-using-local-llms)
-- [Configuration](#-configuration)
-- [Tool System](#-tool-system)
-- [Keyboard Shortcuts](#-keyboard-shortcuts)
-- [Brain System & 3-Tier Memory](#-brain-system--3-tier-memory)
-- [Debug and Logging](#-debug-and-logging)
-- [/goal — Autonomous Goal Loop](#-goal-autonomous-goal-loop)
-- [Cron Jobs & Heartbeats](#-cron-jobs--heartbeats)
-- [Architecture](#-architecture)
-- [Project Structure](#-project-structure)
-- [Development](#-development)
-- [Platform Notes](#-platform-notes)
-- [Troubleshooting](#-troubleshooting)
-- [Companion Tools](#-companion-tools)
-- [Disclaimers](#-disclaimers)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Acknowledgments](#-acknowledgments)
+Measured on live workspaces, not fixtures. Full reports, including what each one explicitly did **not** measure, live in [`src/eval/results/`](src/eval/results/).
+
+### Memory retrieval ([full report](src/eval/results/memory-retrieval-2026-08-12.md))
+
+Every figure was measured on a live workspace: 9 brain files, 158 daily notes, 93 session documents, 258 MB.
+
+| Metric | Before | After |
+|---|---|---|
+| Rule-lookup hit rate (`scope="brain"`) | 2/5 | **5/5** |
+| Cost of one rule lookup | 33,443 chars (whole `AGENTS.md`) | **~1,000 chars (−97%)** |
+| precision@2, per-turn recall ranking | 0.625 | **0.917** |
+| Multilingual precision/recall@2 (6 languages) | not measured | **1.000 / 1.000** |
+| Worst index staleness | 15 hours | **current (refresh on write and on search)** |
+| Empty placeholder vectors | 495 | **0** |
+| Indexed vector rows | 1,944 | **5,744** |
+
+End-to-end check: a fact from **54 days back** (why a monthly invoice cron job had missed its schedule) was recovered in 9 steps, 1m 40s, starting from `memory_search` and reading the primary sources it located. Full chain in the [report](src/eval/results/memory-retrieval-2026-08-12.md).
+
+### Recall quality ([full report](src/eval/results/memory-recall-v1.md))
+
+Fixture-scored (13-section corpus, 12 positive + 12 negative queries), then sanity-checked against a real 156-section memory file and 437 real user messages:
+
+| Metric | Before (hit count ≥ 2) | After (normalized BM25 ≥ 0.35) |
+|---|---|---|
+| precision@2 | 0.625 | **0.917** |
+| recall@2 | **1.000** | 0.917 |
+| False-positive rate | 0.417 | **0.250** |
+| Memory injected into messages (real corpus) | 89.5% | **17.4%** |
+
+Recall falling is the point: the old rule answered almost everything, which is exactly why its precision was poor. The six-language eval (en, ru, es, pt, fr, id) scores 1.000 / 1.000 with per-language recall 3/3, and building it caught two real tokenizer bugs: accent-sensitive matching and Cyrillic combining marks.
+
+### Chunked embeddings ([full report](src/eval/results/memory-chunking.md))
+
+25.5% of vector rows were empty placeholders, making those documents invisible to the semantic half of hybrid search, and nothing over the size guard had ever been chunked. Both fixed; ranking is now per chunk instead of per averaged document vector.
+
+### Latency (criterion, release build)
+
+`cargo bench --bench memory`, in-memory SQLite: FTS search 2.57 ms at 50 docs, vector search 1.02 ms, hybrid RRF fusion 3.49 ms, indexing 214 µs per file. Full tables in the [Development section](#-development).
 
 ---
 
