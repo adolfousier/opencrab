@@ -210,15 +210,55 @@ enum Outcome {
 /// bot may not scope messages in this chat", so it is a warning and the
 /// caller recovers, but it is never swallowed, because a silent failure
 /// looks identical to the feature working while every reply stays public.
+///
+/// A 429 is neither an opinion nor a plain transport failure: it is throttling.
+/// Waiting out the server's `retry_after` (capped) and retrying once usually
+/// lands the send; if it does not, the outcome is `Transport`, never
+/// `Rejected` — caching a throttle as a capability verdict would forfeit the
+/// feature for the life of the process over a busy minute (the exact mistake
+/// `Outcome`'s doc warns about).
 async fn post(token: &str, method: &str, body: &serde_json::Value) -> Outcome {
+    const RETRY_AFTER_CAP: std::time::Duration = std::time::Duration::from_secs(15);
     let url = format!("https://api.telegram.org/bot{token}/{method}");
-    let resp = match reqwest::Client::new().post(&url).json(body).send().await {
+    let mut resp = match reqwest::Client::new().post(&url).json(body).send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("Telegram: ephemeral {method} transport error: {e}, sending publicly");
             return Outcome::Transport;
         }
     };
+    if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let text = resp.text().await.unwrap_or_default();
+        let retry_after = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| {
+                v.get("parameters")
+                    .and_then(|p| p.get("retry_after"))
+                    .and_then(serde_json::Value::as_u64)
+            })
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(RETRY_AFTER_CAP)
+            .min(RETRY_AFTER_CAP);
+        tracing::warn!(
+            "Telegram: ephemeral {method} throttled, waiting {retry_after:?} and retrying once"
+        );
+        tokio::time::sleep(retry_after).await;
+        resp = match reqwest::Client::new().post(&url).json(body).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    "Telegram: ephemeral {method} transport error on retry: {e}, sending publicly"
+                );
+                return Outcome::Transport;
+            }
+        };
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            tracing::warn!(
+                "Telegram: ephemeral {method} still throttled after retry, sending publicly"
+            );
+            return Outcome::Transport;
+        }
+    }
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
