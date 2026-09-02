@@ -25,6 +25,27 @@ use crate::brain::agent::context::AgentContext;
 use crate::brain::provider::Message;
 use uuid::Uuid;
 
+/// Usage-gap signal (#36): the visible text is far shorter than the billed
+/// non-reasoning output tokens would allow. `usage.output_tokens` includes
+/// reasoning, so reasoning is subtracted first — thinking-heavy turns would
+/// otherwise fake a gap on every reply. The floor is deliberately
+/// conservative at 2 chars per visible token (English prose runs ~4): the
+/// gap CORROBORATES a structural truncation signal and journals standalone
+/// deficits, but never triggers a retry by itself — tokenizer variance and
+/// terse/CJK styles make a ratio-only verdict ambiguous. Skipped entirely
+/// when the provider reported no output usage.
+pub(crate) fn has_usage_gap(text: &str, usage: &crate::brain::provider::TokenUsage) -> bool {
+    if usage.output_tokens == 0 {
+        return false;
+    }
+    let visible_tokens = usage.output_tokens.saturating_sub(usage.reasoning_tokens) as u64;
+    if visible_tokens == 0 {
+        return false;
+    }
+    let chars = text.trim_end().chars().count() as u64;
+    chars < visible_tokens * 2
+}
+
 /// Detect a mid-sentence cut-off and inject the one-shot continuation
 /// prompt into the context.
 ///
@@ -34,7 +55,10 @@ use uuid::Uuid;
 /// normal end-of-turn handling.
 ///
 /// Side effects when returning `true`:
-///   * `tracing::warn!` with the last-60-char preview for debugging
+///   * `[TRUNCATION] verdict=retry` warn journal with the signal set
+///     (structural, +usage_gap when the billed non-reasoning output
+///     dwarfs the arrived text — #36), the last-60-char preview, and
+///     the usage numbers
 ///   * `progress_callback` fires `SelfHealingAlert` + `IntermediateText`
 ///     so the user sees the partial reply AND a nudge that we're
 ///     asking for continuation
@@ -50,11 +74,26 @@ use uuid::Uuid;
 pub(super) fn try_emit_truncation_continue(
     iteration_text: &str,
     reasoning_text: Option<&String>,
+    usage: &crate::brain::provider::TokenUsage,
     context: &mut AgentContext,
     session_id: Uuid,
     progress_callback: &Option<ProgressCallback>,
 ) -> bool {
-    if !looks_truncated_mid_sentence(iteration_text.trim_end()) {
+    let structural = looks_truncated_mid_sentence(iteration_text.trim_end());
+    let usage_gap = has_usage_gap(iteration_text, usage);
+
+    if !structural {
+        // Text reads as complete. A usage gap alone never triggers a retry
+        // — tokenizer variance and terse styles make it ambiguous — but the
+        // journal line accumulates evidence for future tuning (#36).
+        if usage_gap {
+            tracing::info!(
+                "[TRUNCATION] verdict=usage-gap-watch text_chars={}, usage_output={}, usage_reasoning={} — complete-looking text with a token deficit; no retry",
+                iteration_text.trim_end().chars().count(),
+                usage.output_tokens,
+                usage.reasoning_tokens
+            );
+        }
         return false;
     }
 
@@ -67,9 +106,13 @@ pub(super) fn try_emit_truncation_continue(
         .rev()
         .collect();
     tracing::warn!(
-        "Response ended with finish_reason=stop but last chars look \
-         mid-sentence (tail={:?}) — asking model to continue once.",
+        "[TRUNCATION] verdict=retry signals=structural{} tail={:?} text_chars={}, usage_output={}, usage_reasoning={}, usage_gap={} — asking model to continue once",
+        if usage_gap { "+usage_gap" } else { "" },
         preview,
+        iteration_text.trim_end().chars().count(),
+        usage.output_tokens,
+        usage.reasoning_tokens,
+        usage_gap
     );
 
     if let Some(cb) = progress_callback {
@@ -171,4 +214,129 @@ pub(crate) fn join_continuation(partial: &str, continuation: &str) -> Continuati
     } else {
         format!("{p}{c}")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::brain::agent::service::phantom::looks_truncated_mid_sentence;
+    use crate::brain::provider::TokenUsage;
+
+    fn usage(output: u32, reasoning: u32) -> TokenUsage {
+        TokenUsage {
+            output_tokens: output,
+            reasoning_tokens: reasoning,
+            ..Default::default()
+        }
+    }
+
+    // ── has_usage_gap ──────────────────────────────────────────────
+
+    #[test]
+    fn usage_gap_incident_numbers() {
+        // The 2026-08-28 #36 incident: 927 completion tokens billed, 457
+        // of them reasoning, but only 316 chars (~80 tokens) arrived.
+        let text = "x".repeat(316);
+        assert!(has_usage_gap(&text, &usage(927, 457)));
+    }
+
+    #[test]
+    fn usage_gap_healthy_text() {
+        // ~4 chars per visible token is normal English prose — no gap.
+        let text = "The deployment completed without issues.".repeat(5); // 190 chars
+        assert!(!has_usage_gap(&text, &usage(50, 0)));
+    }
+
+    #[test]
+    fn usage_gap_reasoning_heavy_no_false_positive() {
+        // Thinking-heavy turn: almost all output is reasoning, the small
+        // visible remainder matches the text. Must NOT flag.
+        let text = "x".repeat(300);
+        assert!(!has_usage_gap(&text, &usage(5000, 4900)));
+    }
+
+    #[test]
+    fn usage_gap_no_usage_no_signal() {
+        let text = "x".repeat(10);
+        assert!(!has_usage_gap(&text, &usage(0, 0)));
+        // All output is reasoning — nothing visible was billed.
+        assert!(!has_usage_gap(&text, &usage(100, 100)));
+    }
+
+    // ── structural shapes added for #36 ────────────────────────────
+
+    #[test]
+    fn backtick_parity_incident_shape() {
+        // Stream died on an OPENING backtick: exactly one backtick in the
+        // whole reply (odd parity) — the #36 shape, previously read as
+        // complete because a lone backtick matched no cut character.
+        let truncated = "You can find the full path in the config file under `";
+        assert!(looks_truncated_mid_sentence(truncated));
+    }
+
+    #[test]
+    fn backtick_closed_inline_code_clean() {
+        // Balanced backticks: the last one CLOSES inline code — complete.
+        let complete = "To check the status of the repository you run `git status`";
+        assert!(!looks_truncated_mid_sentence(complete));
+    }
+
+    #[test]
+    fn unclosed_fence_truncated() {
+        let text = "Here is the script you asked for:\n\n```bash\necho hello\nls -la";
+        assert!(looks_truncated_mid_sentence(text));
+    }
+
+    #[test]
+    fn closed_fence_clean() {
+        let text = "Here is the script you asked for:\n\n```bash\necho hello\n```\nRun it and tell me what it prints.";
+        assert!(!looks_truncated_mid_sentence(text));
+    }
+
+    #[test]
+    fn em_dash_tail_truncated() {
+        let text = "The migration finished cleanly and the only remaining step is the cutover —";
+        assert!(looks_truncated_mid_sentence(text));
+    }
+
+    #[test]
+    fn healthy_period_clean() {
+        let text = "The migration finished cleanly and nothing else needs to be done.";
+        assert!(!looks_truncated_mid_sentence(text));
+    }
+
+    // ── join_continuation semantics (#859/#956 regressions) ────────
+
+    #[test]
+    fn join_echoed_tail_recovers_nothing() {
+        let partial = "The answer is forty two tokens and the reason is";
+        let cont = "and the reason is";
+        assert_eq!(
+            join_continuation(partial, cont),
+            Continuation::Echoed(partial.to_string())
+        );
+    }
+
+    #[test]
+    fn join_genuine_continuation_extends() {
+        let partial = "The answer is forty two tokens and the reason is";
+        let cont = "that the model counted every token twice.";
+        match join_continuation(partial, cont) {
+            Continuation::Extended(j) => {
+                assert!(j.starts_with(partial));
+                assert!(j.ends_with("twice."));
+            }
+            other => panic!("expected Extended, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn join_restart_reproducing_partial_is_progress() {
+        let partial = "The answer is forty";
+        let cont = "The answer is forty two tokens.";
+        assert_eq!(
+            join_continuation(partial, cont),
+            Continuation::Extended(cont.to_string())
+        );
+    }
 }

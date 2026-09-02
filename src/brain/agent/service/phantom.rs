@@ -989,6 +989,16 @@ pub fn looks_truncated_mid_sentence(text: &str) -> bool {
     if trimmed.chars().count() < 40 {
         return false;
     }
+    // A response that ends INSIDE an unclosed code fence (odd count of
+    // fence lines) is truncated regardless of its last character — no
+    // complete markdown reply leaves a fence open (#36).
+    let fence_lines = trimmed
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count();
+    if fence_lines % 2 == 1 {
+        return true;
+    }
     if trimmed.ends_with("```") {
         return false;
     }
@@ -1005,10 +1015,36 @@ pub fn looks_truncated_mid_sentence(text: &str) -> bool {
     if last.is_alphanumeric() {
         return true;
     }
+    // A trailing single backtick is legitimate ONLY when it CLOSES inline
+    // code (even backtick parity outside fenced blocks). Odd parity means
+    // the stream died on an OPENING backtick mid-code — the #36 incident
+    // shape, which this function previously read as complete.
+    if last == '`' {
+        return backticks_outside_fences(trimmed) % 2 == 1;
+    }
     matches!(
         last,
-        ',' | ';' | ':' | '-' | '(' | '[' | '{' | '<' | '/' | '\\' | '&' | '@' | '#'
+        ',' | ';' | ':' | '-' | '(' | '[' | '{' | '<' | '/' | '\\' | '&' | '@' | '#' | '—' | '–'
     )
+}
+
+/// Count backticks on lines outside fenced code blocks. Fence delimiter
+/// lines themselves don't count — their backticks delimit blocks, they
+/// are not inline code. Used for the trailing-backtick parity check in
+/// [`looks_truncated_mid_sentence`] (#36).
+fn backticks_outside_fences(text: &str) -> usize {
+    let mut in_fence = false;
+    let mut count = 0;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence {
+            count += line.bytes().filter(|&b| b == b'`').count();
+        }
+    }
+    count
 }
 
 /// Detect whether `text` ends with a URL.
