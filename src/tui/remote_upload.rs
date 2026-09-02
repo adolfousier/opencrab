@@ -139,16 +139,23 @@ fn zmodem_capable(env: &Env) -> bool {
 /// THIRD field is this host as the client addressed it. The login name is
 /// left as a placeholder because ours is not necessarily theirs.
 pub(crate) fn scp_hint(env: &Env, client_path: &str, dest_dir: &str) -> String {
+    format!(
+        "scp {} {}:{}/",
+        shell_quote(client_path),
+        login_target(env),
+        dest_dir
+    )
+}
+
+/// `user@host` as the client addressed this machine, for the commands the
+/// user is told to run on their side.
+fn login_target(env: &Env) -> String {
     let here = env
         .get("SSH_CONNECTION")
         .and_then(|c| c.split_whitespace().nth(2))
         .unwrap_or("<this-host>");
     let user = env.get("USER").unwrap_or("<you>");
-    format!(
-        "scp {} {user}@{here}:{}/",
-        shell_quote(client_path),
-        dest_dir
-    )
+    format!("{user}@{here}")
 }
 
 /// Single-quote a path for a shell, escaping any embedded quote.
@@ -197,5 +204,16 @@ pub(crate) fn guidance(env: &Env, client_path: &str, dest_dir: &str) -> String {
         ),
         Channel::ScpHint => {}
     }
+    // The path that needs no copy step at all (#1289, #1311): with the agent
+    // on their machine and the forward on their ssh, the next drop is pulled
+    // across and lands in the same directory the scp line targets.
+    out.push_str(&format!(
+        "\nOr, with OpenCrabs on your machine too: run `opencrabs drop-agent` there and \
+         reconnect with `{}`; drops are then copied here on their own.",
+        crate::utils::drop_transfer::ssh_hint(
+            &login_target(env),
+            crate::utils::drop_transfer::DEFAULT_DROP_PORT
+        )
+    ));
     out
 }
