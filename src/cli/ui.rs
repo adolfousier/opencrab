@@ -1218,7 +1218,7 @@ async fn cmd_chat_inner(
                         // Every row is a session that was mid-turn when the
                         // previous process died, duplicate rows included; the
                         // ledger dedups, so the summary counts sessions.
-                        boot_report::record_interrupted(session_id);
+                        boot_report::record_interrupted_origin(session_id, &req.origin);
                         if !seen.insert(session_id) {
                             continue;
                         }

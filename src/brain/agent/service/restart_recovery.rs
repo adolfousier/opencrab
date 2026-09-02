@@ -331,7 +331,9 @@ pub async fn report_interrupted() -> usize {
         // landed on the local surface — the shape #940 fixed for completions
         // and left standing here. Startup runs before channels register, so
         // an unclaimed session parks rather than mis-delivers (#1037).
-        deliver_or_park(row.session_id, interrupted_message(&row));
+        if !deliver_or_park(row.session_id, interrupted_message(&row)) {
+            super::boot_report::record_parked();
+        }
         count += 1;
 
         // Clear per row, only after it is accounted for. clear_all() used to
@@ -393,7 +395,9 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
     for orphan in orphans {
         match Uuid::parse_str(&orphan.session_id) {
             Ok(session_id) => {
-                deliver_or_park(session_id, subagent_interrupted_message(&orphan));
+                if !deliver_or_park(session_id, subagent_interrupted_message(&orphan)) {
+                    super::boot_report::record_parked();
+                }
                 reported += 1;
             }
             Err(e) => {
