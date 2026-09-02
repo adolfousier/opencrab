@@ -7,17 +7,14 @@
 //! fallback for servers without the `media` field. A broken image URL makes
 //! the whole send fail with `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`, so before
 //! delivery each fence is pre-validated against the renderer (mermaid.ink):
-//! the render's PNG bytes are fetched by us and uploaded via multipart
-//! (`attach://`), so Telegram never fetches a third-party URL. A request
-//! ladder keeps the render inside Telegram's photo box (natural size first,
-//! then a proportional 1200px width clamp); anything else degrades to a
+//! a 200 + `image/*` response embeds the image, anything else degrades to a
 //! legible failure block (the renderer's error note plus the original
 //! source) instead of killing the message. Pre-validation never panics or
-//! hangs; failure paths yield [`MermaidResult::Failed`].
+//! hangs; every failure path yields [`MermaidResult::Failed`].
 
 use super::ast::{Block, MermaidResult};
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -28,25 +25,15 @@ const MERMAID_INK_BASE: &str = "https://mermaid.ink/img/";
 
 /// Query parameters appended to every mermaid.ink render request.
 ///
-/// Natural-size PNG request: no width/scale overrides, so mermaid.ink
-/// returns the diagram at its intrinsic Chromium/ELK render size (the
-/// 44-node stress case: 1611×3727). The previous hi-res override
-/// (`width=1600&scale=2`) doubled that to 3200×7404 — 10604 combined px,
-/// past Telegram's photo box — and Telegram refused the photo. The render
-/// size is a property of the request we send, not of the diagram.
-const MERMAID_INK_PARAMS: &str = "?type=png";
+/// The service's defaults produce small blurry JPEGs; these request PNG at
+/// double resolution instead (empirically verified 2026-08-26:
+/// `type=png&width=1600&scale=2` yields a 3200px-wide PNG where bare `/img/`
+/// yields a ~1900px-wide JPEG of the same source). `scale` is ignored
+/// without `width`, so the two always travel together.
+const MERMAID_INK_PARAMS: &str = "?type=png&width=1600&scale=2";
 
-/// Ladder rung 2: same renderer, layout clamped to a proportional 1200px
-/// width. `width` scales the render proportionally (measured: the stress
-/// case goes 1611×3727 → 1200×2776), so a single clamp rung covers any
-/// realistic aspect ratio without a local redraw.
-const MERMAID_INK_CLAMP_PARAMS: &str = "?type=png&width=1200";
-
-/// Telegram rejects photos whose width+height exceeds this combined budget
-/// (measured live, #1238: 3200×7404 refused, 1611×3727 accepted).
-const PHOTO_MAX_TOTAL_DIMS: f32 = 9_600.0;
-
-/// stall message delivery; on timeout we degrade to a legible failure block.
+/// Upper bound on a single pre-validation request. A slow renderer must not
+/// stall message delivery; on timeout we degrade to a failure block.
 const PREVALIDATE_TIMEOUT_SECS: u64 = 10;
 
 /// Cap on how much of the renderer's error body we surface, so a huge HTML
@@ -54,19 +41,12 @@ const PREVALIDATE_TIMEOUT_SECS: u64 = 10;
 const ERROR_NOTE_MAX_CHARS: usize = 400;
 
 /// One media reference embedded via the markdown `media` field (#1044).
-/// `id` matches the `tg://photo?id=<id>` reference in the markdown text.
-///
-/// Exactly one of the payload sources is set:
-/// - `url`: the mermaid.ink renderer image URL Telegram fetches server-side
-///   (the legacy, network-dependent path).
-/// - `bytes`: the pre-validated mermaid.ink PNG bytes, uploaded to Telegram
-///   via multipart as `attach://<id>` — the active delivery mode; Telegram
-///   never touches a third-party URL.
+/// `id` matches the `tg://photo?id=<id>` reference in the markdown text;
+/// `url` is the validated renderer image Telegram fetches server-side.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MediaEntry {
     pub(crate) id: String,
-    pub(crate) url: Option<String>,
-    pub(crate) bytes: Option<Vec<u8>>,
+    pub(crate) url: String,
 }
 
 /// A located ```mermaid fence in the source markdown. `start` is the byte
@@ -212,49 +192,25 @@ pub(crate) fn should_render_mermaid(text: &str) -> bool {
     tg.rich_messages && tg.mermaid_render && has_mermaid_fence(text)
 }
 
-/// Full mermaid.ink embed/resolve URL for a diagram source: b64url
-/// payload plus the natural-size PNG parameters ([`MERMAID_INK_PARAMS`]).
+/// Full mermaid.ink embed/prevalidate URL for a diagram source: b64url
+/// payload plus the hi-res PNG parameters ([`MERMAID_INK_PARAMS`]).
 pub(crate) fn ink_url(source: &str) -> String {
-    ink_url_params(source, MERMAID_INK_PARAMS)
-}
-
-/// Same URL at an explicit parameter set — the ladder's clamp rung.
-fn ink_url_params(source: &str, params: &str) -> String {
-    format!("{}{}{}", MERMAID_INK_BASE, base64url(source), params)
-}
-
-/// Whether a render fits Telegram's photo box (width + height budget).
-/// Pure f32 arithmetic with no renderer deps — kept out of the
-/// feature-gated local-render module so every build can dimension-check
-/// remote PNGs.
-pub(crate) fn photo_fits(w: u32, h: u32) -> bool {
-    (w as f32) + (h as f32) <= PHOTO_MAX_TOTAL_DIMS
-}
-
-/// Parse a PNG's IHDR header for its (width, height). Returns `None` for
-/// non-PNG bodies and buffers too short to carry the header. Split out so
-/// the oversize ladder is unit-testable without a network call.
-pub(crate) fn png_dims(png: &[u8]) -> Option<(u32, u32)> {
-    const PNG_SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-    if png.len() < 24 || png[..8] != PNG_SIG {
-        return None;
-    }
-    if png[12..16] != *b"IHDR" {
-        return None;
-    }
-    let w = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
-    let h = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
-    Some((w, h))
+    format!(
+        "{}{}{}",
+        MERMAID_INK_BASE,
+        base64url(source),
+        MERMAID_INK_PARAMS
+    )
 }
 
 // ── Render cache (#37) ──
 //
-// The regen-nudge preflight resolves the same fence the delivery path
-// resolves moments later, and mermaid.ink renders are deterministic:
+// The regen-nudge preflight validates the same fence the delivery path
+// validates moments later, and mermaid.ink renders are deterministic:
 // identical source, identical outcome. Caching the fresh outcome spares the
 // renderer the duplicate round-trip — and spares the delivery path a second
 // chance to hit a transient wobble on an already-proven source. Only
-// deterministic outcomes are stored: rendered image bytes and parse errors.
+// deterministic outcomes are stored: rendered image URLs and parse errors.
 // Transient `Failed` outcomes are never pinned, because the same source may
 // render fine seconds later.
 
@@ -280,13 +236,13 @@ pub(crate) fn cache_get(source: &str) -> Option<MermaidResult> {
 }
 
 /// Store a deterministic render outcome for `source` (#37). Only
-/// [`MermaidResult::ImageBytes`] and [`MermaidResult::ParseError`] are
+/// [`MermaidResult::Image`] and [`MermaidResult::ParseError`] are
 /// stored; transient failures are skipped so a retryable outage is never
 /// pinned as a stuck failure block. Evicts the oldest entry at the cap.
 pub(crate) fn cache_put(source: &str, outcome: &MermaidResult) {
     if !matches!(
         outcome,
-        MermaidResult::ImageBytes(_) | MermaidResult::ParseError(_)
+        MermaidResult::Image(_) | MermaidResult::ParseError(_)
     ) {
         return;
     }
@@ -312,25 +268,14 @@ fn finish(source: &str, outcome: MermaidResult) -> MermaidResult {
     outcome
 }
 
-/// Pre-validate a single mermaid diagram against the renderer. On HTTP 200
-/// with an `image/*` content type it DOWNLOADS the rendered PNG and returns
-/// [`MermaidResult::ImageBytes`] — Telegram never fetches a URL from us
-/// (its own URL fetcher proved the unreliable link: `400 failed to get
-/// HTTP URL content` on live probes while the same URL fetched fine from
-/// this host). Every other outcome (non-200, non-image, timeout, transport
-/// error, client build failure, dropped body) yields
-/// [`MermaidResult::Failed`] with a legible note. Never panics, never hangs
-/// past the timeout.
-///
-/// Delivery is remote-only (#1238, owner directive: the in-process
-/// renderer's visual quality is not acceptable in production, and the owner
-/// later ordered it removed from the tree entirely): the request ladder
-/// walks natural size → proportional width clamp, both served by
-/// mermaid.ink; if every rung fails or still busts Telegram's photo box,
-/// the fence degrades to a legible failure block. No local renderer exists.
-pub(crate) async fn resolve(source: &str) -> MermaidResult {
-    // #37: reuse a fresh render — the regen preflight and the delivery path
-    // resolve the same source, and the renderer's outcome is deterministic.
+/// Pre-validate a single mermaid diagram against the renderer. Returns
+/// [`MermaidResult::Image`] with the embed URL only on HTTP 200 + an
+/// `image/*` content type; every other outcome (non-200, non-image, timeout,
+/// transport error, client build failure) yields [`MermaidResult::Failed`]
+/// with a legible note. Never panics, never hangs past the timeout.
+pub(crate) async fn prevalidate(source: &str) -> MermaidResult {
+    // A fresh cached outcome (image URL or parse error) spares the renderer
+    // the duplicate round-trip (#37).
     if let Some(cached) = cache_get(source) {
         return cached;
     }
@@ -366,93 +311,18 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
         .to_string();
 
     if is_image_response(status, &content_type) {
-        // Bytes delivery (hybrid round 2): download the PNG here and hand
-        // Telegram the bytes via multipart (`attach://`). Telegram's own
-        // server-side URL fetcher is the unreliable hop — it 400s with
-        // "failed to get HTTP URL content" on URLs this host fetches fine —
-        // so Telegram never sees a URL at all.
-        let body = match resp.bytes().await {
-            Ok(b) => b,
-            Err(_) => {
-                return MermaidResult::Failed("diagram renderer dropped the image".into());
-            }
-        };
-        // Dimension ladder (#1238): natural size first; if it busts
-        // Telegram's photo box, re-request the SAME diagram with a
-        // proportional 1200px width clamp — still mermaid.ink, still
-        // Chromium/ELK quality. Delivery never redraws locally.
-        match png_dims(&body) {
-            Some((w, h)) if !photo_fits(w, h) => {
-                tracing::warn!(
-                    w,
-                    h,
-                    "natural render exceeds the photo box; retrying at the width clamp"
-                );
-                let clamp_url = ink_url_params(source, MERMAID_INK_CLAMP_PARAMS);
-                let cresp = match client.get(&clamp_url).send().await {
-                    Ok(r) => r,
-                    Err(_) => {
-                        return MermaidResult::Failed(format!(
-                            "rendered diagram {w}x{h} exceeds the photo box and the width-clamp retry failed"
-                        ));
-                    }
-                };
-                let cstatus = cresp.status().as_u16();
-                let ctype = cresp
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
-                    .to_string();
-                if !is_image_response(cstatus, &ctype) {
-                    let cbody = cresp.text().await.unwrap_or_default();
-                    return MermaidResult::Failed(error_note(cstatus, &cbody));
-                }
-                let cbytes = match cresp.bytes().await {
-                    Ok(b) => b,
-                    Err(_) => {
-                        return MermaidResult::Failed("width-clamp retry dropped the image".into());
-                    }
-                };
-                if let Some((cw, ch)) = png_dims(&cbytes).filter(|&(cw, ch)| !photo_fits(cw, ch)) {
-                    return MermaidResult::Failed(format!(
-                        "rendered diagram exceeds the photo box even at the width clamp: {cw}x{ch} px"
-                    ));
-                }
-                tracing::info!(
-                    bytes = cbytes.len(),
-                    "mermaid.ink clamp render ok; delivering bytes"
-                );
-                return finish(source, MermaidResult::ImageBytes(cbytes.to_vec()));
-            }
-            _ => {}
-        }
-        tracing::info!(
-            bytes = body.len(),
-            "mermaid.ink render ok; delivering bytes"
-        );
-        return finish(source, MermaidResult::ImageBytes(body.to_vec()));
+        return finish(source, MermaidResult::Image(url));
     }
 
     // Not a usable image: surface the renderer's own error text (mermaid.ink
     // returns a plain-text parse error) so the failure block is legible.
     let body = resp.text().await.unwrap_or_default();
-    // Failure telemetry (#64): the success leg logs `render ok`; without a
-    // matching warn here a non-200 is invisible in the daemon log and
-    // incidents get argued from absence. Parse rejections (4xx) also warn —
-    // the #37 preflight consumes them, but the render attempt itself should
-    // still leave a receipt.
-    tracing::warn!(
-        status,
-        note = %error_note(status, &body),
-        "mermaid.ink render failed"
-    );
     finish(source, classify_render_failure(status, &body))
 }
 
 /// Pre-render every mermaid fence in `text` and collect the PARSE errors
 /// (#37). Called from the tool loop before the reply is final: each fence
-/// is resolved through [`resolve`] — which populates the render cache, so
+/// is resolved through [`prevalidate`] — which populates the render cache, so
 /// the delivery path reuses every outcome instead of re-asking the
 /// renderer — and only deterministic parse rejections are reported.
 /// Transient failures stay silent here; the delivery path degrades them
@@ -461,7 +331,7 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
 pub(crate) async fn preflight_parse_errors(text: &str) -> Vec<String> {
     let mut errors = Vec::new();
     for fence in find_mermaid_fences(text) {
-        if let MermaidResult::ParseError(note) = resolve(&fence.source).await {
+        if let MermaidResult::ParseError(note) = prevalidate(&fence.source).await {
             errors.push(note);
         }
     }
@@ -514,19 +384,7 @@ pub(crate) fn replacement_for(
                 format!("![diagram](tg://photo?id={id})"),
                 Some(MediaEntry {
                     id,
-                    url: Some(url.clone()),
-                    bytes: None,
-                }),
-            )
-        }
-        MermaidResult::ImageBytes(bytes) => {
-            let id = format!("diag{index}");
-            (
-                format!("![diagram](tg://photo?id={id})"),
-                Some(MediaEntry {
-                    id,
-                    url: None,
-                    bytes: Some(bytes.clone()),
+                    url: url.clone(),
                 }),
             )
         }
@@ -536,22 +394,11 @@ pub(crate) fn replacement_for(
     }
 }
 
-/// Resolve a single fence to a render outcome. Remote-only delivery
-/// (#1044 bytes path, #1238 ladder): mermaid.ink renders (ELK layout,
-/// Chromium text rendering, full mermaid 11 diagram coverage) and the PNG
-/// bytes ride to Telegram via multipart (`attach://`) — Telegram never
-/// fetches a URL. On total failure the prevalidation note degrades to the
-/// legible failure block; the in-process renderer is never invoked in
-/// delivery.
-async fn resolve_fence(source: &str) -> MermaidResult {
-    resolve(source).await
-}
-
 /// Resolve every mermaid fence in `text` for the markdown+media path: valid
 /// diagrams become `![diagram](tg://photo?id=diagN)` references with a
 /// matching [`MediaEntry`], broken ones become legible markdown failure
 /// blocks. Non-fence text is untouched (byte-identical). Boxed because the
-/// resolver is async and because it spans an await boundary.
+/// resolver is async and returned across an await boundary.
 pub(crate) fn resolve_markdown_media(text: &str) -> BoxFuture<'static, (String, Vec<MediaEntry>)> {
     let text = text.to_string();
     async move {
@@ -563,7 +410,7 @@ pub(crate) fn resolve_markdown_media(text: &str) -> BoxFuture<'static, (String, 
         let mut media = Vec::new();
         // Replace from last to first so earlier byte offsets stay valid.
         for (i, fence) in fences.iter().enumerate().rev() {
-            let outcome = resolve_fence(&fence.source).await;
+            let outcome = prevalidate(&fence.source).await;
             let (replacement, entry) = replacement_for(&outcome, i, &fence.source);
             if let Some(e) = entry {
                 media.push(e);
@@ -600,7 +447,7 @@ fn resolve_block(block: Block) -> BoxFuture<'static, Block> {
                 if lang.as_deref().is_some_and(is_mermaid_lang)
                     || (lang.is_none() && looks_like_mermaid_source(&text)) =>
             {
-                let result = resolve_fence(&text).await;
+                let result = prevalidate(&text).await;
                 Block::Mermaid {
                     source: text,
                     result,

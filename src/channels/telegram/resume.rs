@@ -11,7 +11,6 @@ use super::send::{best_effort_delete, fire_chat_action};
 use crate::a2a::handler::notify::CLI_SENDER_PREFIX;
 use crate::brain::agent::service::background_tasks;
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
-use crate::channels::bg_resume;
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
 use std::sync::Arc;
@@ -38,13 +37,37 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: no chat for session {session_id}; dropping");
                 return;
             };
-            // #1242: this used to be a one-shot fetch — a completion arriving
-            // while the bot was still authenticating after a restart was
-            // dropped with no retry and no record (2026-08-26/27 boot logs).
-            // Wait the bounded window out first; past it, park so the #1224
-            // route restore delivers when the channel claims the session.
-            let Some(bot) = bg_resume::wait_ready(|| state.bot(), "telegram: bot").await else {
-                bg_resume::park_undeliverable(session_id, msg, "telegram");
+            // Channel-ownership guard (fork #17): this callback is ALSO
+            // reached by paths that bypass deliver_to_session's gate —
+            // background-task completions resolve their route directly
+            // (background_tasks.rs) — so the choke point checks too. A
+            // session replaced on its chat/topic must never be woken into
+            // the successor's conversation; refuse the wake. (Port seam:
+            // the fork parks the message here; upstream has no channel
+            // park primitive in this callback, so the completion is dropped
+            // with a loud warn — the gate's contract is refusing the wake,
+            // not preserving the message.)
+            if let crate::brain::agent::service::session_routes::ChannelOwnership::Occupied {
+                occupant,
+            } = state.channel_ownership_of(session_id)
+            {
+                tracing::warn!(
+                    "[bg-resume] telegram: session {session_id} no longer owns chat {chat_id} — \
+                     occupied by session {occupant}; refusing to wake it into the successor's \
+                     conversation"
+                );
+                return;
+            }
+            // Bounded wait, not a drop (#1242). At boot this callback and
+            // the bot's own connect run concurrently with nothing ordering
+            // them, so "not connected" here usually means "not connected
+            // yet" — and answering it with a return lost the wake forever.
+            let Some(bot) =
+                crate::channels::transport_ready::await_transport("telegram", session_id, || {
+                    state.bot()
+                })
+                .await
+            else {
                 return;
             };
             let Some(agent) = agent_holder
@@ -94,24 +117,20 @@ pub(crate) fn build_enqueue_callback(
                 // `[session-notify from=<uuid>]` header — the raw id is
                 // replaced with a human label (topic name for same-chat
                 // pushes, chat name / chat+topic for cross-chat, per
-                // Alexey's rule). CLI notifications (#23) stamp
+                // Alexey's rule). The CLI lane (#1258) stamps
                 // `from=cli:<label>` instead — no sender session exists,
-                // so the carried label renders verbatim.
-                let (wire, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
+                // so the carried label renders verbatim, zero lookups.
+                let (echo_md, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
                     build_bg_receipt_card(&meta)
                 } else {
                     let (sender, body) = split_bg_echo_parts(&msg.context_text);
                     match sender {
                         Some(NotifySender::Session(s)) => {
                             let label = sender_label(&state, &bot, s, chat_id).await;
-                            build_notify_receipt_card(&label, &body).await
+                            build_notify_receipt_card(&label, &body)
                         }
-                        // CLI lane (#23): no sender session to humanize —
-                        // the carried label renders verbatim, zero API
-                        // lookups. build_notify_receipt_card neutralizes
-                        // angle brackets in the label itself.
                         Some(NotifySender::CliTooling(label)) => {
-                            build_notify_receipt_card(label, &body).await
+                            build_notify_receipt_card(label, &body)
                         }
                         // Defensive: a BackgroundTask push without meta
                         // (parked by an older binary, #1242 redelivery) keeps
@@ -124,66 +143,27 @@ pub(crate) fn build_enqueue_callback(
                         None => build_bg_echo_bubble(&body, "⚙️ background task result"),
                     }
                 };
-                // #38: the wire is the card builder's decision. `<details>`
-                // chrome cards ride the HTML input mode, where the wrapper
-                // parses into a native RichBlockDetails collapsible — the
-                // markdown rich mode cannot express it (rich/api.rs dialect
-                // rule; the #421 revert proved that route ships flat), and
-                // the old #1234 markdown-outbox route for those cards is
-                // what leaked escaped tags into the chat. Plain markdown
-                // bubbles keep the canonical outbox. On rich failure the
-                // classic blockquote below is the LIVE degradation:
-                // send_rich_html_id returns Err to this caller instead of
-                // being swallowed inside the outbox.
-                let rich_on = crate::config::Config::current()
-                    .channels
-                    .telegram
-                    .rich_messages;
-                let sent_rich = match (&wire, rich_on) {
-                    (BubbleWire::Html(html), true) => {
-                        match super::rich::api::send_rich_html_id(
-                            bot.api_url().as_str(),
-                            bot.token(),
-                            chat_id,
-                            thread_id,
-                            html,
-                            None,
-                            "bg-resume",
-                            "-",
-                        )
-                        .await
-                        {
-                            Ok(_) => true,
-                            Err(e) => {
-                                tracing::warn!(
-                                    "[bg-resume] #38 rich HTML send failed, using HTML: {e}"
-                                );
-                                false
-                            }
-                        }
-                    }
-                    // Config gate: rich disabled → classic blockquote below.
-                    (BubbleWire::Html(_), false) => false,
-                    (BubbleWire::Markdown(md), _) => {
-                        match super::send::send_markdown_outbox(
-                            &bot,
-                            teloxide::types::ChatId(chat_id),
-                            thread_id,
-                            md,
-                            "bg-resume",
-                            "-",
-                            None,
-                        )
-                        .await
-                        {
-                            Ok(_) => true,
-                            Err(e) => {
-                                tracing::warn!(
-                                    "[bg-resume] #1234 rich echo failed, using HTML: {e}"
-                                );
-                                false
-                            }
-                        }
+                // #1234/#15: the card rides the CANONICAL markdown→rich
+                // outbox (the same pipeline as every cron/kanal message);
+                // the native-rich route renders the <details> collapse, the
+                // fenced tail and pipe tables server-side. The classic
+                // blockquote above is the degraded-path source: computed up
+                // front, only touched if the outbox send fails.
+                let sent_rich = match super::send::send_markdown_outbox(
+                    &bot,
+                    teloxide::types::ChatId(chat_id),
+                    thread_id,
+                    &echo_md,
+                    "bg-resume",
+                    "-",
+                    None,
+                )
+                .await
+                {
+                    Ok(_) => true,
+                    Err(e) => {
+                        tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
+                        false
                     }
                 };
                 if !sent_rich {
@@ -252,17 +232,6 @@ pub(crate) fn build_enqueue_callback(
                 // nothing will drain this between rounds and the end-of-turn
                 // flush has to know it needs a real tool loop, not a single
                 // toolless round.
-                // Framing for mid-flight drains (fork #13): the queued push
-                // arrives in the receiver's context as a bare user turn,
-                // indistinguishable from a fresh instruction — the confusion
-                // the interrupt gate's true-branch knowingly accepts. One
-                // plain string tells the receiver to re-anchor after reading.
-                let mut msg = msg;
-                msg.context_text = format!(
-                    "[queued while you were working — re-anchor to your current task after \
-                     reading this]\n\n{}",
-                    msg.context_text
-                );
                 state.enqueue_detached_result(session_id, msg);
                 return;
             };
@@ -291,7 +260,6 @@ pub(crate) fn build_enqueue_callback(
                 msg.context_text,
                 agent,
                 state,
-                true, // push-initiated wake (#12): track for restart recovery
             )
             .await
             {
@@ -310,7 +278,6 @@ pub(crate) fn build_enqueue_callback(
 /// directly so the slot is not double-claimed.
 ///
 /// Called from ui.rs on startup when pending Telegram requests are detected.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn resume_session(
     bot: Bot,
     chat_id: ChatId,
@@ -319,7 +286,6 @@ pub(crate) async fn resume_session(
     prompt: String,
     agent: Arc<AgentService>,
     telegram_state: Arc<TelegramState>,
-    track_push_turn: bool,
 ) -> anyhow::Result<()> {
     // Claim the session's turn slot for the whole replay (#1222). A recovery
     // replay drives the SAME edit loop as an ingress turn but used to run
@@ -348,7 +314,6 @@ pub(crate) async fn resume_session(
         prompt,
         agent,
         telegram_state,
-        track_push_turn,
     )
     .await
 }
@@ -356,7 +321,6 @@ pub(crate) async fn resume_session(
 /// Unguarded core of `resume_session`. The turn-slot contract lives in the
 /// caller: either hold an `ActiveTurnGuard` across the await, or go through
 /// the public wrapper.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn resume_session_inner(
     bot: Bot,
     chat_id: ChatId,
@@ -365,7 +329,6 @@ pub(crate) async fn resume_session_inner(
     prompt: String,
     agent: Arc<AgentService>,
     telegram_state: Arc<TelegramState>,
-    track_push_turn: bool,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "Telegram: resume_session {} with full streaming pipeline",
@@ -621,37 +584,18 @@ pub(crate) async fn resume_session_inner(
         .await;
 
     let chat_id_str = chat_id.0.to_string();
-    let result = if track_push_turn {
-        // Push-initiated wake (bg-resume completion, stranded flush, boot
-        // re-delivery): tracked with origin `system` so a kill mid-tool
-        // leaves a boot-visible row (#12). The prompt IS the original push
-        // text for push wakes, so it persists correctly.
-        agent
-            .send_push_turn(
-                session_id,
-                prompt,
-                None,
-                Some(cancel_token.clone()),
-                None, // no approval callback for resume
-                Some(progress_cb),
-                "telegram",
-                Some(&chat_id_str),
-            )
-            .await
-    } else {
-        agent
-            .resume_interrupted_turn(
-                session_id,
-                prompt,
-                None,
-                Some(cancel_token.clone()),
-                None, // no approval callback for resume
-                Some(progress_cb),
-                "telegram",
-                Some(&chat_id_str),
-            )
-            .await
-    };
+    let result = agent
+        .resume_interrupted_turn(
+            session_id,
+            prompt,
+            None,
+            Some(cancel_token.clone()),
+            None, // no approval callback for resume
+            Some(progress_cb),
+            "telegram",
+            Some(&chat_id_str),
+        )
+        .await;
 
     telegram_state.remove_cancel_token(session_id).await;
     edit_cancel.cancel();
@@ -911,30 +855,12 @@ fn strip_push_scaffolding(rest: &str) -> String {
     }
 }
 
-/// The wire a wake bubble's rich leg rides (#38).
-///
-/// `<details>` chrome cards MUST use the HTML input mode: the markdown rich
-/// mode cannot express the collapsible (rich/api.rs dialect rule; the #421
-/// revert proved that route ships flat), and routing those cards through
-/// the #1234 markdown outbox is what leaked escaped tags into the chat
-/// (issue #38, 2026-08-29 — the outbox's internal fallback re-escaped the
-/// wrapper into visible `<details>` text). Plain markdown bubbles keep the
-/// canonical outbox — tables and fences stay native there. Senders branch
-/// on this enum; see the bg-resume call site.
-pub(crate) enum BubbleWire {
-    /// HTML input mode via `rich::api::send_rich_html_id` (#420 path A).
-    Html(String),
-    /// Canonical markdown outbox via `send::send_markdown_outbox` (#1234).
-    Markdown(String),
-}
-
 /// Assemble the echo bubble from the clean body + title. Returns the
-/// rich-capable markdown on the canonical markdown-outbox wire and the
-/// classic HTML blockquote fallback. Raw text is truncated BEFORE
-/// conversion so the wrapper tags stay well-formed — cutting rendered HTML
-/// can split a tag and make Telegram strip the formatting entirely
-/// (plan_card lesson).
-pub(crate) fn build_bg_echo_bubble(body: &str, title: &str) -> (BubbleWire, String) {
+/// rich-capable markdown and the classic HTML blockquote fallback. Raw text
+/// is truncated BEFORE conversion so the wrapper tags stay well-formed —
+/// cutting rendered HTML can split a tag and make Telegram strip the
+/// formatting entirely (plan_card lesson).
+pub(crate) fn build_bg_echo_bubble(body: &str, title: &str) -> (String, String) {
     let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
     let suffix = if truncated { " (truncated)" } else { "" };
@@ -947,7 +873,7 @@ pub(crate) fn build_bg_echo_bubble(body: &str, title: &str) -> (BubbleWire, Stri
         suffix,
         super::rich::markdown_to_html(body),
     );
-    (BubbleWire::Markdown(markdown), html)
+    (markdown, html)
 }
 
 /// The bg-receipt tail fence (#15): three backticks normally, but ONE MORE
@@ -967,17 +893,15 @@ fn receipt_fence(tail: &str) -> String {
 }
 
 /// Background-task receipt card (#15, owner-locked shape P3f): ONE collapsed
-/// `<details>`. Summary = `<sub>{✅|❌} <code>{label}</code> 🕒 {duration}</sub>`
-/// — icon by exit 0 / non-zero as the sole outcome signal (no exit code, no
-/// wording), label = the roster `short_label` form in monospace. Body = the
-/// output tail verbatim inside `<pre>`. Rich leg rides the HTML wire
-/// ([`BubbleWire::Html`]: send_rich_html_id parses the wrapper into a
-/// native collapsible — the markdown rich mode cannot, #38), visually
-/// identical to the owner-approved prototypes (topic 31847); classic
-/// blockquote is the degraded leg.
-pub(crate) fn build_bg_receipt_card(
-    meta: &crate::brain::agent::BgTaskMeta,
-) -> (BubbleWire, String) {
+/// `<details>`. Summary = `<sub>{✅|❌} `{label}` 🕒 {duration}</sub>` — icon
+/// by exit 0 / non-zero as the sole outcome signal (no exit code, no
+/// wording), label = the roster `short_label` form in inline code. Body =
+/// ONE fenced code block with the output tail verbatim. Returns (rich
+/// markdown, classic HTML fallback). The markdown leg feeds
+/// [`super::send::send_markdown_outbox`], whose native-rich route renders
+/// the collapsible + code block server-side — the shape the owner-approved
+/// prototypes proved on screen (topic 31847).
+pub(crate) fn build_bg_receipt_card(meta: &crate::brain::agent::BgTaskMeta) -> (String, String) {
     let icon = if meta.success { "✅" } else { "❌" };
     // The label sits inside an inline-code span: backticks would escape the
     // span and break the summary, so they are stripped.
@@ -989,39 +913,19 @@ pub(crate) fn build_bg_receipt_card(
         label
     };
     let duration = background_tasks::format_elapsed(meta.elapsed_secs);
-    let flat_title = format!("{icon} {label} 🕒 {duration}");
-
-    // #38 empty-body guard: a whitespace-only tail leaves nothing inside
-    // the <details> wrapper and Telegram rejects the whole card with 400
-    // RICH_MESSAGE_EMPTY (3 events on 2026-08-29). Emit a flat one-line
-    // card instead — nothing to reject, no wrapper to leak on any wire.
-    if meta.tail.trim().is_empty() {
-        let markdown = format!("{icon} `{label}` 🕒 {duration}");
-        let classic = format!(
-            "<b>{icon} {} 🕒 {duration}</b>",
-            super::markdown::escape_html(label)
-        );
-        return (BubbleWire::Markdown(markdown), classic);
-    }
-
-    // Rich leg: HTML input mode, where <details><summary> parses into a
-    // native RichBlockDetails. <pre> replaces the markdown fence —
-    // containment comes from the tag, so receipt_fence's backtick
-    // arms-race only survives on the classic leg below.
-    let rich_html = format!(
-        "<details><summary><sub>{icon} <code>{}</code> 🕒 {duration}</sub></summary>\n\
-         <pre>{}</pre>\n</details>",
-        super::markdown::escape_html(label),
-        super::markdown::escape_html(&meta.tail)
+    let fence = receipt_fence(&meta.tail);
+    let markdown = format!(
+        "<details>\n<summary><sub>{icon} `{label}` 🕒 {duration}</sub></summary>\n\n\
+         {fence}\n{tail}\n{fence}\n\n</details>",
+        tail = meta.tail
     );
     // Degraded path: same content as a classic blockquote (non-collapsible
-    // on this wire), computed up front and sent when the rich call fails —
-    // LIVE since #38: send_rich_html_id returns Err to the caller instead
-    // of being swallowed inside the outbox (#1234 fallback discipline).
-    let fence = receipt_fence(&meta.tail);
+    // on this wire), computed up front and only touched if the outbox send
+    // fails (#1234 fallback discipline).
+    let flat_title = format!("{icon} {label} 🕒 {duration}");
     let fenced_body = format!("{fence}\n{tail}\n{fence}", tail = meta.tail);
     let (_, classic_html) = build_bg_echo_bubble(&fenced_body, &flat_title);
-    (BubbleWire::Html(rich_html), classic_html)
+    (markdown, classic_html)
 }
 
 /// The notify-card peek (#15 amendment): the body's first line, truncated
@@ -1039,14 +943,9 @@ fn first_line_preview(body: &str) -> String {
 /// collapsed `<details>`. Summary = `<sub>📨 From <b>{sender}</b>: {preview}</sub>`
 /// — fixed 📨 (notifies carry no success/failure semantics), sender label in
 /// bold, preview = truncated first line of the body. Body = the notify
-/// content rendered from markdown (prose and pipe tables, no code fence —
-/// a notify is a document, not a log) on the HTML wire ([`BubbleWire::Html`]),
-/// where the wrapper parses into a native collapsible (#38; the markdown
-/// rich mode cannot).
-pub(crate) async fn build_notify_receipt_card(
-    sender_label: &str,
-    body: &str,
-) -> (BubbleWire, String) {
+/// content as rendered markdown: prose and pipe tables stay native for the
+/// rich parser — no code fence, a notify is a document, not a log.
+pub(crate) fn build_notify_receipt_card(sender_label: &str, body: &str) -> (String, String) {
     // The sender sits inside a <b> tag: angle brackets are neutralized so a
     // label containing '<' cannot open a tag and corrupt the summary.
     let sanitized = sender_label.replace('<', "‹").replace('>', "›");
@@ -1056,34 +955,17 @@ pub(crate) async fn build_notify_receipt_card(
     } else {
         sender
     };
-
-    // #38 empty-body guard: whitespace-only body = an empty card inside the
-    // wrapper = 400 RICH_MESSAGE_EMPTY (same defect class as the bg card,
-    // issue #38). Flat one-line card instead — no wrapper to reject.
-    if body.trim().is_empty() {
-        let markdown = format!("📨 From **{sender}**");
-        let classic = format!("📨 From <b>{sender}</b>");
-        return (BubbleWire::Markdown(markdown), classic);
-    }
-
     let preview = first_line_preview(body);
     let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
     let suffix = if truncated { " (truncated)" } else { "" };
-    // Body rendered from markdown with <p> wrapping — the rich HTML dialect
-    // chrome surfaces use (#1142); mermaid fences resolve exactly like the
-    // final-reply path, gated so a fence-less body costs no HTTP.
-    let body_html = super::rich::markdown_to_html_mermaid_p(body).await;
-    // The preview is body-derived: escape it, a `<` in the source must not
-    // open a tag inside the summary.
-    let rich_html = format!(
-        "<details><summary><sub>📨 From <b>{sender}</b>: {}</sub></summary>\n\n\
-         {body_html}{suffix}\n\n</details>",
-        super::markdown::escape_html(&preview)
+    let markdown = format!(
+        "<details>\n<summary><sub>📨 From <b>{sender}</b>: {preview}</sub></summary>\n\n\
+         {body}{suffix}\n\n</details>"
     );
     let flat_title = format!("📨 From {sender}: {preview}");
     let (_, classic_html) = build_bg_echo_bubble(&format!("{body}{suffix}"), &flat_title);
-    (BubbleWire::Html(rich_html), classic_html)
+    (markdown, classic_html)
 }
 
 /// Bubble header for a background-task echo: reuse the producer's display

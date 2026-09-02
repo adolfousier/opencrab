@@ -10,20 +10,31 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use teloxide::payloads::{
-    EditMessageReplyMarkupSetters, EditMessageTextSetters, SendMessageSetters,
-};
-use teloxide::prelude::Requester;
+use teloxide::payloads::{EditMessageTextSetters, SendMessageSetters};
 use teloxide::types::{
     ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, ThreadId,
 };
 use uuid::Uuid;
 
 use super::TelegramState;
-use super::edit_retry::{EditErr, classify, classify_str};
 
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
+
+/// Body for the standalone fallback bubble (#1226 item 4). Prose mode keeps
+/// just the folded list (it has no buttons, nothing can expire); button
+/// modes carry the bare lamp plus an expiry marker — this fallback fires
+/// when the merge lost a rate-limit race, so the bubble is subject to the
+/// stale-shell lifecycle and operators kept reading dead fallbacks as
+/// fresh, answerable questions (msgs 30997 / 31010: one was tapped 32
+/// minutes after its choices were consumed).
+pub(crate) fn standalone_fallback_body(layout: &SuggestLayout, options: &[String]) -> String {
+    if *layout == SuggestLayout::NumberedProse {
+        folded_list_html(options).trim_start().to_string()
+    } else {
+        String::from("\u{1f4a1} <i>(choices may have expired)</i>")
+    }
+}
 
 /// What the suggestion block becomes once one of its options is tapped.
 ///
@@ -75,10 +86,6 @@ pub(crate) enum PickRewrite {
     ClassicHost(String),
     /// Standalone suggestion block: body rides plain `edit_message_text`.
     Standalone(String),
-    // NOTE (#55): glued hosts (table-bearing rich answers, keyboard attached
-    // via edit_message_reply_markup) never reach pick_rewrite — the tap
-    // handler routes them by the `glued` flag BEFORE calling this function,
-    // because a tap on a glued host must NEVER rewrite the body.
 }
 
 /// The single construction site for a post-tap body (#39).
@@ -86,25 +93,10 @@ pub(crate) enum PickRewrite {
 /// `host` is `(html, rich)` of the merged host bubble when the tapped
 /// message IS it; merged host → answer HTML + pick record, standalone →
 /// pick record alone.
-pub(crate) fn pick_rewrite(
-    host: Option<(&str, bool)>,
-    picked: String,
-    picked_idx: usize,
-) -> PickRewrite {
+pub(crate) fn pick_rewrite(host: Option<(&str, bool)>, picked: String) -> PickRewrite {
     match host {
         Some((full, rich)) => {
-            let body = if rich {
-                // #67 tap-redraw: the rows must not survive as live
-                // controls — they are rewritten to the picked state
-                // (success+✓+disabled / disabled) instead of stripped, so
-                // the bubble keeps showing what was chosen.
-                format!("{}\n\n{picked}", mark_picked_button(full, picked_idx))
-            } else {
-                // Classic hosts keep their buttons as reply markup (not in
-                // the body) — the empty-markup arm strips those; nothing to
-                // rewrite here.
-                format!("{full}\n\n{picked}")
-            };
+            let body = format!("{full}\n\n{picked}");
             if rich {
                 PickRewrite::RichHost(body)
             } else {
@@ -117,29 +109,12 @@ pub(crate) fn pick_rewrite(
 
 /// Button-width calibration, measured 2026-08-25 on Alexey's client
 /// (`sendRichMessage` probes, messages 29975 + 29991): a single full-width
-/// button fits <=50 chars on one line and wraps by 54. (The original
-/// "shared rows wrap at 11+8=19" claim was DISPROVEN by the 2026-08-31
-/// probes — see [`ROW_BUDGET_CHARS`] and fork issues #49/#52.)
+/// button fits <=50 chars on one line and wraps by 54; shared rows only
+/// survive MICRO labels (Yes/No pairs fit; 11+8=19 chars total wraps).
 pub(crate) const MAX_BUTTON_CHARS: usize = 50;
-/// Shared-row BUDGET model (owner-directed, fork issues #52/#53): a row of
-/// N buttons fits only if total label chars + BUTTON_PADDING_CHARS per
-/// button stay within ROW_BUDGET_CHARS. B=36/pad=1 was solved on the raw
-/// html plane (probes 2026-08-31, thread 30134): 4×8 (36) and 2×15 (32)
-/// shared; 2×18 (38), 3×12 (39), 3×15 (48) cut. The live rich-plane smoke
-/// matrix (#52 evidence, 8/8 verdicts) then showed rich is tighter at the
-/// same char cost: Latin 4×8 cut one label, Cyrillic 4×8 cut all four, and
-/// Cyrillic 2×17 clipped half a glyph per button — while Latin 2×17 fit.
-/// Owner call 2026-08-31: single-language model, no script factor, margin
-/// over density — PAD raised to 2 so the budget sits 2–4 cost-units below
-/// the measured rich wall. New boundaries: 4×7 and 2×16 (cost 36) share;
-/// 4×8 (40) and 2×17 (38) stack. Supersedes #49's per-label bump (8→12)
-/// — right observation, wrong axis. Known residual: bubble-width variance
-/// can still clip a legal row on narrow plain-html bodies.
-pub(crate) const ROW_BUDGET_CHARS: usize = 36;
-/// Per-button padding inside the shared-row budget. Raised 1→2 (#53) as
-/// the rich-plane margin: rich's keyboard gutter eats more than html's,
-/// and the wider Cyrillic glyphs ride the same margin — no script factor.
-pub(crate) const BUTTON_PADDING_CHARS: usize = 2;
+/// Longest label allowed to share one row with its siblings (measured:
+/// 3-7 char words sit side by side without wrapping).
+pub(crate) const SHARED_ROW_MAX_CHARS: usize = 8;
 /// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
 /// than 4 per row, so every target stays big enough for a finger.
 pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
@@ -148,8 +123,7 @@ pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
 /// Tiers are measured, not guessed — see [`MAX_BUTTON_CHARS`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SuggestLayout {
-    /// Few options AND the label total fits the row budget: all buttons
-    /// share ONE row.
+    /// Every label short AND few options: all buttons share ONE row.
     SharedRow,
     /// Every label fits a full-width button: one button per row.
     Column,
@@ -161,11 +135,9 @@ pub(crate) enum SuggestLayout {
 
 pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     let width = |o: &String| o.chars().count();
-    let row_cost: usize = options
-        .iter()
-        .map(|o| width(o) + BUTTON_PADDING_CHARS)
-        .sum();
-    if options.len() <= MAX_NUMBERS_PER_ROW && row_cost <= ROW_BUDGET_CHARS {
+    if options.len() <= MAX_NUMBERS_PER_ROW
+        && options.iter().all(|o| width(o) <= SHARED_ROW_MAX_CHARS)
+    {
         SuggestLayout::SharedRow
     } else if options.iter().all(|o| width(o) <= MAX_BUTTON_CHARS) {
         SuggestLayout::Column
@@ -220,125 +192,6 @@ pub(crate) fn folded_list_html_p(options: &[String]) -> String {
 }
 
 /// The suggestion controls as native rich-button rows (Bot API 10.3
-/// #59: cut every `<tg-button-row>…</tg-button-row>` span out of a rich
-/// bubble body — the inverse of [`suggestion_rows_rich_html`]. Used by the
-/// host-aware stale-shell strip: the #597 clear killed the stash, but the
-/// buttons keep rendering inside the body until the body is rewritten clean.
-pub(crate) fn strip_button_rows(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(start) = rest.find("<tg-button-row>") {
-        match rest[start..].find("</tg-button-row>") {
-            Some(rel) => {
-                let end = start + rel + "</tg-button-row>".len();
-                out.push_str(&rest[..start]);
-                rest = &rest[end..];
-            }
-            None => break, // unterminated span: leave the remainder untouched
-        }
-    }
-    out.push_str(rest);
-    out.trim_end().to_string()
-}
-
-/// #67 tap-redraw: rewrite suggestion buttons in a rich bubble body to
-/// their post-pick state. The picked button (whose
-/// `data="followup:<token>:<idx>"` payload ends in `picked_idx`) becomes
-/// `style="success"` with a `✓ ` label prefix; every sibling follow-up
-/// button keeps its style and gains `disabled`. Non-follow-up markup and
-/// row containers pass through byte-for-byte. Best-effort by design: if
-/// the `disabled` attribute form is ever ignored by the client, a second
-/// tap routes to the #59 stale-strip guard, so nothing can loop.
-pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
-    let mut out = String::with_capacity(html.len() + 64);
-    let mut rest = html;
-    while let Some(tag_start) = rest.find("<tg-button") {
-        let after_open = &rest[tag_start + "<tg-button".len()..];
-        // `<tg-button-row>` and any other `<tg-button…` lookalike that is
-        // not the button tag itself passes through untouched.
-        if !after_open.starts_with('>') && !after_open.starts_with(' ') {
-            out.push_str(&rest[..tag_start + "<tg-button".len()]);
-            rest = after_open;
-            continue;
-        }
-        let Some(attrs_rel) = after_open.find('>') else {
-            // Unterminated tag: emit the remainder verbatim.
-            out.push_str(rest);
-            return out;
-        };
-        let tag_open_len = "<tg-button".len();
-        let attrs = &after_open[..attrs_rel];
-        let after_attrs = &after_open[attrs_rel + 1..];
-        let body_rel = attrs_rel + 1;
-        let Some(label_rel) = after_attrs.find("</tg-button>") else {
-            // Unterminated label: emit through the tag opener verbatim.
-            out.push_str(&rest[..tag_start + tag_open_len + body_rel]);
-            rest = after_attrs;
-            continue;
-        };
-        let label = &after_attrs[..label_rel];
-        let tail = &after_attrs[label_rel + "</tg-button>".len()..];
-        let idx = attrs
-            .split("data=\"followup:")
-            .nth(1)
-            .and_then(|v| v.split('"').next())
-            .and_then(|v| v.rsplit(':').next())
-            .and_then(|v| v.parse::<usize>().ok());
-        let picked = idx == Some(picked_idx);
-        if picked || idx.is_some() {
-            let mut new_attrs = attrs.to_string();
-            if picked {
-                // The picked button flips to success regardless of its
-                // original style.
-                if let Some(s) = new_attrs.find("style=\"")
-                    && let Some(e) = new_attrs[s + "style=\"".len()..].find('"')
-                {
-                    let style_end = s + "style=\"".len() + e;
-                    new_attrs.replace_range(s + "style=\"".len()..style_end, "success");
-                }
-            } else {
-                // #71: a styled button still renders enabled-looking even
-                // with `disabled` (owner A/B: `style="primary" disabled`
-                // stays blue), so siblings drop their style attribute —
-                // bare `disabled` is the only form that renders grayed.
-                if let Some(s) = new_attrs.find(" style=\"")
-                    && let Some(e) = new_attrs[s + " style=\"".len()..].find('"')
-                {
-                    let style_end = s + " style=\"".len() + e + 1;
-                    new_attrs.replace_range(s..style_end, "");
-                }
-            }
-            if !new_attrs.contains("disabled") {
-                new_attrs.push_str(" disabled");
-            }
-            out.push_str(&rest[..tag_start]);
-            out.push_str("<tg-button");
-            out.push_str(&new_attrs);
-            out.push('>');
-            if picked {
-                out.push_str("\u{2713} ");
-            }
-            out.push_str(label);
-            out.push_str("</tg-button>");
-        } else {
-            // Not a follow-up button: emit the whole span verbatim.
-            out.push_str(&rest[..tag_start + tag_open_len + body_rel + label_rel]);
-            out.push_str("</tg-button>");
-        }
-        rest = tail;
-    }
-    out.push_str(rest);
-    out
-}
-
-/// #59 (DRY): the empty reply-markup used to strip dead keyboards — one
-/// construction site instead of one per strip arm.
-pub(crate) fn empty_keyboard() -> teloxide::types::InlineKeyboardMarkup {
-    teloxide::types::InlineKeyboardMarkup::new(
-        Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
-    )
-}
-
 /// `<tg-button-row>`), laid out per the measured ladder. Primary style
 /// throughout — picked over app-default after Alexey compared both live.
 /// Callback payloads stay `followup:<session>:<idx>`, so taps route through
@@ -459,21 +312,11 @@ pub(crate) async fn render_suggestions(
     // content instead of re-deriving it.
     let merge_payload: Option<MergePayload> = merge_host.map(|host| {
         let mid = host.message_id;
-        // #55 glue tier: table-bearing rich answers capture body=None — a
-        // body-rewriting merge would flatten the table (#679), so the
-        // keyboard rides `edit_message_reply_markup` instead and the body
-        // is never touched.
-        let Some(body) = host.body else {
-            return MergePayload {
-                message_id: mid,
-                new_html: String::new(),
-                rich: false,
-                glue: true,
-            };
-        };
         // Base body + surface: classic bubbles keep their exact delivered
-        // HTML; rich bubbles re-render from the captured markdown.
-        let (mut new_html, rich) = match body {
+        // HTML; rich bubbles re-render from the captured markdown. Table-
+        // bearing answers never reach this arm as Markdown — capture skips
+        // them because rich HTML input flattens tables (#679).
+        let (mut new_html, rich) = match host.body {
             super::state::BubbleBody::Html(html) => (html, false),
             super::state::BubbleBody::Markdown(md) => (super::rich::markdown_to_html_p(&md), true),
         };
@@ -502,20 +345,14 @@ pub(crate) async fn render_suggestions(
             message_id: mid,
             new_html,
             rich,
-            glue: false,
         }
     });
 
-    // Standalone fallback (no merge candidate, no glue target, or the edit
-    // lost a race / grew too old): the header sentence is still gone per
-    // #tg-suggest-merge — prose mode shows just the numbered list, button
-    // modes need SOME text for the Bot API to accept the message. #55: the
-    // bare lamp is retired — "Pick one:" says the same with words.
-    let standalone_body = if layout == SuggestLayout::NumberedProse {
-        folded_list_html(&options).trim_start().to_string()
-    } else {
-        String::from("Pick one:")
-    };
+    // Standalone fallback (no merge candidate, or the edit lost a race / grew
+    // too old): the header sentence is still gone per #tg-suggest-merge —
+    // prose mode shows just the numbered list, button modes need SOME text
+    // for the Bot API to accept the message, so they degrade to the bare 💡.
+    let standalone_body = standalone_fallback_body(&layout, &options);
 
     let option_count = options.len();
     match place_once(
@@ -532,12 +369,10 @@ pub(crate) async fn render_suggestions(
     .await
     {
         Ok(()) => {
-            // #31: did the trailer actually ride inside the merged panel?
-            // Only when the RICH merge landed — place_once falls back to
-            // standalone when the merge edit dies, and the standalone body
-            // never carries the embed. The followup host is attached ONLY on
-            // merge success, so it doubles as the landed-path probe; no host
-            // = standalone landed = the trailer still owes its bubble.
+            // #31: send the trailer bubble only if it wasn't already embedded
+            // in a rich merge. The followup host is attached only on merge
+            // success, so peek_followup_host tells us if the merge landed.
+            // If it did and was rich, the trailer is already in the HTML.
             let embedded = state
                 .peek_followup_host(&token)
                 .await
@@ -547,19 +382,13 @@ pub(crate) async fn render_suggestions(
                 send_trailer_bubble(bot, chat_id, thread_id, t).await;
             }
         }
-        Err(EditErr::Fatal(e)) => {
+        Err(PlaceErr::Fatal(e)) => {
             tracing::warn!("Telegram suggest_options: send failed: {e}");
             // The buttons never landed — drop the stash so a stale entry can't
             // swallow an unrelated future tap.
             state.drop_pending_followup(&token).await;
-            // #31: the trailer is content, not chrome — place_once returning
-            // Fatal means NOTHING landed (merge-edit failures fall through to
-            // the standalone send), so the sign-off always ships alone here.
-            if let Some(t) = &trailer {
-                send_trailer_bubble(bot, chat_id, thread_id, t).await;
-            }
         }
-        Err(EditErr::RetryAfter(wait)) => {
+        Err(PlaceErr::RetryAfter(wait)) => {
             // #30: a 429 here used to drop the stash at once — but BOTH arms
             // die inside the same flood window (the standalone send followed
             // the merge edit by 22ms into the same 41s ban), and the buttons
@@ -574,6 +403,7 @@ pub(crate) async fn render_suggestions(
             let state = state.clone();
             let token = token.clone();
             let keyboard = keyboard.clone();
+            let trailer = trailer.clone();
             tokio::spawn(async move {
                 let mut wait = wait;
                 for attempt in 1..=MAX_DEFERRED_PLACEMENT_ATTEMPTS {
@@ -600,8 +430,8 @@ pub(crate) async fn render_suggestions(
                                 "Telegram suggest_options: deferred placement {attempt}/\
                                  {MAX_DEFERRED_PLACEMENT_ATTEMPTS} landed (token {token})"
                             );
-                            // #31: same landed-path probe as the inline pass —
-                            // only a landed RICH merge carried the embed.
+                            // #31: send the trailer bubble only if it wasn't
+                            // already embedded in a rich merge.
                             let embedded = state
                                 .peek_followup_host(&token)
                                 .await
@@ -612,19 +442,15 @@ pub(crate) async fn render_suggestions(
                             }
                             return;
                         }
-                        Err(EditErr::Fatal(e)) => {
+                        Err(PlaceErr::Fatal(e)) => {
                             tracing::warn!(
                                 "Telegram suggest_options: deferred placement {attempt} \
                                  failed permanently: {e}"
                             );
                             state.drop_pending_followup(&token).await;
-                            // #31: nothing landed — the trailer ships alone.
-                            if let Some(t) = &trailer {
-                                send_trailer_bubble(&bot, chat_id, thread_id, t).await;
-                            }
                             return;
                         }
-                        Err(EditErr::RetryAfter(w)) => {
+                        Err(PlaceErr::RetryAfter(w)) => {
                             tracing::warn!(
                                 "Telegram suggest_options: deferred placement {attempt} hit \
                                  Retry-After {}s again (token {token})",
@@ -639,13 +465,150 @@ pub(crate) async fn render_suggestions(
                      {MAX_DEFERRED_PLACEMENT_ATTEMPTS} deferred attempts (token {token}) — dropping"
                 );
                 state.drop_pending_followup(&token).await;
-                // #31: every attempt died inside a flood window — nothing
-                // landed, so the sign-off still ships on its own.
-                if let Some(t) = &trailer {
-                    send_trailer_bubble(&bot, chat_id, thread_id, t).await;
-                }
             });
         }
+    }
+}
+
+/// Pre-built merge-edit payload (#30): computed ONCE per suggestion block so
+/// a deferred re-placement after a Retry-After re-sends byte-identical
+/// content. `rich` picks the wire: rich bubbles edit via the rich API with
+/// in-body button rows, classic bubbles via editMessageText + reply_markup.
+#[derive(Clone)]
+struct MergePayload {
+    message_id: MessageId,
+    new_html: String,
+    rich: bool,
+}
+
+/// Placement error class (#30): decides whether the stash survives the
+/// failure.
+enum PlaceErr {
+    /// Telegram answered 429 with a Retry-After — the placement may succeed
+    /// once the window passes, so the stash MUST survive the wait.
+    RetryAfter(Duration),
+    /// Anything else: retrying cannot fix it; the stash drops as before.
+    Fatal(String),
+}
+
+/// Deferred placement attempts after a Retry-After, on top of the inline
+/// first pass (#30). Two deferrals cap the chase at roughly two flood
+/// windows while comfortably covering the 31–42s windows observed in the
+/// #30 ledger.
+const MAX_DEFERRED_PLACEMENT_ATTEMPTS: u32 = 2;
+
+/// Wait used when only the rich arm's stringified "(429)" survives — see
+/// [`classify_rich_err`].
+const RICH_429_FALLBACK_WAIT_SECS: u64 = 30;
+
+fn classify_request_err(e: teloxide::RequestError) -> PlaceErr {
+    match e {
+        teloxide::RequestError::RetryAfter(secs) => PlaceErr::RetryAfter(secs.duration()),
+        other => PlaceErr::Fatal(other.to_string()),
+    }
+}
+
+/// The rich arm buries Telegram's exact retry_after inside its own internal
+/// retry loop (`post_rich`) and surfaces only an anyhow string, so
+/// classification keys off the status marker. The wait is a middle-of-the-
+/// road default: the rich path already slept out the true value
+/// RICH_MAX_RETRIES times before bailing, and the observed flood windows
+/// run 31–42s (#30 ledger).
+fn classify_rich_err(e: &str) -> PlaceErr {
+    if e.contains("(429)") {
+        PlaceErr::RetryAfter(Duration::from_secs(RICH_429_FALLBACK_WAIT_SECS))
+    } else {
+        PlaceErr::Fatal(e.to_string())
+    }
+}
+
+/// One placement pass (#30): merge onto the answer bubble when a payload
+/// exists, standalone otherwise. RetryAfter-class errors bubble up so the
+/// caller can defer with the stash intact; anything else is Fatal.
+#[allow(clippy::too_many_arguments)]
+async fn place_once(
+    bot: &teloxide::Bot,
+    state: &Arc<TelegramState>,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    token: &str,
+    option_count: usize,
+    keyboard: &InlineKeyboardMarkup,
+    merge: Option<&MergePayload>,
+    standalone_body: &str,
+) -> Result<(), PlaceErr> {
+    use teloxide::prelude::Requester;
+
+    if let Some(mp) = merge {
+        let mid = mp.message_id;
+        let outcome: Result<(), PlaceErr> = if mp.rich {
+            super::rich::api::edit_rich_html(
+                bot.api_url().as_str(),
+                bot.token(),
+                chat_id.0,
+                mid.0,
+                &mp.new_html,
+                None,
+                "turn",
+                "-",
+            )
+            .await
+            .map_err(|e| classify_rich_err(&e.to_string()))
+        } else {
+            bot.edit_message_text(chat_id, mid, &mp.new_html)
+                .parse_mode(ParseMode::Html)
+                .reply_markup(keyboard.clone())
+                .await
+                .map(|_| ())
+                .map_err(classify_request_err)
+        };
+        match outcome {
+            Ok(()) => {
+                // Name the arm, the host message and the token so any tap can
+                // be mapped back to its panel from logs alone.
+                tracing::info!(
+                    "Telegram suggest_options: keyboard merged onto msg {mid} \
+                     ({} host, token {token}, {option_count} options)",
+                    if mp.rich { "rich" } else { "classic" }
+                );
+                state
+                    .attach_followup_host(
+                        token,
+                        super::state::MergedHost {
+                            message_id: mid,
+                            html: mp.new_html.clone(),
+                            rich: mp.rich,
+                        },
+                    )
+                    .await;
+                return Ok(());
+            }
+            Err(PlaceErr::RetryAfter(wait)) => return Err(PlaceErr::RetryAfter(wait)),
+            Err(PlaceErr::Fatal(e)) => {
+                tracing::warn!(
+                    "Telegram suggest_options: merge onto msg {mid} failed ({e}) — standalone fallback"
+                );
+            }
+        }
+    }
+
+    let mut req = bot
+        .send_message(chat_id, standalone_body)
+        .reply_markup(keyboard.clone());
+    req = req.parse_mode(ParseMode::Html);
+    if let Some(tid) = thread_id {
+        req = req.message_thread_id(tid);
+    }
+    match req.await {
+        Ok(msg) => {
+            tracing::info!(
+                "Telegram suggest_options: standalone block msg {} \
+                 (token {token}, {option_count} options)",
+                msg.id
+            );
+            Ok(())
+        }
+        Err(e) => Err(classify_request_err(e)),
     }
 }
 
@@ -660,6 +623,8 @@ async fn send_trailer_bubble(
     thread_id: Option<ThreadId>,
     trailer: &str,
 ) {
+    use teloxide::prelude::Requester;
+
     let html = super::markdown::markdown_to_telegram_html(trailer);
     let mut req = bot.send_message(chat_id, html).parse_mode(ParseMode::Html);
     if let Some(tid) = thread_id {
@@ -687,130 +652,5 @@ async fn send_trailer_bubble(
                 }
             }
         }
-    }
-}
-
-/// Pre-built merge-edit payload (#30): computed ONCE per suggestion block so
-/// a deferred re-placement after a Retry-After re-sends byte-identical
-/// content. `rich` picks the wire: rich bubbles edit via the rich API with
-/// in-body button rows, classic bubbles via editMessageText + reply_markup.
-#[derive(Clone)]
-struct MergePayload {
-    message_id: MessageId,
-    new_html: String,
-    rich: bool,
-    /// #55 glue tier: attach via `edit_message_reply_markup` only — the
-    /// host body is not merge-safe (table) and must never be re-sent.
-    glue: bool,
-}
-
-/// Deferred placement attempts after a Retry-After, on top of the inline
-/// first pass (#30). Two deferrals cap the chase at roughly two flood
-/// windows while comfortably covering the 31–42s windows observed in the
-/// #30 ledger.
-const MAX_DEFERRED_PLACEMENT_ATTEMPTS: u32 = 2;
-
-/// One placement pass (#30): merge onto the answer bubble when a payload
-/// exists, standalone otherwise. RetryAfter-class errors bubble up so the
-/// caller can defer with the stash intact; anything else is Fatal.
-#[allow(clippy::too_many_arguments)]
-async fn place_once(
-    bot: &teloxide::Bot,
-    state: &Arc<TelegramState>,
-    chat_id: ChatId,
-    thread_id: Option<ThreadId>,
-    token: &str,
-    option_count: usize,
-    keyboard: &InlineKeyboardMarkup,
-    merge: Option<&MergePayload>,
-    standalone_body: &str,
-) -> Result<(), EditErr> {
-    use teloxide::prelude::Requester;
-
-    if let Some(mp) = merge {
-        let mid = mp.message_id;
-        let outcome: Result<(), EditErr> = if mp.glue {
-            // #55 glue tier: attach the keyboard without touching the body.
-            bot.edit_message_reply_markup(chat_id, mid)
-                .reply_markup(keyboard.clone())
-                .await
-                .map(|_| ())
-                .map_err(|e| classify(&e))
-        } else if mp.rich {
-            super::rich::api::edit_rich_html(
-                bot.api_url().as_str(),
-                bot.token(),
-                chat_id.0,
-                mid.0,
-                &mp.new_html,
-                None,
-                "turn",
-                "-",
-            )
-            .await
-            .map_err(|e| classify_str(&e.to_string()))
-        } else {
-            bot.edit_message_text(chat_id, mid, &mp.new_html)
-                .parse_mode(ParseMode::Html)
-                .reply_markup(keyboard.clone())
-                .await
-                .map(|_| ())
-                .map_err(|e| classify(&e))
-        };
-        match outcome {
-            Ok(()) => {
-                // #1226: placement outcome used to be invisible on success —
-                // name the arm, the host message and the token so any tap can
-                // be mapped back to its panel from logs alone.
-                tracing::info!(
-                    "Telegram suggest_options: keyboard merged onto msg {mid} \
-                     ({} host, token {token}, {option_count} options)",
-                    if mp.glue {
-                        "glue"
-                    } else if mp.rich {
-                        "rich"
-                    } else {
-                        "classic"
-                    }
-                );
-                state
-                    .attach_followup_host(
-                        token,
-                        super::state::MergedHost {
-                            message_id: mid,
-                            html: mp.new_html.clone(),
-                            rich: mp.rich,
-                            glued: mp.glue,
-                        },
-                    )
-                    .await;
-                return Ok(());
-            }
-            Err(EditErr::RetryAfter(wait)) => return Err(EditErr::RetryAfter(wait)),
-            Err(EditErr::Fatal(e)) => {
-                tracing::warn!(
-                    "Telegram suggest_options: merge onto msg {mid} failed ({e}) — standalone fallback"
-                );
-            }
-        }
-    }
-
-    let mut req = bot
-        .send_message(chat_id, standalone_body)
-        .reply_markup(keyboard.clone());
-    req = req.parse_mode(ParseMode::Html);
-    if let Some(tid) = thread_id {
-        req = req.message_thread_id(tid);
-    }
-    match req.await {
-        Ok(msg) => {
-            tracing::info!(
-                "Telegram suggest_options: standalone block msg {} \
-                 (token {token}, {option_count} options)",
-                msg.id
-            );
-            Ok(())
-        }
-        Err(e) => Err(classify(&e)),
     }
 }

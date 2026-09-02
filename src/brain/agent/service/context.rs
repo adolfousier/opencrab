@@ -340,6 +340,15 @@ impl AgentService {
         model_name: &str,
         cancel_token: Option<&CancellationToken>,
     ) -> Result<String> {
+        // This call replaces the whole context, so a background summariser
+        // still describing the pre-call conversation is describing something
+        // that will not exist by the time it returns. Applying its result
+        // later would overwrite the compaction happening right here.
+        if let Some(superseded) = self.take_pending_compaction(session_id) {
+            tracing::info!("Background compaction superseded by a synchronous one — aborting it");
+            superseded.abort();
+        }
+
         let provider = self.provider_for_session(session_id);
         let cancel = cancel_token.cloned().unwrap_or_default();
 
@@ -356,33 +365,44 @@ impl AgentService {
             self.get_working_directory_for_session(session_id),
             self.auto_approve_tools,
             cancel,
+            self.compaction_attempt_deadline(session_id),
         )
         .await?;
 
-        // Whenever session plan artifacts exist, the summary that survives
-        // compaction must carry the plan state itself: the recovery prompt
-        // alone is a separate message and can scroll away, while this block
-        // rides inside the persisted marker. Harness-written, so it is
-        // present even when the model's summary forgot the plan.
+        let summary =
+            Self::decorate_compaction_summary(summary, session_id, self.subagent_manager.clone())
+                .await;
+
+        Self::apply_compaction_summary(context, &summary);
+        Ok(summary)
+    }
+
+    /// Attach the state a model's prose summary cannot be trusted to carry.
+    ///
+    /// Both blocks are harness-written so they survive a summary that forgot
+    /// them, and both ride INSIDE the persisted marker rather than arriving as
+    /// separate messages that can scroll away:
+    ///
+    /// - session plan artifacts, so the post-compaction agent resumes the plan
+    ///   instead of rediscovering it;
+    /// - live sub-agent IDs, so `wait_agent` / `send_input` / `resume_agent` /
+    ///   `close_agent` still have something to address (#936).
+    ///
+    /// Owns no `&self` and takes the manager by value: the background
+    /// summariser calls it from a spawned task with nothing but a snapshot.
+    pub(super) async fn decorate_compaction_summary(
+        summary: String,
+        session_id: Uuid,
+        subagents: Option<Arc<crate::brain::tools::subagent::SubAgentManager>>,
+    ) -> String {
         let summary = match plan_state_block(session_id).await {
             Some(block) => format!("{summary}\n\n{block}"),
             None => summary,
         };
-
-        // When sub-agents are still alive, inject their IDs into the summary
-        // so the post-compaction agent can still call wait_agent, send_input,
-        // resume_agent, and close_agent on them (#936).
-        let summary = match self
-            .subagent_manager
-            .as_ref()
-            .and_then(|m| m.format_running_for_compaction())
-        {
+        match subagents.and_then(|m| m.format_running_for_compaction()) {
             Some(block) => format!("{summary}\n\n{block}"),
             None => summary,
-        };
-
-        Self::apply_compaction_summary(context, &summary);
-        Ok(summary)
+        }
     }
 
     /// Send the summariser request, walking `[providers.fallback]` when the
@@ -401,12 +421,54 @@ impl AgentService {
     /// to each fallback's default when it doesn't carry the requested one,
     /// and report the whole ledger if everything dies.
     /// `pub(crate)` for the regression tests in `src/tests` — no caller outside
+    /// Bound on a single summariser attempt for a session with no compaction
+    /// history to scale from. Not a guess: it is the 300s every HTTP provider
+    /// in this codebase already enforces per request
+    /// (`anthropic.rs::DEFAULT_TIMEOUT`), extended to the CLI providers that
+    /// ship no timeout at all.
+    pub(crate) const COMPACTION_ATTEMPT_FLOOR: std::time::Duration =
+        std::time::Duration::from_secs(300);
+
+    /// One summariser attempt, bounded.
+    ///
+    /// HTTP providers already cap a single request at
+    /// `anthropic.rs::DEFAULT_TIMEOUT` (300s). CLI providers carry no timeout
+    /// at all, so a summariser that stopped answering held the session for as
+    /// long as the process felt like living, and the fallback chain below was
+    /// never reached because the first attempt never returned (#1255). This
+    /// extends the bound every HTTP provider already honours to the ones that
+    /// do not, and a provider that blows it is handed on rather than waited
+    /// out: `Timeout` is retryable, so `should_try_next_provider` walks.
+    async fn compaction_attempt(
+        provider: &Arc<dyn Provider>,
+        request: LLMRequest,
+        deadline: std::time::Duration,
+    ) -> std::result::Result<
+        crate::brain::provider::LLMResponse,
+        crate::brain::provider::ProviderError,
+    > {
+        match tokio::time::timeout(deadline, provider.complete(request)).await {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::warn!(
+                    "Compaction: provider '{}' produced nothing in {:?} — moving on",
+                    provider.name(),
+                    deadline,
+                );
+                Err(crate::brain::provider::ProviderError::Timeout(
+                    deadline.as_secs(),
+                ))
+            }
+        }
+    }
+
     /// compaction should send a summariser request.
     pub(crate) async fn complete_compaction_request(
         primary: &Arc<dyn Provider>,
         fallbacks: &[Arc<dyn Provider>],
         request: LLMRequest,
         cancel: &CancellationToken,
+        attempt_deadline: std::time::Duration,
     ) -> Result<crate::brain::provider::LLMResponse> {
         use crate::brain::provider::error as provider_error;
 
@@ -417,7 +479,7 @@ impl AgentService {
                 tracing::info!("Compaction cancelled before completion");
                 return Err(AgentError::Cancelled);
             }
-            r = primary.complete(request.clone()) => match r {
+            r = Self::compaction_attempt(primary, request.clone(), attempt_deadline) => match r {
                 Ok(response) => return Ok(response),
                 Err(e) => e,
             },
@@ -460,7 +522,7 @@ impl AgentService {
                     tracing::info!("Compaction cancelled while walking fallback chain");
                     return Err(AgentError::Cancelled);
                 }
-                r = fallback.complete(fb_request) => match r {
+                r = Self::compaction_attempt(fallback, fb_request, attempt_deadline) => match r {
                     Ok(response) => {
                         tracing::info!("Compaction served by fallback '{}'", name);
                         return Ok(response);
@@ -511,6 +573,7 @@ impl AgentService {
         working_directory: PathBuf,
         auto_approve_tools: bool,
         cancel: CancellationToken,
+        attempt_deadline: std::time::Duration,
     ) -> Result<String> {
         let remaining_budget = snapshot_max_tokens.saturating_sub(snapshot_token_count);
 
@@ -699,8 +762,14 @@ impl AgentService {
         // Non-streaming call so no compaction text leaks to the TUI in the
         // background-spawn case. `cancel` aborts the request mid-flight if the
         // caller signals (e.g. 90% hard-truncate firing on the same session).
-        let response =
-            Self::complete_compaction_request(&provider, &fallbacks, request, &cancel).await?;
+        let response = Self::complete_compaction_request(
+            &provider,
+            &fallbacks,
+            request,
+            &cancel,
+            attempt_deadline,
+        )
+        .await?;
 
         let summary = Self::extract_text_from_response(&response);
 
@@ -732,6 +801,59 @@ impl AgentService {
     /// messages, then calls `AgentContext::compact_with_summary` to do the
     /// in-place swap (replace older messages with the summary, keep the recent
     /// tail within 55% of the window).
+    /// Apply a summary that was computed in the background, keeping whatever
+    /// the turn appended while the summariser was still thinking.
+    ///
+    /// `apply_compaction_summary` clears the whole message vector, which is
+    /// right when the summariser blocked the turn: nothing could arrive in the
+    /// meantime. A background summariser leaves a gap, and everything in that
+    /// gap (the tool calls and results of the turn still running) is work the
+    /// summary never saw and cannot describe. Clearing it would silently
+    /// delete the most recent thing the agent did.
+    pub(crate) fn apply_compaction_summary_after(
+        context: &mut AgentContext,
+        summary: &str,
+        snapshot_len: usize,
+    ) {
+        // The index addresses the message vector this turn is appending to.
+        // A vector shorter than the snapshot cannot be that one: the context
+        // is rebuilt from the database at the start of every turn, so this
+        // means the pending entry outlived its turn. There is no delta to
+        // keep, only a summary to apply.
+        if snapshot_len > context.messages.len() {
+            tracing::warn!(
+                "Compaction snapshot ({snapshot_len} messages) outlived its context ({}) — \
+                 applying the summary without a delta",
+                context.messages.len(),
+            );
+            Self::apply_compaction_summary(context, summary);
+            return;
+        }
+
+        let mut delta = context.messages.split_off(snapshot_len);
+        // The summary replaces everything the snapshot covered, so it is
+        // computed against exactly what it summarises.
+        Self::apply_compaction_summary(context, summary);
+
+        // The summary lands as a user message. A delta opening with tool
+        // results has lost the assistant tool_use that authorised them, and
+        // the provider rejects that shape outright.
+        let orphans = delta
+            .iter()
+            .position(|m| !AgentContext::is_orphaned_tool_result_msg(m))
+            .unwrap_or(delta.len());
+        if orphans > 0 {
+            tracing::debug!("Compaction delta: dropping {orphans} orphaned tool results");
+            delta.drain(..orphans);
+        }
+
+        let kept = delta.len();
+        for msg in delta {
+            context.add_message(msg);
+        }
+        tracing::info!("Compaction: kept {kept} messages appended during the summariser call");
+    }
+
     pub(super) fn apply_compaction_summary(context: &mut AgentContext, summary: &str) {
         let recent_snapshot = Self::format_recent_messages(&context.messages, 8);
         let brain_context = Self::build_recovered_brain_context();

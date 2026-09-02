@@ -415,7 +415,7 @@ pub(crate) fn render_flow_html_chrome(
 /// inputs (ADR 0005 Decision 12), shared by the classic and rich paths so the
 /// footer join can never drift between surfaces.
 #[allow(clippy::too_many_arguments)] // one primitive per footer input; the
-                                     // decomposition IS the point (ADR 0005 Decision 12)
+// decomposition IS the point (ADR 0005 Decision 12)
 fn footer_parts<'a>(
     header: &'a FlowHeader,
     fallback_status: Option<&'a str>,
@@ -1866,6 +1866,14 @@ pub(crate) async fn take_folded_final(
 /// be multi-part. Popping only the last entry left earlier parts
 /// imprisoned in the block.
 ///
+/// `System` chrome inside that run stays where it is (#1253). The run is
+/// the final answer only when the model wrote it; a self-healing banner or
+/// a provider-switch line is ours, and promoting it to the final bubble
+/// ships scaffolding as the reply. That is exactly what a react-only turn
+/// behind a provider switch produced: the banner became the answer, and
+/// because the answer then read as non-empty, the react-only path never
+/// ran and the reaction was never sent either.
+///
 /// `options_pending` (#1226 K): the turn halted on a `suggest_options`
 /// call, so a Tool entry sits LAST and the answer is the Text run
 /// immediately BEFORE it. Lift the trailing Tool run aside, pop that Text
@@ -1882,26 +1890,63 @@ pub(crate) fn pop_trailing_folded_texts(
     entries: &mut Vec<FlowEntry>,
     options_pending: bool,
 ) -> (Option<String>, Option<String>) {
-    let join = |mut parts: Vec<String>| {
-        parts.reverse();
-        parts.join("\n\n")
-    };
     if !options_pending {
-        // Stock pop (#478), chrome-aware (#1253): the trailing Text run IS
-        // the final answer; a System banner under it is lifted and put back
-        // in place — never reclaimed as the answer, never deleted.
-        let (parts, _) = pop_run(entries, false);
+        // The candidate run is everything after the last tool call.
+        let run_start = entries
+            .iter()
+            .rposition(|e| matches!(e, FlowEntry::Tool(_)))
+            .map_or(0, |i| i + 1);
+        let mut parts: Vec<String> = Vec::new();
+        let mut chrome: Vec<FlowEntry> = Vec::new();
+        for entry in entries.drain(run_start..) {
+            match entry {
+                FlowEntry::Text(t) => parts.push(t),
+                other => chrome.push(other),
+            }
+        }
+        entries.extend(chrome);
         if parts.is_empty() {
             return (None, None);
         }
-        return (Some(join(parts)), None);
+        return (Some(parts.join("\n\n")), None);
     }
 
     // #31: the post-halt trailer run sits AFTER the trailing Tool entry —
     // pop it first, then run the K lift for the host run.
-    let (trailer_parts, _) = pop_run(entries, false);
-    let (_, mut aside) = pop_run(entries, true);
-    let (host_parts, _) = pop_run(entries, false);
+    let join = |mut parts: Vec<String>| {
+        parts.reverse();
+        parts.join("\n\n")
+    };
+    let mut trailer_parts: Vec<String> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
+        match entries.pop() {
+            Some(FlowEntry::Text(t)) => trailer_parts.push(t),
+            other => {
+                if let Some(e) = other {
+                    entries.push(e);
+                }
+                break;
+            }
+        }
+    }
+    let mut aside: Vec<FlowEntry> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Tool(_))) {
+        if let Some(e) = entries.pop() {
+            aside.push(e);
+        }
+    }
+    let mut host_parts: Vec<String> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
+        match entries.pop() {
+            Some(FlowEntry::Text(t)) => host_parts.push(t),
+            other => {
+                if let Some(e) = other {
+                    entries.push(e);
+                }
+                break;
+            }
+        }
+    }
     let had_trailing_tools = !aside.is_empty();
     while let Some(e) = aside.pop() {
         entries.push(e);
@@ -1917,40 +1962,6 @@ pub(crate) fn pop_trailing_folded_texts(
     let host = (!host_parts.is_empty()).then(|| join(host_parts));
     let trailer = (!trailer_parts.is_empty()).then(|| join(trailer_parts));
     (host, trailer)
-}
-
-/// Pop the contiguous trailing run of Text (or Tool) entries, looking PAST
-/// System chrome (#1253): a banner is lifted aside and restored, in order,
-/// before returning — it never blocks the pop, never joins the popped run,
-/// and never leaves the block.
-fn pop_run(entries: &mut Vec<FlowEntry>, want_tool: bool) -> (Vec<String>, Vec<FlowEntry>) {
-    let mut texts: Vec<String> = Vec::new();
-    let mut tools: Vec<FlowEntry> = Vec::new();
-    let mut chrome: Vec<FlowEntry> = Vec::new();
-    loop {
-        match entries.last() {
-            Some(FlowEntry::Text(_)) if !want_tool => {
-                if let Some(FlowEntry::Text(t)) = entries.pop() {
-                    texts.push(t);
-                }
-            }
-            Some(FlowEntry::Tool(_)) if want_tool => {
-                if let Some(e) = entries.pop() {
-                    tools.push(e);
-                }
-            }
-            Some(FlowEntry::System(_)) => {
-                if let Some(e) = entries.pop() {
-                    chrome.push(e);
-                }
-            }
-            _ => break,
-        }
-    }
-    while let Some(e) = chrome.pop() {
-        entries.push(e);
-    }
-    (texts, tools)
 }
 
 /// The last model-authored folded text, looking past any system chrome
@@ -1998,19 +2009,6 @@ pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
     overlap >= 20 && (norm_final.starts_with(&norm_folded) || norm_folded.starts_with(&norm_final))
 }
 
-/// A post-halt run larger than this is not a sign-off — it is a substantive
-/// answer misfiled by position (#58). Counted in chars, not bytes.
-pub(crate) const MAX_TRAILER_CHARS: usize = 600;
-
-/// #58 cap+reroute decision, split out pure so the threshold matrix is
-/// unit-testable without a loaded config (`should_render_mermaid` reads
-/// `Config::current()`). A mermaid fence in the trailer would ship as raw
-/// fence text — the fence→PNG conversion only runs on the final-answer
-/// send — and an oversized trailer is a second answer, not a sign-off.
-pub(crate) fn trailer_promotes_to_answer(has_mermaid: bool, char_count: usize) -> bool {
-    has_mermaid || char_count > MAX_TRAILER_CHARS
-}
-
 /// Settle the options-pending reclaim into `(final text, trailer)` (#31).
 ///
 /// `content` is the response.content text — with an option-surface halt the
@@ -2028,14 +2026,6 @@ pub(crate) fn trailer_promotes_to_answer(has_mermaid: bool, char_count: usize) -
 /// - Keep-never-discard: when the popper found no trailer run but content
 ///   carries a non-duplicate leftover (the ack never folded into the flow),
 ///   the content text BECOMES the trailer instead of vanishing.
-/// - #58 cap+reroute (owner-approved Option A): a trailer carrying a
-///   mermaid fence or exceeding [`MAX_TRAILER_CHARS`] is substantive answer
-///   text misfiled by position, NOT a sign-off. It is promoted to the
-///   answer slot — the normal final-answer send renders its fence to PNG
-///   for free — and the host it displaces demotes to the trailer (nothing
-///   dies). Live miss 2026-09-01 04:21Z: a 2668-byte design answer rode
-///   after the buttons, its fence shipped as raw text, the pre-rendered
-///   PNG died in the render cache (#58).
 pub(crate) fn settle_options_reclaim(
     content: String,
     host: Option<String>,
@@ -2055,20 +2045,5 @@ pub(crate) fn settle_options_reclaim(
             _ => None,
         },
     };
-    // #58 cap+reroute (owner-approved Option A): reject a misfiled trailer —
-    // promote it to the answer, demote the displaced host to the trailer.
-    if let Some(t) = trailer.as_ref().filter(|t| {
-        trailer_promotes_to_answer(
-            super::rich::mermaid::should_render_mermaid(t),
-            t.chars().count(),
-        )
-    }) {
-        let demoted = if text.trim().is_empty() {
-            None
-        } else {
-            Some(text)
-        };
-        return (t.clone(), demoted);
-    }
     (text, trailer)
 }

@@ -11,6 +11,7 @@ pub mod onboarding_render;
 pub mod pane;
 pub mod plan;
 pub mod provider_selector;
+pub mod remote_upload;
 pub mod render;
 pub mod runner;
 

@@ -616,6 +616,16 @@ pub async fn take_plan_just_archived(session_id: Uuid) -> bool {
     take_just_archived_in_dir(&dir, session_id)
 }
 
+/// Peek the "just archived" stamp WITHOUT consuming it (#62).
+///
+/// The settle restick gate re-checks every settle (per-turn restick), so a
+/// consuming read there would starve every later turn. Gate sites peek; the
+/// one-shot consumer that finalizes the completed card still calls
+/// [`take_plan_just_archived`].
+pub async fn peek_plan_just_archived(session_id: Uuid) -> bool {
+    plan_just_archived_path(session_id).await.exists()
+}
+
 /// True when the newest file under this session's `archive/` was written
 /// within `max_age` (#1158). tool_loop archives a plan at EVERY settling
 /// plan-turn, so "an archive exists" cannot distinguish completion-now from

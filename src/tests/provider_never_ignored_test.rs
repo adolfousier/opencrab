@@ -19,6 +19,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// Long enough that no mock in this file can reach it: these tests are about
+/// which provider gets asked, not about how long one is given to answer.
+const ATTEMPT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// What a mock does when called.
 #[derive(Clone, Copy)]
 enum Outcome {
@@ -234,6 +238,7 @@ async fn compaction_re_attempts_a_quota_failed_provider_on_the_next_run() {
             &chain,
             request(),
             &tokio_util::sync::CancellationToken::new(),
+            ATTEMPT_DEADLINE,
         )
         .await;
         assert!(outcome.is_err(), "run {run}: every entry is quota-dead");

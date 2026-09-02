@@ -39,9 +39,9 @@ pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
     text_after_directive.trim().is_empty()
 }
 
-/// Whether the turn ends on a `suggest_options` surface (#1226 K): the
+/// Whether the turn ends on a suggest_options surface (#1226 K): the
 /// progress handler stashes the options mid-turn (progress.rs), so by
-/// delivery time a `Some` here means an option surface is armed and the
+/// delivery time a Some here means an option surface is armed and the
 /// flow block ends on the suggest_options Tool entry — the reclaim calls
 /// below must then look BEFORE that trailing tool for the answer.
 fn options_pending(streaming: &Arc<std::sync::Mutex<StreamingState>>) -> bool {
@@ -55,7 +55,7 @@ fn options_pending(streaming: &Arc<std::sync::Mutex<StreamingState>>) -> bool {
 /// True when a rich-send failure means Telegram could not fetch the embedded
 /// media (the mermaid.ink diagram) — a transient renderer or network window
 /// that a single re-send can sail (#tg-mermaid-delivery-hardening). Our
-/// resolve runs seconds before Telegram's own server-side refetch, so
+/// prevalidate runs seconds before Telegram's own server-side refetch, so
 /// `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND` is a race with a flaky renderer, not a
 /// structural rejection. Structural 400s (schema, content) are never retried.
 pub(crate) fn is_no_media_found(e: &anyhow::Error) -> bool {
@@ -492,16 +492,10 @@ pub(crate) async fn deliver_final_response(
             // the original response had rich structure (tables, headings,
             // lists), replace the HTML intermediates with a single native rich
             // message so Telegram renders proper tables and blocks.
-            // #46: this arm decides on `pre_dedup_text` BEFORE the options
-            // reclaim below can restore the host, so it must consult
-            // options_pending itself — same gate as the final-answer site
-            // (#45) — or a fully-deduped buttons turn stays plain.
             let text_only = if text_only.is_empty()
                 && !sent.is_empty()
-                && super::rich::should_send_native_rich_for(
-                    &pre_dedup_text,
-                    options_pending(streaming),
-                ) {
+                && super::rich::should_send_native_rich(&pre_dedup_text)
+            {
                 let rich_md = pre_dedup_text.clone();
                 match super::rich::send_rich_with_mermaid_id(
                     bot.api_url().as_str(),
@@ -529,18 +523,14 @@ pub(crate) async fn deliver_final_response(
                             rich_md.len(),
                             intermediate_ids.len()
                         );
-                        // Merge candidate (#tg-suggest-merge): the id is
-                        // captured ALWAYS. Table-free rich bubbles capture the
-                        // body too; table-bearing ones capture body=None — #55
-                        // glue tier (keyboard attaches via
-                        // edit_message_reply_markup, body never re-sent), not
-                        // the old skip-to-standalone.
-                        final_bubble = Some(super::state::MergeBubble {
-                            message_id: teloxide::types::MessageId(rich_msg_id),
-                            body: (!super::rich::contains_table(&pre_dedup_text)).then(|| {
-                                super::state::BubbleBody::Markdown(pre_dedup_text.clone())
-                            }),
-                        });
+                        // Merge candidate (#tg-suggest-merge): table-free rich
+                        // bubbles can carry the suggestion controls too.
+                        if !super::rich::contains_table(&pre_dedup_text) {
+                            final_bubble = Some(super::state::MergeBubble {
+                                message_id: teloxide::types::MessageId(rich_msg_id),
+                                body: super::state::BubbleBody::Markdown(pre_dedup_text.clone()),
+                            });
+                        }
                         // Store bot reply in channel_messages even though
                         // text_only is empty (dedup stripped it). The rich
                         // fallback already sent pre_dedup_text, so the next
@@ -697,10 +687,7 @@ pub(crate) async fn deliver_final_response(
                 // is plain text, appended as-is. On ANY failure we fall through
                 // to the HTML chunking path below, so the streaming path is
                 // never regressed. Plain prose skips rich entirely so Telegram's
-                // parser never reinterprets incidental characters — EXCEPT prose
-                // that ends on a suggest_options surface (#45): the tap rewrite
-                // preserves the host plane, so button-bearing prose rides rich
-                // too and the pick record edits back in rendered form.
+                // parser never reinterprets incidental characters.
                 // #679: for TABLE messages, skip only the doomed native-BLOCKS
                 // attempt — Telegram's InputRichBlock rejects our header/rows/align
                 // shape (its schema wants cells/size), so a table always 400s the
@@ -710,76 +697,56 @@ pub(crate) async fn deliver_final_response(
                 // to the HTML path where they showed as bare markup). Non-table
                 // rich content still tries blocks first (clean fences) then falls
                 // back to markdown.
-                let mut delivered_rich = super::rich::should_send_native_rich_for(
-                    &text_only,
-                    // #45: `options_pending` is true when the turn stashed a
-                    // suggest_options set mid-turn (#1226 K helper) — force the
-                    // rich plane for prose so buttons never live on a plain host.
-                    options_pending(streaming),
-                ) && {
-                    let rich_md = text_only.clone();
-                    // Send a FRESH rich message rather than editing the streamed
-                    // placeholder into rich. Editing a normal message into a rich
-                    // one glitches the client render — overlap during the
-                    // transition, and a stale pre-edit (HTML) version after a
-                    // refresh / chat switch. A fresh sendRichMessage renders clean.
-                    //
-                    // Delete the placeholder FIRST so the fresh rich message is
-                    // the LAST thing added to the chat — deleting it AFTER the
-                    // send pulls the content up and leaves the view mid-chat
-                    // instead of scrolling to the bottom on completion. `.take()`
-                    // clears the id so the HTML fallback below sends a fresh
-                    // message (not an edit of a deleted one) if the rich send fails.
-                    if let Some(mid) = streaming_msg_id.take() {
-                        best_effort_delete(bot, chat_id, mid, "pre-rich-fallback cleanup").await;
-                    }
-                    // Native BLOCKS first (#476 path B) for NON-table content: the
-                    // block value is sent as-is, so code fences render natively with
-                    // no server-side parser to mangle them into <code> artifacts. A
-                    // table would only 400 here (schema mismatch), so skip blocks
-                    // entirely when one is present and let the markdown send below
-                    // render it. On any block rejection we also fall through to
-                    // markdown, so worst case is exactly the rich-markdown render.
-                    // Straight to rich-markdown (#871). The native-blocks
-                    // attempt ran 68 times across two days and returned 400
-                    // (RICH_MESSAGE_CONTENT_REQUIRED) all 68 times, never once
-                    // succeeding, so every rich message already arrived via the
-                    // markdown fallback below. Keeping it cost a guaranteed
-                    // round-trip and a guaranteed error before every delivery.
-                    //
-                    // Markdown is also the only mode that renders tables: the
-                    // rich HTML input mode returns 200 and then flattens a table
-                    // into a run-on paragraph, which is why telegram_send now
-                    // uses this same call rather than its own.
-                    {
-                        // Rich MARKDOWN renders tables correctly; mermaid fences
-                        // are routed to the rich-HTML image path inside the sender
-                        // (#1044), everything else stays on markdown.
-                        // #tg-mermaid-delivery-hardening: retry once when
-                        // Telegram's server-side refetch of the embedded media
-                        // (mermaid.ink) died — `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`
-                        // is a race against a flaky renderer (our resolve ran
-                        // seconds earlier), not a structural rejection. The sender
-                        // re-resolves media on every call, so the retry naturally
-                        // re-fetches from the renderer. Structural 400s are never
-                        // retried.
-                        let mut rich_send = super::rich::send_rich_with_mermaid_id(
-                            bot.api_url().as_str(),
-                            bot.token(),
-                            chat_id.0,
-                            thread_id,
-                            &rich_md,
-                            None,
-                            "turn",
-                            "-",
-                        )
-                        .await;
-                        if rich_send.is_err() && is_no_media_found(rich_send.as_ref().unwrap_err())
+                let mut delivered_rich = super::rich::should_send_native_rich(&text_only)
+                    && {
+                        let rich_md = text_only.clone();
+                        // Send a FRESH rich message rather than editing the streamed
+                        // placeholder into rich. Editing a normal message into a rich
+                        // one glitches the client render — overlap during the
+                        // transition, and a stale pre-edit (HTML) version after a
+                        // refresh / chat switch. A fresh sendRichMessage renders clean.
+                        //
+                        // Delete the placeholder FIRST so the fresh rich message is
+                        // the LAST thing added to the chat — deleting it AFTER the
+                        // send pulls the content up and leaves the view mid-chat
+                        // instead of scrolling to the bottom on completion. `.take()`
+                        // clears the id so the HTML fallback below sends a fresh
+                        // message (not an edit of a deleted one) if the rich send fails.
+                        if let Some(mid) = streaming_msg_id.take() {
+                            best_effort_delete(bot, chat_id, mid, "pre-rich-fallback cleanup")
+                                .await;
+                        }
+                        // Native BLOCKS first (#476 path B) for NON-table content: the
+                        // block value is sent as-is, so code fences render natively with
+                        // no server-side parser to mangle them into <code> artifacts. A
+                        // table would only 400 here (schema mismatch), so skip blocks
+                        // entirely when one is present and let the markdown send below
+                        // render it. On any block rejection we also fall through to
+                        // markdown, so worst case is exactly the rich-markdown render.
+                        // Straight to rich-markdown (#871). The native-blocks
+                        // attempt ran 68 times across two days and returned 400
+                        // (RICH_MESSAGE_CONTENT_REQUIRED) all 68 times, never once
+                        // succeeding, so every rich message already arrived via the
+                        // markdown fallback below. Keeping it cost a guaranteed
+                        // round-trip and a guaranteed error before every delivery.
+                        //
+                        // Markdown is also the only mode that renders tables: the
+                        // rich HTML input mode returns 200 and then flattens a table
+                        // into a run-on paragraph, which is why telegram_send now
+                        // uses this same call rather than its own.
                         {
-                            tracing::warn!(
-                                "Telegram: rich send hit NO_MEDIA_FOUND (renderer flake?) — retrying once"
-                            );
-                            rich_send = super::rich::send_rich_with_mermaid_id(
+                            // Rich MARKDOWN renders tables correctly; mermaid fences
+                            // are routed to the rich-HTML image path inside the sender
+                            // (#1044), everything else stays on markdown.
+                            // #tg-mermaid-delivery-hardening: retry once when
+                            // Telegram's server-side refetch of the embedded media
+                            // (mermaid.ink) died — `RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND`
+                            // is a race against a flaky renderer (our prevalidate ran
+                            // seconds earlier), not a structural rejection. The sender
+                            // re-resolves media on every call, so the retry naturally
+                            // re-fetches from the renderer. Structural 400s are never
+                            // retried.
+                            let mut rich_send = super::rich::send_rich_with_mermaid_id(
                                 bot.api_url().as_str(),
                                 bot.token(),
                                 chat_id.0,
@@ -790,37 +757,57 @@ pub(crate) async fn deliver_final_response(
                                 "-",
                             )
                             .await;
-                        }
-                        match rich_send {
-                            Ok(id) => {
-                                // Success was silent, which is why an
-                                // unformatted table could not be traced (#860).
-                                tracing::info!(
-                                    "Telegram: rich markdown delivered as msg {id} ({} chars)",
-                                    rich_md.len()
+                            if rich_send.is_err()
+                                && is_no_media_found(rich_send.as_ref().unwrap_err())
+                            {
+                                tracing::warn!(
+                                    "Telegram: rich send hit NO_MEDIA_FOUND (renderer flake?) — retrying once"
                                 );
-                                sent_reply_id = Some(id);
-                                // Merge candidate (#tg-suggest-merge): the id
-                                // is captured ALWAYS. Table-free bubbles carry
-                                // the controls in-body; table-bearing ones
-                                // capture body=None — merging re-sends as rich
-                                // HTML input, which flattens tables (#679), so
-                                // #55 glues the keyboard markup-only instead.
-                                final_bubble = Some(super::state::MergeBubble {
-                                    message_id: teloxide::types::MessageId(id),
-                                    body: (!super::rich::contains_table(&rich_md)).then(|| {
-                                        super::state::BubbleBody::Markdown(rich_md.clone())
-                                    }),
-                                });
-                                true
+                                rich_send = super::rich::send_rich_with_mermaid_id(
+                                    bot.api_url().as_str(),
+                                    bot.token(),
+                                    chat_id.0,
+                                    thread_id,
+                                    &rich_md,
+                                    None,
+                                    "turn",
+                                    "-",
+                                )
+                                .await;
                             }
-                            Err(e) => {
-                                tracing::warn!("Telegram: rich delivery failed, using HTML: {e}");
-                                false
+                            match rich_send {
+                                Ok(id) => {
+                                    // Success was silent, which is why an
+                                    // unformatted table could not be traced (#860).
+                                    tracing::info!(
+                                        "Telegram: rich markdown delivered as msg {id} ({} chars)",
+                                        rich_md.len()
+                                    );
+                                    sent_reply_id = Some(id);
+                                    // Merge candidate (#tg-suggest-merge): the
+                                    // controls can ride this bubble too — but only
+                                    // when it carries no table: merging re-sends as
+                                    // rich HTML input, which flattens tables (#679);
+                                    // those answers keep the standalone fallback.
+                                    if !super::rich::contains_table(&rich_md) {
+                                        final_bubble = Some(super::state::MergeBubble {
+                                            message_id: teloxide::types::MessageId(id),
+                                            body: super::state::BubbleBody::Markdown(
+                                                rich_md.clone(),
+                                            ),
+                                        });
+                                    }
+                                    true
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Telegram: rich delivery failed, using HTML: {e}"
+                                    );
+                                    false
+                                }
                             }
                         }
-                    }
-                };
+                    };
 
                 if !delivered_rich {
                     // #tg-mermaid-delivery-hardening: last-chance mermaid render
@@ -900,7 +887,7 @@ pub(crate) async fn deliver_final_response(
                                 // answer bubble suggest_options can ride on.
                                 final_bubble = Some(super::state::MergeBubble {
                                     message_id: mid,
-                                    body: Some(super::state::BubbleBody::Html(chunks[0].clone())),
+                                    body: super::state::BubbleBody::Html(chunks[0].clone()),
                                 });
                             }
                             Err(teloxide::RequestError::RetryAfter(secs)) => {
@@ -914,9 +901,7 @@ pub(crate) async fn deliver_final_response(
                                         sent_reply_id = Some(mid.0);
                                         final_bubble = Some(super::state::MergeBubble {
                                             message_id: mid,
-                                            body: Some(super::state::BubbleBody::Html(
-                                                chunks[0].clone(),
-                                            )),
+                                            body: super::state::BubbleBody::Html(chunks[0].clone()),
                                         });
                                     }
                                     Err(e) => {
@@ -942,9 +927,9 @@ pub(crate) async fn deliver_final_response(
                                             sent_reply_id = Some(sent.0);
                                             final_bubble = Some(super::state::MergeBubble {
                                                 message_id: sent,
-                                                body: Some(super::state::BubbleBody::Html(
+                                                body: super::state::BubbleBody::Html(
                                                     chunks[0].clone(),
-                                                )),
+                                                ),
                                             });
                                         } else {
                                             tracing::error!(
@@ -968,9 +953,7 @@ pub(crate) async fn deliver_final_response(
                                     sent_reply_id = Some(sent.0);
                                     final_bubble = Some(super::state::MergeBubble {
                                         message_id: sent,
-                                        body: Some(super::state::BubbleBody::Html(
-                                            chunks[0].clone(),
-                                        )),
+                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
                                     });
                                 }
                             }
@@ -989,7 +972,7 @@ pub(crate) async fn deliver_final_response(
                                 sent_reply_id = Some(sent.0);
                                 final_bubble = Some(super::state::MergeBubble {
                                     message_id: sent,
-                                    body: Some(super::state::BubbleBody::Html(chunk.clone())),
+                                    body: super::state::BubbleBody::Html(chunk.clone()),
                                 });
                             }
                         }

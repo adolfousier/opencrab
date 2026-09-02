@@ -23,16 +23,6 @@ pub(crate) fn build_enqueue_callback(
                 );
                 return;
             };
-            // #1242: client used to be fetched only AFTER the resume turn ran,
-            // so a completion arriving in a boot window burned the model call
-            // and dropped the result. Acquire the client BEFORE running
-            // anything; past the bound, park the untouched message for its
-            // route claim.
-            let Some(client) = bg_resume::wait_ready(|| state.client(), "whatsapp: client").await
-            else {
-                bg_resume::park_undeliverable(session_id, msg, "whatsapp");
-                return;
-            };
             let Some(agent) = bg_resume::upgrade(&agent_holder) else {
                 tracing::warn!("[bg-resume] whatsapp: agent gone; dropping resume");
                 return;
@@ -45,6 +35,18 @@ pub(crate) fn build_enqueue_callback(
                 &jid_str,
             )
             .await
+            else {
+                return;
+            };
+            // Bounded wait rather than a drop (#1242). Worse here than on
+            // the surfaces that check first: the turn above has already run,
+            // so returning threw away a completed answer AND the provider
+            // call that produced it.
+            let Some(client) =
+                crate::channels::transport_ready::await_transport("whatsapp", session_id, || {
+                    state.client()
+                })
+                .await
             else {
                 return;
             };

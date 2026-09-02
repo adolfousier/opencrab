@@ -46,43 +46,33 @@ pub(crate) fn contains_table(text: &str) -> bool {
 /// deployments opt out (onboard dialog or `richtext off`) and get the
 /// universal HTML rendering. Read via the zero-disk config mirror.
 pub(crate) fn should_send_native_rich(text: &str) -> bool {
-    should_send_native_rich_for(text, false)
-}
-
-/// #45 variant: `has_buttons` forces the rich plane for plain prose that ends
-/// on a `suggest_options` surface. The tap rewrite preserves the host plane,
-/// so a classic prose host would keep the pick record in plain HTML even
-/// though the turn carries interactive buttons — button-bearing answers ride
-/// rich instead. The `rich_messages` flag still gates everything (richtext
-/// off = never rich, buttons or not).
-pub(crate) fn should_send_native_rich_for(text: &str, has_buttons: bool) -> bool {
     let flag = crate::config::Config::current()
         .channels
         .telegram
         .rich_messages;
     let structured = has_rich_structure(text);
-    let verdict = flag && (structured || has_buttons);
-    // Same visibility rationale as the base verdict (#860): both inputs are
-    // recorded so a false verdict says which half caused it — plus the
-    // buttons_forced input, so a prose-with-buttons send is distinguishable
-    // from a structured send in the log.
+    // Logged because the verdict was previously invisible: only FAILURES down
+    // the rich path were recorded, so "rich was never attempted" and "rich was
+    // sent and the client rendered it badly" produced identical logs. A table
+    // that arrived as unformatted HTML could not be diagnosed from the log at
+    // all (#860). Both inputs are recorded, not just the answer, so a false
+    // verdict says which half caused it.
     tracing::info!(
-        "Telegram rich verdict: {} (rich_messages={}, structured={}, buttons_forced={}, table={}, len={})",
-        verdict,
+        "Telegram rich verdict: {} (rich_messages={}, structured={}, table={}, len={})",
+        flag && structured,
         flag,
         structured,
-        has_buttons,
         contains_table(text),
         text.len()
     );
-    verdict
+    flag && structured
 }
 
 /// Whether `text` contains block-level markdown structure that native rich
 /// rendering handles meaningfully better than plain/HTML: a table, ATX
 /// heading, list item, fenced code block, block math, or a `<details>`
 /// collapse block — matched by `<details>` line prefix so the inline
-/// `<details><summary>` opener the #15 receipt cards emit counts too.
+/// `<details><summary>` openers count too (the #15 receipt cards emitted that shape before the parser-safe block form).
 /// Plain prose (even
 /// with inline emphasis) returns false, so it stays on the existing path and
 /// is never reinterpreted by Telegram's markdown parser. Gates the native
@@ -107,7 +97,9 @@ pub(crate) fn has_rich_structure(text: &str) -> bool {
 }
 
 /// A `# `..`###### ` ATX heading line (1-6 hashes followed by a space).
-fn is_atx_heading(t: &str) -> bool {
+/// Shared by the rich gate and the classic HTML ladder so the two parsers
+/// can never disagree on `#N`-style lines (#1257).
+pub(crate) fn is_atx_heading(t: &str) -> bool {
     let hashes = t.chars().take_while(|&c| c == '#').count();
     (1..=6).contains(&hashes) && t[hashes..].starts_with(' ')
 }

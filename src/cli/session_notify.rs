@@ -5,16 +5,15 @@
 //! route table, so the verb posts over the profile's A2A gateway — the
 //! daemon's HTTP surface — where the `session/notify` method hands the
 //! message to `deliver_to_session`, the same route the agent's
-//! session_notify tool uses (including #19 redirect-with-framing for
-//! archived/replaced sessions and #1206 parking).
+//! session_notify tool uses (including #1206 parking).
 //!
-//! Exit codes are the machine contract for tooling (oc-deploy fan-out, #24):
+//! Exit codes are the machine contract for tooling (deploy fan-out):
 //!
 //! | exit | meaning                                             |
 //! |------|-----------------------------------------------------|
-//! | 0    | delivered / redirected / parked — the message is safe |
+//! | 0    | delivered / parked — the message is safe            |
 //! | 2    | unknown or dead uuid — nothing sent, nothing created |
-//! | 3    | refused: target mid-turn and `--interrupt` not set  |
+//! | 3    | refused: target mid-turn and `--interrupt` not set (reserved: rides with the #13 in-flight failsafe harvest — upstream `deliver_to_session` never refuses yet) |
 //! | 4    | transport/config: a2a disabled, unreachable, bad response |
 //!
 //! SENDER LABEL (#23, owner amendment "Overridable"): the CLI lane has no

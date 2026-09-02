@@ -5,11 +5,12 @@
 
 pub(crate) mod announcement_loop;
 pub(crate) mod background_tasks;
+pub(crate) mod boot_report;
 mod builder;
-mod compaction;
+pub(crate) mod compaction;
 pub(crate) mod compaction_prompts;
 pub(crate) mod context;
-pub(crate) mod work_status;
+pub(crate) mod detached_status;
 #[allow(unused_imports)] // only used in test code
 pub(crate) use context::{format_editing_reminder, format_plan_reminder, plan_state_block};
 pub(crate) mod fallback_suggest;
@@ -45,6 +46,6 @@ pub use phantom::{
 };
 pub use types::{
     AgentResponse, AgentStreamResponse, ApprovalCallback, BgTaskMeta, ChannelSessionEvent,
-    MessageEnqueueCallback, MessageQueueCallback, PendingOrigin, ProgressCallback, ProgressEvent,
-    PushOrigin, QueuedUserMessage, SshPasswordCallback, SudoCallback, ToolApprovalInfo,
+    MessageEnqueueCallback, MessageQueueCallback, ProgressCallback, ProgressEvent, PushOrigin,
+    QueuedUserMessage, SshPasswordCallback, SudoCallback, ToolApprovalInfo,
 };

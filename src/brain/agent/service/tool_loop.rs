@@ -474,7 +474,7 @@ impl AgentService {
         override_progress_callback: Option<ProgressCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
-        track_origin: Option<PendingOrigin>,
+        track_pending: bool,
     ) -> Result<AgentResponse> {
         // #1008: one-shot proactive fallback-chain setup suggestion. Rides
         // the first REAL user turn (never a [System: resume / background
@@ -487,21 +487,14 @@ impl AgentService {
         );
 
         // Track this request for restart recovery. Resume turns pass
-        // `track_origin == None`: a resume is a one-shot best-effort recovery,
+        // `track_pending == false`: a resume is a one-shot best-effort recovery,
         // so it must NOT re-insert its own pending row. Otherwise an interrupted
         // resume (cancel, crash, another restart) leaves a row that resumes the
         // same already-done session on every subsequent startup — a perpetual
         // loop with rows piling up (#729).
-        //
-        // Tracked turns record their origin (#12): user-initiated rows replay
-        // with the continuation prompt at boot; push-initiated rows (a
-        // session_notify / background-task completion woke the session) are
-        // re-delivered as the original push text instead, because replaying
-        // the LLM turn there could double-execute the interrupted tool call's
-        // side effects.
         let pending_repo = crate::db::PendingRequestRepository::new(self.context.pool());
         let request_id = Uuid::new_v4();
-        if let Some(origin) = track_origin
+        if track_pending
             && let Err(e) = pending_repo
                 .insert(
                     request_id,
@@ -509,7 +502,6 @@ impl AgentService {
                     &user_message,
                     channel,
                     channel_chat_id,
-                    origin.as_db_str(),
                 )
                 .await
         {
@@ -618,9 +610,7 @@ impl AgentService {
         // Request finished — delete the tracking row. Only PROCESSING rows
         // survive (meaning the process crashed/restarted mid-request).
         // Untracked (resume) turns never inserted a row, so nothing to clean up.
-        if track_origin.is_some()
-            && let Err(e) = pending_repo.delete(request_id).await
-        {
+        if track_pending && let Err(e) = pending_repo.delete(request_id).await {
             tracing::warn!("Failed to clean up pending request: {}", e);
         }
 
@@ -1249,19 +1239,15 @@ impl AgentService {
                 &model_name,
                 cancel_token.as_ref(),
                 &progress_callback,
+                super::compaction::BudgetPhase::TurnStart,
             )
             .await
         };
 
-        if let Some(ref summary) = compaction_result {
+        if let Some(ref outcome) = compaction_result {
             // Persist compaction marker to DB so restarts load from this point
-            let compaction_marker = format!(
-                "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                 Below is a structured summary of everything before this point.]\n\n{}",
-                summary
-            );
             if let Err(e) = message_service
-                .create_message(session_id, "user".to_string(), compaction_marker)
+                .create_message(session_id, "user".to_string(), outcome.marker(""))
                 .await
             {
                 tracing::error!("Failed to persist compaction marker to DB: {}", e);
@@ -1485,12 +1471,6 @@ impl AgentService {
         // but the visible text ends mid-word ("Standard Get I"). One-shot
         // nudge to continue from where they left off.
         let mut truncated_mid_sentence_retry_used: bool = false;
-        // Tool-text leak (fork #66, ex-upstream adolfousier/opencrabs#1260):
-        // the provider stripped unrecoverable tool-call JSON and set
-        // tool_text_leak. One corrective retry with a structured-calls
-        // nudge; a second leak fails the turn clean instead of delivering
-        // raw internals as the final answer.
-        let mut tool_text_leak_retry_used: bool = false;
         // Mermaid regen attempts spent (#37): each spend echoes the broken
         // text as an assistant message and injects the renderer's error as
         // a user-role [System: ...] nudge — same shape as the empty-answer
@@ -1721,7 +1701,7 @@ impl AgentService {
             // Enforce 65% budget before every API call. Skip ONLY when the
             // CLI manages its own session (claude-cli with --resume). Qwen
             // is spawned cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -1730,17 +1710,13 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
                 // Persist compaction marker to DB so restarts load from this point
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                     Below is a structured summary of everything before this point.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(session_id, "user".to_string(), outcome.marker(""))
                     .await
                 {
                     tracing::error!("Failed to persist mid-loop compaction marker to DB: {}", e);
@@ -3840,7 +3816,7 @@ impl AgentService {
             // Post-calibration compaction check. Skip ONLY when the CLI
             // owns its session (claude-cli with --resume). Qwen is spawned
             // cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -3849,16 +3825,16 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted \
-                     after token calibration revealed high context usage.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(
+                        session_id,
+                        "user".to_string(),
+                        outcome.marker(" after token calibration revealed high context usage"),
+                    )
                     .await
                 {
                     tracing::error!(
@@ -5509,53 +5485,6 @@ impl AgentService {
                     }
                 }
 
-                // ── Tool-text leak: corrective retry, then fail clean ───
-                // (fork #66, ex-upstream adolfousier/opencrabs#1260) The
-                // provider flagged unrecoverable tool-call JSON as text.
-                // With tools available, give the model ONE structured-calls
-                // nudge; if it leaks again, fail the turn clean — never
-                // deliver raw internals as the final answer. Compaction-style
-                // requests without tools never reach this loop, and the
-                // parse layer already stripped the JSON from content.
-                if response.tool_text_leak && self.tool_registry.count() > 0 {
-                    if !tool_text_leak_retry_used {
-                        tool_text_leak_retry_used = true;
-                        tracing::warn!(
-                            "Tool-call JSON leaked as text — one corrective retry with \
-                             structured-calls nudge (iteration {})",
-                            iteration,
-                        );
-                        self.record_provider_feedback(
-                            session_id,
-                            "tool_text_leak_retry",
-                            "provider-integrity",
-                            Some("model returned tool requests as text; corrective retry"),
-                        );
-                        context.add_message(Message::user(
-                            "[System: Your previous response contained tool-call JSON as plain \
-                             text instead of executable calls. You have access to tools — invoke \
-                             them ONLY through the structured function-call API, never as text \
-                             or JSON in your reply. Re-issue your response using real tool_use \
-                             calls; if no tool is needed, answer in plain prose without any \
-                             JSON.]"
-                                .to_string(),
-                        ));
-                        continue;
-                    }
-                    let msg = "Model returned tool requests as text and recovery failed \
-                               after one retry — try a model with native function calling \
-                               (e.g. Claude, GPT-4, Gemini)."
-                        .to_string();
-                    tracing::warn!("Tool-text leak retry exhausted — failing clean: {}", msg);
-                    self.record_provider_feedback(
-                        session_id,
-                        "tool_text_leak_fail",
-                        "provider-integrity",
-                        Some("leak persisted after corrective retry; failing clean"),
-                    );
-                    return Err(AgentError::Provider(crate::brain::provider::ProviderError::StreamError(msg)));
-                }
-
                 // ── Mid-sentence truncation retry ────────────────────────
                 // Local reasoning models sometimes hit an internal EOS mid-
                 // sentence. The response stream closes cleanly (finish_reason
@@ -5998,8 +5927,7 @@ impl AgentService {
                             // Loud break (#32): append a user-visible breadcrumb so the turn
                             // does not end silent — the user sees the guard tripped, nothing
                             // is queued, and how to resume.
-                            let call_label =
-                                normalized_call.split(':').next().unwrap_or("tool");
+                            let call_label = normalized_call.split(':').next().unwrap_or("tool");
                             response.content.push(ContentBlock::Text {
                                 text: crate::brain::agent::service::nudge::loop_guard_breadcrumb(
                                     call_label,
@@ -7155,7 +7083,7 @@ impl AgentService {
             // Enforce 65% budget after tool results. Skip ONLY when the CLI
             // owns its session (claude-cli with --resume). Qwen is spawned
             // cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -7164,17 +7092,13 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
                 // Persist compaction marker to DB so restarts load from this point
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                     Below is a structured summary of everything before this point.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(session_id, "user".to_string(), outcome.marker(""))
                     .await
                 {
                     tracing::error!("Failed to persist post-tool compaction marker to DB: {}", e);
@@ -7268,7 +7192,6 @@ impl AgentService {
                     // per-iteration LLMResponses; this top-level
                     // synthesis is for content/usage handoff only.
                     streaming_active_secs: None,
-                    tool_text_leak: false,
                 }
             }
             None => {

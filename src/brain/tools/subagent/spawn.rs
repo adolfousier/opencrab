@@ -1,10 +1,10 @@
 //! spawn_agent tool — creates a child agent with forked context.
 //!
-//! Sub-agent progress is streamed to `~/.opencrabs/tmp/detached/<agent_id>.json`
+//! Sub-agent progress is streamed to `~/.opencrabs/tmp/subagents/<agent_id>.json`
 //! so the main orchestrator can track status without session_search.
 
 use super::manager::{SubAgent, SubAgentManager};
-use crate::brain::agent::service::work_status::{WorkState, WorkStatus};
+use super::status::AgentStatus;
 use crate::brain::tools::error::{Result, ToolError};
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
@@ -91,9 +91,6 @@ pub(crate) fn push_result(
     use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
     let msg = completion_message(label, agent_id, outcome);
-    // interrupt=true (fork #13): a sub-agent completion is the parent's own
-    // awaited work — it must reach the parent even mid-turn, exactly as
-    // before the gate existed.
     match deliver_to_session(parent_session_id, msg, true) {
         Delivery::Delivered => {
             tracing::info!(
@@ -490,7 +487,7 @@ impl Tool for SpawnAgentTool {
         // Create the status file in Pending state before spawning. new()
         // writes the file; we don't need the returned handle, but we do
         // propagate any write error.
-        let _ = WorkStatus::new_agent(
+        let _ = AgentStatus::new(
             &agent_id,
             &label,
             &child_session_id.to_string(),
@@ -515,8 +512,8 @@ impl Tool for SpawnAgentTool {
             tracing::info!("Sub-agent {} starting: {}", agent_id_clone, prompt_clone);
 
             // Transition to Running state.
-            let mut status = WorkStatus::read(&agent_id_clone).unwrap_or_else(|| {
-                WorkStatus::new_agent(
+            let mut status = AgentStatus::read(&agent_id_clone).unwrap_or_else(|| {
+                AgentStatus::new(
                     &agent_id_clone,
                     &label_clone,
                     &child_session_id.to_string(),
@@ -524,8 +521,10 @@ impl Tool for SpawnAgentTool {
                 )
                 .expect("status file")
             });
-            if !matches!(status.state, WorkState::Completed | WorkState::Failed)
-                && let Err(e) = status.mark_running()
+            if !matches!(
+                status.state,
+                super::status::AgentState::Completed | super::status::AgentState::Failed
+            ) && let Err(e) = status.mark_running()
             {
                 tracing::warn!("Failed to write running status: {e}");
             }

@@ -8,14 +8,14 @@
 //! point `should_render_mermaid` is not unit-tested because it reads the live
 //! `Config`, whose values in tests depend on the embedded example config.
 
-use crate::channels::telegram::rich::api::build_body_markdown_media_target;
+use crate::channels::telegram::rich::api::build_body_markdown_media;
 use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
 use crate::channels::telegram::rich::mermaid::{
-    base64url, cache_get, cache_put, classify_render_failure, error_note, failure_html,
+    MediaEntry, base64url, cache_get, cache_put, classify_render_failure, error_note, failure_html,
     find_mermaid_fences, has_mermaid_fence, image_html, ink_url, is_image_response,
     looks_like_mermaid_source, markdown_failure_block, replacement_for, resolve_blocks,
-    resolve_markdown_media, MediaEntry,
+    resolve_markdown_media,
 };
 
 // ---------------------------------------------------------------------------
@@ -259,8 +259,7 @@ fn replacement_for_image_emits_media_reference_and_entry() {
     assert_eq!(md, "![diagram](tg://photo?id=diag0)");
     let e = entry.expect("image outcome must carry a media entry");
     assert_eq!(e.id, "diag0");
-    assert_eq!(e.url, Some("https://mermaid.ink/img/xyz".into()));
-    assert!(e.bytes.is_none());
+    assert_eq!(e.url, "https://mermaid.ink/img/xyz");
 }
 
 #[test]
@@ -269,20 +268,6 @@ fn replacement_for_image_uses_fence_index_in_id() {
     let (md, entry) = replacement_for(&outcome, 3, "src");
     assert_eq!(md, "![diagram](tg://photo?id=diag3)");
     assert_eq!(entry.unwrap().id, "diag3");
-}
-
-#[test]
-fn replacement_for_image_bytes_carries_png_and_no_url() {
-    let outcome = MermaidResult::ImageBytes(vec![0x89, b'P', b'N', b'G', 0, 0, 0, 0]);
-    let (md, entry) = replacement_for(&outcome, 1, "graph TD;");
-    assert_eq!(md, "![diagram](tg://photo?id=diag1)");
-    let e = entry.expect("bytes outcome must carry a media entry");
-    assert_eq!(e.id, "diag1");
-    assert!(e.url.is_none());
-    assert_eq!(
-        e.bytes.as_deref(),
-        Some(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0][..])
-    );
 }
 
 #[test]
@@ -387,17 +372,16 @@ fn markdown_failure_block_contains_warning_error_and_source() {
 }
 
 // ---------------------------------------------------------------------------
-// build_body_markdown_media_target (JSON shape, matches validated prototype 1073)
+// build_body_markdown_media (JSON shape, matches validated prototype 1073)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn build_body_markdown_media_target_matches_prototype_shape() {
+fn build_body_markdown_media_matches_prototype_shape() {
     let media = vec![MediaEntry {
         id: "diag0".into(),
-        url: Some("https://mermaid.ink/img/abc".into()),
-        bytes: None,
+        url: "https://mermaid.ink/img/abc".into(),
     }];
-    let body = build_body_markdown_media_target(-100, None, None, "text", &media);
+    let body = build_body_markdown_media(-100, None, "text", &media, None);
     assert_eq!(body["chat_id"], -100);
     assert_eq!(body["rich_message"]["markdown"], "text");
     let arr = body["rich_message"]["media"]
@@ -411,27 +395,10 @@ fn build_body_markdown_media_target_matches_prototype_shape() {
 }
 
 #[test]
-fn build_body_markdown_media_target_includes_thread_id_when_present() {
+fn build_body_markdown_media_includes_thread_id_when_present() {
     use teloxide::types::{MessageId, ThreadId};
-    let body =
-        build_body_markdown_media_target(-100, Some(ThreadId(MessageId(249))), None, "m", &[]);
+    let body = build_body_markdown_media(-100, Some(ThreadId(MessageId(249))), "m", &[], None);
     assert_eq!(body["message_thread_id"], 249);
-}
-
-#[test]
-fn build_body_markdown_media_target_bytes_entry_uses_attach_reference() {
-    let media = vec![MediaEntry {
-        id: "diag1".into(),
-        url: None,
-        bytes: Some(vec![0x89, b'P']),
-    }];
-    let body = build_body_markdown_media_target(-100, None, None, "text", &media);
-    let arr = body["rich_message"]["media"]
-        .as_array()
-        .expect("media array");
-    assert_eq!(arr[0]["id"], "diag1");
-    assert_eq!(arr[0]["media"]["type"], "photo");
-    assert_eq!(arr[0]["media"]["media"], "attach://diag1");
 }
 
 // ---------------------------------------------------------------------------
@@ -558,19 +525,18 @@ fn test_bare_fence_with_diagram_body_is_still_classified() {
 }
 
 // ---------------------------------------------------------------------------
-// natural-size PNG embed URLs (#1238): the request carries no width/scale
-// overrides, so mermaid.ink returns the diagram at its intrinsic size — the
-// dimension ladder keeps that size inside Telegram's photo box.
+// hi-res PNG embed URLs: every prevalidate/embed URL must carry the
+// type/width/scale query so Telegram receives crisp rasters instead of the
+// renderer's small JPEG defaults.
 
 #[test]
-fn ink_url_requests_natural_size_png() {
+fn ink_url_appends_hires_png_params() {
     let url = ink_url("graph TD\n    A --> B");
     assert!(url.starts_with("https://mermaid.ink/img/"));
     assert!(
-        url.ends_with("?type=png"),
-        "expected natural-size params: {url}"
+        url.ends_with("?type=png&width=1600&scale=2"),
+        "missing hi-res params: {url}"
     );
-    assert!(!url.contains("scale=") && !url.contains("width="));
 }
 
 #[test]
@@ -585,19 +551,6 @@ fn ink_url_payload_is_base64url_without_padding() {
         .expect("payload before query string");
     assert!(!payload.contains('='), "padding leaked: {payload}");
     assert!(!payload.contains('+') && !payload.contains('/'));
-}
-
-#[test]
-fn photo_fits_matches_the_measured_photo_box() {
-    use crate::channels::telegram::rich::mermaid::photo_fits;
-    // Measured live (#1238): natural 1611×3727 accepted, prod-params
-    // 3200×7404 refused; the box edge is 9600 combined px.
-    assert!(photo_fits(1611, 3727));
-    assert!(photo_fits(1200, 2776));
-    assert!(photo_fits(800, 1851));
-    assert!(!photo_fits(3200, 7404));
-    assert!(photo_fits(4800, 4800)); // exactly 9600: fits
-    assert!(!photo_fits(4800, 4801)); // 9601: busts
 }
 
 // ---------------------------------------------------------------------------
@@ -631,33 +584,4 @@ fn no_media_found_sees_through_anyhow_context_wraps() {
     let inner = anyhow::anyhow!("Telegram rich API error (400): RICH_MESSAGE_PHOTO_NO_MEDIA_FOUND");
     let wrapped = inner.context("while delivering final response");
     assert!(is_no_media_found(&wrapped));
-}
-
-// ---------------------------------------------------------------------------
-// png_dims (bytes-delivery oversize guard)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn png_dims_parses_ihdr() {
-    use crate::channels::telegram::rich::mermaid::png_dims;
-
-    let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-    png.extend_from_slice(&[0, 0, 0, 13]); // IHDR chunk length
-    png.extend_from_slice(b"IHDR");
-    png.extend_from_slice(&1611u32.to_be_bytes());
-    png.extend_from_slice(&3727u32.to_be_bytes());
-    assert_eq!(png_dims(&png), Some((1611, 3727)));
-}
-
-#[test]
-fn png_dims_rejects_non_png_and_short_buffers() {
-    use crate::channels::telegram::rich::mermaid::png_dims;
-
-    assert_eq!(png_dims(b"not a png at all...."), None);
-    assert_eq!(png_dims(&[0x89, b'P']), None);
-    let mut hdr = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-    hdr.extend_from_slice(&[0, 0, 0, 13]);
-    hdr.extend_from_slice(b"IDAT"); // wrong chunk type
-    hdr.extend_from_slice(&[0u8; 16]);
-    assert_eq!(png_dims(&hdr), None);
 }

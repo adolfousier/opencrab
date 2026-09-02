@@ -26,6 +26,10 @@ use crate::brain::provider::{
     LLMRequest, LLMResponse, Message, Provider, ProviderError, ProviderStream, TokenUsage,
 };
 
+/// Long enough that no mock in this file can reach it: these tests are about
+/// which provider gets asked, not about how long one is given to answer.
+const ATTEMPT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// How a mock answers `complete`.
 enum Behaviour {
     Ok,
@@ -33,6 +37,10 @@ enum Behaviour {
     QuotaExhausted,
     /// Not fall-through-able: nothing downstream should be tried.
     Fatal,
+    /// Never answers. CLI providers ship no request timeout, so this is what
+    /// a wedged summariser actually looks like (#1255) — not an error, just
+    /// silence for as long as the process lives.
+    Hangs,
 }
 
 struct CountingMock {
@@ -95,6 +103,10 @@ impl Provider for CountingMock {
                 "Insufficient balance or no resource package. Please recharge.".to_string(),
             )),
             Behaviour::Fatal => Err(ProviderError::Internal("mock fatal".to_string())),
+            Behaviour::Hangs => {
+                futures::future::pending::<()>().await;
+                unreachable!("a hanging provider never returns")
+            }
         }
     }
 
@@ -147,6 +159,7 @@ async fn quota_on_primary_falls_through_to_the_chain() {
         &chain,
         request("primary-model"),
         &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
     )
     .await
     .expect("#1247: the chain must serve compaction when the primary is dead");
@@ -177,6 +190,7 @@ async fn fallback_model_is_remapped_when_unsupported() {
         &chain,
         request("a-model-only-the-primary-has"),
         &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
     )
     .await
     .expect("remapped request must succeed");
@@ -203,6 +217,7 @@ async fn empty_chain_surfaces_the_primary_error() {
         &[],
         request("primary-model"),
         &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
     )
     .await
     .expect_err("nothing to fall back to");
@@ -227,6 +242,7 @@ async fn fatal_error_does_not_walk_the_chain() {
         &chain,
         request("primary-model"),
         &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
     )
     .await
     .expect_err("a fatal error stays fatal");
@@ -256,6 +272,7 @@ async fn exhausted_chain_reports_what_was_tried() {
         &chain,
         request("primary-model"),
         &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
     )
     .await
     .expect_err("every provider failed");
@@ -281,9 +298,15 @@ async fn cancellation_short_circuits_the_walk() {
     let cancel = CancellationToken::new();
     cancel.cancel();
 
-    AgentService::complete_compaction_request(&primary, &chain, request("m"), &cancel)
-        .await
-        .expect_err("cancelled");
+    AgentService::complete_compaction_request(
+        &primary,
+        &chain,
+        request("m"),
+        &cancel,
+        ATTEMPT_DEADLINE,
+    )
+    .await
+    .expect_err("cancelled");
 
     assert_eq!(untouched_calls.load(Ordering::SeqCst), 0);
 }
@@ -343,4 +366,92 @@ fn fall_through_policy_covers_transient_and_auth_but_not_internal() {
     assert!(!should_try_next_provider(&ProviderError::Internal(
         "bug".to_string()
     )));
+}
+
+/// A summariser that stops answering must not stop the session (#1255).
+///
+/// HTTP providers cap a single request at 300s. CLI providers carry no
+/// timeout at all, so a wedged one held compaction for as long as it felt
+/// like living and the chain below it was never reached, because the first
+/// attempt never returned to fail.
+mod watchdog {
+    use super::*;
+
+    /// Short enough to keep the test instant. The bound that ships is scaled
+    /// from the session's own observed compactions; what is asserted here is
+    /// that a bound exists and that blowing it hands the work on.
+    const SHORT: std::time::Duration = std::time::Duration::from_millis(50);
+
+    #[tokio::test]
+    async fn a_wedged_primary_is_handed_to_the_chain() {
+        let primary: Arc<dyn Provider> =
+            Arc::new(CountingMock::new("cfc-wedged", Behaviour::Hangs));
+        let healthy = CountingMock::new("cfc-rescue", Behaviour::Ok);
+        let healthy_calls = healthy.call_counter();
+        let chain: Vec<Arc<dyn Provider>> = vec![Arc::new(healthy)];
+
+        let response = AgentService::complete_compaction_request(
+            &primary,
+            &chain,
+            request("primary-model"),
+            &CancellationToken::new(),
+            SHORT,
+        )
+        .await
+        .expect("the chain should have rescued a wedged primary");
+
+        assert_eq!(
+            healthy_calls.load(Ordering::SeqCst),
+            1,
+            "the fallback was never reached: the wedged primary was waited out"
+        );
+        assert!(matches!(
+            &response.content[0],
+            crate::brain::provider::ContentBlock::Text { text } if text.contains("cfc-rescue")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_wedged_fallback_does_not_end_the_walk() {
+        let primary: Arc<dyn Provider> =
+            Arc::new(CountingMock::new("cfc-dead", Behaviour::QuotaExhausted));
+        let healthy = CountingMock::new("cfc-last", Behaviour::Ok);
+        let healthy_calls = healthy.call_counter();
+        let chain: Vec<Arc<dyn Provider>> = vec![
+            Arc::new(CountingMock::new("cfc-wedged-fb", Behaviour::Hangs)),
+            Arc::new(healthy),
+        ];
+
+        AgentService::complete_compaction_request(
+            &primary,
+            &chain,
+            request("primary-model"),
+            &CancellationToken::new(),
+            SHORT,
+        )
+        .await
+        .expect("a hang mid-chain must not strand the entries behind it");
+
+        assert_eq!(healthy_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_hang_with_nowhere_to_go_still_returns() {
+        let primary: Arc<dyn Provider> =
+            Arc::new(CountingMock::new("cfc-alone-wedged", Behaviour::Hangs));
+
+        let err = AgentService::complete_compaction_request(
+            &primary,
+            &[],
+            request("primary-model"),
+            &CancellationToken::new(),
+            SHORT,
+        )
+        .await
+        .expect_err("a wedged provider with no chain is a failure, not a wait");
+
+        // The caller retries and eventually truncates with a marker. What it
+        // must never do is block on this call forever.
+        assert!(format!("{err}").to_lowercase().contains("time"), "{err}");
+    }
 }

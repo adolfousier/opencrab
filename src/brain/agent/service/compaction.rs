@@ -18,6 +18,122 @@ use super::types::{ProgressCallback, ProgressEvent};
 use crate::brain::agent::context::AgentContext;
 use uuid::Uuid;
 
+/// What `enforce_context_budget` did to the context on this visit.
+///
+/// Both variants MUST be persisted as a DB marker row. The summarised case is
+/// obvious. The truncated case is the one that bit us: dropping the oldest
+/// messages without writing a marker leaves `messages_from_last_compaction`
+/// pointing at the same old anchor, so the next restart reloads the history
+/// that just overflowed and overflows again on the first turn. Two sessions
+/// died that way on 2026-05-05 (397% and 372% context, 793k tokens still in
+/// the DB, a fresh loop on every user message). A marker with no summary is
+/// lossy; no marker at all is unrecoverable.
+pub(crate) enum CompactionOutcome {
+    /// A summary was produced and swapped into the live context.
+    Summarised(String),
+    /// Every summariser attempt failed, so the oldest messages were dropped
+    /// to fit the window instead. Nothing before this point survives.
+    Truncated,
+}
+
+impl CompactionOutcome {
+    /// The marker row to persist. `trigger` names what prompted this
+    /// compaction (empty for the ordinary paths), so each call site keeps its
+    /// own wording without copying the marker text five times.
+    pub(crate) fn marker(&self, trigger: &str) -> String {
+        match self {
+            Self::Summarised(summary) => format!(
+                "[CONTEXT COMPACTION — The conversation was automatically compacted{trigger}. \
+                 Below is a structured summary of everything before this point.]\n\n{summary}"
+            ),
+            Self::Truncated => format!(
+                "[CONTEXT COMPACTION — The conversation was automatically compacted{trigger}. \
+                 No summary is available: every summariser attempt failed, so the oldest \
+                 messages were dropped to fit the window. Nothing before this point \
+                 survives. Ask the user to restate anything you need rather than guessing \
+                 at what was lost.]"
+            ),
+        }
+    }
+}
+
+/// A summariser running against a snapshot of a session's context while that
+/// session keeps taking turns.
+///
+/// There is deliberately no cancel handle. Cancelling an in-flight summary to
+/// make room is what produced the 2026-05-05 loop: the context was truncated,
+/// the summary that would have justified the truncation was thrown away, and
+/// no marker was written, so every restart replayed the overflow. When the
+/// context outgrows the headroom the turn WAITS for this task instead.
+pub(crate) struct PendingCompaction {
+    handle: tokio::task::JoinHandle<crate::brain::agent::error::Result<String>>,
+    /// Length of the message vector when the snapshot was taken. Everything
+    /// after this index arrived while the summariser was thinking and is not
+    /// described by the summary, so the swap re-appends it.
+    snapshot_len: usize,
+    /// Fill level at spawn time, reported as the "before" on the receipt so
+    /// the number reflects the context that was actually summarised.
+    snapshot_usage_pct: f64,
+    started: std::time::Instant,
+}
+
+impl PendingCompaction {
+    /// Stop a summariser whose subject no longer exists.
+    ///
+    /// Not the same move as cancelling to reclaim headroom, which is what
+    /// looped two sessions in May: there the summary was still the thing that
+    /// would have made the truncation recoverable. Here the context it
+    /// describes has already been replaced by a synchronous compaction, so
+    /// the result could only overwrite fresher state. Letting it run would
+    /// spend a provider call on a summary nothing may apply.
+    pub(super) fn abort(self) {
+        self.handle.abort();
+    }
+}
+
+/// Where in a turn a budget check is happening.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BudgetPhase {
+    /// About to answer a user. A summary in flight is waited for here: the
+    /// reply would otherwise be composed against a context that is one swap
+    /// away from being replaced, and the user is already waiting on a reply
+    /// anyway, so the wait costs them nothing extra.
+    TurnStart,
+    /// Between provider calls inside the tool loop. A summary in flight keeps
+    /// running unless the context has climbed to the ceiling.
+    MidLoop,
+}
+
+/// What a visit found in the session's pending slot.
+enum PendingState {
+    /// Nothing in flight.
+    Empty,
+    /// Still thinking, and this visit is not obliged to wait for it.
+    StillRunning,
+    /// A summary landed and was swapped into the live context.
+    Applied(String),
+    /// The task finished without a summary. Spawning another would just
+    /// repeat the same failing call on every visit, so the caller falls back
+    /// to the blocking path and its attempt budget.
+    Failed,
+}
+
+/// Fill level at which a turn stops running ahead of the summariser and waits
+/// for it. Above this there is not enough headroom left to be confident the
+/// next provider call fits, and blocking here is exactly what the code did
+/// before compaction went to the background.
+const BACKPRESSURE_CEILING_PCT: f64 = 80.0;
+
+/// Whether this visit has to stop and wait for an in-flight summariser.
+///
+/// Waiting, never cancelling. Two reasons to stop running ahead of it:
+/// a reply is about to be composed and must not be composed against a context
+/// one swap away from replacement, or the context has climbed past the point
+/// where the next provider call comfortably fits.
+pub(crate) fn must_wait_for_compaction(phase: BudgetPhase, usage_pct: f64) -> bool {
+    phase == BudgetPhase::TurnStart || usage_pct >= BACKPRESSURE_CEILING_PCT
+}
+
 impl AgentService {
     /// Enforce context budget with non-blocking compaction.
     ///
@@ -37,8 +153,9 @@ impl AgentService {
     /// the documented limit, around 75-80% in practice. 65% gives enough
     /// headroom to summarise without bumping into the actual ceiling.
     ///
-    /// Returns `Some(summary)` only on the visit where a previously-spawned
-    /// async task finished AND its summary was applied; otherwise `None`.
+    /// Returns `Some(outcome)` on any visit that changed the context, and the
+    /// caller MUST persist `outcome.marker(..)`. That includes the truncation
+    /// path: a context that shrank without a marker cannot be reloaded.
     pub(super) async fn enforce_context_budget(
         &self,
         session_id: Uuid,
@@ -46,7 +163,12 @@ impl AgentService {
         model_name: &str,
         cancel_token: Option<&tokio_util::sync::CancellationToken>,
         progress_callback: &Option<ProgressCallback>,
-    ) -> Option<String> {
+        phase: BudgetPhase,
+    ) -> Option<CompactionOutcome> {
+        // Set by every branch that drops messages. Read at each of the three
+        // exits: dropping messages without telling the DB is what turns a
+        // recoverable overflow into a restart loop.
+        let mut truncated = false;
         // Restored to the pre-0f052250 shape (the version that ran fine for
         // months before the async-compaction refactor). Logic, in order:
         //
@@ -96,8 +218,10 @@ impl AgentService {
             );
 
             let target = (effective_max as f64 * 0.80) as usize;
+            let before_len = context.messages.len();
             context.hard_truncate_to(target);
             context.trim_to_fit(0);
+            truncated |= context.messages.len() < before_len;
 
             if let Some(cb) = progress_callback {
                 cb(session_id, ProgressEvent::TokenCount(context.token_count));
@@ -121,6 +245,22 @@ impl AgentService {
             );
         }
 
+        // ── An in-flight summariser gets first refusal ──
+        // Ahead of the 65% gate: a summary that finished on a previous visit
+        // is free to apply, and a turn about to answer must not answer from a
+        // context queued for replacement.
+        let usage_pct = if effective_max > 0 {
+            (context.effective_token_count() as f64 / effective_max as f64) * 100.0
+        } else {
+            100.0
+        };
+        let pending_state = self
+            .resolve_pending_compaction(session_id, context, phase, usage_pct, progress_callback)
+            .await;
+        if let PendingState::Applied(summary) = pending_state {
+            return Some(CompactionOutcome::Summarised(summary));
+        }
+
         // ── Tier 1: soft trigger at 65% - LLM compaction ──
         let usage_pct = if effective_max > 0 {
             (context.effective_token_count() as f64 / effective_max as f64) * 100.0
@@ -132,7 +272,9 @@ impl AgentService {
             // pressure warning if usage is in the 55-64% band (#909), and
             // re-arm the throttle when usage has dropped below the floor.
             self.maybe_emit_pressure_warning(session_id, context, usage_pct);
-            return None;
+            // Tier 2 may have already dropped messages to get us here. The
+            // marker still has to land even though no summariser ran.
+            return truncated.then_some(CompactionOutcome::Truncated);
         }
 
         tracing::warn!(
@@ -145,6 +287,26 @@ impl AgentService {
             model_name,
             Some(&format!("proactive_65pct tokens={}", context.token_count)),
         );
+
+        match pending_state {
+            // Work is already under way against this exact conversation. A
+            // second summariser would burn a provider call describing a
+            // context the first one is about to replace.
+            PendingState::StillRunning => {
+                return truncated.then_some(CompactionOutcome::Truncated);
+            }
+            // Nothing in flight and backgrounding is on: start the summariser
+            // and let the turn carry on. This is the whole point — the user
+            // sees the receipt afterwards instead of a minute of nothing.
+            PendingState::Empty if self.background_compaction => {
+                self.spawn_background_compaction(session_id, context, model_name, usage_pct);
+                return truncated.then_some(CompactionOutcome::Truncated);
+            }
+            // Backgrounding off, or the background attempt already failed:
+            // block the turn, exactly as every compaction did before.
+            PendingState::Empty | PendingState::Failed => {}
+            PendingState::Applied(_) => unreachable!("returned above"),
+        }
 
         // Signal channels that the next 10-60s will produce zero
         // streaming chunks so their typing-indicator pingers can keep
@@ -225,8 +387,10 @@ impl AgentService {
                     context.token_count,
                     usage_pct,
                 );
+                let before_len = context.messages.len();
                 context.hard_truncate_to(safety_target);
                 context.trim_to_fit(0);
+                truncated |= context.messages.len() < before_len;
             }
         }
 
@@ -235,31 +399,14 @@ impl AgentService {
         // the settled ctx footer never wears the ❕ until usage climbs the
         // 55% floor again.
         if let Some(ref summary) = summary_result {
-            if let Ok(mut map) = self.session_pressure_warned.write() {
-                map.insert(session_id, false);
-            }
-            // E2 (#29): this run's observed duration becomes the ETA hint
-            // for the session's NEXT compaction — grounded, never a guess.
-            let elapsed = compact_started.elapsed();
-            if let Ok(mut map) = self.last_compaction_elapsed.write() {
-                map.insert(session_id, elapsed);
-            }
-            if let Some(cb) = progress_callback {
-                let after_pct = if effective_max > 0 {
-                    (context.effective_token_count() as f64 / effective_max as f64) * 100.0
-                } else {
-                    100.0
-                };
-                cb(
-                    session_id,
-                    ProgressEvent::CompactionSummary {
-                        summary: summary.clone(),
-                        before_pct,
-                        after_pct,
-                        elapsed,
-                    },
-                );
-            }
+            self.note_compaction_success(
+                session_id,
+                context,
+                summary,
+                before_pct,
+                compact_started.elapsed(),
+                progress_callback,
+            );
         }
 
         // Emit the token count the NEXT request will start with.
@@ -280,7 +427,234 @@ impl AgentService {
             }
         }
 
-        summary_result
+        match summary_result {
+            Some(summary) => Some(CompactionOutcome::Summarised(summary)),
+            None if truncated => Some(CompactionOutcome::Truncated),
+            None => None,
+        }
+    }
+
+    /// Bookkeeping every successful compaction owes, whichever path produced
+    /// it: clear the #909 pressure throttle so the ctx footer drops its
+    /// marker, remember how long this took so the next compaction can quote a
+    /// real ETA instead of a guess, and hand channels the receipt (#29).
+    fn note_compaction_success(
+        &self,
+        session_id: Uuid,
+        context: &AgentContext,
+        summary: &str,
+        before_pct: f64,
+        elapsed: std::time::Duration,
+        progress_callback: &Option<ProgressCallback>,
+    ) {
+        if let Ok(mut map) = self.session_pressure_warned.write() {
+            map.insert(session_id, false);
+        }
+        if let Ok(mut map) = self.last_compaction_elapsed.write() {
+            map.insert(session_id, elapsed);
+        }
+        if let Some(cb) = progress_callback {
+            let after_pct = if context.max_tokens > 0 {
+                (context.effective_token_count() as f64 / context.max_tokens as f64) * 100.0
+            } else {
+                100.0
+            };
+            cb(
+                session_id,
+                ProgressEvent::CompactionSummary {
+                    summary: summary.to_string(),
+                    before_pct,
+                    after_pct,
+                    elapsed,
+                },
+            );
+        }
+    }
+
+    /// The ETA hint for this session, grounded in its last observed
+    /// compaction. `None` on the first one: no history, no prediction.
+    fn predicted_compaction_elapsed(&self, session_id: Uuid) -> Option<std::time::Duration> {
+        self.last_compaction_elapsed
+            .read()
+            .ok()
+            .and_then(|map| map.get(&session_id).copied())
+    }
+
+    /// How long one summariser attempt gets before the chain walks on.
+    ///
+    /// Scaled from what this session's compactions actually cost, tripled, so
+    /// a conversation that habitually takes four minutes is not declared hung
+    /// at five. A session with no history has nothing to scale from and gets
+    /// the floor, which is the per-request bound every HTTP provider already
+    /// enforces.
+    pub(super) fn compaction_attempt_deadline(&self, session_id: Uuid) -> std::time::Duration {
+        self.predicted_compaction_elapsed(session_id)
+            .map(|observed| observed * 3)
+            .unwrap_or(AgentService::COMPACTION_ATTEMPT_FLOOR)
+            .max(AgentService::COMPACTION_ATTEMPT_FLOOR)
+    }
+
+    /// Take the session's in-flight summariser out of the map.
+    ///
+    /// Taken rather than borrowed because awaiting it needs ownership, and
+    /// holding a `std::sync::Mutex` across an await would poison every other
+    /// session's budget check.
+    pub(super) fn take_pending_compaction(&self, session_id: Uuid) -> Option<PendingCompaction> {
+        self.pending_compactions
+            .lock()
+            .ok()
+            .and_then(|mut map| map.remove(&session_id))
+    }
+
+    /// Decide what to do with an in-flight summariser, and swap it in if it is
+    /// this visit's job to.
+    async fn resolve_pending_compaction(
+        &self,
+        session_id: Uuid,
+        context: &mut AgentContext,
+        phase: BudgetPhase,
+        usage_pct: f64,
+        progress_callback: &Option<ProgressCallback>,
+    ) -> PendingState {
+        let Some(pending) = self.take_pending_compaction(session_id) else {
+            return PendingState::Empty;
+        };
+
+        // Two reasons to stop running ahead of the summariser: the turn is
+        // about to answer a user, or the context has climbed past the point
+        // where the next provider call comfortably fits. Neither cancels it.
+        if !pending.handle.is_finished() && !must_wait_for_compaction(phase, usage_pct) {
+            if let Ok(mut map) = self.pending_compactions.lock() {
+                map.insert(session_id, pending);
+            }
+            return PendingState::StillRunning;
+        }
+
+        if !pending.handle.is_finished() {
+            tracing::warn!(
+                "Waiting on background compaction at {:.0}% ({:?} elapsed) — {}",
+                usage_pct,
+                pending.started.elapsed(),
+                if phase == BudgetPhase::TurnStart {
+                    "a reply must not be composed against a context queued for replacement"
+                } else {
+                    "context reached the back-pressure ceiling"
+                },
+            );
+            // The only place backgrounded compaction is announced: here the
+            // user really is waiting, and silence reads as a hang.
+            if let Some(cb) = progress_callback {
+                cb(
+                    session_id,
+                    ProgressEvent::Compacting {
+                        usage_pct,
+                        predicted: self.predicted_compaction_elapsed(session_id),
+                    },
+                );
+            }
+        }
+
+        let PendingCompaction {
+            handle,
+            snapshot_len,
+            snapshot_usage_pct,
+            started,
+        } = pending;
+
+        match handle.await {
+            Ok(Ok(summary)) => {
+                Self::apply_compaction_summary_after(context, &summary, snapshot_len);
+                self.note_compaction_success(
+                    session_id,
+                    context,
+                    &summary,
+                    snapshot_usage_pct,
+                    started.elapsed(),
+                    progress_callback,
+                );
+                if let Some(cb) = progress_callback {
+                    cb(session_id, ProgressEvent::TokenCount(context.token_count));
+                }
+                PendingState::Applied(summary)
+            }
+            Ok(Err(e)) => {
+                tracing::error!(
+                    "Background compaction failed after {:?}: {e}",
+                    started.elapsed()
+                );
+                PendingState::Failed
+            }
+            Err(e) => {
+                tracing::error!("Background compaction task did not finish: {e}");
+                PendingState::Failed
+            }
+        }
+    }
+
+    /// Start a summariser against a snapshot and let the turn carry on.
+    ///
+    /// Nothing about the live context is touched here. The task reads a clone
+    /// and the swap happens on a later visit, so the turn keeps streaming
+    /// while the summary is written.
+    fn spawn_background_compaction(
+        &self,
+        session_id: Uuid,
+        context: &AgentContext,
+        model_name: &str,
+        usage_pct: f64,
+    ) {
+        let snapshot_len = context.messages.len();
+        tracing::info!(
+            "Spawning background compaction at {:.0}% ({snapshot_len} messages)",
+            usage_pct,
+        );
+
+        let provider = self.provider_for_session(session_id);
+        let fallbacks = self.fallback_chain_snapshot();
+        let messages = context.messages.clone();
+        let token_count = context.token_count;
+        let max_tokens = context.max_tokens;
+        let model = model_name.to_string();
+        let max_output = self.max_tokens;
+        let working_dir = self.get_working_directory_for_session(session_id);
+        let auto_approve = self.auto_approve_tools;
+        let subagents = self.subagent_manager.clone();
+        let attempt_deadline = self.compaction_attempt_deadline(session_id);
+        // Its own token: this task answers to session teardown, never to a
+        // context that grew impatient.
+        let cancel = tokio_util::sync::CancellationToken::new();
+
+        let handle = tokio::spawn(async move {
+            let summary = Self::compute_compaction_summary(
+                provider,
+                fallbacks,
+                session_id,
+                messages,
+                token_count,
+                max_tokens,
+                usage_pct,
+                model,
+                max_output,
+                working_dir,
+                auto_approve,
+                cancel,
+                attempt_deadline,
+            )
+            .await?;
+            Ok(Self::decorate_compaction_summary(summary, session_id, subagents).await)
+        });
+
+        if let Ok(mut map) = self.pending_compactions.lock() {
+            map.insert(
+                session_id,
+                PendingCompaction {
+                    handle,
+                    snapshot_len,
+                    snapshot_usage_pct: usage_pct,
+                    started: std::time::Instant::now(),
+                },
+            );
+        }
     }
 
     /// Pre-compaction pressure-warning gate (#909).

@@ -24,11 +24,15 @@ pub(crate) fn build_enqueue_callback(
                 );
                 return;
             };
-            // #1242: one-shot http fetch — a completion arriving while Discord
-            // was still connecting was dropped outright. Bounded wait, then
-            // park so the route-restore claim delivers it once connected.
-            let Some(http) = bg_resume::wait_ready(|| state.http(), "discord: http").await else {
-                bg_resume::park_undeliverable(session_id, msg, "discord");
+            // Bounded wait rather than a drop (#1242): at boot the transport
+            // is usually seconds away, and returning here lost the wake for
+            // good.
+            let Some(http) =
+                crate::channels::transport_ready::await_transport("discord", session_id, || {
+                    state.http()
+                })
+                .await
+            else {
                 return;
             };
             let Some(agent) = bg_resume::upgrade(&agent_holder) else {
