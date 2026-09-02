@@ -724,6 +724,7 @@ pub mod restart_recovery_test;
 pub mod slack_handler_test;
 mod telegram_acl_test;
 mod telegram_attachment_tmp_name_test;
+mod telegram_atx_heading_agreement_test;
 pub mod telegram_bg_resume_gate_test;
 mod telegram_caption_test;
 pub mod telegram_command_sanitize_test;

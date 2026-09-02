@@ -95,7 +95,9 @@ pub(crate) fn has_rich_structure(text: &str) -> bool {
 }
 
 /// A `# `..`###### ` ATX heading line (1-6 hashes followed by a space).
-fn is_atx_heading(t: &str) -> bool {
+/// Shared by the rich gate and the classic HTML ladder so the two parsers
+/// can never disagree on `#N`-style lines (#1257).
+pub(crate) fn is_atx_heading(t: &str) -> bool {
     let hashes = t.chars().take_while(|&c| c == '#').count();
     (1..=6).contains(&hashes) && t[hashes..].starts_with(' ')
 }
