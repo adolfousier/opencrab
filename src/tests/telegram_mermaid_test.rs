@@ -12,10 +12,10 @@ use crate::channels::telegram::rich::api::build_body_markdown_media_target;
 use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
 use crate::channels::telegram::rich::mermaid::{
-    base64url, cache_get, cache_put, classify_render_failure, error_note, failure_html,
+    MediaEntry, base64url, cache_get, cache_put, classify_render_failure, error_note, failure_html,
     find_mermaid_fences, has_mermaid_fence, image_html, ink_url, is_image_response,
     looks_like_mermaid_source, markdown_failure_block, replacement_for, resolve_blocks,
-    resolve_markdown_media, MediaEntry,
+    resolve_markdown_media,
 };
 
 // ---------------------------------------------------------------------------
