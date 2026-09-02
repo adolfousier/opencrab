@@ -492,9 +492,16 @@ pub(crate) async fn deliver_final_response(
             // the original response had rich structure (tables, headings,
             // lists), replace the HTML intermediates with a single native rich
             // message so Telegram renders proper tables and blocks.
+            // #46: this arm decides on `pre_dedup_text` BEFORE the options
+            // reclaim below can restore the host, so it must consult
+            // options_pending itself — same gate as the final-answer site
+            // (#45) — or a fully-deduped buttons turn stays plain.
             let text_only = if text_only.is_empty()
                 && !sent.is_empty()
-                && super::rich::should_send_native_rich(&pre_dedup_text)
+                && super::rich::should_send_native_rich_for(
+                    &pre_dedup_text,
+                    options_pending(streaming),
+                )
             {
                 let rich_md = pre_dedup_text.clone();
                 match super::rich::send_rich_with_mermaid_id(
@@ -687,7 +694,10 @@ pub(crate) async fn deliver_final_response(
                 // is plain text, appended as-is. On ANY failure we fall through
                 // to the HTML chunking path below, so the streaming path is
                 // never regressed. Plain prose skips rich entirely so Telegram's
-                // parser never reinterprets incidental characters.
+                // parser never reinterprets incidental characters — EXCEPT prose
+                // that ends on a suggest_options surface (#45): the tap rewrite
+                // preserves the host plane, so button-bearing prose rides rich
+                // too and the pick record edits back in rendered form.
                 // #679: for TABLE messages, skip only the doomed native-BLOCKS
                 // attempt — Telegram's InputRichBlock rejects our header/rows/align
                 // shape (its schema wants cells/size), so a table always 400s the
@@ -697,8 +707,13 @@ pub(crate) async fn deliver_final_response(
                 // to the HTML path where they showed as bare markup). Non-table
                 // rich content still tries blocks first (clean fences) then falls
                 // back to markdown.
-                let mut delivered_rich = super::rich::should_send_native_rich(&text_only)
-                    && {
+                let mut delivered_rich = super::rich::should_send_native_rich_for(
+                    &text_only,
+                    // #45: `options_pending` is true when the turn stashed a
+                    // suggest_options set mid-turn (#1226 K helper) — force the
+                    // rich plane for prose so buttons never live on a plain host.
+                    options_pending(streaming),
+                ) && {
                         let rich_md = text_only.clone();
                         // Send a FRESH rich message rather than editing the streamed
                         // placeholder into rich. Editing a normal message into a rich
