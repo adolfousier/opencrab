@@ -2012,6 +2012,30 @@ impl App {
         None
     }
 
+    /// Pull a file from the client over the drop tunnel and store it where
+    /// the rest of the attachment pipeline expects a path (#1289).
+    ///
+    /// Written into the channel attachments dir under its own name, so it is
+    /// indistinguishable from a file that arrived through a chat channel.
+    fn pull_dropped_file(port: u16, client_path: &str) -> anyhow::Result<String> {
+        let bytes = crate::utils::drop_agent::fetch(port, client_path)?;
+        let dir = crate::channels::telegram::media::channel_attachments_dir().join("dropped");
+        std::fs::create_dir_all(&dir)?;
+        let name = std::path::Path::new(client_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "dropped-file".to_string());
+        let dest = dir.join(&name);
+        std::fs::write(&dest, &bytes)?;
+        tracing::info!(
+            "drop tunnel: pulled {} ({} bytes) to {}",
+            client_path,
+            bytes.len(),
+            dest.display()
+        );
+        Ok(dest.to_string_lossy().to_string())
+    }
+
     pub(crate) fn extract_image_paths(text: &str) -> (String, Vec<ImageAttachment>) {
         let trimmed = text.trim();
         let lower = trimmed.to_lowercase();
@@ -2152,6 +2176,45 @@ impl App {
                         // so in the message itself: forwarding it as prose
                         // sent the agent hunting through the attachments dir
                         // and cost a whole turn before it worked that out.
+                        // The file is on the user's machine. If they opened
+                        // the reverse tunnel, pull it across the SSH
+                        // connection they already made and attach it like any
+                        // local drop (#1289).
+                        Dropped::Elsewhere { path, .. }
+                            if crate::utils::drop_transfer::tunnel_port().is_some() =>
+                        {
+                            let port = crate::utils::drop_transfer::tunnel_port()
+                                .expect("guarded by the match arm");
+                            match Self::pull_dropped_file(port, &path) {
+                                Ok(local) => {
+                                    let lower = local.to_lowercase();
+                                    let is_video =
+                                        VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
+                                    let name = std::path::Path::new(&path)
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| path.clone());
+                                    attachments.push(ImageAttachment {
+                                        name,
+                                        path: local,
+                                        is_video,
+                                    });
+                                    rewritten.replace_range(start..end, "");
+                                }
+                                Err(e) => {
+                                    // Never silently claim an attachment that
+                                    // did not arrive.
+                                    tracing::warn!("drop tunnel: {path}: {e:#}");
+                                    rewritten.replace_range(
+                                        start..end,
+                                        &format!(
+                                            "[attachment unavailable: could not pull {path} \
+                                             over the drop tunnel: {e}]"
+                                        ),
+                                    );
+                                }
+                            }
+                        }
                         Dropped::Elsewhere { path, .. } => {
                             // Name the transfer that actually works for this
                             // terminal (#1289) rather than only reporting the
