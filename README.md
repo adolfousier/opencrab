@@ -632,43 +632,73 @@ OpenCrabs runs in one of two modes. Pick the one that fits the machine, and **fo
 #### Dropping files into a TUI running on a VPS
 
 Dragging a file onto your terminal inserts **text**: the path as your *local*
-machine sees it. When the TUI is running over SSH, that path names a file on
-your laptop while the process is on the VPS, so there is nothing local to
-attach. OpenCrabs detects this and tells you how to get the file across
-instead of passing a dead path to the agent.
+machine sees it. When the TUI runs over SSH that path names a file on your
+laptop while the process is on the server, so there is nothing local to attach.
 
-Whether it can pull the file in automatically depends on your **terminal
-emulator**, not on your SSH client. Regular `ssh` is fine.
+OpenCrabs can pull it across **the SSH connection you already opened**. Two
+steps, once:
 
-| Your terminal | In-band transfer | Install on the VPS |
-|---|---|---|
-| kitty | yes, kitty transfer protocol | `kitten` |
-| iTerm2, WezTerm, tabby | yes, zmodem | `lrzsz` (gives you `rz`) |
-| Alacritty, Terminal.app, GNOME Terminal, most others | no | nothing helps |
+**1. On the machine you drag files from**, run the agent and leave it running:
 
-**Two things that surprise people:**
-
-- Installing `kitten` or `lrzsz` on the VPS does nothing on its own. The
-  capability lives in the terminal you are sitting in front of. `kitten
-  transfer` needs kitty as your terminal; it is unrelated to `kitten ssh`.
-- **`tmux` and `screen` disable in-band transfer**, including for kitty and
-  iTerm2. They rewrite the escape stream, so the transfer negotiation is
-  swallowed. This is worth knowing because running the TUI inside `tmux` is
-  exactly what we recommend just above for a VPS.
-
-**`scp` is what you are always given**, because it is the one mechanism that
-works from every terminal, through `tmux`, with nothing extra installed. If
-your terminal can do better, OpenCrabs says so, but it still hands you the
-`scp` line. The client host is filled in from `SSH_CONNECTION` and the path is
-quoted, so it survives spaces in filenames:
-
-```
-scp <you>@203.0.113.9:'/Users/you/Screenshot 2026-09-01 at 18.18.16.png' ~/.opencrabs/channel_attachments/
+```bash
+opencrabs drop-agent
 ```
 
-Anything landing in `channel_attachments/` is readable by the agent. Sending
-the file through a connected chat channel (Telegram, Discord, Slack) also puts
-it there, which is usually the fastest route on a headless box.
+**2. Add a reverse forward to how you connect.** If you use an alias, change it
+once and forget it:
+
+```bash
+# before
+alias son='ssh root@188.166.147.13'
+# after
+alias son='ssh -R 8765:localhost:8765 root@188.166.147.13'
+```
+
+That is it. Drop a file into the remote TUI and it arrives in
+`channel_attachments/dropped/` and attaches like any local file.
+
+**Why the forward is needed.** A process on the server has no handle on the
+SSH connection it arrived over; sshd hands it a pty and nothing else. `-R`
+opens a real channel on that same connection, which the agent answers.
+
+**Works everywhere.** `ssh -R` is standard on Windows (built-in OpenSSH),
+Linux and macOS, and the agent is an OpenCrabs subcommand, so any client OS
+works. It never touches the terminal escape stream, so it also works from any
+terminal emulator **and through `tmux`/`screen`** — unlike kitty's transfer or
+zmodem, which the multiplexer swallows.
+
+**What the agent will and will not serve.** It hands files to whatever holds
+the far end of the tunnel, so it is deliberately narrow:
+
+| | |
+|---|---|
+| Serves from | `Desktop`, `Downloads`, `Pictures`, `Documents`, `Movies` |
+| Listens on | `127.0.0.1` only, reachable solely through your forward |
+| Refuses | anything outside those roots, `..` traversal, symlinks pointing out of a root, directories, files over 64 MB |
+| Logs | every path served **and every path refused** |
+
+Serve somewhere else with `--root`, repeatable:
+
+```bash
+opencrabs drop-agent --root ~/work/screenshots --root ~/Desktop
+```
+
+The default is not `$HOME` on purpose: a server that asked for
+`~/.ssh/id_ed25519` is refused by construction rather than by you having
+remembered to restrict it. Note that the forwarded port is reachable by other
+users on that server, so only use this on a box you trust — which is already
+true, since you are running a shell there.
+
+**Without the agent** you get a ready-to-run `scp` line instead, addressed to
+this host and with the path quoted so it survives spaces in filenames:
+
+```
+scp '/Users/you/Screenshot 2026-09-01 at 18.18.16.png' root@188.166.147.13:~/.opencrabs/channel_attachments/
+```
+
+Sending the file through a connected chat channel (Telegram, Discord, Slack)
+also lands it in `channel_attachments/`, which is often quickest on a headless
+box.
 
 ### Daemon & Service
 
