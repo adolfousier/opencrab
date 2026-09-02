@@ -188,7 +188,7 @@ async fn render_plan_card(
         }
     }
 
-    // Goal: style-dependent wrapper + truncation on classic only.
+    // Goal dart marker (owner option B, #77 — word dropped): truncation on classic only.
     if let Some(g) = goal {
         let text = g.text.trim();
         if !text.is_empty() {
@@ -205,7 +205,7 @@ async fn render_plan_card(
                     )
                 }
                 CollapsibleStyle::DetailsSummary => format!(
-                    "<details><summary>{} goal</summary>\n{}</details>",
+                    "<details><summary>{}</summary>\n{}</details>",
                     g.prefix(true),
                     escape_html(text)
                 ),

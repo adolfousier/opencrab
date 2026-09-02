@@ -122,9 +122,9 @@ pub(crate) fn split_plan_prose(md: &str) -> Vec<ProseSection> {
 /// bullets, inline markdown elsewhere. Blank source lines come through as
 /// The flow-message Goal section (ADR 0005 Decision 10): the goal text plus
 /// whether it is a retained completed goal (the live `GoalManager` entry
-/// completed or cleared mid-turn). A completed goal keeps the `🎯 Goal:`
-/// prefix while the turn runs and swaps only the icon to `✅ Goal:` on the
-/// settled render; an active goal is `🎯 Goal:` everywhere.
+/// completed or cleared mid-turn). A completed goal keeps the `🎯`
+/// prefix while the turn runs and swaps only the icon to `✅` on the
+/// settled render; an active goal is `🎯` everywhere.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GoalSection {
     pub(crate) text: String,
@@ -132,16 +132,17 @@ pub(crate) struct GoalSection {
 }
 
 impl GoalSection {
-    /// Bold section prefix with the Decision 10 icon: `✅` only for a
-    /// completed goal on a settled render, `🎯` everywhere else. The `Goal:`
-    /// word never changes.
+    /// Bold section marker with the Decision 10 icon: `✅` only for a
+    /// completed goal on a settled render, `🎯` everywhere else. Dart-only
+    /// (owner option B, #77): the `Goal:` word is dropped — the dart is the
+    /// section marker.
     pub(crate) fn prefix(&self, settled: bool) -> String {
         let icon = if self.completed && settled {
             "✅"
         } else {
             "🎯"
         };
-        format!("<b>{icon} Goal:</b>")
+        format!("<b>{icon}</b>")
     }
 }
 

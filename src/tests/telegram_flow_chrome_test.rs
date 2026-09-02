@@ -72,7 +72,7 @@ fn chrome_classic_order_title_checklist_rows_goal_and_omit_state_and_ctx() {
     assert_eq!(
         out,
         "📋 <b>Ship plan mode</b>\n☑ scope it\n☐ build it\n\n\
-         <blockquote expandable><b>🎯 Goal:</b> close B</blockquote>"
+         <blockquote expandable><b>🎯</b> close B</blockquote>"
     );
     assert!(
         !out.contains("Editing plan"),
@@ -176,7 +176,7 @@ fn rich_prose_then_checklist_then_goal_use_hr_boundaries() {
     assert_eq!(
         out,
         "<p>📋 <b>P</b></p><details><summary>Ctx</summary><p>body</p></details>\
-         <hr><p>☐ a</p><hr><p><b>🎯 Goal:</b> g</p>"
+         <hr><p>☐ a</p><hr><p><b>🎯</b> g</p>"
     );
 }
 
@@ -250,7 +250,7 @@ fn rich_multi_paragraph_goal_collapses_with_first_paragraph_summary() {
     let out = s.chrome_rich(false);
     assert_eq!(
         out,
-        "<details><summary><b>🎯 Goal:</b> ship the release</summary>\
+        "<details><summary><b>🎯</b> ship the release</summary>\
          <p>then tag it</p><p>then announce</p></details>"
     );
 }
@@ -259,7 +259,7 @@ fn rich_multi_paragraph_goal_collapses_with_first_paragraph_summary() {
 fn rich_one_paragraph_goal_stays_plain_always_visible() {
     let s = sections(None, None, Some("ship the release"));
     let out = s.chrome_rich(false);
-    assert_eq!(out, "<p><b>🎯 Goal:</b> ship the release</p>");
+    assert_eq!(out, "<p><b>🎯</b> ship the release</p>");
     assert!(!out.contains("<details"), "one paragraph never collapses");
 }
 
@@ -270,16 +270,16 @@ fn completed_goal_keeps_target_icon_live_and_swaps_to_check_at_settle() {
     // While the turn is still running a completed goal keeps 🎯 (Decision 10).
     assert_eq!(
         s.chrome_rich(false),
-        "<p><b>🎯 Goal:</b> close the audit</p>"
+        "<p><b>🎯</b> close the audit</p>"
     );
-    // At settle only the icon swaps; the Goal: word never changes.
+    // At settle only the icon swaps; the word never changes.
     assert_eq!(
         s.chrome_rich(true),
-        "<p><b>✅ Goal:</b> close the audit</p>"
+        "<p><b>✅</b> close the audit</p>"
     );
     assert_eq!(
         s.chrome_classic(true),
-        "<blockquote expandable><b>✅ Goal:</b> close the audit</blockquote>"
+        "<blockquote expandable><b>✅</b> close the audit</blockquote>"
     );
 }
 
@@ -287,7 +287,7 @@ fn completed_goal_keeps_target_icon_live_and_swaps_to_check_at_settle() {
 fn active_goal_never_shows_check_even_at_settle() {
     // Settle with the goal still active → 🎯 (Decision 10 rule 5).
     let s = sections(None, None, Some("still going"));
-    assert_eq!(s.chrome_rich(true), "<p><b>🎯 Goal:</b> still going</p>");
+    assert_eq!(s.chrome_rich(true), "<p><b>🎯</b> still going</p>");
 }
 
 // ── plan-state copy (Decision 7): Editing chrome carries no slash hints ──
@@ -547,7 +547,7 @@ fn details_populated_flow_keeps_chrome_outside_the_details() {
     // Chrome is an always-visible <p> block BEFORE the collapsed log, with a
     // kept spacer, not inside the summary.
     assert!(out.starts_with(
-        "<p><b>🎯 Goal:</b> finish the audit</p><p>&nbsp;</p><details><summary><sub>"
+        "<p><b>🎯</b> finish the audit</p><p>&nbsp;</p><details><summary><sub>"
     ));
     assert!(out.ends_with("</details>"));
     assert!(out.contains("⏱ 0:08"));
@@ -1118,10 +1118,10 @@ async fn plan_card_renders_goal_after_checklist() {
     let html = render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&active))
         .await
         .unwrap();
-    assert!(html.contains("<blockquote expandable><b>🎯 Goal:</b>"));
+    assert!(html.contains("<blockquote expandable><b>🎯</b>"));
     assert!(html.contains("Ship v0.3.68 without regressions"));
     let checklist_pos = html.find("Task two").unwrap();
-    let goal_pos = html.find("🎯 Goal:").unwrap();
+    let goal_pos = html.find("🎯").unwrap();
     assert!(checklist_pos < goal_pos);
 
     // Completed goal on the settled card swaps the icon to ✅ (Decision 10).
@@ -1132,7 +1132,7 @@ async fn plan_card_renders_goal_after_checklist() {
     let html_done = render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&done))
         .await
         .unwrap();
-    assert!(html_done.contains("<blockquote expandable><b>✅ Goal:</b>"));
+    assert!(html_done.contains("<blockquote expandable><b>✅</b>"));
 
     // Goal text is HTML-escaped inside the expandable.
     let evil = GoalSection {
