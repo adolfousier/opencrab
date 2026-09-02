@@ -21,6 +21,21 @@ use super::TelegramState;
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 
+/// Body for the standalone fallback bubble (#1226 item 4). Prose mode keeps
+/// just the folded list (it has no buttons, nothing can expire); button
+/// modes carry the bare lamp plus an expiry marker — this fallback fires
+/// when the merge lost a rate-limit race, so the bubble is subject to the
+/// stale-shell lifecycle and operators kept reading dead fallbacks as
+/// fresh, answerable questions (msgs 30997 / 31010: one was tapped 32
+/// minutes after its choices were consumed).
+pub(crate) fn standalone_fallback_body(layout: &SuggestLayout, options: &[String]) -> String {
+    if *layout == SuggestLayout::NumberedProse {
+        folded_list_html(options).trim_start().to_string()
+    } else {
+        String::from("\u{1f4a1} <i>(choices may have expired)</i>")
+    }
+}
+
 /// What the suggestion block becomes once one of its options is tapped.
 ///
 /// Replaces the prompt and its keyboard in place. The Bot API has no
@@ -337,11 +352,7 @@ pub(crate) async fn render_suggestions(
     // too old): the header sentence is still gone per #tg-suggest-merge —
     // prose mode shows just the numbered list, button modes need SOME text
     // for the Bot API to accept the message, so they degrade to the bare 💡.
-    let standalone_body = if layout == SuggestLayout::NumberedProse {
-        folded_list_html(&options).trim_start().to_string()
-    } else {
-        String::from("\u{1f4a1}")
-    };
+    let standalone_body = standalone_fallback_body(&layout, &options);
 
     let option_count = options.len();
     match place_once(

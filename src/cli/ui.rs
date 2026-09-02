@@ -830,6 +830,15 @@ async fn cmd_chat_inner(
             db.pool().clone(),
         ))
         .await;
+    // Durable follow-up suggestion stash (#1226 item 3): without it a
+    // restart orphans every live picker keyboard — buttons stay rendered
+    // but taps can only hit the unknown-token strip path.
+    #[cfg(feature = "telegram")]
+    telegram_state
+        .set_followup_store(crate::db::repository::PendingFollowupRepository::new(
+            db.pool().clone(),
+        ))
+        .await;
 
     // Register Telegram connect tool (agent-callable bot setup)
     #[cfg(feature = "telegram")]

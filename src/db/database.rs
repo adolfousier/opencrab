@@ -149,6 +149,9 @@ pub(crate) fn build_migrations() -> Migrations<'static> {
         M::up(include_str!(
             "../migrations/20260826000001_add_session_bindings.sql"
         )),
+        M::up(include_str!(
+            "../migrations/20260902000001_add_pending_followups.sql"
+        )),
     ])
 }
 
