@@ -74,7 +74,9 @@ impl Env {
 /// question. Without one of them a missing path is simply a wrong path, and
 /// suggesting a transfer would be noise.
 pub(crate) fn is_remote(env: &Env) -> bool {
-    env.has("SSH_CONNECTION") || env.has("SSH_TTY") || env.has("SSH_CLIENT")
+    crate::utils::drop_transfer::SSH_MARKERS
+        .iter()
+        .any(|k| env.has(k))
 }
 
 /// Is a terminal multiplexer between us and the terminal emulator?

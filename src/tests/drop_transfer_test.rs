@@ -11,7 +11,8 @@ use std::path::PathBuf;
 
 use crate::utils::drop_agent;
 use crate::utils::drop_transfer::{
-    DEFAULT_DROP_PORT, MAX_TRANSFER_BYTES, Refusal, Response, authorize, ssh_hint,
+    DEFAULT_DROP_PORT, DROP_PORT_VAR, MAX_TRANSFER_BYTES, Refusal, Response, Tunnel, authorize,
+    ssh_hint, tunnel_from,
 };
 
 struct Sandbox {
@@ -193,4 +194,59 @@ fn test_fetch_fails_fast_when_no_agent_is_listening() {
 #[test]
 fn test_the_transfer_cap_is_a_real_number() {
     assert_eq!(MAX_TRANSFER_BYTES, 64 * 1024 * 1024);
+}
+
+fn vars(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+    let map: std::collections::HashMap<String, String> = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    move |k| map.get(k).cloned()
+}
+
+#[test]
+fn test_a_declared_port_is_a_declared_tunnel_even_off_ssh() {
+    let t = tunnel_from(vars(&[(DROP_PORT_VAR, " 9911 ")])).expect("declared");
+    assert_eq!(
+        t,
+        Tunnel {
+            port: 9911,
+            declared: true
+        }
+    );
+}
+
+#[test]
+fn test_an_ssh_session_without_the_var_probes_the_default_port() {
+    for marker in ["SSH_CONNECTION", "SSH_TTY", "SSH_CLIENT"] {
+        let t = tunnel_from(vars(&[(marker, "10.0.0.2 51234 10.0.0.1 22")])).expect(marker);
+        assert_eq!(
+            t,
+            Tunnel {
+                port: DEFAULT_DROP_PORT,
+                declared: false
+            },
+            "{marker}"
+        );
+    }
+}
+
+#[test]
+fn test_no_ssh_and_no_var_means_nothing_to_dial() {
+    assert_eq!(tunnel_from(vars(&[("TERM", "xterm-256color")])), None);
+    // An empty marker is what an unset-but-exported var looks like.
+    assert_eq!(tunnel_from(vars(&[("SSH_CONNECTION", "")])), None);
+}
+
+#[test]
+fn test_a_malformed_declared_port_falls_back_to_the_probe_rule() {
+    let over_ssh = tunnel_from(vars(&[(DROP_PORT_VAR, "eight"), ("SSH_TTY", "/dev/pts/0")]));
+    assert_eq!(
+        over_ssh,
+        Some(Tunnel {
+            port: DEFAULT_DROP_PORT,
+            declared: false
+        })
+    );
+    assert_eq!(tunnel_from(vars(&[(DROP_PORT_VAR, "eight")])), None);
 }

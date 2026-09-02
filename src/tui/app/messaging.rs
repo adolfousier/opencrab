@@ -2197,22 +2197,24 @@ impl App {
                             });
                             rewritten.replace_range(start..end, "");
                         }
-                        // The path is real, just not on this machine — a drop
+                        // The path is real, just not on this machine: a drop
                         // from a laptop into a session running over SSH. Say
                         // so in the message itself: forwarding it as prose
                         // sent the agent hunting through the attachments dir
                         // and cost a whole turn before it worked that out.
-                        // The file is on the user's machine. If they opened
-                        // the reverse tunnel, pull it across the SSH
-                        // connection they already made and attach it like any
-                        // local drop (#1289).
-                        Dropped::Elsewhere { path, .. }
-                            if crate::utils::drop_transfer::tunnel_port().is_some() =>
-                        {
-                            let port = crate::utils::drop_transfer::tunnel_port()
-                                .expect("guarded by the match arm");
-                            match Self::pull_dropped_file(port, &path) {
-                                Ok(pulled) => {
+                        //
+                        // If the user opened the reverse tunnel, pull the file
+                        // across the SSH connection they already made and
+                        // attach the local copy like any other drop (#1289).
+                        // Over SSH the default port is probed even without
+                        // OPENCRABS_DROP_PORT, so the documented `ssh -R`
+                        // alias is enough on its own; only a DECLARED tunnel
+                        // that fails is reported as an error (#1311).
+                        Dropped::Elsewhere { path, .. } => {
+                            let attempt = crate::utils::drop_transfer::tunnel()
+                                .map(|t| (t, Self::pull_dropped_file(t.port, &path)));
+                            match attempt {
+                                Some((_, Ok(pulled))) => {
                                     let lower = pulled.path.to_lowercase();
                                     let is_video =
                                         VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
@@ -2223,7 +2225,7 @@ impl App {
                                     });
                                     rewritten.replace_range(start..end, "");
                                 }
-                                Err(e) => {
+                                Some((tunnel, Err(e))) if tunnel.declared => {
                                     // Never silently claim an attachment that
                                     // did not arrive.
                                     tracing::warn!("drop tunnel: {path}: {e:#}");
@@ -2235,27 +2237,35 @@ impl App {
                                         ),
                                     );
                                 }
+                                other => {
+                                    if let Some((tunnel, Err(e))) = other {
+                                        tracing::debug!(
+                                            "drop tunnel: nothing answering the probe on port {}: \
+                                             {e:#}; falling back to copy guidance",
+                                            tunnel.port
+                                        );
+                                    }
+                                    // Name the transfer that actually works for
+                                    // this terminal (#1289) rather than only
+                                    // reporting the absence: over SSH the file
+                                    // IS reachable, just not from here.
+                                    let env = crate::tui::remote_upload::Env::current();
+                                    // Same destination a tunnel-pulled file
+                                    // lands in, so copying by hand and copying
+                                    // automatically put the file in the same
+                                    // place.
+                                    let dest = crate::config::opencrabs_home().join("tmp");
+                                    let advice = crate::tui::remote_upload::guidance(
+                                        &env,
+                                        &path,
+                                        &dest.to_string_lossy(),
+                                    );
+                                    rewritten.replace_range(
+                                        start..end,
+                                        &format!("[attachment unavailable: {advice}]"),
+                                    );
+                                }
                             }
-                        }
-                        Dropped::Elsewhere { path, .. } => {
-                            // Name the transfer that actually works for this
-                            // terminal (#1289) rather than only reporting the
-                            // absence: over SSH the file IS reachable, just
-                            // not from here.
-                            let env = crate::tui::remote_upload::Env::current();
-                            // Same destination a tunnel-pulled file lands in,
-                            // so copying by hand and copying automatically put
-                            // the file in the same place.
-                            let dest = crate::config::opencrabs_home().join("tmp");
-                            let advice = crate::tui::remote_upload::guidance(
-                                &env,
-                                &path,
-                                &dest.to_string_lossy(),
-                            );
-                            rewritten.replace_range(
-                                start..end,
-                                &format!("[attachment unavailable: {advice}]"),
-                            );
                         }
                     }
                 }
