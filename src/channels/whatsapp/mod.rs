@@ -4,11 +4,13 @@
 //! allowlisted phone numbers to the AgentService and replying with responses.
 
 mod agent;
+mod approval;
 pub(crate) mod handler;
 pub(crate) mod resume;
 pub(crate) mod store;
 
 pub use agent::WhatsAppAgent;
+pub use approval::WaApproval;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,22 +18,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// option list to translate the user's numeric reply back into the
-/// chosen option string.
 use whatsapp_rust::client::Client;
-
-/// Approval choices mirroring the TUI's Yes / Always (session) / YOLO (permanent) / No.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WaApproval {
-    /// Approve this tool call once.
-    Yes,
-    /// Approve this and all future tool calls for the rest of the session.
-    Always,
-    /// Approve permanently (survives restarts).
-    Yolo,
-    /// Deny this tool call.
-    No,
-}
 
 /// Shared WhatsApp client state for proactive messaging.
 ///
@@ -144,30 +131,6 @@ impl WhatsAppState {
     /// The chat JID a session was last handled in, if known (#731).
     pub async fn session_jid(&self, session_id: Uuid) -> Option<String> {
         self.session_jids.lock().await.get(&session_id).cloned()
-    }
-
-    /// Register a pending approval for a phone number.
-    pub async fn register_pending_approval(
-        &self,
-        phone: String,
-        tx: tokio::sync::oneshot::Sender<WaApproval>,
-    ) {
-        self.pending_approvals.lock().await.insert(phone, tx);
-    }
-
-    /// Resolve a pending approval (called when user replies or taps a button).
-    /// Returns `Some(choice)` if there was a pending approval, `None` otherwise.
-    pub async fn resolve_pending_approval(
-        &self,
-        phone: &str,
-        choice: WaApproval,
-    ) -> Option<WaApproval> {
-        if let Some(tx) = self.pending_approvals.lock().await.remove(phone) {
-            let _ = tx.send(choice);
-            Some(choice)
-        } else {
-            None
-        }
     }
 
     /// Stash this session's optional follow-up suggestions (#600).
