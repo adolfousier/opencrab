@@ -508,6 +508,12 @@ pub(crate) async fn render_suggestions(
             // The buttons never landed — drop the stash so a stale entry can't
             // swallow an unrelated future tap.
             state.drop_pending_followup(&token).await;
+            // #31: the trailer is content, not chrome — Fatal means NOTHING
+            // landed (merge-edit failures fall through to the standalone
+            // send), so the sign-off always ships alone here.
+            if let Some(t) = &trailer {
+                send_trailer_bubble(bot, chat_id, thread_id, t).await;
+            }
         }
         Err(PlaceErr::RetryAfter(wait)) => {
             // #30: a 429 here used to drop the stash at once — but BOTH arms
@@ -569,6 +575,10 @@ pub(crate) async fn render_suggestions(
                                  failed permanently: {e}"
                             );
                             state.drop_pending_followup(&token).await;
+                            // #31: nothing landed — the trailer ships alone.
+                            if let Some(t) = &trailer {
+                                send_trailer_bubble(&bot, chat_id, thread_id, t).await;
+                            }
                             return;
                         }
                         Err(PlaceErr::RetryAfter(w)) => {
@@ -586,6 +596,11 @@ pub(crate) async fn render_suggestions(
                      {MAX_DEFERRED_PLACEMENT_ATTEMPTS} deferred attempts (token {token}) — dropping"
                 );
                 state.drop_pending_followup(&token).await;
+                // #31: every attempt died inside a flood window — nothing
+                // landed, so the sign-off still ships on its own.
+                if let Some(t) = &trailer {
+                    send_trailer_bubble(&bot, chat_id, thread_id, t).await;
+                }
             });
         }
     }
