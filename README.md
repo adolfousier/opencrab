@@ -760,9 +760,9 @@ the far end of the tunnel, so it is deliberately narrow:
 | | |
 |---|---|
 | Serves from | `Desktop`, `Downloads`, `Pictures`, `Documents`, `Movies` |
-| Listens on | `127.0.0.1` only, reachable solely through your forward |
+| Listens on | `127.0.0.1` on your machine. On the server, through the forward, `localhost:8765` for **every process on that box**, not only your TUI |
 | Refuses | anything outside those roots, `..` traversal, symlinks pointing out of a root, directories, files over 64 MB |
-| Logs | every path served **and every path refused** |
+| Logs | every path served **and every path refused**, to the terminal it runs in |
 
 Serve somewhere else with `--root`, repeatable:
 
@@ -772,9 +772,39 @@ opencrabs drop-agent --root ~/work/screenshots --root ~/Desktop
 
 The default is not `$HOME` on purpose: a server that asked for
 `~/.ssh/id_ed25519` is refused by construction rather than by you having
-remembered to restrict it. Note that the forwarded port is reachable by other
-users on that server, so only use this on a box you trust, which is already
-true, since you are running a shell there.
+remembered to restrict it.
+
+**What you are exposing.** Read this before leaving the agent running.
+
+- **There is no authentication.** A request is a bare path on a TCP line, and
+  holding the far end of the socket is the only credential. The served-roots
+  allowlist above is the entire security model.
+- **Anything on the server can read your served folders while the tunnel is
+  up.** The forward makes the agent answer on the server's `localhost:8765`,
+  which every process there can dial: other users on a shared box, other
+  services, and **the agent's own tools**. A `bash` tool call on the server can
+  pull any file inside your roots. A prompt-injected model can therefore read
+  from your Desktop or Downloads without you dropping anything. Serve the
+  narrowest `--root` you can and open the tunnel only while you are actually
+  dropping files.
+- **Exposure lasts the whole SSH session**, not the moment of a drop. `-R`
+  opens the channel when you connect and keeps it until you disconnect, and the
+  agent answers whenever it is running.
+- **Check `GatewayPorts` on the server.** By default sshd binds a reverse
+  forward to loopback. With `GatewayPorts yes` in `sshd_config` it binds on
+  every interface, and your served folders are reachable from the internet
+  through the VPS. Force loopback from your side regardless:
+
+  ```bash
+  ssh -R 127.0.0.1:8765:localhost:8765 root@188.166.147.13
+  ```
+
+- **On your own machine** the listener is loopback only. Nothing off the
+  laptop reaches it except through a forward you opened.
+
+Only use this against a server you control alone. Never against a shared or
+untrusted host, never with the agent left running as a service, and never with
+a root wider than the files you intend to drop.
 
 Sending the file through a connected chat channel (Telegram, Discord, Slack)
 also puts it on the server, which is often quickest on a headless box and
