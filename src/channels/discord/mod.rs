@@ -4,6 +4,7 @@
 //! allowlisted users to the AgentService and replying with responses.
 
 mod agent;
+mod approval;
 mod connection;
 pub(crate) mod handler;
 pub(crate) mod interactions;
@@ -159,21 +160,6 @@ impl DiscordState {
             pending_selects: Mutex::new(HashMap::new()),
             pending_forms: Mutex::new(HashMap::new()),
             tool_groups: Mutex::new((Vec::new(), HashMap::new())),
-        }
-    }
-
-    /// Register a pending approval oneshot channel.
-    pub async fn register_pending_approval(&self, id: String, tx: oneshot::Sender<(bool, bool)>) {
-        self.pending_approvals.lock().await.insert(id, tx);
-    }
-
-    /// Resolve a pending approval. Returns true if one existed.
-    pub async fn resolve_pending_approval(&self, id: &str, approved: bool, always: bool) -> bool {
-        if let Some(tx) = self.pending_approvals.lock().await.remove(id) {
-            let _ = tx.send((approved, always));
-            true
-        } else {
-            false
         }
     }
 
