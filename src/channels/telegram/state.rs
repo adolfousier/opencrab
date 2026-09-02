@@ -181,6 +181,13 @@ pub struct TelegramState {
     /// surfaces built without a database, which keeps the old in-memory-only
     /// behaviour rather than failing.
     plan_card_store: Mutex<Option<crate::db::repository::PlanCardRepository>>,
+    /// Durable backing for `pending_followups` (#1226 item 3): rows are
+    /// written when a keyboard arms (and when its merge host attaches),
+    /// deleted on tap/drop/clear, and hydrated back into the map at boot so
+    /// keyboards that survived a restart keep resolving taps instead of
+    /// dying as unknown-token stale shells. `None` on surfaces built
+    /// without a database — old in-memory-only behaviour.
+    followup_store: Mutex<Option<crate::db::repository::PendingFollowupRepository>>,
     /// Session → when card writes may resume, after Telegram asked us to wait
     /// (#814). Without this the next refresh wrote immediately and renewed the
     /// flood-control window, so the countdown never elapsed.
@@ -197,10 +204,6 @@ pub struct TelegramState {
     ///
     /// Per session, so unrelated chats never wait on each other.
     plan_card_locks: Mutex<HashMap<Uuid, std::sync::Arc<tokio::sync::Mutex<()>>>>,
-    /// Session → when the card was last re-stuck (deleted and reposted at the
-    /// bottom). The re-stick costs two writes, so it is worth doing
-    /// occasionally to keep the card reachable and ruinous to do every settle.
-    plan_card_restick: Mutex<HashMap<Uuid, std::time::Instant>>,
     /// Photo batching buffer: (chat_id, user_id, media_group_id) → Vec<(img_marker, Option<caption>)>
     /// When user sends multiple photos in an album, we buffer them and only fire the agent
     /// after a quiet period (no new photos for 3s). Keyed by media_group_id to avoid merging
@@ -322,9 +325,9 @@ impl TelegramState {
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
             plan_card_store: Mutex::new(None),
+            followup_store: Mutex::new(None),
             plan_card_backoff: Mutex::new(HashMap::new()),
             plan_card_locks: Mutex::new(HashMap::new()),
-            plan_card_restick: Mutex::new(HashMap::new()),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
             text_buffer: Mutex::new(HashMap::new()),
@@ -692,14 +695,16 @@ impl TelegramState {
     ) -> String {
         let token = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
         let count = options.len();
-        self.pending_followups.lock().await.insert(
-            token.clone(),
-            PendingFollowupEntry {
-                session_id,
-                options,
-                host: None,
-            },
-        );
+        let entry = PendingFollowupEntry {
+            session_id,
+            options,
+            host: None,
+        };
+        self.pending_followups
+            .lock()
+            .await
+            .insert(token.clone(), entry.clone());
+        self.persist_followup(&token, &entry).await;
         // #1226: stash lifecycle used to be invisible — a register line lets
         // every later tap be mapped to the arm that minted its token.
         tracing::info!(
@@ -711,8 +716,18 @@ impl TelegramState {
 
     /// Record the answer-bubble host after a successful merge-edit (#1217).
     pub(crate) async fn attach_followup_host(&self, token: &str, host: MergedHost) {
-        if let Some(entry) = self.pending_followups.lock().await.get_mut(token) {
-            entry.host = Some(host);
+        let updated = {
+            let mut map = self.pending_followups.lock().await;
+            match map.get_mut(token) {
+                Some(entry) => {
+                    entry.host = Some(host);
+                    Some(entry.clone())
+                }
+                None => None,
+            }
+        };
+        if let Some(entry) = updated {
+            self.persist_followup(token, &entry).await;
         }
     }
 
@@ -733,6 +748,7 @@ impl TelegramState {
     /// Forget an unused registration (buttons never landed).
     pub(crate) async fn drop_pending_followup(&self, token: &str) {
         let existed = self.pending_followups.lock().await.remove(token).is_some();
+        self.forget_followup(token).await;
         if existed {
             tracing::info!("Telegram followups: dropped unplaced stash token {token}");
         }
@@ -747,14 +763,24 @@ impl TelegramState {
         &self,
         token: &str,
         idx: usize,
-    ) -> Option<(Uuid, String, Option<MergedHost>)> {
+    ) -> Option<(PendingFollowupEntry, String)> {
         let entry = self.pending_followups.lock().await.remove(token)?;
-        let host = entry.host.clone();
-        entry
-            .options
-            .get(idx)
-            .cloned()
-            .map(|text| (entry.session_id, text, host))
+        self.forget_followup(token).await;
+        entry.options.get(idx).cloned().map(|text| (entry, text))
+    }
+
+    /// Re-arm a keyboard whose tap could not start a turn (#1226 G): the
+    /// busy-guard fires AFTER `take_pending_followup` consumed the stash,
+    /// so without this a mid-turn tap silently eats the choice while the
+    /// keyboard stays rendered with a dead token. Restores the entry under
+    /// its original token so the still-rendered buttons keep working and a
+    /// retry tap resolves normally.
+    pub(crate) async fn restore_pending_followup(&self, token: &str, entry: PendingFollowupEntry) {
+        self.persist_followup(token, &entry).await;
+        self.pending_followups
+            .lock()
+            .await
+            .insert(token.to_string(), entry);
     }
 
     /// Drop this session's pending follow-up suggestions (the user sent their
@@ -766,6 +792,13 @@ impl TelegramState {
             map.retain(|_, e| e.session_id != session_id);
             before - map.len()
         };
+        let guard = self.followup_store.lock().await;
+        if let Some(store) = guard.as_ref()
+            && let Err(e) = store.delete_session(&session_id.to_string()).await
+        {
+            tracing::warn!("Telegram followup store session-clear failed for {session_id}: {e}");
+        }
+        drop(guard);
         if removed > 0 {
             // #1226: the #597 wipe used to leave zero log lines, which made
             // stale-shell taps impossible to explain from logs alone.
@@ -853,6 +886,21 @@ impl TelegramState {
         Some(card)
     }
 
+    /// In-memory-only card check (#62): whether a card message id is live in
+    /// THIS process. Unlike [`Self::plan_card`] it never rehydrates from the
+    /// store, so it is cheap enough to gate the per-settle restick claim —
+    /// cardless settles must not spend the shared sticky budget (#1150) they
+    /// do not need, or the flow-block restick would starve for 15s after
+    /// every settle. A card tracked by a previous process but not yet
+    /// re-posted here skips at most one restick: the refresh below re-posted
+    /// and re-tracked it, so the next settle resticks normally.
+    pub(crate) async fn plan_card_cached(
+        &self,
+        session_id: Uuid,
+    ) -> Option<(teloxide::types::MessageId, String)> {
+        self.plan_cards.lock().await.get(&session_id).cloned()
+    }
+
     /// The lock serialising card writes for a session (#822).
     ///
     /// Returned as an `Arc` so the caller holds it across its API calls; the
@@ -893,34 +941,89 @@ impl TelegramState {
             .insert(session_id, std::time::Instant::now() + wait);
     }
 
-    /// Should the card be re-stuck (deleted and reposted at the bottom) now?
-    ///
-    /// Records the decision, so a `true` starts the cooldown. Re-sticking keeps
-    /// the card from being buried by streamed output, but costs a delete plus a
-    /// create; doing it every settle is what put the card within reach of flood
-    /// control (#814, regression from 3c45e41a).
-    pub(crate) async fn should_restick_plan_card(
-        &self,
-        session_id: Uuid,
-        cooldown: std::time::Duration,
-    ) -> bool {
-        let now = std::time::Instant::now();
-        let mut map = self.plan_card_restick.lock().await;
-        match map.get(&session_id) {
-            Some(last) if now.duration_since(*last) < cooldown => false,
-            _ => {
-                map.insert(session_id, now);
-                true
-            }
-        }
-    }
-
     /// Give the plan-card map durable backing. Called once at startup.
     pub(crate) async fn set_plan_card_store(
         &self,
         repo: crate::db::repository::PlanCardRepository,
     ) {
         *self.plan_card_store.lock().await = Some(repo);
+    }
+
+    /// Give the follow-up stash durable backing and hydrate what the last
+    /// process armed (#1226 item 3). Called once at startup. In-memory
+    /// entries win over rows (the map is authoritative); a hydration error
+    /// only degrades to the old restart-orphan behaviour.
+    pub(crate) async fn set_followup_store(
+        &self,
+        repo: crate::db::repository::PendingFollowupRepository,
+    ) {
+        match repo.load_all().await {
+            Ok(rows) => {
+                let mut restored = 0usize;
+                let mut map = self.pending_followups.lock().await;
+                for row in rows {
+                    let Ok(sid) = Uuid::parse_str(&row.session_id) else {
+                        continue;
+                    };
+                    let host = row.host.map(|h| MergedHost {
+                        message_id: MessageId(h.message_id as i32),
+                        html: h.html,
+                        rich: h.rich,
+                    });
+                    let token = row.token;
+                    let entry = PendingFollowupEntry {
+                        session_id: sid,
+                        options: row.options,
+                        host,
+                    };
+                    if let std::collections::hash_map::Entry::Vacant(slot) = map.entry(token) {
+                        slot.insert(entry);
+                        restored += 1;
+                    }
+                }
+                tracing::info!(
+                    target: "telegram",
+                    "Followup store hydrated: {restored} keyboard(s) restored"
+                );
+            }
+            Err(e) => tracing::warn!("Followup store hydration failed: {e}"),
+        }
+        *self.followup_store.lock().await = Some(repo);
+    }
+
+    /// Mirror one stash entry into the durable store. Storage failures are
+    /// logged and swallowed: the map stays authoritative, and a lost row can
+    /// only fall back to the stale-tap strip, never break a turn.
+    async fn persist_followup(&self, token: &str, entry: &PendingFollowupEntry) {
+        let row = crate::db::repository::PendingFollowup {
+            token: token.to_string(),
+            session_id: entry.session_id.to_string(),
+            options: entry.options.clone(),
+            host: entry
+                .host
+                .as_ref()
+                .map(|h| crate::db::repository::FollowupHost {
+                    message_id: i64::from(h.message_id.0),
+                    html: h.html.clone(),
+                    rich: h.rich,
+                }),
+        };
+        let guard = self.followup_store.lock().await;
+        if let Some(store) = guard.as_ref()
+            && let Err(e) = store.save(&row).await
+        {
+            tracing::warn!("Telegram followup store save failed for {token}: {e}");
+        }
+    }
+
+    /// Forget one token's durable row (tap consumed it or buttons never landed).
+    async fn forget_followup(&self, token: &str) {
+        let guard = self.followup_store.lock().await;
+        if let Some(store) = guard.as_ref()
+            && let Err(e) = store.delete(token).await
+        {
+            tracing::warn!("Telegram followup store delete failed for {token}: {e}");
+        }
     }
 
     /// Track the plan-card message id + its rendered signature for a session.

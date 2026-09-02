@@ -11,7 +11,6 @@
 //! [`BackgroundTaskManager`]: crate::brain::agent::service::BackgroundTaskManager
 
 use crate::brain::agent::AgentService;
-use crate::brain::agent::service::restart_recovery;
 use std::sync::{Arc, Mutex, Weak};
 use uuid::Uuid;
 
@@ -111,30 +110,6 @@ where
     None
 }
 
-/// Park a wake whose surface cannot deliver right now, instead of dropping it.
-///
-/// The parked message is delivered when the owning channel claims the session
-/// (route registration drains the parked queue), so a completion produced
-/// around a restart arrives late rather than never (#1242). Callers park only
-/// messages whose turn has NOT run yet — nothing re-executes on claim.
-///
-/// Parking is UNCONDITIONAL (#21): this never goes back through
-/// [`restart_recovery::deliver_or_park`], which would hand the message to the
-/// very route whose surface just refused it — the zero-sleep bounce that spun
-/// a core on 2026-08-28.
-pub(crate) fn park_undeliverable(
-    session_id: Uuid,
-    msg: crate::brain::agent::service::QueuedUserMessage,
-    surface: &str,
-) {
-    tracing::warn!(
-        target: "bg-resume",
-        "[bg-resume] {surface}: cannot deliver for session {session_id} right now — \
-         parking until a fresh route claim (#21)"
-    );
-    restart_recovery::park_unconditional(session_id, msg);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,32 +165,5 @@ mod tests {
         .await;
         assert_eq!(got.as_deref(), Some("up"));
         assert_eq!(polls.load(Ordering::Relaxed), 1);
-    }
-
-    /// Parking routes through the shared parked queue and a route claim
-    /// delivers it — no loss end-to-end (#1242 contract).
-    #[test]
-    fn park_undeliverable_reaches_claim() {
-        let _guard = restart_recovery::test_guard();
-        let sid = Uuid::new_v4();
-        let msg = crate::brain::agent::QueuedUserMessage {
-            context_text: "ctx".to_string(),
-            display_text: "#1242 park test".to_string(),
-            origin: crate::brain::agent::PushOrigin::BackgroundTask,
-            bg_meta: None,
-        };
-        park_undeliverable(sid, msg.clone(), "telegram");
-        assert_eq!(restart_recovery::parked_count(), 1);
-        // A claim (what #1224 route restore does per binding) drains it.
-        let seen: Arc<std::sync::Mutex<Vec<String>>> = Default::default();
-        let sink = seen.clone();
-        let cb: crate::brain::agent::service::MessageEnqueueCallback = Arc::new(move |_id, m| {
-            if let Ok(mut v) = sink.lock() {
-                v.push(m.display_text);
-            }
-        });
-        let delivered = restart_recovery::claim_session(sid, &cb);
-        assert_eq!(delivered, 1);
-        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 }

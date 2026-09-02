@@ -11,7 +11,6 @@ use super::send::{best_effort_delete, fire_chat_action};
 use crate::a2a::handler::notify::CLI_SENDER_PREFIX;
 use crate::brain::agent::service::background_tasks;
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
-use crate::channels::bg_resume;
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
 use std::sync::Arc;
@@ -38,13 +37,37 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: no chat for session {session_id}; dropping");
                 return;
             };
-            // #1242: this used to be a one-shot fetch — a completion arriving
-            // while the bot was still authenticating after a restart was
-            // dropped with no retry and no record (2026-08-26/27 boot logs).
-            // Wait the bounded window out first; past it, park so the #1224
-            // route restore delivers when the channel claims the session.
-            let Some(bot) = bg_resume::wait_ready(|| state.bot(), "telegram: bot").await else {
-                bg_resume::park_undeliverable(session_id, msg, "telegram");
+            // Channel-ownership guard (fork #17): this callback is ALSO
+            // reached by paths that bypass deliver_to_session's gate —
+            // background-task completions resolve their route directly
+            // (background_tasks.rs) — so the choke point checks too. A
+            // session replaced on its chat/topic must never be woken into
+            // the successor's conversation; refuse the wake. (Port seam:
+            // the fork parks the message here; upstream has no channel
+            // park primitive in this callback, so the completion is dropped
+            // with a loud warn — the gate's contract is refusing the wake,
+            // not preserving the message.)
+            if let crate::brain::agent::service::session_routes::ChannelOwnership::Occupied {
+                occupant,
+            } = state.channel_ownership_of(session_id)
+            {
+                tracing::warn!(
+                    "[bg-resume] telegram: session {session_id} no longer owns chat {chat_id} — \
+                     occupied by session {occupant}; refusing to wake it into the successor's \
+                     conversation"
+                );
+                return;
+            }
+            // Bounded wait, not a drop (#1242). At boot this callback and
+            // the bot's own connect run concurrently with nothing ordering
+            // them, so "not connected" here usually means "not connected
+            // yet" — and answering it with a return lost the wake forever.
+            let Some(bot) =
+                crate::channels::transport_ready::await_transport("telegram", session_id, || {
+                    state.bot()
+                })
+                .await
+            else {
                 return;
             };
             let Some(agent) = agent_holder
@@ -94,9 +117,9 @@ pub(crate) fn build_enqueue_callback(
                 // `[session-notify from=<uuid>]` header — the raw id is
                 // replaced with a human label (topic name for same-chat
                 // pushes, chat name / chat+topic for cross-chat, per
-                // Alexey's rule). CLI notifications (#23) stamp
+                // Alexey's rule). The CLI lane (#1258) stamps
                 // `from=cli:<label>` instead — no sender session exists,
-                // so the carried label renders verbatim.
+                // so the carried label renders verbatim, zero lookups.
                 let (echo_md, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
                     build_bg_receipt_card(&meta)
                 } else {
@@ -106,10 +129,6 @@ pub(crate) fn build_enqueue_callback(
                             let label = sender_label(&state, &bot, s, chat_id).await;
                             build_notify_receipt_card(&label, &body)
                         }
-                        // CLI lane (#23): no sender session to humanize —
-                        // the carried label renders verbatim, zero API
-                        // lookups. build_notify_receipt_card neutralizes
-                        // angle brackets in the label itself.
                         Some(NotifySender::CliTooling(label)) => {
                             build_notify_receipt_card(label, &body)
                         }
@@ -932,7 +951,7 @@ pub(crate) fn build_bg_receipt_card(meta: &crate::brain::agent::BgTaskMeta) -> (
     let duration = background_tasks::format_elapsed(meta.elapsed_secs);
     let fence = receipt_fence(&meta.tail);
     let markdown = format!(
-        "<details><summary><sub>{icon} `{label}` 🕒 {duration}</sub></summary>\n\n\
+        "<details>\n<summary><sub>{icon} `{label}` 🕒 {duration}</sub></summary>\n\n\
          {fence}\n{tail}\n{fence}\n\n</details>",
         tail = meta.tail
     );
@@ -977,7 +996,7 @@ pub(crate) fn build_notify_receipt_card(sender_label: &str, body: &str) -> (Stri
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
     let suffix = if truncated { " (truncated)" } else { "" };
     let markdown = format!(
-        "<details><summary><sub>📨 From <b>{sender}</b>: {preview}</sub></summary>\n\n\
+        "<details>\n<summary><sub>📨 From <b>{sender}</b>: {preview}</sub></summary>\n\n\
          {body}{suffix}\n\n</details>"
     );
     let flat_title = format!("📨 From {sender}: {preview}");

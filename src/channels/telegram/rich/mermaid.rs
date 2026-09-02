@@ -16,8 +16,8 @@
 //! hangs; failure paths yield [`MermaidResult::Failed`].
 
 use super::ast::{Block, MermaidResult};
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};

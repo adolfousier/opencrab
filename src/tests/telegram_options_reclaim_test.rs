@@ -21,7 +21,7 @@
 //! an unfolded content leftover is promoted to the trailer).
 
 use crate::channels::telegram::flow::{
-    pop_trailing_folded_texts, settle_options_reclaim, FlowEntry,
+    FlowEntry, pop_trailing_folded_texts, settle_options_reclaim,
 };
 
 #[test]

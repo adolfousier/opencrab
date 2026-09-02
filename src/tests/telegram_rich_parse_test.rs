@@ -286,7 +286,9 @@ fn has_rich_structure_gates_native_rich_path() {
     assert!(has_rich_structure("```\ncode\n```"));
     assert!(has_rich_structure("$$\nx^2\n$$"));
     // <details> collapse blocks — standalone, attributed, and the inline
-    // `<details><summary>` opener the #15 receipt cards emit on ONE line.
+    // `<details><summary>` opener on ONE line (the #15 receipt cards
+    // emitted that shape before the parser-safe block form; the gate
+    // keeps accepting it for any producer that still sends it).
     // Before the #15 fix the gate only matched a standalone `<details>`
     // line, so the fence-less notify card fell to the HTML ladder and
     // rendered as literal tag soup on screen (owner screenshot 2026-08-28).

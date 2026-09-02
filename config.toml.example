@@ -681,6 +681,29 @@ enabled = false
 # vector_enabled = false
 
 # --------------------------------------------
+# External Index Paths (knowledge base)
+# --------------------------------------------
+# Index directories of markdown/text OUTSIDE your profile into memory search.
+# Search them with memory_search scope="external" — answers come back as
+# ranked excerpts with file paths, quotable verbatim.
+#
+# Each entry is a bare path string or a { path, pattern } table.
+# Relative paths resolve against the OpenCrabs home (not the session cwd).
+#
+# Tip: pair with web_scrape sitemap export to index an entire docs site:
+#   web_scrape url="https://docs.example.com" mode=sitemap export=true
+# then point extra_paths at the scrapes/ directory. Zero AI/API cost.
+#
+# [memory]
+# extra_paths = [
+#   "~/knowledge/product-docs",
+#   { path = "scrapes/docs.example.com", pattern = "**/*.md" },
+# ]
+# # exclude = ["**/node_modules/**"]          # extra global excludes (secrets/VCS are excluded by default)
+# # external_allowed_in_shared = false         # default: external results are owner-session-only
+# # sweep_interval_secs = 300                  # freshness sweep interval; changed files also caught lazily at search time
+
+# --------------------------------------------
 # OpenAI-compatible Embedding API
 # --------------------------------------------
 # When configured, embeddings are generated via API instead of the local

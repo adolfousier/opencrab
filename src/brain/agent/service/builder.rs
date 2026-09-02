@@ -251,6 +251,18 @@ pub struct AgentService {
     /// emit; same per-session map pattern as `session_pressure_warned`.
     pub(super) last_compaction_elapsed: std::sync::RwLock<HashMap<Uuid, std::time::Duration>>,
 
+    /// Mirrors `[agent] background_compaction` from config.toml. Default true.
+    pub(super) background_compaction: bool,
+    /// Summariser tasks running against a snapshot of a session's context
+    /// while that session keeps taking turns. At most one per session: a
+    /// second would summarise a conversation the first is about to replace.
+    ///
+    /// Entries are taken OUT of the map to be awaited, never awaited under
+    /// the lock. Nothing in here is ever cancelled to make room — see
+    /// `super::compaction::PendingCompaction`.
+    pub(super) pending_compactions:
+        std::sync::Mutex<HashMap<Uuid, super::compaction::PendingCompaction>>,
+
     /// Per-session ring buffer of outgoing assistant texts (#957). The
     /// cross-turn announcement guard: near-identical turn-final texts that
     /// repeat within the ring nudge once, then abort. Lives here (not in
@@ -431,6 +443,8 @@ impl AgentService {
                 &config.agent.approval_policy,
             ),
             silent_compaction: config.agent.silent_compaction,
+            background_compaction: config.agent.background_compaction,
+            pending_compactions: std::sync::Mutex::new(HashMap::new()),
             lazy_tools: config.agent.lazy_tools,
             max_concurrent: (config.agent.max_concurrent as usize).max(1),
             context_limit: config.agent.context_limit,

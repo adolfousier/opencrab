@@ -408,17 +408,13 @@ async fn drainer_wire_round(label: &str) {
         snap.delivered_finals, 1,
         "one delivered final must be accounted exactly once ({label}): \
          delivered={} failed={} pending={}",
-        snap.delivered_finals,
-        snap.failed_finals,
-        snap.finals_pending,
+        snap.delivered_finals, snap.failed_finals, snap.finals_pending,
     );
     assert_eq!(
         snap.failed_finals, 0,
         "drainer abandoned within the retry budget ({label}): \
          delivered={} failed={} pending={}",
-        snap.delivered_finals,
-        snap.failed_finals,
-        snap.finals_pending,
+        snap.delivered_finals, snap.failed_finals, snap.finals_pending,
     );
     assert_eq!(snap.finals_pending, 0);
 }

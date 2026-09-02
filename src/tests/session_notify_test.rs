@@ -76,7 +76,10 @@ fn test_schema_requires_target_and_message() {
         .iter()
         .map(|v| v.as_str().expect("required entry is a string"))
         .collect();
-    assert_eq!(required, vec!["target_session", "message"]);
+    // v2 (#1273): only target_session is required — `message` became optional
+    // with the action verb family (action=status polls a receipt, sends no text).
+    // Mirrors the in-file schema test in subagent/notify.rs.
+    assert_eq!(required, vec!["target_session"]);
     assert!(schema["properties"]["target_session"].is_object());
     assert!(schema["properties"]["message"].is_object());
 }

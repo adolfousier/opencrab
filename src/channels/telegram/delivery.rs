@@ -39,9 +39,9 @@ pub(crate) fn is_react_only(text_after_directive: &str) -> bool {
     text_after_directive.trim().is_empty()
 }
 
-/// Whether the turn ends on a `suggest_options` surface (#1226 K): the
+/// Whether the turn ends on a suggest_options surface (#1226 K): the
 /// progress handler stashes the options mid-turn (progress.rs), so by
-/// delivery time a `Some` here means an option surface is armed and the
+/// delivery time a Some here means an option surface is armed and the
 /// flow block ends on the suggest_options Tool entry — the reclaim calls
 /// below must then look BEFORE that trailing tool for the answer.
 fn options_pending(streaming: &Arc<std::sync::Mutex<StreamingState>>) -> bool {

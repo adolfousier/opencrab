@@ -1276,6 +1276,25 @@ pub struct AgentConfig {
     #[serde(default)]
     pub silent_compaction: bool,
 
+    /// Run auto-compaction in the background. **On by default.** The
+    /// summariser call is spawned on a snapshot of the conversation and the
+    /// turn keeps going; the summary is swapped in on a later budget check.
+    /// Compaction becomes something the session reports afterwards instead of
+    /// a minute the user spends watching nothing happen.
+    ///
+    /// The turn that follows a spawn always waits for the summary before it
+    /// answers, so a reply is never computed against a context that is about
+    /// to be replaced, and a context crossing the 80% ceiling waits too. The
+    /// in-flight summary is never cancelled to make room: discarding it is
+    /// what left a truncated context with no marker and looped two sessions
+    /// on reload (2026-05-05).
+    ///
+    /// Set `background_compaction = false` to make every compaction block the
+    /// turn that triggered it. `/compact` is always synchronous and visible:
+    /// the user asked for it.
+    #[serde(default = "default_background_compaction")]
+    pub background_compaction: bool,
+
     /// Lazy tool-schema loading. **On by default.** A request ships only the
     /// CORE tool schemas (~4k tokens) plus `tool_search`, instead of all ~95
     /// (~20k counted in every request's input); the agent calls `tool_search`
@@ -1335,6 +1354,10 @@ impl AgentConfig {
             self.redact_group.unwrap_or(self.redact_sensitive_data)
         }
     }
+}
+
+fn default_background_compaction() -> bool {
+    true
 }
 
 fn default_lazy_tools() -> bool {
@@ -1427,6 +1450,7 @@ impl Default for AgentConfig {
             default_provider: None,
             default_model: None,
             silent_compaction: false,
+            background_compaction: default_background_compaction(),
             lazy_tools: default_lazy_tools(),
             redact_sensitive_data: default_redact_sensitive_data(),
             redact_group: None,

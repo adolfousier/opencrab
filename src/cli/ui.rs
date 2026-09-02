@@ -830,6 +830,15 @@ async fn cmd_chat_inner(
             db.pool().clone(),
         ))
         .await;
+    // Durable follow-up suggestion stash (#1226 item 3): without it a
+    // restart orphans every live picker keyboard — buttons stay rendered
+    // but taps can only hit the unknown-token strip path.
+    #[cfg(feature = "telegram")]
+    telegram_state
+        .set_followup_store(crate::db::repository::PendingFollowupRepository::new(
+            db.pool().clone(),
+        ))
+        .await;
 
     // Register Telegram connect tool (agent-callable bot setup)
     #[cfg(feature = "telegram")]
@@ -1187,29 +1196,15 @@ async fn cmd_chat_inner(
     // they are not nudged a second time by it.
     let mut resumed_session_ids: std::collections::HashSet<uuid::Uuid> =
         std::collections::HashSet::new();
-    // #1242 boot-resume accounting + defined flush-path ordering (AC3):
-    //
-    //   1. restart_recovery::recover() parks interruption reports whose
-    //      sessions have no route yet (route map is empty this early);
-    //   2. THIS pass spawns the startup replays — each telegram-bound one
-    //      inside a bounded bot-readiness wait, parking its continuation
-    //      prompt past the bound instead of dropping it;
-    //   3. ChannelManager spawns the channel agents; each connect runs the
-    //      #1224 binding restore, whose claim_for_channel drains everything
-    //      parked (step 1 AND step 2 items) into the now-live enqueue
-    //      callbacks, which re-check handle readiness themselves;
-    //   4. flush-after-grace is daemon-disabled (local=None): nothing is
-    //      flushed to a void surface, parked items simply keep waiting for
-    //      their owning channel.
-    //
-    // So parks are consumed exactly once — by the route claim — never
-    // dropped, never double-run: callers only park messages that have not
-    // been executed yet.
-    let boot_found = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let boot_parked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    // #12 AC3: system-origin rows counted separately for the boot summary.
-    let boot_found_system = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    // #12/#1242 boot accounting: interrupted-row counts, user vs system
+    // origin split, and parked (route-unclaimed) sessions, read once by the
+    // end-of-boot summary line emitted further down.
+    let boot_found = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let boot_parked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let boot_found_system = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     {
+        use crate::brain::agent::service::boot_report;
         let pending_repo = crate::db::PendingRequestRepository::new(db.pool().clone());
         match pending_repo.get_interrupted().await {
             Ok(requests) if !requests.is_empty() => {
@@ -1234,6 +1229,10 @@ async fn cmd_chat_inner(
                         boot_found_system.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     if let Ok(session_id) = uuid::Uuid::parse_str(&req.session_id) {
+                        // Every row is a session that was mid-turn when the
+                        // previous process died, duplicate rows included; the
+                        // ledger dedups, so the summary counts sessions.
+                        boot_report::record_interrupted(session_id);
                         if !seen.insert(session_id) {
                             continue;
                         }
@@ -1264,6 +1263,7 @@ async fn cmd_chat_inner(
                             );
                             continue;
                         }
+                        boot_report::record_resumed(session_id);
                         // Restore the session's saved working directory before
                         // resuming so the agent runs tools in the right CWD.
                         // Note: agent_service shares one global WD lock across
@@ -1340,9 +1340,31 @@ async fn cmd_chat_inner(
                             let tg = tg.clone();
                             let boot_parked_tg = boot_parked.clone();
                             tokio::spawn(async move {
-                                // Continuation prompt shared by both branches:
-                                // the inline replay below AND the parked
-                                // fallback when the bot never comes up.
+                                // This path always knew the bot might not be
+                                // up yet and waited for it. The bg-resume
+                                // paths did not, and dropped the wake instead
+                                // (#1242). One definition now, so the two
+                                // startup flush paths cannot drift back into
+                                // disagreeing about what "ready" means.
+                                // Gate only: the re-delivery below goes through
+                                // deliver_or_park, which does not need the bot
+                                // handle — the await exists so a boot window
+                                // that never opens is counted, not silent.
+                                let Some(_bot) = crate::channels::transport_ready::await_transport(
+                                    "telegram",
+                                    session_id,
+                                    || tg.bot(),
+                                )
+                                .await
+                                else {
+                                    // The channel never came up inside the
+                                    // grace window: this wake is not slow,
+                                    // it is gone (#1242). Count it so the
+                                    // boot summary names the session that
+                                    // never resumed instead of silence.
+                                    boot_report::record_failed();
+                                    return;
+                                };
                                 let prompt = "[System: A restart just occurred while you were \
                                         processing a request. Read the conversation context and continue \
                                         where you left off naturally. Do not mention the restart or \
@@ -1401,17 +1423,21 @@ async fn cmd_chat_inner(
                                         .await
                                     }
                                 };
-                                if let Err(e) = crate::channels::telegram::handler::resume_session(
+                                match crate::channels::telegram::handler::resume_session(
                                     bot, chat, thread_id, session_id, prompt, agent, tg,
                                     false, // boot replay of an EXISTING row: resume-of-resume must stay untracked (#729/#12)
                                 )
                                 .await
                                 {
-                                    tracing::error!(
-                                        "Telegram resume failed for session {}: {}",
-                                        session_id,
-                                        e
-                                    );
+                                    Ok(()) => boot_report::record_delivered(),
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Telegram resume failed for session {}: {}",
+                                            session_id,
+                                            e
+                                        );
+                                        boot_report::record_failed();
+                                    }
                                 }
                             });
                             continue;
@@ -1448,6 +1474,7 @@ async fn cmd_chat_inner(
                                         channel,
                                         response.content.len()
                                     );
+                                    boot_report::record_delivered();
                                     match channel.as_str() {
                                         "tui" => {
                                             let _ = ev_tx.send(
@@ -1525,6 +1552,7 @@ async fn cmd_chat_inner(
                                         session_id,
                                         e
                                     );
+                                    boot_report::record_failed();
                                     if channel == "tui" {
                                         let _ = ev_tx.send(crate::tui::events::TuiEvent::Error {
                                             session_id,
@@ -1541,6 +1569,15 @@ async fn cmd_chat_inner(
             Err(e) => tracing::warn!("Failed to check for interrupted requests: {}", e),
         }
     }
+
+    // One grace window past the last dispatch, every bounded wait in the pass
+    // above has resolved, so a resume still unaccounted for is genuinely
+    // missing rather than slow (#1242). The line logs even on boots with
+    // nothing to recover: that is the fact that makes its absence meaningful
+    // on the boots that did.
+    crate::brain::agent::service::boot_report::schedule_summary(
+        crate::brain::agent::service::restart_recovery::ROUTE_GRACE,
+    );
 
     // #1242 (AC2): one end-of-boot line answering "did everything resume?" —
     // emitted EVERY boot, zero counts included, delayed past READY_WAIT_SECS
@@ -1572,8 +1609,8 @@ async fn cmd_chat_inner(
         });
     }
 
-    // Wake pass (#1227): recently-active bound sessions that were NOT mid-turn
-    // at boot have no journal row, so they look dead until someone pokes one.
+    // Wake (#1227): recently-active bound sessions that were NOT mid-turn at
+    // boot have no journal row, so they look dead until someone pokes one.
     // #1224 re-registers their routes (draining parked reports) at connect,
     // but quietly. Log the stranded set so it is auditable; purely
     // informational — it runs no turn, re-executes nothing, sends no message

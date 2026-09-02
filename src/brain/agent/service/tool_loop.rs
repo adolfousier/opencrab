@@ -1249,19 +1249,15 @@ impl AgentService {
                 &model_name,
                 cancel_token.as_ref(),
                 &progress_callback,
+                super::compaction::BudgetPhase::TurnStart,
             )
             .await
         };
 
-        if let Some(ref summary) = compaction_result {
+        if let Some(ref outcome) = compaction_result {
             // Persist compaction marker to DB so restarts load from this point
-            let compaction_marker = format!(
-                "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                 Below is a structured summary of everything before this point.]\n\n{}",
-                summary
-            );
             if let Err(e) = message_service
-                .create_message(session_id, "user".to_string(), compaction_marker)
+                .create_message(session_id, "user".to_string(), outcome.marker(""))
                 .await
             {
                 tracing::error!("Failed to persist compaction marker to DB: {}", e);
@@ -1715,7 +1711,7 @@ impl AgentService {
             // Enforce 65% budget before every API call. Skip ONLY when the
             // CLI manages its own session (claude-cli with --resume). Qwen
             // is spawned cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -1724,17 +1720,13 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
                 // Persist compaction marker to DB so restarts load from this point
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                     Below is a structured summary of everything before this point.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(session_id, "user".to_string(), outcome.marker(""))
                     .await
                 {
                     tracing::error!("Failed to persist mid-loop compaction marker to DB: {}", e);
@@ -3834,7 +3826,7 @@ impl AgentService {
             // Post-calibration compaction check. Skip ONLY when the CLI
             // owns its session (claude-cli with --resume). Qwen is spawned
             // cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -3843,16 +3835,16 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted \
-                     after token calibration revealed high context usage.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(
+                        session_id,
+                        "user".to_string(),
+                        outcome.marker(" after token calibration revealed high context usage"),
+                    )
                     .await
                 {
                     tracing::error!(
@@ -5945,8 +5937,7 @@ impl AgentService {
                             // Loud break (#32): append a user-visible breadcrumb so the turn
                             // does not end silent — the user sees the guard tripped, nothing
                             // is queued, and how to resume.
-                            let call_label =
-                                normalized_call.split(':').next().unwrap_or("tool");
+                            let call_label = normalized_call.split(':').next().unwrap_or("tool");
                             response.content.push(ContentBlock::Text {
                                 text: crate::brain::agent::service::nudge::loop_guard_breadcrumb(
                                     call_label,
@@ -7102,7 +7093,7 @@ impl AgentService {
             // Enforce 65% budget after tool results. Skip ONLY when the CLI
             // owns its session (claude-cli with --resume). Qwen is spawned
             // cold every turn so we MUST compact for it.
-            if let Some(ref summary) = if cli_owns_context {
+            if let Some(ref outcome) = if cli_owns_context {
                 None
             } else {
                 self.enforce_context_budget(
@@ -7111,17 +7102,13 @@ impl AgentService {
                     &model_name,
                     cancel_token.as_ref(),
                     &progress_callback,
+                    super::compaction::BudgetPhase::MidLoop,
                 )
                 .await
             } {
                 // Persist compaction marker to DB so restarts load from this point
-                let compaction_marker = format!(
-                    "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                     Below is a structured summary of everything before this point.]\n\n{}",
-                    summary
-                );
                 if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), compaction_marker)
+                    .create_message(session_id, "user".to_string(), outcome.marker(""))
                     .await
                 {
                     tracing::error!("Failed to persist post-tool compaction marker to DB: {}", e);

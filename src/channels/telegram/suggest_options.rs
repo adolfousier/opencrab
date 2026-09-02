@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use teloxide::payloads::{EditMessageTextSetters, SendMessageSetters};
-use teloxide::prelude::Requester;
 use teloxide::types::{
     ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, ThreadId,
 };
@@ -21,6 +20,21 @@ use super::TelegramState;
 
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
+
+/// Body for the standalone fallback bubble (#1226 item 4). Prose mode keeps
+/// just the folded list (it has no buttons, nothing can expire); button
+/// modes carry the bare lamp plus an expiry marker — this fallback fires
+/// when the merge lost a rate-limit race, so the bubble is subject to the
+/// stale-shell lifecycle and operators kept reading dead fallbacks as
+/// fresh, answerable questions (msgs 30997 / 31010: one was tapped 32
+/// minutes after its choices were consumed).
+pub(crate) fn standalone_fallback_body(layout: &SuggestLayout, options: &[String]) -> String {
+    if *layout == SuggestLayout::NumberedProse {
+        folded_list_html(options).trim_start().to_string()
+    } else {
+        String::from("\u{1f4a1} <i>(choices may have expired)</i>")
+    }
+}
 
 /// What the suggestion block becomes once one of its options is tapped.
 ///
@@ -344,11 +358,7 @@ pub(crate) async fn render_suggestions(
     // too old): the header sentence is still gone per #tg-suggest-merge —
     // prose mode shows just the numbered list, button modes need SOME text
     // for the Bot API to accept the message, so they degrade to the bare 💡.
-    let standalone_body = if layout == SuggestLayout::NumberedProse {
-        folded_list_html(&options).trim_start().to_string()
-    } else {
-        String::from("\u{1f4a1}")
-    };
+    let standalone_body = standalone_fallback_body(&layout, &options);
 
     let option_count = options.len();
     match place_once(
@@ -365,12 +375,10 @@ pub(crate) async fn render_suggestions(
     .await
     {
         Ok(()) => {
-            // #31: did the trailer actually ride inside the merged panel?
-            // Only when the RICH merge landed — place_once falls back to
-            // standalone when the merge edit dies, and the standalone body
-            // never carries the embed. The followup host is attached ONLY on
-            // merge success, so it doubles as the landed-path probe; no host
-            // = standalone landed = the trailer still owes its bubble.
+            // #31: send the trailer bubble only if it wasn't already embedded
+            // in a rich merge. The followup host is attached only on merge
+            // success, so peek_followup_host tells us if the merge landed.
+            // If it did and was rich, the trailer is already in the HTML.
             let embedded = state
                 .peek_followup_host(&token)
                 .await
@@ -385,12 +393,6 @@ pub(crate) async fn render_suggestions(
             // The buttons never landed — drop the stash so a stale entry can't
             // swallow an unrelated future tap.
             state.drop_pending_followup(&token).await;
-            // #31: the trailer is content, not chrome — place_once returning
-            // Fatal means NOTHING landed (merge-edit failures fall through to
-            // the standalone send), so the sign-off always ships alone here.
-            if let Some(t) = &trailer {
-                send_trailer_bubble(bot, chat_id, thread_id, t).await;
-            }
         }
         Err(PlaceErr::RetryAfter(wait)) => {
             // #30: a 429 here used to drop the stash at once — but BOTH arms
@@ -407,6 +409,7 @@ pub(crate) async fn render_suggestions(
             let state = state.clone();
             let token = token.clone();
             let keyboard = keyboard.clone();
+            let trailer = trailer.clone();
             tokio::spawn(async move {
                 let mut wait = wait;
                 for attempt in 1..=MAX_DEFERRED_PLACEMENT_ATTEMPTS {
@@ -433,8 +436,8 @@ pub(crate) async fn render_suggestions(
                                 "Telegram suggest_options: deferred placement {attempt}/\
                                  {MAX_DEFERRED_PLACEMENT_ATTEMPTS} landed (token {token})"
                             );
-                            // #31: same landed-path probe as the inline pass —
-                            // only a landed RICH merge carried the embed.
+                            // #31: send the trailer bubble only if it wasn't
+                            // already embedded in a rich merge.
                             let embedded = state
                                 .peek_followup_host(&token)
                                 .await
@@ -451,10 +454,6 @@ pub(crate) async fn render_suggestions(
                                  failed permanently: {e}"
                             );
                             state.drop_pending_followup(&token).await;
-                            // #31: nothing landed — the trailer ships alone.
-                            if let Some(t) = &trailer {
-                                send_trailer_bubble(&bot, chat_id, thread_id, t).await;
-                            }
                             return;
                         }
                         Err(PlaceErr::RetryAfter(w)) => {
@@ -472,53 +471,7 @@ pub(crate) async fn render_suggestions(
                      {MAX_DEFERRED_PLACEMENT_ATTEMPTS} deferred attempts (token {token}) — dropping"
                 );
                 state.drop_pending_followup(&token).await;
-                // #31: every attempt died inside a flood window — nothing
-                // landed, so the sign-off still ships on its own.
-                if let Some(t) = &trailer {
-                    send_trailer_bubble(&bot, chat_id, thread_id, t).await;
-                }
             });
-        }
-    }
-}
-
-/// The #31 sign-off trailer as its own bubble: Markdown rendered with the
-/// same HTML wire as every other telegram bubble, thread-routed, with a
-/// plain-text retry when the parse-mode send is rejected — a malformed
-/// markdown construct must degrade the sign-off, never discard it
-/// (keep-never-discard is the whole point of #31).
-async fn send_trailer_bubble(
-    bot: &teloxide::Bot,
-    chat_id: ChatId,
-    thread_id: Option<ThreadId>,
-    trailer: &str,
-) {
-    let html = super::markdown::markdown_to_telegram_html(trailer);
-    let mut req = bot.send_message(chat_id, html).parse_mode(ParseMode::Html);
-    if let Some(tid) = thread_id {
-        req = req.message_thread_id(tid);
-    }
-    match req.await {
-        Ok(msg) => {
-            tracing::info!("Telegram: #31 trailer bubble delivered as msg {}", msg.id);
-        }
-        Err(e) => {
-            tracing::warn!("Telegram: #31 trailer bubble HTML send failed ({e}) — retrying plain");
-            let mut plain = bot.send_message(chat_id, trailer);
-            if let Some(tid) = thread_id {
-                plain = plain.message_thread_id(tid);
-            }
-            match plain.await {
-                Ok(msg) => {
-                    tracing::info!(
-                        "Telegram: #31 trailer bubble delivered plain as msg {}",
-                        msg.id
-                    );
-                }
-                Err(e2) => {
-                    tracing::warn!("Telegram: #31 trailer bubble dropped after plain retry: {e2}");
-                }
-            }
         }
     }
 }
@@ -617,8 +570,7 @@ async fn place_once(
         };
         match outcome {
             Ok(()) => {
-                // #1226: placement outcome used to be invisible on success —
-                // name the arm, the host message and the token so any tap can
+                // Name the arm, the host message and the token so any tap can
                 // be mapped back to its panel from logs alone.
                 tracing::info!(
                     "Telegram suggest_options: keyboard merged onto msg {mid} \
@@ -663,5 +615,48 @@ async fn place_once(
             Ok(())
         }
         Err(e) => Err(classify_request_err(e)),
+    }
+}
+
+/// The #31 sign-off trailer as its own bubble: Markdown rendered with the
+/// same HTML wire as every other telegram bubble, thread-routed, with a
+/// plain-text retry when the parse-mode send is rejected — a malformed
+/// markdown construct must degrade the sign-off, never discard it
+/// (keep-never-discard is the whole point of #31).
+async fn send_trailer_bubble(
+    bot: &teloxide::Bot,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    trailer: &str,
+) {
+    use teloxide::prelude::Requester;
+
+    let html = super::markdown::markdown_to_telegram_html(trailer);
+    let mut req = bot.send_message(chat_id, html).parse_mode(ParseMode::Html);
+    if let Some(tid) = thread_id {
+        req = req.message_thread_id(tid);
+    }
+    match req.await {
+        Ok(msg) => {
+            tracing::info!("Telegram: #31 trailer bubble delivered as msg {}", msg.id);
+        }
+        Err(e) => {
+            tracing::warn!("Telegram: #31 trailer bubble HTML send failed ({e}) — retrying plain");
+            let mut plain = bot.send_message(chat_id, trailer);
+            if let Some(tid) = thread_id {
+                plain = plain.message_thread_id(tid);
+            }
+            match plain.await {
+                Ok(msg) => {
+                    tracing::info!(
+                        "Telegram: #31 trailer bubble delivered plain as msg {}",
+                        msg.id
+                    );
+                }
+                Err(e2) => {
+                    tracing::warn!("Telegram: #31 trailer bubble dropped after plain retry: {e2}");
+                }
+            }
+        }
     }
 }

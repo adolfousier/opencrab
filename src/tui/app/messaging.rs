@@ -2017,6 +2017,48 @@ impl App {
         None
     }
 
+    /// Pull a file from the client over the drop tunnel and store it where
+    /// the rest of the attachment pipeline expects a path (#1289).
+    ///
+    /// Lands in `<home>/tmp/`, beside pasted clipboard images, because that is
+    /// what this is: a TUI-side attachment materialised locally. NOT in
+    /// `channel_attachments/`, which the system prompt defines as files sent
+    /// or forwarded in a chat channel, and which is keyed by platform. A drop
+    /// is neither, and filing it there would tell the agent something untrue.
+    ///
+    /// Stamped on disk and named for display, mirroring `attach_clipboard_image`:
+    /// two screenshots called `Screenshot.png` must not clobber each other,
+    /// and `ImageAttachment` carries the display name separately anyway.
+    fn pull_dropped_file(port: u16, client_path: &str) -> anyhow::Result<(String, String)> {
+        let bytes = crate::utils::drop_agent::fetch(port, client_path)?;
+        let dir = crate::config::opencrabs_home().join("tmp");
+        std::fs::create_dir_all(&dir)?;
+
+        let source = std::path::Path::new(client_path);
+        let display = source
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "dropped-file".to_string());
+        let ext = source
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+
+        let dest = dir.join(format!("dropped-{stamp}{ext}"));
+        std::fs::write(&dest, &bytes)?;
+        tracing::info!(
+            "drop tunnel: pulled {} ({} bytes) to {}",
+            client_path,
+            bytes.len(),
+            dest.display()
+        );
+        Ok((display, dest.to_string_lossy().to_string()))
+    }
+
     pub(crate) fn extract_image_paths(text: &str) -> (String, Vec<ImageAttachment>) {
         let trimmed = text.trim();
         let lower = trimmed.to_lowercase();
@@ -2103,9 +2145,122 @@ impl App {
             }
         }
 
-        // Case 2: Mixed text — scan for image URLs (split by whitespace is fine for URLs)
-        // and absolute paths without spaces
+        // Case 2: Mixed text.
+        //
+        // A dropped path can contain spaces, and macOS names every screenshot
+        // that way, so the whitespace scan below can never see one: it
+        // shatters into fragments and the only one carrying the extension is
+        // tested as a relative path and fails (#1288). Anchor on the
+        // extension instead and pull those out first, longest-match wins.
         let mut attachments = Vec::new();
+        let mut text = std::borrow::Cow::Borrowed(text);
+        {
+            use super::dropped_path::{self, Dropped};
+            let media: Vec<&str> = IMAGE_EXTENSIONS
+                .iter()
+                .chain(VIDEO_EXTENSIONS.iter())
+                .copied()
+                .collect();
+
+            // Collect over the ORIGINAL text, then rewrite right-to-left so
+            // earlier byte ranges stay valid. Rewriting as we go would also
+            // let an "unavailable" marker match itself on the next pass.
+            let mut hits: Vec<(usize, usize, Dropped)> = Vec::new();
+            let mut from = 0usize;
+            while from < text.len() {
+                let Some(hit) = dropped_path::find(&text[from..], &media) else {
+                    break;
+                };
+                let (s, e) = hit.range();
+                hits.push((from + s, from + e, hit));
+                from += e;
+            }
+
+            if !hits.is_empty() {
+                let mut rewritten = text.to_string();
+                for (start, end, hit) in hits.into_iter().rev() {
+                    match hit {
+                        Dropped::Here { path, .. } => {
+                            let lower = path.to_lowercase();
+                            let is_video = VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
+                            let name = std::path::Path::new(&path)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.clone());
+                            attachments.push(ImageAttachment {
+                                name,
+                                path,
+                                is_video,
+                            });
+                            rewritten.replace_range(start..end, "");
+                        }
+                        // The path is real, just not on this machine — a drop
+                        // from a laptop into a session running over SSH. Say
+                        // so in the message itself: forwarding it as prose
+                        // sent the agent hunting through the attachments dir
+                        // and cost a whole turn before it worked that out.
+                        // The file is on the user's machine. If they opened
+                        // the reverse tunnel, pull it across the SSH
+                        // connection they already made and attach it like any
+                        // local drop (#1289).
+                        Dropped::Elsewhere { path, .. }
+                            if crate::utils::drop_transfer::tunnel_port().is_some() =>
+                        {
+                            let port = crate::utils::drop_transfer::tunnel_port()
+                                .expect("guarded by the match arm");
+                            match Self::pull_dropped_file(port, &path) {
+                                Ok((name, local)) => {
+                                    let lower = local.to_lowercase();
+                                    let is_video =
+                                        VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
+                                    attachments.push(ImageAttachment {
+                                        name,
+                                        path: local,
+                                        is_video,
+                                    });
+                                    rewritten.replace_range(start..end, "");
+                                }
+                                Err(e) => {
+                                    // Never silently claim an attachment that
+                                    // did not arrive.
+                                    tracing::warn!("drop tunnel: {path}: {e:#}");
+                                    rewritten.replace_range(
+                                        start..end,
+                                        &format!(
+                                            "[attachment unavailable: could not pull {path} \
+                                             over the drop tunnel: {e}]"
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                        Dropped::Elsewhere { path, .. } => {
+                            // Name the transfer that actually works for this
+                            // terminal (#1289) rather than only reporting the
+                            // absence: over SSH the file IS reachable, just
+                            // not from here.
+                            let env = crate::tui::remote_upload::Env::current();
+                            // Same destination a tunnel-pulled file lands in,
+                            // so copying by hand and copying automatically put
+                            // the file in the same place.
+                            let dest = crate::config::opencrabs_home().join("tmp");
+                            let advice = crate::tui::remote_upload::guidance(
+                                &env,
+                                &path,
+                                &dest.to_string_lossy(),
+                            );
+                            rewritten.replace_range(
+                                start..end,
+                                &format!("[attachment unavailable: {advice}]"),
+                            );
+                        }
+                    }
+                }
+                text = std::borrow::Cow::Owned(rewritten);
+            }
+        }
+        let text: &str = &text;
+
         let mut remaining_parts = Vec::new();
         let mut inlined_files: Vec<String> = Vec::new();
 
