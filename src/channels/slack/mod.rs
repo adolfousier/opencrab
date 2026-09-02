@@ -4,6 +4,7 @@
 //! allowlisted users to the AgentService and replying with responses.
 
 mod agent;
+mod approval;
 pub(crate) mod blocks;
 mod connection;
 pub(crate) mod final_body;
@@ -132,21 +133,6 @@ impl SlackState {
     /// Drop this session's pending follow-up suggestions (user sent their own).
     pub async fn clear_pending_followups(&self, session_id: Uuid) {
         self.pending_followups.lock().await.remove(&session_id);
-    }
-
-    /// Register a pending approval oneshot channel.
-    pub async fn register_pending_approval(&self, id: String, tx: oneshot::Sender<(bool, bool)>) {
-        self.pending_approvals.lock().await.insert(id, tx);
-    }
-
-    /// Resolve a pending approval. Returns true if one existed.
-    pub async fn resolve_pending_approval(&self, id: &str, approved: bool, always: bool) -> bool {
-        if let Some(tx) = self.pending_approvals.lock().await.remove(id) {
-            let _ = tx.send((approved, always));
-            true
-        } else {
-            false
-        }
     }
 
     /// Store a cancel token for a session (before starting agent call).
