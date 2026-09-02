@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::utils::drop_landing::{client_file_name, landing_path};
+use crate::utils::drop_landing::{client_file_name, human_size, landing_path, pulled_notice};
 
 fn never(_: &Path) -> bool {
     false
@@ -55,4 +55,15 @@ fn test_unusable_names_fall_back_to_a_placeholder() {
     assert_eq!(client_file_name("/"), "dropped-file");
     assert_eq!(client_file_name("/Users/me/.."), "dropped-file");
     assert_eq!(client_file_name("/Users/me/dir/"), "dir");
+}
+
+#[test]
+fn test_receipt_names_source_size_and_destination() {
+    let n = pulled_notice("shot.png", "/root/.opencrabs/tmp/shot.png", 1536);
+    assert_eq!(
+        n,
+        "Pulled shot.png (1.5 KB) from your machine to /root/.opencrabs/tmp/shot.png"
+    );
+    assert_eq!(human_size(512), "512 B");
+    assert_eq!(human_size(3 * 1024 * 1024), "3.0 MB");
 }

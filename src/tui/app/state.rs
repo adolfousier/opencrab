@@ -1860,7 +1860,14 @@ impl App {
                             .floor_char_boundary(self.cursor_position.min(self.input_buffer.len()));
 
                         // Check if pasted text contains image paths — extract as attachments
-                        let (clean_text, new_attachments) = Self::extract_image_paths(&filtered);
+                        let extraction = Self::extract_attachments(&filtered);
+                        // A file copied across the drop tunnel says so in the
+                        // chat, with where it landed (#1311).
+                        for notice in extraction.notices {
+                            self.push_system_message(notice);
+                        }
+                        let (clean_text, new_attachments) =
+                            (extraction.text, extraction.attachments);
                         if !new_attachments.is_empty() {
                             // Track them, exactly as a pasted clipboard image
                             // is tracked just above. This is what routes the

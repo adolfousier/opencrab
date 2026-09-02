@@ -56,3 +56,25 @@ pub fn landing_path(
         .unwrap_or_default();
     dir.join(format!("{stem}-{stamp}{ext}"))
 }
+
+/// The one-line receipt shown in the TUI after a pull, so the user can see
+/// that the file was copied to this machine and where it now lives.
+pub fn pulled_notice(name: &str, landed: &str, bytes: usize) -> String {
+    format!(
+        "Pulled {name} ({}) from your machine to {landed}",
+        human_size(bytes)
+    )
+}
+
+/// `1.2 MB` style size for the receipt.
+pub fn human_size(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    let b = bytes as f64;
+    if b < KB {
+        format!("{bytes} B")
+    } else if b < KB * KB {
+        format!("{:.1} KB", b / KB)
+    } else {
+        format!("{:.1} MB", b / (KB * KB))
+    }
+}

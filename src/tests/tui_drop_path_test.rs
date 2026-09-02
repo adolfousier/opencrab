@@ -1,4 +1,4 @@
-//! Tests for `App::extract_image_paths` drag-drop handling: terminals
+//! Tests for `App::extract_attachments` drag-drop handling: terminals
 //! shell-escape dropped paths (spaces become `\ `), which used to fail the
 //! `Path::exists()` check so a dropped screenshot silently never attached.
 //! Also covers PDF/doc paths surfacing a parse hint rather than vanishing.
@@ -13,7 +13,9 @@ fn escaped_space_image_path_is_detected() {
     // What the terminal pastes on drag-drop: spaces backslash-escaped.
     let escaped = real.display().to_string().replace(' ', "\\ ");
 
-    let (clean, atts) = App::extract_image_paths(&escaped);
+    let e = App::extract_attachments(&escaped);
+
+    let (clean, atts) = (e.text, e.attachments);
     assert_eq!(atts.len(), 1, "escaped-space image path should attach");
     assert_eq!(atts[0].path, real.to_string_lossy());
     assert!(!atts[0].is_video);
@@ -29,7 +31,9 @@ fn plain_image_path_without_spaces_still_works() {
     let real = dir.path().join("plain.png");
     std::fs::write(&real, b"\x89PNG\r\n").unwrap();
 
-    let (_clean, atts) = App::extract_image_paths(real.to_str().unwrap());
+    let e = App::extract_attachments(real.to_str().unwrap());
+
+    let (_clean, atts) = (e.text, e.attachments);
     assert_eq!(atts.len(), 1);
     assert_eq!(atts[0].path, real.to_string_lossy());
 }
@@ -41,7 +45,9 @@ fn pdf_path_surfaces_parse_hint_not_attachment() {
     std::fs::write(&real, b"%PDF-1.4\n").unwrap();
     let escaped = real.display().to_string().replace(' ', "\\ ");
 
-    let (text, atts) = App::extract_image_paths(&escaped);
+    let e = App::extract_attachments(&escaped);
+
+    let (text, atts) = (e.text, e.attachments);
     assert!(atts.is_empty(), "a PDF is not an image attachment");
     assert!(
         text.contains("pdf_to_images") && text.contains("parse_document"),
@@ -56,7 +62,8 @@ fn pdf_path_surfaces_parse_hint_not_attachment() {
 #[test]
 fn nonexistent_escaped_path_is_left_as_text() {
     // No file on disk → nothing attached, text preserved (not silently eaten).
-    let (text, atts) = App::extract_image_paths("/no/such/Screenshot\\ 1.png");
+    let e = App::extract_attachments("/no/such/Screenshot\\ 1.png");
+    let (text, atts) = (e.text, e.attachments);
     assert!(atts.is_empty());
     assert!(text.contains("Screenshot"));
 }

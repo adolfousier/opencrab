@@ -27,6 +27,18 @@ pub(crate) struct PulledDrop {
     pub name: String,
     /// Where it landed on this machine.
     pub path: String,
+    /// Size of the copy.
+    pub bytes: usize,
+}
+
+/// What scanning a message for dropped paths produced (#1311).
+pub(crate) struct Extraction {
+    /// The message with the attached paths removed.
+    pub text: String,
+    pub attachments: Vec<ImageAttachment>,
+    /// Receipts to show in the chat, one per file that was copied onto this
+    /// machine, so a pull over the drop tunnel is never silent.
+    pub notices: Vec<String>,
 }
 
 impl App {
@@ -2059,10 +2071,14 @@ impl App {
         Ok(PulledDrop {
             name: crate::utils::drop_landing::client_file_name(client_path),
             path: dest.to_string_lossy().to_string(),
+            bytes: bytes.len(),
         })
     }
 
-    pub(crate) fn extract_image_paths(text: &str) -> (String, Vec<ImageAttachment>) {
+    /// Scan `text` for dropped media paths and turn them into attachments,
+    /// with a receipt for every file that had to be copied onto this machine.
+    pub(crate) fn extract_attachments(text: &str) -> Extraction {
+        let mut notices: Vec<String> = Vec::new();
         let trimmed = text.trim();
         let lower = trimmed.to_lowercase();
 
@@ -2078,26 +2094,28 @@ impl App {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| real.clone());
-                return (
-                    String::new(),
-                    vec![ImageAttachment {
+                return Extraction {
+                    text: String::new(),
+                    attachments: vec![ImageAttachment {
                         name,
                         path: real,
                         is_video: is_video_single,
                     }],
-                );
+                    notices,
+                };
             }
             // URL (no spaces — just check prefix)
             if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
                 let name = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
-                return (
-                    String::new(),
-                    vec![ImageAttachment {
+                return Extraction {
+                    text: String::new(),
+                    attachments: vec![ImageAttachment {
                         name,
                         path: trimmed.to_string(),
                         is_video: is_video_single,
                     }],
-                );
+                    notices,
+                };
             }
         }
 
@@ -2121,10 +2139,11 @@ impl App {
             } else {
                 format!("Call `parse_document(path='{real}')` to read it.")
             };
-            return (
-                format!("[User attached a document: {name} ({real}). {how}]"),
-                vec![],
-            );
+            return Extraction {
+                text: format!("[User attached a document: {name} ({real}). {how}]"),
+                attachments: vec![],
+                notices,
+            };
         }
 
         // Case 1c: Entire pasted text is a single text file path (handles spaces in path)
@@ -2144,7 +2163,11 @@ impl App {
                 } else {
                     content
                 };
-                return (format!("[File: {}]\n```\n{}\n```", name, truncated), vec![]);
+                return Extraction {
+                    text: format!("[File: {}]\n```\n{}\n```", name, truncated),
+                    attachments: vec![],
+                    notices,
+                };
             }
         }
 
@@ -2218,6 +2241,11 @@ impl App {
                                     let lower = pulled.path.to_lowercase();
                                     let is_video =
                                         VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
+                                    notices.push(crate::utils::drop_landing::pulled_notice(
+                                        &pulled.name,
+                                        &pulled.path,
+                                        pulled.bytes,
+                                    ));
                                     attachments.push(ImageAttachment {
                                         name: pulled.name,
                                         path: pulled.path,
@@ -2363,7 +2391,11 @@ impl App {
             }
             result.push_str(&file_content);
         }
-        (result, attachments)
+        Extraction {
+            text: result,
+            attachments,
+            notices,
+        }
     }
 
     /// Replace `<<IMG:/path>>` and `<<VID:/path>>` markers with readable

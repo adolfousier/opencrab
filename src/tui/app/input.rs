@@ -1660,7 +1660,13 @@ impl App {
             }
 
             // Also scan typed input for image paths at submit time
-            let (clean_text, typed_attachments) = Self::extract_image_paths(&content);
+            let extraction = Self::extract_attachments(&content);
+            // A file copied across the drop tunnel says so in the chat, with
+            // where it landed (#1311).
+            for notice in extraction.notices {
+                self.push_system_message(notice);
+            }
+            let (clean_text, typed_attachments) = (extraction.text, extraction.attachments);
             let mut all_attachments = std::mem::take(&mut self.attachments);
             all_attachments.extend(typed_attachments);
 
