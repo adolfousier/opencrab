@@ -5,7 +5,8 @@
 //! wrapper tags stay intact).
 
 use crate::channels::telegram::resume::{
-    background_task_title, build_bg_echo_bubble, build_bg_echo_bubble_rich, split_bg_echo_parts,
+    background_task_title, bg_echo_prefers_markdown_dialect, build_bg_echo_bubble,
+    build_bg_echo_bubble_rich, build_bg_echo_bubble_rich_markdown, split_bg_echo_parts,
     split_notify_header, strip_system_framing,
 };
 use uuid::Uuid;
@@ -183,4 +184,89 @@ fn classic_and_rich_builders_stay_separate() {
         "fallback stays classic-dialect"
     );
     assert!(rich.contains("details"), "primary stays rich-dialect");
+}
+
+/// #1234: the markdown-dialect envelope keeps the body as raw markdown
+/// source — the whole point of the fix. Pre-converting through
+/// markdown_to_html (the HTML-dialect builder) is what flattened tables.
+#[test]
+fn markdown_bubble_keeps_body_raw_for_native_tables() {
+    let table = "| a | b |\n|---|---|\n| 1 | 2 |";
+    let md = build_bg_echo_bubble_rich_markdown(table, "📨 Ops / Push to session");
+    // Block form the rich markdown parser accepts (parse.rs: `<details>` and
+    // `</details>` on their own lines, inline `<summary>` on the next).
+    assert!(
+        md.starts_with("<details>\n<summary>**📨 Ops / Push to session**</summary>\n\n"),
+        "envelope must open in the parser's block form, got: {md:?}"
+    );
+    assert!(
+        md.ends_with("\n\n</details>"),
+        "envelope must close details"
+    );
+    // Body survives as raw markdown source — no fallback conversion:
+    assert!(md.contains(table));
+    assert!(
+        !md.contains("<table"),
+        "fallback converter must not pre-flatten tables"
+    );
+    assert!(!md.contains("&lt;"), "no HTML escaping on this path");
+}
+
+#[test]
+fn markdown_bubble_truncates_with_suffix_and_stays_wellformed() {
+    let big = "y".repeat(10_000);
+    let md = build_bg_echo_bubble_rich_markdown(&big, "⚙️ background task result");
+    assert!(md.contains("(truncated)"));
+    // Raw text cut BEFORE assembly means the wrapper tags can never be cut:
+    assert!(md.ends_with("\n\n</details>"));
+}
+
+/// Parser-level end-to-end: the envelope must parse into a Details block
+/// whose body contains a NATIVE Table — the exact structure the
+/// server-side markdown dialect is expected to build from this wire shape.
+#[test]
+fn markdown_bubble_parses_to_details_with_native_table_inside() {
+    use crate::channels::telegram::rich::ast::{Block, Inline};
+    use crate::channels::telegram::rich::parse_markdown;
+
+    let table = "| a | b |\n|---|---|\n| 1 | 2 |";
+    let md = build_bg_echo_bubble_rich_markdown(table, "cron nightly");
+    let blocks = parse_markdown(&md);
+    match blocks.as_slice() {
+        [
+            Block::Details {
+                summary, blocks, ..
+            },
+        ] => {
+            let title_in_summary = summary.iter().any(|i| match i {
+                Inline::Bold(inner) => inner
+                    .iter()
+                    .any(|n| matches!(n, Inline::Text(t) if t.contains("cron nightly"))),
+                _ => false,
+            });
+            assert!(
+                title_in_summary,
+                "summary carries the title, got {summary:?}"
+            );
+            assert!(
+                blocks.iter().any(|b| matches!(b, Block::Table { .. })),
+                "body keeps a native table block, got {blocks:?}"
+            );
+        }
+        other => panic!("envelope must parse as one Details block, got {other:?}"),
+    }
+}
+
+/// #1234 gate: titles carrying angle brackets can break the markdown
+/// envelope open (the dialect has no escape for them), so they route to the
+/// HTML dialect where escape_html neutralises them.
+#[test]
+fn angle_bracket_titles_route_to_html_dialect() {
+    assert!(bg_echo_prefers_markdown_dialect("📨 Ops / Push to session"));
+    assert!(bg_echo_prefers_markdown_dialect(
+        "🔧 background task finished: grep"
+    ));
+    assert!(!bg_echo_prefers_markdown_dialect("📨 Ops <script> / Push"));
+    assert!(!bg_echo_prefers_markdown_dialect("weird > title"));
+    assert!(!bg_echo_prefers_markdown_dialect("a < b"));
 }

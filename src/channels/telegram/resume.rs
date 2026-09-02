@@ -132,27 +132,59 @@ pub(crate) fn build_enqueue_callback(
                 // card (user-verified 2026-08-26).
                 let rich_html = build_bg_echo_bubble_rich(&body, &title);
 
-                // Rich-first: route the echo bubble through the same canonical
-                // rich send plan_card uses. Any send failure degrades to the
-                // classic HTML blockquote below.
-                let sent_rich = match super::rich::api::send_rich_html_id(
-                    bot.api_url().as_str(),
-                    bot.token(),
-                    chat_id,
-                    thread_id,
-                    &rich_html,
-                    None,
-                    "bg-resume",
-                    "-",
-                )
-                .await
-                {
-                    Ok(_) => true,
-                    Err(e) => {
-                        tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
-                        false
+                // Rich-first ladder (#1234): the MARKDOWN dialect is tried
+                // first — its envelope keeps the body as raw markdown source,
+                // so the server-side rich parser renders pipe tables as native
+                // grids inside the collapsible (cron results are the
+                // table-heaviest payload class routed through this bubble).
+                // The HTML dialect below pre-flattens tables into static
+                // markup and survives as the fallback. Mermaid-aware send so
+                // fenced diagrams in task output resolve to embedded media.
+                let mut sent_rich = false;
+                if bg_echo_prefers_markdown_dialect(&title) {
+                    let rich_markdown = build_bg_echo_bubble_rich_markdown(&body, &title);
+                    match super::rich::send_rich_with_mermaid_target_id(
+                        bot.api_url().as_str(),
+                        bot.token(),
+                        chat_id,
+                        thread_id,
+                        None,
+                        &rich_markdown,
+                        "bg-resume",
+                        "-",
+                    )
+                    .await
+                    {
+                        Ok(_) => sent_rich = true,
+                        Err(e) => {
+                            tracing::warn!(
+                                "[bg-resume] #1234 markdown echo failed, trying HTML: {e}"
+                            );
+                        }
                     }
-                };
+                }
+                // HTML dialect (fallback rung): the body is pre-converted —
+                // tables flatten, but the collapsible card still lands. Any
+                // send failure degrades to the classic HTML blockquote below.
+                if !sent_rich {
+                    match super::rich::api::send_rich_html_id(
+                        bot.api_url().as_str(),
+                        bot.token(),
+                        chat_id,
+                        thread_id,
+                        &rich_html,
+                        None,
+                        "bg-resume",
+                        "-",
+                    )
+                    .await
+                    {
+                        Ok(_) => sent_rich = true,
+                        Err(e) => {
+                            tracing::warn!("[bg-resume] #1225 rich echo failed, using HTML: {e}");
+                        }
+                    }
+                }
                 if !sent_rich {
                     let mut echo = bot
                         .send_message(teloxide::types::ChatId(chat_id), classic_html.clone())
@@ -855,6 +887,39 @@ pub(crate) fn build_bg_echo_bubble_rich(body: &str, title: &str) -> String {
         suffix,
         super::rich::markdown_to_html(body),
     )
+}
+
+/// Markdown-dialect envelope for the echo bubble (#1234): `<details>` chrome
+/// in the block form the rich markdown parser accepts — `<details>` and
+/// `</details>` on their own lines, inline `<summary>` on the next — with the
+/// body kept as RAW markdown source so the server-side rich parser builds
+/// native components: pipe tables stay grids, fences stay fences. The HTML
+/// dialect ([`build_bg_echo_bubble_rich`]) pre-converts the body through the
+/// fallback [`super::rich::markdown_to_html`], which collapses tables into
+/// static markup; this variant is tried FIRST and the HTML one becomes the
+/// fallback. The summary is markdown (`**bold**`), not escaped HTML: the
+/// inline parser leaves unbalanced delimiters as literal text, so a stray
+/// `*` in a label degrades cosmetically at worst. Angle brackets in the
+/// title are the exception — they could break the envelope open — and the
+/// caller routes those titles to the HTML dialect via
+/// [`bg_echo_prefers_markdown_dialect`].
+pub(crate) fn build_bg_echo_bubble_rich_markdown(body: &str, title: &str) -> String {
+    let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
+    let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
+    let suffix = if truncated { " (truncated)" } else { "" };
+    format!(
+        "<details>\n<summary>**{}{}**</summary>\n\n{}\n\n</details>",
+        title, suffix, body,
+    )
+}
+
+/// Whether the echo bubble should ride the markdown dialect for this title
+/// (#1234). Angle brackets in a dynamic label (chat/task names) could break
+/// the markdown envelope open — the dialect has no escape for them — so
+/// those sends go straight to the HTML dialect, where `escape_html`
+/// neutralises them.
+pub(crate) fn bg_echo_prefers_markdown_dialect(title: &str) -> bool {
+    !title.contains('<') && !title.contains('>')
 }
 
 /// Bubble header for a background-task echo: reuse the producer's display
