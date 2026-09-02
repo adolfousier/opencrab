@@ -596,6 +596,20 @@ impl TelegramAgent {
                                                                             .await
                                                                     },
                                                                     move || async move {
+                                                                        // Contract point 2 (#76): the
+                                                                        // pick-record edit failed TWICE —
+                                                                        // the bubble never showed the pick
+                                                                        // (#71 lesson: telemetry ≠ visual).
+                                                                        // Mark it, so no log reader can
+                                                                        // mistake this tap as rendered; the
+                                                                        // echo below is the only record.
+                                                                        tracing::warn!(
+                                                                            "Telegram followup tap: pick \
+                                                                             REDRAW_FAILED on msg {} in chat \
+                                                                             {} — second 429; choice registered \
+                                                                             via echo fallback only",
+                                                                            mid, chat_id
+                                                                        );
                                                                         // The legacy quoted echo — now
                                                                         // safely outside the 429 window
                                                                         // that killed attempt 1 (#68).
