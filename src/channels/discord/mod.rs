@@ -50,7 +50,7 @@ pub struct DiscordState {
     pending_forms: Mutex<HashMap<String, (std::time::Instant, interactions::FormSpec)>>,
     /// Collapsible tool groups keyed by message id, so the Expand/Collapse
     /// interaction can re-render after the turn ended. Insertion-ordered
-    /// for pruning; bounded at [`Self::TOOL_GROUP_CAP`].
+    /// for pruning; bounded at [`Self::TOOL_GROUP_CAP`] (see `tool_group`).
     tool_groups: Mutex<(Vec<u64>, HashMap<u64, tool_group::GroupState>)>,
 }
 
@@ -61,46 +61,6 @@ impl Default for DiscordState {
 }
 
 impl DiscordState {
-    /// Retained tool groups; older ones stop being toggleable (their last
-    /// rendered state stays on screen, like Telegram's frozen blocks).
-    const TOOL_GROUP_CAP: usize = 20;
-
-    /// Insert or update a group, PRESERVING the stored expanded/collapsed
-    /// choice on updates (a completing tool must not snap an expanded group
-    /// shut). Returns the stored state so callers render what is kept.
-    pub(crate) async fn upsert_tool_group(
-        &self,
-        message_id: u64,
-        mut group: tool_group::GroupState,
-    ) -> tool_group::GroupState {
-        let mut guard = self.tool_groups.lock().await;
-        let (order, map) = &mut *guard;
-        match map.get(&message_id) {
-            Some(existing) => group.expanded = existing.expanded,
-            None => {
-                order.push(message_id);
-                while order.len() > Self::TOOL_GROUP_CAP {
-                    let oldest = order.remove(0);
-                    map.remove(&oldest);
-                }
-            }
-        }
-        map.insert(message_id, group.clone());
-        group
-    }
-
-    /// Flip a group's expanded state; None when it aged out of retention.
-    pub(crate) async fn toggle_tool_group(
-        &self,
-        message_id: u64,
-    ) -> Option<tool_group::GroupState> {
-        let mut guard = self.tool_groups.lock().await;
-        let (_, map) = &mut *guard;
-        let group = map.get_mut(&message_id)?;
-        group.expanded = !group.expanded;
-        Some(group.clone())
-    }
-
     pub fn new() -> Self {
         Self {
             http: Mutex::new(None),
