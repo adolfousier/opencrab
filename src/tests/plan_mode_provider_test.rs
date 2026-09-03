@@ -10,7 +10,10 @@
 //! none of these keys must compute no override at all, so existing users see
 //! byte-identical behaviour.
 
-use crate::brain::agent::service::plan_mode_provider::{ModeOverride, PlanModeSwap, override_for};
+use crate::brain::agent::service::plan_mode_provider::{
+    ModeOverride, PlanModeSwap, normalized_override_for, override_for,
+};
+use crate::config::Config;
 use crate::config::types::AgentConfig;
 use crate::utils::plan_files::PlanModeState;
 
@@ -216,4 +219,67 @@ fn a_user_switch_mid_plan_is_not_still_applied() {
         !swap.still_applied("anthropic", "claude-sonnet-4-6"),
         "same provider but a different model is still a deliberate change"
     );
+}
+
+// ------------------------------------------------------------- #1316
+
+fn full_config(json: &str) -> Config {
+    serde_json::from_str(json).expect("fixture config")
+}
+
+#[test]
+fn a_custom_prefixed_plan_provider_resolves_to_the_section_name() {
+    let cfg = full_config(
+        r#"{
+            "agent": { "plan_provider": "custom:myprovider", "plan_model": "some-model" },
+            "providers": {
+                "custom": { "myprovider": { "base_url": "http://localhost:1/v1", "api_key": "k" } }
+            }
+        }"#,
+    );
+    assert_eq!(
+        normalized_override_for(PlanModeState::PreInitEditing, &cfg),
+        Some(ModeOverride {
+            provider: Some("myprovider".into()),
+            model: Some("some-model".into()),
+        })
+    );
+}
+
+#[test]
+fn an_execute_provider_slash_model_lands_the_model_in_the_override() {
+    let cfg = full_config(
+        r#"{
+            "agent": { "execute_provider": "zhipu/glm-5.3" },
+            "providers": { "zhipu": { "enabled": true, "api_key": "k" } }
+        }"#,
+    );
+    assert_eq!(
+        normalized_override_for(PlanModeState::Active, &cfg),
+        Some(ModeOverride {
+            provider: Some("zhipu".into()),
+            model: Some("glm-5.3".into()),
+        })
+    );
+    // Editing states read the plan pair, which is unset here.
+    assert_eq!(
+        normalized_override_for(PlanModeState::PreInitEditing, &cfg),
+        None
+    );
+}
+
+#[test]
+fn a_model_only_override_and_the_no_op_pass_through_unnormalised() {
+    let model_only = full_config(r#"{ "agent": { "plan_model": "some-model" }, "providers": {} }"#);
+    assert_eq!(
+        normalized_override_for(PlanModeState::PostInitEditing, &model_only),
+        Some(ModeOverride {
+            provider: None,
+            model: Some("some-model".into()),
+        })
+    );
+    let unset = full_config(r#"{ "agent": {}, "providers": {} }"#);
+    for state in EVERY_STATE {
+        assert_eq!(normalized_override_for(state, &unset), None, "{state:?}");
+    }
 }
