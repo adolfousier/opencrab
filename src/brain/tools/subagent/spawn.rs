@@ -363,19 +363,17 @@ impl Tool for SpawnAgentTool {
         // Load config and extract model override before entering block scope
         let config = crate::config::Config::load()
             .map_err(|e| ToolError::Execution(format!("Config load failed: {}", e)))?;
-        // Precedence: per-call model > config.subagent_model > None
-        // (when None, the child uses its provider's default model).
-        let model_override = call_model
-            .clone()
-            .or_else(|| config.agent.subagent_model.clone());
-
-        // Resolve the effective provider name with the same precedence:
-        // per-call provider > config.subagent_provider > parent default.
-        // Captured for the log line so users picking a model on a
-        // different provider can see which one was actually used.
-        let effective_provider_name = call_provider
-            .clone()
-            .or_else(|| config.agent.subagent_provider.clone());
+        // Precedence: per-call > config > parent default, for provider and
+        // model alike; the winning value is normalised so "custom:<name>"
+        // or "<provider>/<model>" resolves to the provider it names (#1316).
+        // When the model is None the child uses its provider's default.
+        let child = super::provider_pair::child_pair(
+            &config,
+            call_provider.as_deref(),
+            call_model.as_deref(),
+        );
+        let model_override = child.model.clone();
+        let effective_provider_name = child.provider.clone();
 
         // Build a minimal AgentService for the child
         let child_service = {
@@ -388,10 +386,9 @@ impl Tool for SpawnAgentTool {
                 match crate::brain::provider::create_provider_by_name(&config, provider_name).await
                 {
                     Ok(p) => {
-                        let source = if call_provider.is_some() {
-                            "per-call"
-                        } else {
-                            "config"
+                        let source = match child.source {
+                            super::provider_pair::ProviderSource::PerCall => "per-call",
+                            super::provider_pair::ProviderSource::Config => "config",
                         };
                         tracing::info!("Sub-agent using {source} provider '{provider_name}'");
                         p
