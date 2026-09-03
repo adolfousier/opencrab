@@ -91,7 +91,7 @@ async fn rich_card_never_relies_on_a_bare_newline_to_break_a_line() {
         "prose → checklist seam must be a real break. Got:\n{html}"
     );
     assert!(
-        rich_has_block_break_between(&html, "Third task", "goal"),
+        rich_has_block_break_between(&html, "Third task", "🎯"),
         "checklist → goal seam must be a real break. Got:\n{html}"
     );
 }
