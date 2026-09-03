@@ -1269,9 +1269,11 @@ The same bare name goes in `subagent_provider`, `plan_provider`,
 `execute_provider`, the `[providers.fallback] providers` list, the
 `[image.vision] provider` override, and `/models myprovider/some-model`. A
 provider key never takes `<provider>/<model>`: the model belongs in the matching
-`_model` key. RSI corrects the `custom:` prefix and the `provider/model` split
-for its own key and says so in the log (see Troubleshooting), but the other keys
-take what you wrote, so get the name right once and it works everywhere.
+`_model` key. All four `[agent]` keys (`self_improvement_`, `subagent_`, `plan_`
+and `execute_provider`) correct the `custom:` prefix and the `provider/model`
+split and say so in the log (see Troubleshooting); the fallback list and the
+vision override take what you wrote, so get the name right once and it works
+everywhere.
 
 #### Free Prototyping with NVIDIA API + Kimi K2.5
 
@@ -3106,9 +3108,10 @@ self_improvement_provider = "moonshotai"   # the section name, no "custom:" pref
 self_improvement_model    = "kimi-k2"
 ```
 
-RSI recognises the two common slips anyway: a `custom:` prefix is dropped, and a
-`<provider>/<model>` value whose head is one of your configured providers is
-split into the pair, with a warning in the log naming the canonical spelling.
+RSI, and the `subagent_`, `plan_` and `execute_provider` keys, recognise the two
+common slips anyway: a `custom:` prefix is dropped, and a `<provider>/<model>`
+value whose head is one of your configured providers is split into the pair,
+with a warning in the log naming the canonical spelling.
 Before that, a prefixed value never built a provider and every cycle died
 silently before it started, which Mission Control reported as "RSI has never
 run".
@@ -4663,13 +4666,16 @@ self_improvement_provider = "myprovider"   # the bare section name
 self_improvement_model    = "some-model"   # the model goes here, not in the provider key
 ```
 
-RSI now recognises both slips: it drops the `custom:` prefix and splits a
-`<provider>/<model>` value whose head is one of your configured providers, then
-logs `RSI: self_improvement_provider corrected to '<name>'` naming the canonical
-spelling. If you see that line, fix the config so it stops appearing. The other
-provider keys (`subagent_provider`, `plan_provider`, `execute_provider`, the
-fallback list, `[image.vision] provider`) take the value as written, so use the
-bare name there too. See **Custom (OpenAI-Compatible)** under Providers.
+All four `[agent]` provider keys now recognise both slips: they drop the
+`custom:` prefix and split a `<provider>/<model>` value whose head is one of your
+configured providers, then log a line such as
+`RSI: self_improvement_provider corrected to '<name>'`,
+`Sub-agent provider corrected to '<name>'` or
+`Plan-mode routing: plan_provider corrected to '<name>'` naming the canonical
+spelling. If you see one of those lines, fix the config so it stops appearing.
+The `[providers.fallback] providers` list and `[image.vision] provider` take the
+value as written, so use the bare name there too. See **Custom
+(OpenAI-Compatible)** under Providers.
 
 ### Agent Hallucinating Tool Calls
 
