@@ -169,7 +169,11 @@ impl SymbolExtractor {
                 }
             }
             "impl_item" => {
-                // Extract impl block (trait implementation)
+                // Extract impl block (trait implementation), then recurse:
+                // impl bodies contain `function_item` methods, and stopping
+                // here made every impl method in the codebase invisible to the
+                // symbols table (#1325 — `insert_symbol`, `query_callers_of`
+                // had edges but no symbol rows).
                 let impl_name = self.extract_impl_name(node, source);
                 symbols.push(Symbol {
                     name: impl_name,
@@ -178,6 +182,16 @@ impl SymbolExtractor {
                     start_line: node.start_position().row,
                     end_line: node.end_position().row,
                 });
+                for child in node.children(&mut node.walk()) {
+                    self.extract_from_node(
+                        child,
+                        source,
+                        file_path,
+                        current_function,
+                        symbols,
+                        call_edges,
+                    );
+                }
             }
             "use_declaration" => {
                 // Extract import
@@ -191,7 +205,11 @@ impl SymbolExtractor {
                 });
             }
             "call_expression" => {
-                // Extract function call
+                // Extract function call, then recurse: calls nest inside other
+                // calls' subtrees (receiver `.await.context()` chains, call
+                // arguments, method chains) and each nested call is its own
+                // edge (#1325 — `retry_db_operation(..).await.context(..)`
+                // dropped the inner edge when this arm stopped after handling).
                 if let (Some(caller), Some(callee)) =
                     (current_function, self.extract_callee(node, source))
                 {
@@ -201,6 +219,16 @@ impl SymbolExtractor {
                         file_path: file_path.to_string(),
                         line: node.start_position().row,
                     });
+                }
+                for child in node.children(&mut node.walk()) {
+                    self.extract_from_node(
+                        child,
+                        source,
+                        file_path,
+                        current_function,
+                        symbols,
+                        call_edges,
+                    );
                 }
             }
             _ => {
@@ -477,6 +505,90 @@ fn share() -> Arc<u32> {
             edges
                 .iter()
                 .any(|e| e.caller == "share" && e.callee == "Arc::new")
+        );
+    }
+
+    #[test]
+    fn test_await_context_chain_inner_call_extracted() {
+        // #1325: `retry_db_operation(..).await.context(..)` — the inner call
+        // sits inside the outer `.context` call's subtree (receiver
+        // await_expression). The call_expression arm must recurse after
+        // handling, or the inner edge is dropped. Generics in the signature
+        // are incidental; the nesting is the bug.
+        let source = r#"
+async fn retry_db_anyhow<F, Fut, T>(operation: F, config: &DbRetryConfig) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    retry_db_operation(operation, config)
+        .await
+        .context("Database operation failed after retries")
+}
+"#;
+        let mut extractor = SymbolExtractor::new().unwrap();
+        let path = PathBuf::from("test.rs");
+        let (_symbols, edges) = extractor.extract(&path, source).unwrap();
+
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.caller == "retry_db_anyhow" && e.callee == "retry_db_operation"),
+            "inner call of an .await.context() chain must produce its edge, got: {edges:?}"
+        );
+        assert!(edges.iter().any(|e| e.callee == "context"));
+    }
+
+    #[test]
+    fn test_nested_call_in_arguments_extracted() {
+        // #1325 (same class): `wrap(inner())` — inner call lives in the outer
+        // call's argument subtree.
+        let source = r#"
+fn outer() -> u32 {
+    wrap(inner())
+}
+"#;
+        let mut extractor = SymbolExtractor::new().unwrap();
+        let path = PathBuf::from("test.rs");
+        let (_symbols, edges) = extractor.extract(&path, source).unwrap();
+
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.caller == "outer" && e.callee == "wrap")
+        );
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.caller == "outer" && e.callee == "inner")
+        );
+    }
+
+    #[test]
+    fn test_impl_method_symbol_and_calls_extracted() {
+        // #1325 (found while fixing): impl_item handled-and-stopped, so impl
+        // methods had no symbol rows and their bodies no call edges.
+        let source = r#"
+struct Store;
+
+impl Store {
+    fn query_all(&self) -> Vec<u32> {
+        self.load()
+    }
+}
+"#;
+        let mut extractor = SymbolExtractor::new().unwrap();
+        let path = PathBuf::from("test.rs");
+        let (symbols, edges) = extractor.extract(&path, source).unwrap();
+
+        assert!(
+            symbols.iter().any(|s| s.name == "query_all"),
+            "impl method must appear in symbols, got: {symbols:?}"
+        );
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.caller == "query_all" && e.callee == "load")
         );
     }
 }
