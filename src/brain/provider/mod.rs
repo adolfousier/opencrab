@@ -36,6 +36,7 @@ pub mod kimi_plan;
 pub mod kimi_reasoning;
 pub mod model_fetch;
 pub(crate) mod nonstream_compat;
+pub mod opencode;
 pub mod opencode_cli;
 pub mod qwen;
 pub mod qwen_reasoning;

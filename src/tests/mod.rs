@@ -77,6 +77,7 @@ pub mod brain_provider_copilot_test;
 pub mod brain_provider_error_test;
 pub mod brain_provider_factory_test;
 pub mod brain_provider_json_repair_test;
+pub mod brain_provider_opencode_test;
 pub mod brain_provider_qwen_test;
 pub mod brain_provider_response_id_test;
 pub mod brain_provider_trait_test;

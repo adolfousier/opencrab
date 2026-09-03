@@ -2520,8 +2520,18 @@ impl OpenAIProvider {
         self.vision_model.as_deref()
     }
 
-    /// Build request headers
+    /// Build request headers for a call made outside any conversation (the
+    /// model-catalogue fetch). Chat paths use [`Self::headers_for`] so the
+    /// gateway sees the session the request belongs to.
     fn headers(&self) -> std::result::Result<reqwest::header::HeaderMap, ProviderError> {
+        self.headers_for(None)
+    }
+
+    /// Build request headers for a request belonging to `session`.
+    fn headers_for(
+        &self,
+        session: Option<uuid::Uuid>,
+    ) -> std::result::Result<reqwest::header::HeaderMap, ProviderError> {
         let mut headers = reqwest::header::HeaderMap::new();
 
         // Resolve the bearer token: dynamic token_fn takes priority over static api_key
@@ -2605,6 +2615,24 @@ impl OpenAIProvider {
                 value.parse::<reqwest::header::HeaderValue>(),
             ) {
                 headers.insert(k, v);
+            }
+        }
+
+        // OpenCode Zen wants a User-Agent and a per-conversation session id;
+        // a no-op for every other target.
+        for (key, value) in super::opencode::extra_headers(&self.base_url, session) {
+            match (
+                key.parse::<reqwest::header::HeaderName>(),
+                value.parse::<reqwest::header::HeaderValue>(),
+            ) {
+                (Ok(k), Ok(v)) => {
+                    headers.insert(k, v);
+                }
+                _ => tracing::warn!(
+                    "OpenCode: dropping malformed header '{}' — the gateway may reject \
+                     this request for a missing session id",
+                    key
+                ),
             }
         }
 
@@ -3304,6 +3332,9 @@ impl Provider for OpenAIProvider {
         let model = request.model.clone();
         let message_count = request.messages.len();
         let retry_config = self.retry_config(&model);
+        // Captured before `to_openai_request` consumes the request: the
+        // OpenCode session header is keyed on it.
+        let session = request.session_id;
 
         let mut openai_request = self.to_openai_request(request);
 
@@ -3342,7 +3373,7 @@ impl Provider for OpenAIProvider {
                 let response = self
                     .client
                     .post(self.send_url())
-                    .headers(self.headers()?)
+                    .headers(self.headers_for(session)?)
                     .json(&body)
                     .send()
                     .await?;
@@ -3411,7 +3442,7 @@ impl Provider for OpenAIProvider {
                         let response = self
                             .client
                             .post(self.send_url())
-                            .headers(self.headers()?)
+                            .headers(self.headers_for(session)?)
                             .json(&body)
                             .send()
                             .await?;
@@ -3445,7 +3476,7 @@ impl Provider for OpenAIProvider {
                                 let response = self
                                     .client
                                     .post(self.send_url())
-                                    .headers(self.headers()?)
+                                    .headers(self.headers_for(session)?)
                                     .json(&body)
                                     .send()
                                     .await?;
@@ -3488,6 +3519,9 @@ impl Provider for OpenAIProvider {
 
         let model = request.model.clone();
         let message_count = request.messages.len();
+        // Captured before `to_openai_request` consumes the request: the
+        // OpenCode session header is keyed on it.
+        let session = request.session_id;
 
         // Proactive pacing: stay under provider rate limits
         if let Some(ref limiter) = self.rate_limiter {
@@ -3573,7 +3607,7 @@ impl Provider for OpenAIProvider {
                 let response = self
                     .client
                     .post(self.send_url())
-                    .headers(self.headers()?)
+                    .headers(self.headers_for(session)?)
                     .json(&body)
                     .send()
                     .await?;
@@ -3617,7 +3651,7 @@ impl Provider for OpenAIProvider {
                     let r = self
                         .client
                         .post(self.send_url())
-                        .headers(self.headers()?)
+                        .headers(self.headers_for(session)?)
                         .json(&body)
                         .send()
                         .await?;
@@ -3648,7 +3682,7 @@ impl Provider for OpenAIProvider {
                             let r = self
                                 .client
                                 .post(self.send_url())
-                                .headers(self.headers()?)
+                                .headers(self.headers_for(session)?)
                                 .json(&body)
                                 .send()
                                 .await?;
