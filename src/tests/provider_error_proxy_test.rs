@@ -13,6 +13,7 @@ use crate::brain::provider::custom_openai_compatible::{
 };
 use crate::brain::provider::error::{
     ProviderError, is_html_error_body, is_temporary_unavailable_signal, is_transient_proxy_400,
+    is_waf_block_body,
 };
 
 // ─── unwrap_proxy_error ─────────────────────────────────────────────
@@ -416,4 +417,84 @@ fn http_404_html_retryable_but_json_not() {
         !json.is_retryable(),
         "404 JSON client error → not retryable"
     );
+}
+
+// ─── WAF block pages vs transient infra pages ───────────────────────
+//
+// A 4xx carrying HTML is retried on purpose: a CDN or load-balancer error
+// page usually clears on the next attempt. A block page is the opposite —
+// the gateway has decided to refuse us, typically at the end of a rate-limit
+// escalation, so retrying is futile and risks extending the block.
+
+/// The shape observed on 2026-09-01: an Aliyun block page returned as HTTP
+/// 405 for a valid POST, after a week of 429s. Abridged, keeping the markers
+/// and their approximate offsets: the wording sits well past the `<style>`
+/// block, which is why the check scans further than `is_html_error_body`.
+fn aliyun_block_page() -> String {
+    format!(
+        "<!doctypehtml><html lang=\"zh-cn\"><meta charset=\"utf-8\">\
+         <meta name=\"data-spm\"content=\"a3c0e\"><title>405</title>\
+         <style>{}</style><body><div id=\"block_message\"></div>\
+         <script>var en_tips={{block_message:\"Sorry, your request has been \
+         blocked as it may harm the site.\"}}</script></body></html>",
+        "a,body,div{margin:0;padding:0}".repeat(20)
+    )
+}
+
+#[test]
+fn an_aliyun_block_page_is_recognised_as_a_block() {
+    let body = aliyun_block_page();
+    assert!(is_html_error_body(&body), "still an HTML body");
+    assert!(is_waf_block_body(&body), "and specifically a block page");
+}
+
+/// The marker sits past the 256-char prefix `is_html_error_body` scans, so a
+/// short scan would miss it and the page would keep its retry budget.
+#[test]
+fn the_block_marker_is_found_past_the_html_sniff_prefix() {
+    let body = aliyun_block_page();
+    let head: String = body.chars().take(256).collect();
+    assert!(
+        !head.to_ascii_lowercase().contains("has been blocked"),
+        "fixture must place the wording past the sniff prefix or it proves nothing"
+    );
+    assert!(is_waf_block_body(&body));
+}
+
+#[test]
+fn a_block_page_is_not_retried() {
+    let err = ProviderError::ApiError {
+        status: 405,
+        message: aliyun_block_page(),
+        error_type: None,
+    };
+    assert!(
+        !err.is_retryable(),
+        "answering a block with the full backoff risks extending it"
+    );
+}
+
+/// The 2026-06-07 behaviour is preserved: a transient infrastructure page on
+/// a 4xx still gets its retries.
+#[test]
+fn a_transient_html_error_page_is_still_retried() {
+    for body in [
+        "<!DOCTYPE html>\n<html><head><title>405</title></head></html>",
+        "<html><body>502 Bad Gateway</body></html>",
+    ] {
+        assert!(!is_waf_block_body(body), "not a block page: {body:?}");
+        let err = ProviderError::ApiError {
+            status: 405,
+            message: body.to_string(),
+            error_type: None,
+        };
+        assert!(err.is_retryable(), "should keep its retry budget: {body:?}");
+    }
+}
+
+#[test]
+fn a_json_error_body_is_never_treated_as_a_block() {
+    assert!(!is_waf_block_body(
+        r#"{"error":{"message":"invalid model","type":"invalid_request_error"}}"#
+    ));
 }
