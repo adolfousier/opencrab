@@ -821,8 +821,16 @@ impl OnboardingWizard {
                     "default_model",
                     "gpt-4o-mini-tts"
                 );
-                // Write selected voice to [voice] tts_voice
-                try_write!(write_errors, "voice", "tts_voice", &self.tts_api_voice);
+                // Write selected voice under providers.tts.openai.voice — the
+                // struct registry's real location. The legacy `[voice]` table
+                // is migration-only; writing it directly would now be an
+                // orphan table the write guard rejects (#83).
+                try_write!(
+                    write_errors,
+                    "providers.tts.openai",
+                    "voice",
+                    &self.tts_api_voice
+                );
                 // Write API key to keys.toml (only what the user actually typed).
                 // The equality check this replaces let a seeded field that was
                 // typed into through persist as `__EXISTING_KEY__<key>`.
