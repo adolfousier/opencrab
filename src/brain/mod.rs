@@ -23,6 +23,7 @@ pub mod rsi_command_patterns;
 pub mod rsi_disposition;
 pub mod rsi_git_history;
 pub mod rsi_proposals;
+pub mod rsi_provider_spec;
 pub mod rsi_pruned;
 pub mod rsi_skill_sequences;
 pub mod rsi_stale_ledger;

@@ -317,6 +317,7 @@ pub mod rsi_notification_redaction_test;
 pub mod rsi_opportunity_hash_test;
 pub mod rsi_prompt_propose_test;
 pub mod rsi_provider_resolution_test;
+pub mod rsi_provider_spec_test;
 pub mod rsi_pruned_test;
 pub mod rsi_rule_budget_test;
 pub mod rsi_session_pin_test;
