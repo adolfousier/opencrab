@@ -1413,9 +1413,14 @@ async fn cmd_chat_inner(
                                 // That is today's behaviour, not a regression:
                                 // it can only improve once a topic is bound.
                                 let thread_id = match tg.session_topic(session_id).await {
-                                    Some(topic) => Some(teloxide::types::ThreadId(
-                                        teloxide::types::MessageId(topic),
-                                    )),
+                                    // Through the delivery boundary: a
+                                    // General-bound session has no thread,
+                                    // not thread 1 (#1319).
+                                    Some(topic) => {
+                                        crate::channels::telegram::session_resolve::delivery_thread_id(
+                                            Some(topic),
+                                        )
+                                    }
                                     None => {
                                         crate::channels::telegram::send::latest_thread_id_for_chat(
                                             chat.0,

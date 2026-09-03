@@ -90,8 +90,14 @@ pub(crate) fn build_enqueue_callback(
             // for a DM or a non-forum group (where `session_topic` is None
             // anyway), and it is all we have for a session whose in-memory
             // topic binding has not been re-registered since a restart.
+            // Bound sessions resolve through the delivery boundary, so a
+            // General-bound one yields NO thread rather than the synthetic 1
+            // (#1319). Note the two arms mean different things: bound-to-
+            // General is a definite "no thread", while unbound falls back to
+            // the chat-wide lookup. Collapsing them would send a General
+            // session's message into whichever topic spoke last.
             let thread_id = match state.session_topic(session_id).await {
-                Some(topic) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(topic))),
+                Some(topic) => super::session_resolve::delivery_thread_id(Some(topic)),
                 None => super::send::latest_thread_id_for_chat(chat_id).await,
             };
 
@@ -259,8 +265,14 @@ pub(crate) fn build_enqueue_callback(
             // for a DM or a non-forum group (where `session_topic` is None
             // anyway), and it is all we have for a session whose in-memory
             // topic binding has not been re-registered since a restart.
+            // Bound sessions resolve through the delivery boundary, so a
+            // General-bound one yields NO thread rather than the synthetic 1
+            // (#1319). Note the two arms mean different things: bound-to-
+            // General is a definite "no thread", while unbound falls back to
+            // the chat-wide lookup. Collapsing them would send a General
+            // session's message into whichever topic spoke last.
             let thread_id = match state.session_topic(session_id).await {
-                Some(topic) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(topic))),
+                Some(topic) => super::session_resolve::delivery_thread_id(Some(topic)),
                 None => super::send::latest_thread_id_for_chat(chat_id).await,
             };
             if let Err(e) = resume_session_inner(

@@ -46,7 +46,12 @@ pub async fn latest_thread_id_for_chat(chat_id: i64) -> Option<ThreadId> {
         .ok()?;
     let row = rows.into_iter().next()?;
     let tid_str = row.thread_id?;
-    tid_str.parse::<i32>().ok().map(|n| ThreadId(MessageId(n)))
+    // A stored "1" is the General scoping key, not a thread anyone can post
+    // to, so it resolves to no thread like every other read (#1319).
+    tid_str
+        .parse::<i32>()
+        .ok()
+        .and_then(|n| super::session_resolve::delivery_thread_id(Some(n)))
 }
 
 /// `bot.send_message(chat_id, text)` with optional `message_thread_id`.
