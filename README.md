@@ -455,6 +455,47 @@ allowed_users = ["123456789"]    # who may interact
 # bot_owner = ["123456789"]      # owner for owner-only commands (auto-seeded from allowed_users[0])
 ```
 
+#### Flood governor (`[channels.telegram.rate_limiter]`)
+
+Telegram rate-limits per peer, and a forum supergroup is **one peer no matter how
+many topics it has**. Under load a busy turn can outrun that on its own, so the
+governor paces outbound calls proactively instead of only reacting to 429s.
+
+Enforcement engages **only for forum peers** (a chat seen carrying a topic id).
+DMs are never paced, so leaving this alone is the right default; the knobs exist
+for deployments whose traffic differs from the one the defaults were sized on.
+
+```toml
+[channels.telegram.rate_limiter]
+enabled = true                  # master switch; forum peers only either way
+
+typing_min_interval_secs = 3    # sendChatAction: min gap between actions
+typing_burst = 8                # ...and how many may bunch up
+typing_max_hold_secs = 30       # longest a typing indicator is held
+
+edits_per_minute = 30           # classic editMessageText budget
+edit_burst = 10
+
+rich_per_minute = 30            # sendRichMessage budget (separate bucket)
+rich_burst = 10
+
+send_min_interval_millis = 1000 # new messages: min gap
+sends_ceiling_per_minute = 18
+sends_burst = 5
+
+summary_log_secs = 300          # how often the admitted/dropped summary is logged
+```
+
+When a bucket empties, what happens depends on what is queued. **Chrome** (the
+clock, brain previews, status churn) is dropped and counted: it self-heals on the
+next full-state render, so nothing is lost. A **final** message is never dropped;
+it queues latest-wins and lands when the bucket refills. Every value is read live
+on each gate evaluation, so edits take effect without a restart.
+
+The defaults follow Telegram's documented bot regime per peer: roughly 20 typing
+actions per 5s and 40 per 30s, edits observed safe at 30/min, sends kept under
+~20/min.
+
 #### Per-group access control (per-chat ACL)
 
 Telegram groups can have their own member list, so a user can be allowed in **one group** without gaining DM access:
@@ -561,6 +602,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | `opencrabs session list` | List all sessions with provider, model, token count (`--all` includes archived) |
 | `opencrabs session get <id>` | Show session details and recent messages |
 | `opencrabs session set-model <provider/model> [target]` | Non-interactive model switch: target by id prefix, `--name "<title match>"`, or `--all` (non-archived sessions). The pair splits on the first slash, so `openrouter/tencent/hy3:free` works. A running instance applies it on each session's next message |
+| `opencrabs session notify <id> --text "..."` | Send a notification into a session from outside it — the subcommand meant for scripts and tooling. `--title` adds a header, `--sender` sets the label the recipient sees (default "CLI tooling"), `--interrupt` delivers even while that session is mid-turn, `--format json` returns a machine-readable delivery verdict |
 | `opencrabs db init` | Initialize database |
 | `opencrabs db stats` | Show database statistics |
 | `opencrabs db clear` | Clear all sessions and messages (`--force` to skip confirmation) |
@@ -568,6 +610,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | `opencrabs logs status\|view\|clean\|open` | Log management |
 | `opencrabs service install\|start\|stop\|restart\|status\|uninstall` | OS service management (launchd on macOS, systemd on Linux) |
 | `opencrabs daemon` | Run in headless daemon mode — channels only, no TUI |
+| `opencrabs evolve` | Update to the latest release binary and hot-restart, the same path as the `/evolve` command and the automatic 24h check. `--check-only` reports whether an update exists without installing it |
 | `opencrabs completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
 | `opencrabs migrate <source>` | Migrate from OpenClaw or Hermes. Scans the system, shows interactive picker, spawns agent to handle migration. `--dry-run` to preview |
 | `opencrabs version` | Print version and exit |
@@ -1645,7 +1688,7 @@ All features are enabled by default. To customize, use `--no-default-features` a
 cargo install opencrabs --no-default-features --features "telegram,discord"
 
 # Everything except browser automation
-cargo install opencrabs --no-default-features --features "telegram,whatsapp,discord,slack,trello,local-stt,local-tts"
+cargo install opencrabs --no-default-features --features "telegram,whatsapp,discord,slack,trello,local-stt,local-tts,browser,rtk,code-graph,pdfium"
 ```
 
 | Feature | Crate | Description |
@@ -1658,6 +1701,9 @@ cargo install opencrabs --no-default-features --features "telegram,whatsapp,disc
 | `local-stt` | rwhisper | On-device speech-to-text (requires CMake + C++ compiler) |
 | `local-tts` | opusic-sys | On-device text-to-speech (requires `python3` + `python3-venv` at runtime) |
 | `browser` | chromey | Browser automation via CDP (Chrome, Brave, Edge, Arc, Vivaldi, Opera — not Firefox) |
+| `code-graph` | tree-sitter | Symbol/call-graph index for structural code queries (see [Structural code search](#-benchmarks)) |
+| `rtk` | — | Bash output filtering via RTK, cutting tokens on supported commands |
+| `pdfium` | pdfium-render | PDF page rendering, the primary renderer; falls back to `pdftoppm` when the system Pdfium library is absent |
 
 ### Option 4: Build from Source (full control)
 
@@ -2276,6 +2322,14 @@ approval_policy = "auto-always"  # auto-always (default) | auto-session | ask
                                  # run with nothing to prompt on (cron, CI, `run`) refuses gated tools
                                  # rather than hanging — pass --auto-approve there, or keep an auto policy.
 max_concurrent = 4               # tools per turn that may run in parallel (auto-approved batches only; 1 = fully sequential)
+plan_require_approval = true     # true (default): a plan stays Editing until a human approves it (plan-card
+                                 # button, /execute, reaction consent) or the agent approves under a
+                                 # user-granted in-session autonomy. approval_policy = "auto-always" does NOT
+                                 # satisfy this gate. Set false only for the legacy behaviour where yolo /
+                                 # cron / run / a2a sessions activate a plan with no human approve.
+background_compaction = true     # true (default): compaction summarises in the background instead of
+                                 # stopping the turn. Set false to make every compaction block the turn that
+                                 # triggered it. /compact is always synchronous either way.
 # The working directory is per-session, not a config key: each session keeps its own
 # (set with /cd, or inherited from the launch cwd) so isolated sessions never collide.
 redact_sensitive_data = true     # global default: redact IPs, tokens, passwords from tool output (set false for sysadmin work)
@@ -3005,7 +3059,13 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `discord_send` | 17 actions: send, reply, react, edit, delete, pin, threads, embeds, roles, kick, ban, send_file |
 | `slack_send` | 17 actions: send, reply, react, edit, delete, pin, blocks, topics, members, send_file |
 | `trello_send` | 22 actions: cards, comments, checklists, labels, members, attachments, board management, search |
+| `whatsapp_send` | Full WhatsApp control: send, reply, delete, and send photos, documents, audio, video and stickers |
 | `channel_search` | Search captured message history across all channels (Telegram, Discord, Slack, WhatsApp) |
+| `telegram_connect` | Connect a Telegram bot from chat — takes a @BotFather token and starts listening |
+| `discord_connect` | Connect a Discord bot from chat — takes a bot token and starts listening |
+| `slack_connect` | Connect a Slack bot via Socket Mode — takes the two tokens Slack issues |
+| `whatsapp_connect` | Connect WhatsApp from chat — renders a QR code to scan with the phone |
+| `trello_connect` | Connect one or more Trello boards — takes a Trello API key and token |
 
 #### Agent & System
 | Tool | Description |
@@ -3023,6 +3083,12 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `write_opencrabs_file` | Write or edit any file under `~/.opencrabs/` (brain files, memory logs, commands.toml). Enforces append-only + dedup-aware shrink + `.bak` snapshots on the 9 protected brain files (SOUL/USER/AGENTS/TOOLS/CODE/SECURITY/MEMORY/BOOT) |
 | `evolve` | Download latest release binary from GitHub and hot-restart (no Rust toolchain needed). Also runs automatically on startup and every 24h when `[agent] auto_update = true` (default), and via the `/evolve` slash command — both paths invoke the tool directly without the LLM, so they can't be dropped or refused by a provider |
 | `rebuild` | Build from source (`cargo build --release`) and hot-restart |
+| `suggest_options` | Surface up to 8 short options for the user to pick as their next input. Channel-agnostic: native buttons where the channel has them, numbered text where it does not |
+| `goal_manage` | Set and manage an autonomous goal for the session, so the agent can drive itself toward it across turns |
+| `tasks_list` | List in-flight background work: spawned sub-agents with id and label, and running background tasks |
+| `task_manager` | **Deprecated — use `plan`.** Create, update, list and track multi-step tasks with priorities |
+| `profile_list` | List profiles and their A2A gateway endpoints |
+| `mission_control_report` | Generate a shareable mission-control report for this instance: analytics, sessions, usage |
 
 #### Plan Mode: Design, Approve, Execute
 
@@ -3072,6 +3138,7 @@ Autonomous feedback loop that tracks performance and enables the agent to improv
 | `feedback_record` | Record an observation to the feedback ledger — tool outcomes, user corrections, patterns, provider errors. Auto-recorded for all tool executions; also callable manually |
 | `feedback_analyze` | Query the feedback ledger for patterns — overall summary, per-tool success rates, recent events, failure breakdown |
 | `self_improve` | Autonomously apply improvements to brain files (SOUL.md, AGENTS.md, TOOLS.md, etc.) based on feedback analysis. Changes are logged to `~/.opencrabs/rsi/improvements.md` and archived daily in `~/.opencrabs/rsi/history/YYYY-MM-DD.md` |
+| `rsi_propose` | Propose a new dynamic tool, slash command, or skill for the user to install. Proposals are surfaced for approval, never self-installed |
 
 > **How it works:** Every tool call automatically records success/failure to an append-only SQLite feedback ledger (fire-and-forget, never blocks). User corrections are detected via pattern matching (~30 negative signal phrases) and recorded automatically. On startup, a performance digest (failure rates, correction count, recent issues) is injected into the system prompt. The agent uses `feedback_analyze` to drill into patterns and `self_improve` to apply brain file edits autonomously — changes are logged to `~/.opencrabs/rsi/improvements.md` with daily archives. No human approval required.
 >
@@ -4461,6 +4528,10 @@ cargo clippy -- -D warnings
 | `trello` | Trello board polling + card management (default: enabled) |
 | `local-stt` | Local speech-to-text via rwhisper (candle-based, pure Rust) |
 | `local-tts` | Local text-to-speech via Piper (requires `python3` + `python3-venv` at runtime) |
+| `browser` | Browser automation via CDP (default: enabled) |
+| `rtk` | Bash output filtering via RTK (default: enabled) |
+| `code-graph` | tree-sitter symbol/call-graph index behind `memory_search`'s structural lane (default: enabled) |
+| `pdfium` | PDF page rendering via the system Pdfium library, ahead of the `pdftoppm` fallback (default: enabled) |
 | `profiling` | Enable pprof flamegraph profiling (Unix only) |
 | `eval` | Offline + live evaluation harness (compiled automatically under `cfg(test)`; never in a release binary) |
 
