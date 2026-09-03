@@ -872,7 +872,57 @@ async fn create_fallback(config: &Config, fallback_type: &str) -> Result<Arc<dyn
 /// Used to register the provider-native `analyze_image` tool when Gemini
 /// vision isn't set up.  See issue #253.
 pub fn active_provider_vision(config: &Config) -> Option<(String, String, String)> {
-    vision_candidates(config).into_iter().next()
+    any_provider_vision(config).into_iter().next()
+}
+
+/// Every provider that CAN see, scanned in registration order then customs.
+///
+/// This answers a capability question — "is vision available at all?" — and
+/// is deliberately separate from the ORDER things are tried in (#1318).
+/// Conflating the two was the bug: this scan used to feed the roll-through
+/// directly, so it decided precedence, and because dedup keeps the first
+/// occurrence the configured chain could never reorder what the scan had
+/// already found.
+///
+/// Callers: registration gates for `analyze_image` / `analyze_video`, and
+/// `file_extract`'s "can this be read as an image" check. None of them cares
+/// about order; they care whether anything exists.
+///
+/// `enabled = false` is NOT a filter. That flag governs chat; seeing needs
+/// only an endpoint and a `vision_model`.
+pub fn any_provider_vision(config: &Config) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    let push = |cand: (String, String, String), out: &mut Vec<(String, String, String)>| {
+        if !out.contains(&cand) {
+            out.push(cand);
+        }
+    };
+
+    for reg in REGISTRATIONS.iter() {
+        if let Some(cfg) = (reg.config_field)(config)
+            && let Some(vm) = &cfg.vision_model
+            && let Some(cand) = builtin_vision_candidate(reg.session_id, cfg, vm)
+        {
+            push(cand, &mut out);
+        }
+    }
+    if let Some(customs) = &config.providers.custom {
+        for cfg in customs.values() {
+            if let Some(vm) = &cfg.vision_model
+                && let Some(cand) = custom_vision_candidate(cfg, vm)
+            {
+                push(cand, &mut out);
+            }
+        }
+    }
+    if let Some(fallback) = &config.providers.fallback {
+        for name in &fallback.vision {
+            if let Some(cand) = vision_by_name(config, name) {
+                push(cand, &mut out);
+            }
+        }
+    }
+    out
 }
 
 /// Ordered vision candidates `(api_key, base_url, vision_model)`, walked at
@@ -891,7 +941,33 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
 /// Candidates whose endpoint cannot be derived (no explicit `base_url`, no
 /// known per-provider default) are SKIPPED: guessing OpenAI sent a Xiaomi
 /// token-plan key to api.openai.com and 401'd every call (#430).
-pub fn vision_candidates(config: &Config) -> Vec<(String, String, String)> {
+/// Ordered vision candidates for a session: current provider, then chain.
+///
+/// Order is the whole contract (#1318):
+///
+/// 1. the session's CURRENT provider, when it carries a `vision_model`
+/// 2. `[providers.fallback] vision`, in the order written
+/// 3. Gemini, applied by the caller after every candidate fails
+///
+/// What this deliberately does NOT do is scan every provider that happens to
+/// carry a `vision_model`. That scan used to run FIRST and, because dedup
+/// keeps the first occurrence, a provider it found held its scan position and
+/// the configured chain could never reorder anything — the chain only ever
+/// contributed entries the scan had missed. Measured cost: four candidates
+/// tried and failed before the working one, ~2.5 s on every image, with
+/// providers in the chain never reached.
+///
+/// `enabled = false` is NOT a filter here. That flag governs whether a
+/// provider serves CHAT; a vision candidate needs only a reachable endpoint
+/// and a `vision_model`.
+///
+/// Takes `config` per call rather than being computed once at startup: the
+/// list must follow a `config.toml` edit without a restart, the same way the
+/// Telegram governors read `Config::current()` on every gate evaluation.
+pub fn vision_candidates_for(
+    config: &Config,
+    session_provider: Option<&str>,
+) -> Vec<(String, String, String)> {
     let mut out: Vec<(String, String, String)> = Vec::new();
     let push = |cand: (String, String, String), out: &mut Vec<(String, String, String)>| {
         if !out.contains(&cand) {
@@ -899,30 +975,15 @@ pub fn vision_candidates(config: &Config) -> Vec<(String, String, String)> {
         }
     };
 
-    // 1. Scan: built-ins in REGISTRATIONS priority order, then customs
-    //    (the Custom registration's `config_field` returns `None`, so
-    //    custom entries never appear in the REGISTRATIONS loop).
-    for reg in REGISTRATIONS.iter() {
-        if let Some(cfg) = (reg.config_field)(config)
-            && let Some(vm) = &cfg.vision_model
-            && let Some(cand) = builtin_vision_candidate(reg.session_id, cfg, vm)
-        {
-            push(cand, &mut out);
-        }
-    }
-    if let Some(customs) = &config.providers.custom {
-        for cfg in customs.values() {
-            if let Some(vm) = &cfg.vision_model
-                && let Some(cand) = custom_vision_candidate(cfg, vm)
-            {
-                push(cand, &mut out);
-            }
-        }
+    // 1. The session's current provider, if it can see.
+    if let Some(name) = session_provider
+        && let Some(cand) = vision_by_name(config, name)
+    {
+        push(cand, &mut out);
     }
 
-    // 2. Chain: explicit entries land after the scan (they usually
-    //    duplicate scanned providers and dedup away; kept for entries the
-    //    scan cannot reach).
+    // 2. The configured chain, in order. Dedup keeps position 1 when the
+    //    current provider also appears here, which is what we want.
     if let Some(fallback) = &config.providers.fallback {
         for name in &fallback.vision {
             if let Some(cand) = vision_by_name(config, name) {
@@ -931,6 +992,11 @@ pub fn vision_candidates(config: &Config) -> Vec<(String, String, String)> {
         }
     }
     out
+}
+
+/// Chain-only resolution, for callers with no session in hand.
+pub fn vision_candidates(config: &Config) -> Vec<(String, String, String)> {
+    vision_candidates_for(config, None)
 }
 
 /// Vision base URL for a built-in provider, derived the way the chat
