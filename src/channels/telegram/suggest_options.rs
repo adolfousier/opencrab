@@ -105,7 +105,7 @@ pub(crate) fn pick_rewrite(
                 // controls — they are rewritten to the picked state
                 // (success+✓+disabled / disabled) instead of stripped, so
                 // the bubble keeps showing what was chosen.
-                format!("{full}\n\n{picked}", picked = mark_picked_button(full, picked_idx))
+                format!("{}\n\n{picked}", mark_picked_button(full, picked_idx))
             } else {
                 // Classic hosts keep their buttons as reply markup (not in
                 // the body) — the empty-markup arm strips those; nothing to
