@@ -207,6 +207,20 @@ Recall falling is the point: the old rule answered almost everything, which is e
 
 25.5% of vector rows were empty placeholders, making those documents invisible to the semantic half of hybrid search, and nothing over the size guard had ever been chunked. Both fixed; ranking is now per chunk instead of per averaged document vector.
 
+### Structural code search ([full report](src/eval/results/code-graph-structural-v1.md))
+
+Measured on this repository (1,383 `.rs` files), ground truth locked by grep before any blind search. The symbol graph (`code-graph`, on by default) adds a structural lane beside FTS5+vector:
+
+| Query class | Before (FTS5+vector) | After (+ symbol graph) |
+|---|---|---|
+| Callers of a function | text chunks, no caller info | **exact callers, file + line** |
+| Callers, generic-heavy path | text chunks | 4/5 callers, file + line ([#1325](https://github.com/adolfousier/opencrabs/issues/1325)) |
+| Duplicate implementations | 2 of 3 found | **3 of 3**, exact locations |
+| Module structure | file content only | + full function inventory |
+| Concept lookup | strong | unchanged — text lane untouched |
+
+Graph: 12,649 symbols / 35,024 call edges / 5,415 imports, full-repo index in 5.8 s. Three extractor defects found during the run (receiver-qualified callees, enum-variant noise, test-name ranking) were fixed before these numbers — regression-tested in the report.
+
 ### Latency (criterion, release build)
 
 `cargo bench --bench memory`, in-memory SQLite: FTS search 2.57 ms at 50 docs, vector search 1.02 ms, hybrid RRF fusion 3.49 ms, indexing 214 µs per file. Full tables in the [Development section](#-development).
@@ -2975,7 +2989,7 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `http_request` | Make HTTP requests |
 | `web_scrape` | Native URL-to-markdown scraping (zero AI, zero API cost). Fetches a URL, extracts clean markdown, keeps images as `![alt](url)` tags so the agent can vision only what it needs. Includes SSRF protection, sitemap crawling, and profile/project-aware markdown export. Surfaced via `tool_search` (deferred, not in core set) |
 | `memory_search` | Hybrid semantic search — FTS5 keyword + vector embeddings combined via RRF. `scope` picks the corpus: `memory` (daily logs, the default) for history, `brain` for rules and policy in your brain files, `all` for both. Local GGUF, OpenAI-compatible API, or FTS5-only mode. With `.rs` files under `extra_paths`, structural queries ("who calls X") auto-route to the tree-sitter symbol graph (`code-graph` feature, on by default) |
-| `session_search` | Hybrid FTS5 + vector search across every past session's message history. Same backends as `memory_search` |
+| `session_search` | Direct case-insensitive SQL substring search over the live `messages` table — exhaustive and always current, including the active session thousands of messages back. `list` shows sessions with titles, dates, and message counts; `tail` returns the last N messages. Complements `memory_search` (indexed, semantic) with exact-match recall |
 
 #### Image & Video
 | Tool | Description |
@@ -3630,7 +3644,7 @@ The agent writes important knowledge to `~/.opencrabs/` brain files as it works:
 - Custom files (e.g., `DEPLOY.md`) — domain-specific knowledge
 
 **3. Cross-session recall — hybrid search**
-The `memory_search` and `session_search` tools use hybrid FTS5 + vector semantic search (Reciprocal Rank Fusion) to find relevant context from past sessions and memory files. Supports local embeddings (embeddinggemma-300M), OpenAI-compatible API embeddings, or FTS5-only mode.
+`memory_search` uses hybrid FTS5 + vector semantic search (Reciprocal Rank Fusion) over the memory files and indexed external paths. Supports local embeddings (embeddinggemma-300M), OpenAI-compatible API embeddings, or FTS5-only mode. `session_search` is the complementary lane: a direct case-insensitive SQL scan of the live `messages` table — exhaustive, always current, exact-match, and it covers the active session too.
 
 `memory_search` takes a `scope`, and choosing it matters more than the query wording. `memory` (the default) searches the daily logs — history: what happened, when, what was decided. `brain` searches the brain files — rules and policy: whether a rule about something already exists and which file owns it. `all` searches both, brain hits first. A rule question sent to the default scope tends to return confident but irrelevant daily notes, because there are far more of them and they reuse the same words for unrelated things.
 
@@ -4500,19 +4514,7 @@ extra_paths = [
 # sweep_interval_secs = 300            # freshness sweep; changed files also caught lazily at search
 ```
 
-**Symbol graph for source code (feature: `code-graph`, on by default):** `.rs` files under `extra_paths` are additionally parsed with tree-sitter into a symbol graph — functions, structs, traits, impls, call edges, imports — stored in `symbols` / `call_edges` / `imports` tables alongside the FTS5+vector index. `memory_search` auto-routes structural queries ("who calls `retry_db_operation`", "where is X defined") to the graph lane; conceptual queries keep the text lane. Method calls are normalized to bare names (`store.insert_symbol(...)` indexes callee `insert_symbol`), enum-variant constructors (`Some` / `Ok`) are skipped, and production symbols rank above test symbols.
-
-Before/after benchmark against grep-locked ground truth on this repo (1,383 files → 12,649 symbols, 35,024 call edges, 5,415 imports; one-off index 5.8s, freshness sweep keeps it current):
-
-| Query class | Example | Before (FTS5+vector) | After (+ symbol graph) |
-|---|---|---|---|
-| Callers of a function | who calls `validate_input` | text chunks, no caller info | exact callers, file + line |
-| Callers, generic-heavy path | who calls `retry_db_operation` | text chunks | 4/5 callers, file + line |
-| Duplicate implementations | find all HTML-escape variants | 2 of 3 found | all 3, exact locations |
-| Structure of a module | what's in `tool_loop.rs` | file content only | + full function inventory |
-| Concept lookup | "context compaction" | strong | unchanged — text lane untouched |
-
-Known gap: a call nested inside a `.await.context()` chain within a generic function can drop its edge ([#1325](https://github.com/adolfousier/opencrabs/issues/1325)).
+**Symbol graph for source code (feature: `code-graph`, on by default):** `.rs` files under `extra_paths` are additionally parsed with tree-sitter into a symbol graph — functions, structs, traits, impls, call edges, imports — stored in `symbols` / `call_edges` / `imports` tables alongside the FTS5+vector index. `memory_search` auto-routes structural queries ("who calls `retry_db_operation`", "where is X defined") to the graph lane; conceptual queries keep the text lane. Method calls are normalized to bare names (`store.insert_symbol(...)` indexes callee `insert_symbol`), enum-variant constructors (`Some` / `Ok`) are skipped, and production symbols rank above test symbols. Before/after numbers and the known generic-code recall gap ([#1325](https://github.com/adolfousier/opencrabs/issues/1325)): see [Structural code search](#-benchmarks) in the Benchmarks section.
 
 
 Benchmarked with `cargo bench --bench memory` on release builds:
