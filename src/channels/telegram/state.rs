@@ -164,6 +164,11 @@ pub struct TelegramState {
     /// next message re-evaluates instead of trusting a stale snapshot — the
     /// exact staleness class Gap 2 of #1155 describes.
     solo_evaluated: Mutex<HashMap<i64, bool>>,
+    /// Skills signature at the time the command menus were last published
+    /// (#1317). Compared on every inbound message by `menu_refresh`; a
+    /// mismatch re-publishes the scoped menus so new/edited skills appear
+    /// in the `/` picker without a restart or config write.
+    menu_skills_sig: Mutex<Option<u64>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Persistent plan-card message per session (#580): the single Telegram
@@ -322,6 +327,7 @@ impl TelegramState {
             pending_approvals: Mutex::new(HashMap::new()),
             pending_followups: Mutex::new(HashMap::new()),
             solo_evaluated: Mutex::new(HashMap::new()),
+            menu_skills_sig: Mutex::new(None),
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
             plan_card_store: Mutex::new(None),
@@ -519,6 +525,32 @@ impl TelegramState {
     /// message re-evaluates (#1155).
     pub async fn clear_solo_evaluated(&self, chat_id: i64) {
         self.solo_evaluated.lock().await.remove(&chat_id);
+    }
+
+    /// Chats auto-registered as solo-owner groups (#1155): eligible and
+    /// currently menu-published. `menu_refresh` re-publishes exactly these
+    /// on skills changes, since `maybe_auto_register` evaluates each chat
+    /// once and never revisits an already-evaluated chat (#1317).
+    pub async fn solo_registered_chats(&self) -> Vec<i64> {
+        self.solo_evaluated
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, eligible)| **eligible)
+            .map(|(chat_id, _)| *chat_id)
+            .collect()
+    }
+
+    /// Skills signature at the last menu publish, if menus were ever
+    /// published in this process (#1317).
+    pub async fn menu_skills_sig(&self) -> Option<u64> {
+        *self.menu_skills_sig.lock().await
+    }
+
+    /// Record the skills signature the current menus were published
+    /// under (#1317).
+    pub async fn set_menu_skills_sig(&self, sig: u64) {
+        *self.menu_skills_sig.lock().await = Some(sig);
     }
 
     /// Check if Telegram is currently connected.

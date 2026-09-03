@@ -115,6 +115,13 @@ impl TelegramAgent {
                     // Register slash commands so they appear in Telegram's / menu
                     register_bot_commands(&bot).await;
 
+                    // #1317: seed the published-skills signature so the first
+                    // post-boot message does not redundantly re-publish the
+                    // menus registered just above.
+                    self.telegram_state
+                        .set_menu_skills_sig(super::menu_refresh::skills_signature())
+                        .await;
+
                     // One-time: organize any pre-subdir flat attachments under
                     // channel_attachments/telegram/ (#513). Idempotent.
                     super::media::migrate_flat_channel_attachments();
@@ -1956,6 +1963,17 @@ fn is_stream_candidate(msg: &Message) -> bool {
 /// to process callback queries (approval buttons) while the agent runs.
 fn spawn_handle_message(bot: Bot, msg: Message, deps: DispatchDeps) {
     tokio::spawn(async move {
+        // #1317: cheap skills-signature check per inbound message. If the
+        // skills overlay changed since the menus were last published (new
+        // symlinked skill, edited project skills), re-publish the scoped
+        // command menus. Fire-and-forget so the reply path is never delayed.
+        {
+            let bot = bot.clone();
+            let state = deps.telegram_state.clone();
+            tokio::spawn(async move {
+                super::menu_refresh::refresh_menus_if_skills_changed(&bot, &state).await;
+            });
+        }
         let result = tokio::task::spawn(async move {
             handle_message(
                 bot,
@@ -2216,8 +2234,9 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
 /// - owner: the full list, in DMs and in every configured group
 /// - allowed non-owner: nothing, because nothing there is theirs to run
 ///
-/// Registration runs at startup, so an allowlist edited afterwards keeps the
-/// menu it was last given until the next restart.
+/// Registration runs at startup and is re-run by the ConfigWatcher on every
+/// config write and by `menu_refresh` whenever the skills dirs change
+/// (#1317), so allowlist and skills edits are picked up without a restart.
 async fn register_scoped_menus(bot: &Bot, commands: Vec<teloxide::types::BotCommand>) {
     use teloxide::payloads::SetMyCommandsSetters;
     use teloxide::types::{BotCommand, BotCommandScope, ChatId, Recipient, UserId};

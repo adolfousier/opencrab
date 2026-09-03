@@ -154,8 +154,9 @@ async fn collect_members(bot: &Bot, chat_id: i64, allowed_users: &[String]) -> V
 
 /// Publish the full owner catalog into the group under a `ChatMember` scope
 /// keyed to the owner — the same shape `register_scoped_menus` uses for
-/// configured groups, so the two paths stay visually identical.
-async fn publish_owner_menu(
+/// configured groups, so the two paths stay visually identical. Re-published
+/// on skills changes by `menu_refresh` (#1317).
+pub(crate) async fn publish_owner_menu(
     bot: &Bot,
     chat_id: i64,
     owner_id: i64,

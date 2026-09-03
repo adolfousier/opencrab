@@ -225,7 +225,7 @@ pub(crate) fn split_frontmatter(raw: &str) -> Option<(&str, &str)> {
 }
 
 /// User skills directory: `~/.opencrabs/skills/`.
-fn user_skills_dir() -> PathBuf {
+pub(crate) fn user_skills_dir() -> PathBuf {
     crate::config::opencrabs_home().join("skills")
 }
 
