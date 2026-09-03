@@ -33,6 +33,8 @@ pub(crate) mod search;
 pub(crate) mod settings;
 pub(crate) mod shared_sessions;
 pub(crate) mod store;
+#[cfg(feature = "code-graph")]
+pub(crate) mod symbol_extractor;
 pub(crate) mod types;
 pub mod vector_search;
 

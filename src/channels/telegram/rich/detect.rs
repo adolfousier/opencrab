@@ -18,7 +18,7 @@ use super::{list, table};
 /// checkbox, both of which the legacy path renders poorly (raw `| pipes |` and
 /// literal `- [ ]` respectively).
 pub(crate) fn prefers_rich_render(text: &str) -> bool {
-    contains_table(text) || contains_task_list(text)
+    contains_table(text) || contains_task_list(text) || contains_details(text)
 }
 
 /// Whether `text` contains a GitHub-flavored pipe table.
@@ -89,9 +89,24 @@ pub(crate) fn has_rich_structure(text: &str) -> bool {
                 || list::is_item(t)
                 || t.starts_with("```")
                 || t == "$$"
-                || t.starts_with("<details>")
-                || t.starts_with("<details ")
+                || is_details_open(t)
         })
+}
+
+/// A `<details>` collapse opener, bare or with attributes (`<details open>`).
+/// Shared by the rich gate and the classic HTML ladder so the two can never
+/// disagree about who renders a collapse block: [`has_rich_structure`] sends
+/// it to `sendRichMessage`, and when that send fails [`prefers_rich_render`]
+/// must route the fallback through the rich AST too. The line-based ladder
+/// escapes unknown tags, so a collapse that reached it surfaced its literal
+/// `<details>` / `<summary>` markup as visible text.
+pub(crate) fn is_details_open(t: &str) -> bool {
+    t.starts_with("<details>") || t.starts_with("<details ")
+}
+
+/// Whether `text` opens a `<details>` collapse block on any line.
+pub(crate) fn contains_details(text: &str) -> bool {
+    text.lines().any(|line| is_details_open(line.trim_start()))
 }
 
 /// A `# `..`###### ` ATX heading line (1-6 hashes followed by a space).

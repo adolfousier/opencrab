@@ -213,6 +213,11 @@ pub(crate) fn reindex_external(store: &Store) -> ExternalReport {
         .collect();
 
     let mut on_disk: Vec<String> = Vec::new();
+
+    // Symbol extraction happens inside `index_file_sync_keyed` (the single
+    // indexing chokepoint), so both this cold walk and the periodic sweep
+    // populate the graph from one place.
+
     for root in &roots {
         for path in walk_root(root, &excludes) {
             let key = path.to_string_lossy().to_string();
@@ -225,7 +230,9 @@ pub(crate) fn reindex_external(store: &Store) -> ExternalReport {
                         &key,
                         &body,
                     ) {
-                        Ok(true) => report.indexed += 1,
+                        Ok(true) => {
+                            report.indexed += 1;
+                        }
                         Ok(false) => {}
                         Err(e) => {
                             tracing::warn!("memory: failed to index external file {key}: {e}")
