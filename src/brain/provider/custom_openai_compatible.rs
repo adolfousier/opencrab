@@ -2618,9 +2618,9 @@ impl OpenAIProvider {
             }
         }
 
-        // OpenCode Zen wants a User-Agent and a per-conversation session id;
-        // a no-op for every other target.
-        for (key, value) in super::opencode::extra_headers(&self.base_url, session) {
+        // Client identification, resolved per gateway; a no-op for any host
+        // without an identity contract.
+        for (key, value) in super::identity::headers_for(&self.base_url, session) {
             match (
                 key.parse::<reqwest::header::HeaderName>(),
                 value.parse::<reqwest::header::HeaderValue>(),
@@ -2629,9 +2629,10 @@ impl OpenAIProvider {
                     headers.insert(k, v);
                 }
                 _ => tracing::warn!(
-                    "OpenCode: dropping malformed header '{}' — the gateway may reject \
-                     this request for a missing session id",
-                    key
+                    "Identity: dropping malformed header '{}' for {} — the gateway may \
+                     reject this request as an unidentified client",
+                    key,
+                    self.base_url
                 ),
             }
         }
