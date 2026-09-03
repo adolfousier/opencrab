@@ -21,12 +21,8 @@ pub(crate) fn register_config_dependent_tools(
     config: &crate::config::Config,
 ) {
     use crate::brain::tools::{
-        analyze_image::AnalyzeImageTool,
-        analyze_video::AnalyzeVideoTool,
-        brave_search::BraveSearchTool,
-        exa_search::ExaSearchTool,
-        generate_image::GenerateImageTool,
-        provider_vision::{ProviderVisionTool, VisionSetupHintTool},
+        analyze_video::AnalyzeVideoTool, brave_search::BraveSearchTool, exa_search::ExaSearchTool,
+        generate_image::GenerateImageTool, provider_vision::ProviderVisionTool,
         web_search::WebSearchTool,
     };
 
@@ -69,15 +65,19 @@ pub(crate) fn register_config_dependent_tools(
         registry.unregister("generate_image");
     }
 
-    // Vision (analyze_image): provider vision candidates roll through in
-    // order (#430); Gemini image.vision is strictly the final fallback and
-    // primary ONLY when no candidate exists.
-    let vision_cands = crate::brain::provider::factory::vision_candidates(config);
-    if !vision_cands.is_empty() {
-        let mut tool = ProviderVisionTool::new(vision_cands);
-        // Resilience: if Gemini image.vision is also configured, attach it as a
-        // fallback so analyze_image still works when the provider's own vision
-        // endpoint fails (model/proxy doesn't actually accept images).
+    // Vision (analyze_image): the session's current provider first, then the
+    // configured chain, then Gemini (#1318).
+    //
+    // Registered UNCONDITIONALLY, because the candidate list is resolved per
+    // request now. The old three-branch gate read a startup snapshot, so
+    // adding a vision provider to config.toml did nothing until restart and
+    // the "not configured" hint tool could be registered permanently over a
+    // config that had since gained vision. The hint is emitted at request
+    // time instead, when resolution genuinely finds nothing.
+    {
+        let mut tool = ProviderVisionTool::new();
+        // Gemini stays the LAST resort, attached when configured so
+        // analyze_image still works if every provider candidate fails.
         if config.image.vision.enabled
             && let Some(gkey) = config
                 .image
@@ -89,23 +89,6 @@ pub(crate) fn register_config_dependent_tools(
             tool = tool.with_gemini_fallback(gkey, config.image.vision.model.clone());
         }
         registry.register(Arc::new(tool));
-    } else if config.image.vision.enabled
-        && let Some(key) = config
-            .image
-            .vision
-            .api_key
-            .clone()
-            .filter(|k| !k.is_empty())
-    {
-        registry.register(Arc::new(AnalyzeImageTool::new(
-            key,
-            config.image.vision.model.clone(),
-        )));
-    } else {
-        // No vision backend at all — register a hint so the agent can tell the
-        // user how to enable it (provider vision_model or a Gemini key) rather
-        // than silently lacking analyze_image.
-        registry.register(Arc::new(VisionSetupHintTool));
     }
 
     // Video (analyze_video): registered whenever any vision backend exists —

@@ -10,23 +10,64 @@ use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
+/// What to tell the user when no vision backend resolves at all.
+///
+/// Shared so the request-time path and [`VisionSetupHintTool`] cannot drift.
+pub(crate) const VISION_SETUP_HINT: &str = "Image analysis isn't set up yet. To enable it, either: (1) set a \
+     multimodal `vision_model` on your active provider via the \
+     `config_manager` tool (works for OpenAI-compatible providers), \
+     or (2) add a Google Gemini vision key via the `/onboard:image` \
+     wizard (or an `[image.vision]` section). It hot-reloads, so no \
+     restart is needed. Tell the user this.";
+
 /// Image vision/analysis tool rolling through provider vision candidates.
+///
+/// Holds NO candidate list. It used to be built once at startup and baked in,
+/// which meant a `config.toml` edit changed nothing until restart, and meant
+/// the list could not know which provider the session was actually running on
+/// (#1318). Resolution happens per request instead, from `Config::current()`,
+/// the same way the Telegram governors read their knobs live.
 pub struct ProviderVisionTool {
-    /// Ordered `(api_key, base_url, vision_model)` candidates from
-    /// `factory::vision_candidates` (#430). Walked in order at request
-    /// time: a candidate failure tries the next, next, next.
-    candidates: Vec<(String, String, String)>,
+    /// An explicit candidate list, when the caller already resolved one.
+    ///
+    /// `analyze_video` extracts frames locally and hands them to a vision
+    /// backend it has already picked, so it pins that rather than re-deriving
+    /// it. `None` is the ordinary case: resolve from config per request.
+    pinned: Option<Vec<(String, String, String)>>,
     /// Gemini fallback, tried only after EVERY candidate fails. Gemini is
     /// never primary while any provider can serve vision (owner contract).
     gemini_fallback: Option<AnalyzeImageTool>,
 }
 
+impl Default for ProviderVisionTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProviderVisionTool {
-    pub fn new(candidates: Vec<(String, String, String)>) -> Self {
+    pub fn new() -> Self {
         Self {
-            candidates,
+            pinned: None,
             gemini_fallback: None,
         }
+    }
+
+    /// Pin an explicit candidate list, skipping config resolution.
+    pub fn with_candidates(candidates: Vec<(String, String, String)>) -> Self {
+        Self {
+            pinned: Some(candidates),
+            gemini_fallback: None,
+        }
+    }
+
+    /// Candidates for THIS request: current provider, then the configured
+    /// chain, read from config now so an edit needs no restart (#1318).
+    fn candidates_for(session_provider: Option<&str>) -> Vec<(String, String, String)> {
+        crate::brain::provider::factory::vision_candidates_for(
+            &crate::config::Config::current(),
+            session_provider,
+        )
     }
 
     /// Attach a Gemini fallback (`image.vision` key + model). Tried only if the
@@ -140,7 +181,18 @@ impl Tool for ProviderVisionTool {
         // Roll through candidates in order (#430): a failure logs and tries
         // the next; Gemini runs only after every candidate failed.
         let mut last_failure = "no vision candidates configured".to_string();
-        for (api_key, base_url, vision_model) in &self.candidates {
+        let candidates = match &self.pinned {
+            Some(pinned) => pinned.clone(),
+            None => Self::candidates_for(context.session_provider.as_deref()),
+        };
+        // Nothing configured anywhere: say how to fix it rather than failing
+        // opaquely. Emitted HERE, at request time, so it follows a config
+        // edit — the old startup gate could register this permanently over a
+        // config that had since gained vision (#1318).
+        if candidates.is_empty() && self.gemini_fallback.is_none() {
+            return Ok(ToolResult::error(VISION_SETUP_HINT.to_string()));
+        }
+        for (api_key, base_url, vision_model) in &candidates {
             match try_vision_candidate(
                 &client,
                 api_key,
@@ -268,14 +320,6 @@ impl Tool for VisionSetupHintTool {
         _input: Value,
         _context: &ToolExecutionContext,
     ) -> super::error::Result<ToolResult> {
-        Ok(ToolResult::error(
-            "Image analysis isn't set up yet. To enable it, either: (1) set a \
-             multimodal `vision_model` on your active provider via the \
-             `config_manager` tool (works for OpenAI-compatible providers), \
-             or (2) add a Google Gemini vision key via the `/onboard:image` \
-             wizard (or an `[image.vision]` section). It hot-reloads, so no \
-             restart is needed. Tell the user this."
-                .to_string(),
-        ))
+        Ok(ToolResult::error(VISION_SETUP_HINT.to_string()))
     }
 }
