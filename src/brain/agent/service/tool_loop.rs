@@ -7217,6 +7217,9 @@ impl AgentService {
                     // per-iteration LLMResponses; this top-level
                     // synthesis is for content/usage handoff only.
                     streaming_active_secs: None,
+                    // Synthesised from accumulated text, not provider
+                    // output — no leak flag applies (fork #66).
+                    tool_text_leak: false,
                 }
             }
             None => {
