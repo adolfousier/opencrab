@@ -1322,6 +1322,9 @@ impl AgentService {
         tool_context.background_manager = self.background_manager.clone();
         tool_context.plan_session_override = self.plan_session_override;
         tool_context.subagent_manager = self.subagent_manager.clone();
+        // Vision resolves the CURRENT provider first (#1318); a tool cannot
+        // ask AgentService for it, and this loop has both.
+        tool_context.session_provider = Some(self.provider_name_for_session(session_id));
         tool_context.parent_tool_registry = Some(self.tool_registry.clone());
 
         // Tool execution loop
@@ -6310,6 +6313,7 @@ impl AgentService {
                                 tracing::info!("User approved tool '{}'", tool_name);
                                 // Create approved context for this tool execution
                                 let approved_tool_context = ToolExecutionContext {
+                                    session_provider: None,
                                     session_id: tool_context.session_id,
                                     working_directory: tool_context.working_directory.clone(),
                                     env_vars: tool_context.env_vars.clone(),

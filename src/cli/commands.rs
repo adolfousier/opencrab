@@ -2254,6 +2254,7 @@ pub(crate) async fn cmd_evolve(config: &crate::config::Config, check_only: bool)
         "current_user_version": current_user_version
     });
     let context = ToolExecutionContext {
+        session_provider: None,
         session_id: uuid::Uuid::new_v4(),
         working_directory: std::env::current_dir().unwrap_or_default(),
         env_vars: HashMap::new(),

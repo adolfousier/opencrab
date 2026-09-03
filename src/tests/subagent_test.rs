@@ -391,6 +391,7 @@ mod send_input_tool {
 
     fn test_context() -> ToolExecutionContext {
         ToolExecutionContext {
+            session_provider: None,
             session_id: Uuid::new_v4(),
             working_directory: std::path::PathBuf::from("/tmp"),
             env_vars: HashMap::new(),
@@ -551,6 +552,7 @@ mod close_agent_tool {
 
     fn test_context() -> ToolExecutionContext {
         ToolExecutionContext {
+            session_provider: None,
             session_id: Uuid::new_v4(),
             working_directory: std::path::PathBuf::from("/tmp"),
             env_vars: HashMap::new(),
@@ -678,6 +680,7 @@ mod wait_agent_tool {
 
     fn test_context() -> ToolExecutionContext {
         ToolExecutionContext {
+            session_provider: None,
             session_id: Uuid::new_v4(),
             working_directory: std::path::PathBuf::from("/tmp"),
             env_vars: HashMap::new(),
@@ -1281,6 +1284,7 @@ mod team_delete_tool {
 
     fn test_context() -> ToolExecutionContext {
         ToolExecutionContext {
+            session_provider: None,
             session_id: Uuid::new_v4(),
             working_directory: std::path::PathBuf::from("/tmp"),
             env_vars: HashMap::new(),
@@ -1408,6 +1412,7 @@ mod team_broadcast_tool {
 
     fn test_context() -> ToolExecutionContext {
         ToolExecutionContext {
+            session_provider: None,
             session_id: Uuid::new_v4(),
             working_directory: std::path::PathBuf::from("/tmp"),
             env_vars: HashMap::new(),

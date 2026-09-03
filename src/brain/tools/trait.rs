@@ -69,6 +69,15 @@ pub struct ToolExecutionContext {
     /// The session's live tool registry (#908). Handed to spawned children
     /// so their registries inherit the parent's tools (filtered per agent
     /// type). `None` where no registry is wired.
+    /// Config key of the provider this session is running on, when known.
+    ///
+    /// Vision resolution tries the CURRENT provider first (#1318), and a tool
+    /// has no handle on `AgentService` to ask. Stamped per execution by the
+    /// tool loop, which has both. `None` for surfaces that build a context
+    /// without a live provider (cron, tests), where resolution simply starts
+    /// at the configured chain instead.
+    pub session_provider: Option<String>,
+
     pub parent_tool_registry: Option<Arc<crate::brain::tools::ToolRegistry>>,
 }
 
@@ -102,6 +111,7 @@ impl ToolExecutionContext {
             background_manager: None,
             plan_session_override: None,
             subagent_manager: None,
+            session_provider: None,
             parent_tool_registry: None,
         }
     }
