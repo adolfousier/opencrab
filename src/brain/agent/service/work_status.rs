@@ -1,6 +1,7 @@
 //! Unified status files for detached work (#26 P1).
 //!
-#![allow(dead_code)] // upstream rework (#1313-#1319) removed callers of the
+#![allow(dead_code)]
+// upstream rework (#1313-#1319) removed callers of the
 // legacy/stale-status subset; kept intact for the forkwin port cycle to
 // disposition (round-4/5 precedent: tag, don't delete).
 //! One JSON status file per unit of detached work — both detached bash

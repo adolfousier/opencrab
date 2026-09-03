@@ -2126,20 +2126,18 @@ async fn refire_pick_edit(
     use teloxide::payloads::EditMessageTextSetters;
     use teloxide::prelude::Requester;
     match rewrite {
-        super::suggest_options::PickRewrite::RichHost(body) => {
-            super::rich::api::edit_rich_html(
-                bot.api_url().as_str(),
-                bot.token(),
-                chat_id.0,
-                mid.0,
-                &body,
-                Some(&serde_json::json!(kb)),
-                "turn",
-                "-",
-            )
-            .await
-            .map_err(|e| e.to_string())
-        }
+        super::suggest_options::PickRewrite::RichHost(body) => super::rich::api::edit_rich_html(
+            bot.api_url().as_str(),
+            bot.token(),
+            chat_id.0,
+            mid.0,
+            &body,
+            Some(&serde_json::json!(kb)),
+            "turn",
+            "-",
+        )
+        .await
+        .map_err(|e| e.to_string()),
         super::suggest_options::PickRewrite::ClassicHost(body) => bot
             .edit_message_text(chat_id, mid, &body)
             .parse_mode(teloxide::types::ParseMode::Html)

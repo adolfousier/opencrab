@@ -839,7 +839,11 @@ impl TelegramState {
     ) -> Option<(PendingFollowupEntry, String, usize)> {
         let entry = self.pending_followups.lock().await.remove(token)?;
         self.forget_followup(token).await;
-        entry.options.get(idx).cloned().map(|text| (entry, text, idx))
+        entry
+            .options
+            .get(idx)
+            .cloned()
+            .map(|text| (entry, text, idx))
     }
 
     /// Re-arm a keyboard whose tap could not start a turn (#1226 G): the

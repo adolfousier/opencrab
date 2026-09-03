@@ -255,7 +255,6 @@ fn settle_no_host_no_trailer_is_stock() {
     assert_eq!(trailer, None);
 }
 
-
 #[test]
 fn settle_oversized_trailer_promoted_to_answer() {
     // The #58 incident shape, cap leg (config-independent — no fence): the

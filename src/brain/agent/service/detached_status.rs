@@ -1,6 +1,7 @@
 //! Detached-command progress via JSON status files (#1160).
 //!
-#![allow(dead_code)] // upstream rework (#1313-#1319) removed the lib callers
+#![allow(dead_code)]
+// upstream rework (#1313-#1319) removed the lib callers
 // (run_detached reworked); kept intact for the forkwin port cycle to
 // disposition (round-4/5 precedent: tag, don't delete).
 //! Mirrors the sub-agent status-file pattern
