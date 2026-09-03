@@ -15,8 +15,8 @@ Feature: `code-graph` (tree-sitter + tree-sitter-rust), on by default since #132
 | Structure of a module | what's in `tool_loop.rs` | file content only | + full function inventory |
 | Concept lookup | "context compaction" | strong | unchanged — text lane untouched |
 
-Graph after extraction fixes: **12,649 symbols, 35,024 call edges, 5,415 imports**, one-off
-index of the full repo in **5.8 s**; the freshness sweep (default 300 s) keeps it current.
+Graph after extraction fixes: **15,769 symbols, 95,601 call edges, 5,649 imports**, one-off
+index of the full repo in **12.1 s**; the freshness sweep (default 300 s) keeps it current.
 
 Ground truth for the structural rows, locked pre-run:
 
@@ -45,11 +45,10 @@ almost entirely the enum noise removed, not lost real edges.
 
 ## What the numbers do not cover
 
-- **Caller recall in generic code.** The one miss (`src/db/retry.rs:155`) is a call
-  nested in a `.await.context()` chain inside a generic function — the callee node
-  resolves, the edge is dropped. Tracked in
-  [#1325](https://github.com/adolfousier/opencrabs/issues/1325). Until it lands, treat
-  caller-recall on generic-heavy paths as ~80–100%, not 100%.
+- **Caller recall in generic code — resolved.** The v1 miss (`src/db/retry.rs:155`, a
+  call nested in a `.await.context()` chain inside a generic function) is captured since
+  [#1328](https://github.com/adolfousier/opencrabs/pull/1328); the generic-heavy row is
+  5/5. Deeper generic/monomorphization edge cases remain unmeasured, but no known miss.
 - **Non-Rust languages.** Only `tree-sitter-rust` is wired. Python/TS/JS grammars are
   buildable but unextracted.
 - **Blind scoring at scale.** Five query classes, one repo, one operator. The spike that

@@ -214,12 +214,12 @@ Measured on this repository (1,383 `.rs` files), ground truth locked by grep bef
 | Query class | Before (FTS5+vector) | After (+ symbol graph) |
 |---|---|---|
 | Callers of a function | text chunks, no caller info | **exact callers, file + line** |
-| Callers, generic-heavy path | text chunks | 4/5 callers, file + line ([#1325](https://github.com/adolfousier/opencrabs/issues/1325)) |
+| Callers, generic-heavy path | text chunks | **5/5** callers, file + line ([#1328](https://github.com/adolfousier/opencrabs/pull/1328)) |
 | Duplicate implementations | 2 of 3 found | **3 of 3**, exact locations |
 | Module structure | file content only | + full function inventory |
 | Concept lookup | strong | unchanged — text lane untouched |
 
-Graph: 12,649 symbols / 35,024 call edges / 5,415 imports, full-repo index in 5.8 s. Three extractor defects found during the run (receiver-qualified callees, enum-variant noise, test-name ranking) were fixed before these numbers — regression-tested in the report.
+Graph: 15,769 symbols / 95,601 call edges / 5,649 imports, full-repo index in 12.1 s. Four extractor defects found during and after the run (receiver-qualified callees, enum-variant noise, test-name ranking, nested-call/impl recursion) are fixed — regression-tested in the report.
 
 ### Latency (criterion, release build)
 
