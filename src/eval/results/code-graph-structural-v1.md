@@ -10,7 +10,7 @@ Feature: `code-graph` (tree-sitter + tree-sitter-rust), on by default since #132
 | Query class | Example | Before (FTS5+vector only) | After (+ symbol graph) |
 |---|---|---|---|
 | Callers of a function | who calls `validate_input` | text chunks, no caller info | exact callers, file + line |
-| Callers, generic-heavy path | who calls `retry_db_operation` | text chunks | **4/5** callers, file + line |
+| Callers, generic-heavy path | who calls `retry_db_operation` | text chunks | **5/5** callers, file + line |
 | Duplicate implementations | find all HTML-escape variants | 2 of 3 found | **3 of 3**, exact locations |
 | Structure of a module | what's in `tool_loop.rs` | file content only | + full function inventory |
 | Concept lookup | "context compaction" | strong | unchanged — text lane untouched |
