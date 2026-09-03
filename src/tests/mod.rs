@@ -370,6 +370,7 @@ pub mod telegram_session_gate_test;
 pub mod telegram_suggest_merge_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_table_render_test;
+pub mod telegram_token_redaction_test;
 pub mod telegram_topic_routing_test;
 pub mod tool_search_child_registry_test;
 pub mod tools_md_regression_test;
@@ -776,6 +777,7 @@ pub mod telegram_rich_api_test;
 pub mod telegram_rich_json_test;
 pub mod telegram_rich_parse_test;
 pub mod telegram_rich_test;
+pub mod telegram_rich_transport_retry_test;
 pub mod telegram_rich_wrap_p_test;
 pub mod telegram_send_caption_test;
 pub mod telegram_send_input_file_test;

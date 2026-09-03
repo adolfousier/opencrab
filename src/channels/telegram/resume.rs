@@ -390,6 +390,7 @@ pub(crate) async fn resume_session_inner(
         tool_msgs: Vec::new(),
         display_queue: Vec::new(),
         open_group_msg_id: None,
+        rich_transport_failures: 0,
         flow_entries: Vec::new(),
         flow_status: None,
         flow_rich: false,
