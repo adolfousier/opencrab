@@ -1,20 +1,48 @@
-//! Normalise `[agent] self_improvement_provider` into the pair RSI actually
-//! runs on (#1314).
+//! Normalise an `[agent] *_provider` config value into the provider/model pair
+//! it names (#1314, #1316).
 //!
-//! The key takes a provider name: the config section name, so
+//! Every such key takes a provider name: the config section name, so
 //! `[providers.custom.moonshotai]` is `"moonshotai"`. Users reasonably write
 //! `"custom:moonshotai"` (the table path) or `"zhipu/glm-5.3"` (the pair they
 //! see in `/models`), and a value taken verbatim then fails to build a
-//! provider and every cycle dies before it starts. This module recognises
-//! those spellings against the providers that are actually configured and
-//! says what it corrected, so the log teaches the canonical form.
+//! provider. This module recognises those spellings against the providers that
+//! are actually configured and says what it corrected, naming the key it was
+//! correcting, so the log teaches the canonical form.
 //!
-//! Pure: the two predicates are injected so every branch is testable without
-//! a `Config`.
+//! [`normalize`] is pure: the two predicates are injected so every branch is
+//! testable without a `Config`. [`normalize_in`] binds them to a live config.
 
-/// The provider and optional model RSI should run on, after normalisation.
+use crate::config::Config;
+
+/// Which `[agent]` key pair a value came from, for the correction note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderKey {
+    pub provider: &'static str,
+    pub model: &'static str,
+}
+
+impl ProviderKey {
+    pub const SELF_IMPROVEMENT: Self = Self {
+        provider: "self_improvement_provider",
+        model: "self_improvement_model",
+    };
+    pub const SUBAGENT: Self = Self {
+        provider: "subagent_provider",
+        model: "subagent_model",
+    };
+    pub const PLAN: Self = Self {
+        provider: "plan_provider",
+        model: "plan_model",
+    };
+    pub const EXECUTE: Self = Self {
+        provider: "execute_provider",
+        model: "execute_model",
+    };
+}
+
+/// The provider and optional model a key resolves to, after normalisation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RsiPair {
+pub struct ProviderPair {
     pub provider: String,
     pub model: Option<String>,
     /// What was corrected, for a one-line warning; `None` when the value was
@@ -27,8 +55,8 @@ pub struct RsiPair {
 /// path reads to someone thinking in `<provider>/<model>` terms.
 const CUSTOM_PREFIXES: [&str; 3] = ["custom:", "custom.", "custom/"];
 
-/// Normalise `spec` (the raw `self_improvement_provider`) with `model_key`
-/// (the raw `self_improvement_model`).
+/// Normalise `spec` (the raw `<key>_provider` value) with `model_key` (the raw
+/// `<key>_model` value).
 ///
 /// `is_custom` answers whether a name is a `[providers.custom.<name>]` key;
 /// `is_declared` whether a name is any configured provider, custom or
@@ -39,13 +67,14 @@ const CUSTOM_PREFIXES: [&str; 3] = ["custom:", "custom.", "custom/"];
 ///    provider, it is split: `<a>` is the provider and `<b>` the model. The
 ///    split happens only when the head is a known provider, because model ids
 ///    themselves contain both separators (`anthropic/claude-…`, `qwen:7b`).
-/// 3. An explicit `self_improvement_model` wins over a model found by (2).
+/// 3. An explicit `<key>_model` wins over a model found by (2).
 pub fn normalize(
+    key: ProviderKey,
     spec: &str,
     model_key: Option<&str>,
     is_custom: impl Fn(&str) -> bool,
     is_declared: impl Fn(&str) -> bool,
-) -> RsiPair {
+) -> ProviderPair {
     let raw = spec.trim();
     let mut notes: Vec<String> = Vec::new();
 
@@ -67,8 +96,8 @@ pub fn normalize(
         if !head.is_empty() && !tail.is_empty() && (is_custom(head) || is_declared(head)) {
             notes.push(format!(
                 "split \"{name}\" into provider \"{head}\" and model \"{tail}\": \
-                 self_improvement_provider takes a provider name only; the model \
-                 goes in self_improvement_model"
+                 {} takes a provider name only; the model goes in {}",
+                key.provider, key.model
             ));
             model_from_spec = Some(tail.to_string());
             name = head;
@@ -81,8 +110,8 @@ pub fn normalize(
     ) {
         (Some(explicit), Some(found)) if explicit != found => {
             notes.push(format!(
-                "self_improvement_model = \"{explicit}\" wins over the \"{found}\" \
-                 found in self_improvement_provider"
+                "{} = \"{explicit}\" wins over the \"{found}\" found in {}",
+                key.model, key.provider
             ));
             Some(explicit.to_string())
         }
@@ -90,9 +119,31 @@ pub fn normalize(
         (None, found) => found,
     };
 
-    RsiPair {
+    ProviderPair {
         provider: name.to_string(),
         model,
         note: (!notes.is_empty()).then(|| notes.join("; ")),
     }
+}
+
+/// [`normalize`] against the providers `config` declares.
+pub fn normalize_in(
+    config: &Config,
+    key: ProviderKey,
+    spec: &str,
+    model_key: Option<&str>,
+) -> ProviderPair {
+    normalize(
+        key,
+        spec,
+        model_key,
+        |name| {
+            config
+                .providers
+                .custom
+                .as_ref()
+                .is_some_and(|m| m.contains_key(name))
+        },
+        |name| config.providers.is_declared(name),
+    )
 }

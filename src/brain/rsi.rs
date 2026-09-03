@@ -673,22 +673,16 @@ the tool entirely. Always include the search-then-call pattern.";
 /// taken verbatim fails to build a provider and every cycle dies before it
 /// starts (#1314). The returned `note` names what was corrected; the cycle
 /// logs it once.
-pub(crate) fn resolve_rsi_pair(config: &Config) -> crate::brain::rsi_provider_spec::RsiPair {
+pub(crate) fn resolve_rsi_pair(config: &Config) -> crate::brain::provider_spec::ProviderPair {
     let model_key = config.agent.self_improvement_model.as_deref();
     match config.agent.self_improvement_provider.as_deref() {
-        Some(explicit) => crate::brain::rsi_provider_spec::normalize(
+        Some(explicit) => crate::brain::provider_spec::normalize_in(
+            config,
+            crate::brain::provider_spec::ProviderKey::SELF_IMPROVEMENT,
             explicit,
             model_key,
-            |name| {
-                config
-                    .providers
-                    .custom
-                    .as_ref()
-                    .is_some_and(|m| m.contains_key(name))
-            },
-            |name| config.providers.is_declared(name),
         ),
-        None => crate::brain::rsi_provider_spec::RsiPair {
+        None => crate::brain::provider_spec::ProviderPair {
             provider: resolve_rsi_provider_default(config),
             model: model_key
                 .map(str::trim)
