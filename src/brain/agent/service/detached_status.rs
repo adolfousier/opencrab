@@ -1,5 +1,8 @@
 //! Detached-command progress via JSON status files (#1160).
 //!
+#![allow(dead_code)] // upstream rework (#1313-#1319) removed the lib callers
+// (run_detached reworked); kept intact for the forkwin port cycle to
+// disposition (round-4/5 precedent: tag, don't delete).
 //! Mirrors the sub-agent status-file pattern
 //! (`brain/tools/subagent/status.rs`): each detached bash command writes
 //! `<opencrabs_home>/tmp/detached/<task_id>.json` at spawn and rewrites it on
