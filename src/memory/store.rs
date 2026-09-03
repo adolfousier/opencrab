@@ -81,10 +81,24 @@ fn build_store(db_path: &Path) -> Result<Store, String> {
             tracing::info!("Vector table created with {dims} dimensions");
         }
 
+        // Create symbol tables when code-graph feature is enabled
+        #[cfg(feature = "code-graph")]
+        {
+            store
+                .ensure_symbol_tables()
+                .map_err(|e| format!("Failed to create symbol tables: {e}"))?;
+            tracing::info!("Symbol graph tables created (code-graph feature)");
+        }
+
         tracing::info!(
-            "Memory store ready at {} (vector: {})",
+            "Memory store ready at {} (vector: {}, code-graph: {})",
             db_path.display(),
             if super::vector_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            if cfg!(feature = "code-graph") {
                 "enabled"
             } else {
                 "disabled"

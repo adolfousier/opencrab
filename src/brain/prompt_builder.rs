@@ -919,6 +919,9 @@ pub(crate) fn compiled_features() -> Vec<&'static str> {
     if cfg!(feature = "pdfium") {
         out.push("pdfium");
     }
+    if cfg!(feature = "code-graph") {
+        out.push("code-graph");
+    }
     if cfg!(feature = "profiling") {
         out.push("profiling");
     }

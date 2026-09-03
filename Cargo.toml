@@ -89,6 +89,8 @@ urlencoding = "2.1"
 syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
 pulldown-cmark = "0.13"
 strip-ansi = "0.1"
+tree-sitter = { version = "0.24", optional = true }
+tree-sitter-rust = { version = "0.23", optional = true }
 
 # Concurrent Data Structures
 once_cell = "1.20"
@@ -218,6 +220,7 @@ local-stt = ["rwhisper", "rodio", "hound", "rubato", "symphonia", "symphonia-ada
 local-tts = ["opusic-sys", "rubato"]
 browser = ["chromey"]
 pdfium = ["dep:pdfium-render"]
+code-graph = ["tree-sitter", "tree-sitter-rust"]
 [profile.dev]
 opt-level = 0
 debug = true

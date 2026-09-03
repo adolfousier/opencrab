@@ -267,6 +267,8 @@ pub mod memory_search_scope_test;
 pub mod memory_search_test;
 pub mod memory_store_profile_test;
 pub mod memory_store_test;
+#[cfg(feature = "code-graph")]
+pub mod memory_symbol_extractor_test;
 pub mod menu_auto_solo_test;
 #[cfg(feature = "telegram")]
 pub mod menu_refresh_test;

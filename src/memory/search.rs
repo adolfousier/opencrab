@@ -10,6 +10,113 @@ use super::{
     embedding_api_configured,
 };
 
+/// Detect if a query is asking for structural code relationships.
+///
+/// Returns `Some((query_type, symbol))` where query_type is one of:
+/// - "calls" - "who calls X", "what calls X"
+/// - "called_by" - "what does X call", "what X calls"
+/// - "implements" - "show implementations of X", "who implements X"
+/// - "defined_in" - "where is X defined", "show definition of X"
+///
+/// Returns `None` for conceptual queries that should use BM25+vector.
+#[cfg(feature = "code-graph")]
+pub(crate) fn detect_structural_query(query: &str) -> Option<(String, String)> {
+    let query_lower = query.to_lowercase();
+
+    // "who calls X" / "what calls X" → find callers of X
+    if let Some(caps) = regex::Regex::new(r"(?i)(who|what)\s+calls\s+([a-zA-Z_][a-zA-Z0-9_]*)")
+        .ok()
+        .and_then(|re| re.captures(&query_lower))
+    {
+        return Some(("calls".to_string(), caps[2].to_string()));
+    }
+
+    // "what does X call" / "what X calls" → find callees of X
+    if let Some(caps) = regex::Regex::new(r"(?i)what\s+(?:does\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s+call")
+        .ok()
+        .and_then(|re| re.captures(&query_lower))
+    {
+        return Some(("called_by".to_string(), caps[1].to_string()));
+    }
+
+    // "show implementations of X" / "who implements X" → find impl blocks
+    if let Some(caps) = regex::Regex::new(
+        r"(?i)(?:show\s+)?(?:implementations?\s+of|who\s+implements)\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+    )
+    .ok()
+    .and_then(|re| re.captures(&query_lower))
+    {
+        return Some(("implements".to_string(), caps[1].to_string()));
+    }
+
+    // "where is X defined" / "show definition of X" → find symbol definition
+    if let Some(caps) = regex::Regex::new(
+        r"(?i)(?:where\s+is|show\s+(?:the\s+)?definition\s+of)\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+    )
+    .ok()
+    .and_then(|re| re.captures(&query_lower))
+    {
+        return Some(("defined_in".to_string(), caps[1].to_string()));
+    }
+
+    None
+}
+
+/// Execute a structural query against the symbol graph.
+#[cfg(feature = "code-graph")]
+fn search_symbol_graph(
+    store: &Store,
+    query_type: &str,
+    symbol: &str,
+    n: usize,
+) -> Result<Vec<MemoryResult>, String> {
+    match query_type {
+        "calls" => {
+            // Find who calls this symbol
+            let callers = store.query_callers_of(symbol)?;
+            Ok(callers
+                .into_iter()
+                .take(n)
+                .map(|(caller, file_path, line)| MemoryResult {
+                    path: file_path,
+                    snippet: format!("{} calls {} at line {}", caller, symbol, line),
+                    rank: 1.0,
+                })
+                .collect())
+        }
+        "called_by" => {
+            // Find what this symbol calls
+            let callees = store.query_callees_of(symbol)?;
+            Ok(callees
+                .into_iter()
+                .take(n)
+                .map(|(callee, file_path, line)| MemoryResult {
+                    path: file_path,
+                    snippet: format!("{} calls {} at line {}", symbol, callee, line),
+                    rank: 1.0,
+                })
+                .collect())
+        }
+        "implements" | "defined_in" => {
+            // Find symbol definitions
+            let symbols = store.query_symbols_by_name(symbol)?;
+            Ok(symbols
+                .into_iter()
+                .take(n)
+                .map(|(kind, file_path, start_line, end_line)| MemoryResult {
+                    path: file_path,
+                    snippet: format!(
+                        "{} {} defined at lines {}-{}",
+                        kind, symbol, start_line, end_line
+                    ),
+                    rank: 1.0,
+                })
+                .collect())
+        }
+        _ => Ok(vec![]),
+    }
+}
+
 /// Hybrid search across ALL collections in the store: FTS5 (BM25) + vector
 /// (cosine) via RRF.
 ///
@@ -47,11 +154,23 @@ pub(crate) async fn search_memory(
 /// mtime moved and re-query once, so an in-place edit is reflected. The
 /// tier-2 sweep handles additions and deletions; this catches content edits
 /// that don't bump the parent directory's mtime.
+///
+/// Structural queries (code-graph feature): "who calls X", "what does X call",
+/// etc. route to the symbol graph instead of BM25+vector search.
 pub(crate) async fn search_external(
     store: &'static Mutex<Store>,
     query: &str,
     n: usize,
 ) -> Result<Vec<MemoryResult>, String> {
+    // Check for structural query (code-graph feature)
+    #[cfg(feature = "code-graph")]
+    if let Some((query_type, symbol)) = detect_structural_query(query) {
+        let store_lock = store
+            .lock()
+            .map_err(|e| format!("Store lock poisoned: {e}"))?;
+        return search_symbol_graph(&store_lock, &query_type, &symbol, n);
+    }
+
     let results = search_core(store, query, n, Some(COLLECTION_EXTERNAL)).await?;
     let paths: Vec<String> = results.iter().map(|r| r.path.clone()).collect();
     if super::freshness::refresh_stale_external(&paths).await > 0 {
@@ -419,4 +538,76 @@ pub fn hybrid_search_rrf(
     });
 
     results
+}
+
+#[cfg(all(test, feature = "code-graph"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_structural_query_calls() {
+        let result = detect_structural_query("who calls process_message");
+        assert_eq!(
+            result,
+            Some(("calls".to_string(), "process_message".to_string()))
+        );
+
+        let result = detect_structural_query("what calls validate_input");
+        assert_eq!(
+            result,
+            Some(("calls".to_string(), "validate_input".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_detect_structural_query_called_by() {
+        let result = detect_structural_query("what does process_message call");
+        assert_eq!(
+            result,
+            Some(("called_by".to_string(), "process_message".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_detect_structural_query_implements() {
+        let result = detect_structural_query("show implementations of Drawable");
+        assert_eq!(
+            result,
+            Some(("implements".to_string(), "drawable".to_string()))
+        );
+
+        let result = detect_structural_query("who implements Serializable");
+        assert_eq!(
+            result,
+            Some(("implements".to_string(), "serializable".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_detect_structural_query_defined_in() {
+        let result = detect_structural_query("where is process_message defined");
+        assert_eq!(
+            result,
+            Some(("defined_in".to_string(), "process_message".to_string()))
+        );
+
+        let result = detect_structural_query("show definition of validate_input");
+        assert_eq!(
+            result,
+            Some(("defined_in".to_string(), "validate_input".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_detect_structural_query_conceptual() {
+        // These should NOT match structural patterns
+        let result = detect_structural_query("context compaction");
+        assert_eq!(result, None);
+
+        let result = detect_structural_query("telegram rich cards");
+        assert_eq!(result, None);
+
+        let result = detect_structural_query("how does memory search work");
+        assert_eq!(result, None);
+    }
 }
