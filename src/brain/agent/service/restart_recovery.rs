@@ -139,6 +139,7 @@ pub fn deliver_or_park(session_id: Uuid, msg: QueuedUserMessage) -> bool {
 /// A message parked here leaves only on a fresh [`claim_session`] for that
 /// session — re-run on every inbound message, so a live session still
 /// drains promptly — or on [`flush_parked`] when the grace period ends.
+#[allow(dead_code)] // upstream-dead: adolfo's tree runs no -D warnings gate (no ci.yml); fork pr-checks.yml requires it
 pub fn park_unconditional(session_id: Uuid, msg: QueuedUserMessage) {
     match PARKED.lock() {
         Ok(mut parked) => parked.push((session_id, msg)),

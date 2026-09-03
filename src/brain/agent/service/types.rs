@@ -278,6 +278,7 @@ impl PendingOrigin {
     /// Parse a persisted `pending_requests.origin` value. Unknown or legacy
     /// values map to [`PendingOrigin::User`] so pre-#12 rows keep their
     /// historical replay behavior.
+    #[allow(dead_code)] // upstream-dead: adolfo's tree runs no -D warnings gate (no ci.yml); fork pr-checks.yml requires it
     pub fn from_db_str(value: &str) -> Self {
         match value {
             "system" => PendingOrigin::System,

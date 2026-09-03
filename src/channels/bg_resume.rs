@@ -88,6 +88,7 @@ pub(crate) async fn run_resume_turn(
 /// dropped outright. The bound matches the pre-existing inline waits
 /// (telegram `wait_for_bot`, the ui.rs startup-resume loop) so all callers
 /// share one number.
+#[allow(dead_code)] // upstream-dead: adolfo's tree runs no -D warnings gate (no ci.yml); fork pr-checks.yml requires it
 pub(crate) const READY_WAIT_SECS: u64 = 30;
 
 /// Poll `fetch` once a second until it yields a value or [`READY_WAIT_SECS`]
@@ -96,6 +97,7 @@ pub(crate) const READY_WAIT_SECS: u64 = 30;
 /// Replaces the one-shot handle fetches that dropped the wake whenever the
 /// SDK client was not ready at the exact instant of the call (#1242).
 /// Checks before sleeping, so an already-ready handle costs zero delay.
+#[allow(dead_code)] // upstream-dead: adolfo's tree runs no -D warnings gate (no ci.yml); fork pr-checks.yml requires it
 pub(crate) async fn wait_ready<T, F, Fut>(mut fetch: F, label: &str) -> Option<T>
 where
     F: FnMut() -> Fut,
@@ -122,6 +124,7 @@ where
 /// [`restart_recovery::deliver_or_park`], which would hand the message to the
 /// very route whose surface just refused it — the zero-sleep bounce that spun
 /// a core on 2026-08-28.
+#[allow(dead_code)] // upstream-dead: adolfo's tree runs no -D warnings gate (no ci.yml); fork pr-checks.yml requires it
 pub(crate) fn park_undeliverable(
     session_id: Uuid,
     msg: crate::brain::agent::service::QueuedUserMessage,

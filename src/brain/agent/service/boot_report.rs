@@ -53,6 +53,7 @@ fn with<R>(f: impl FnOnce(&mut Ledger) -> R) -> Option<R> {
 }
 
 /// A session was mid-turn when the previous process died.
+#[allow(dead_code)] // upstream-dead: adolfo's tree runs no -D warnings gate (no ci.yml); fork pr-checks.yml requires it
 pub fn record_interrupted(session_id: Uuid) {
     with(|l| l.interrupted.insert(session_id));
 }
