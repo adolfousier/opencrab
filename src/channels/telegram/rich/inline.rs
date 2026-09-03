@@ -54,6 +54,15 @@ pub(super) fn parse_inlines(input: &str) -> Vec<Inline> {
             i += span.len() + 4;
             continue;
         }
+        // `<sub>` small text, emitted by the flow and result cards for their
+        // summary lines. Recognised here so the HTML renderer can drop the
+        // tag instead of escaping it into visible `&lt;sub&gt;`.
+        if let Some(span) = tag_paired(rest, "sub") {
+            flush(&mut text, &mut out);
+            out.push(Inline::Sub(parse_inlines(span)));
+            i += span.len() + "<sub></sub>".len();
+            continue;
+        }
         if let Some(span) = paired(rest, "~~") {
             flush(&mut text, &mut out);
             out.push(Inline::Strike(parse_inlines(span)));
@@ -134,6 +143,18 @@ fn paired_word_bounded<'a>(input: &str, i: usize, rest: &'a str, delim: &str) ->
 fn paired<'a>(rest: &'a str, delim: &str) -> Option<&'a str> {
     let after = rest.strip_prefix(delim)?;
     let close = after.find(delim)?;
+    if close == 0 {
+        return None;
+    }
+    Some(&after[..close])
+}
+
+/// The content of a `<tag>`..`</tag>` pair at the start of `rest`, or `None`
+/// when `rest` does not open that tag or the pair never closes. Only a
+/// well-formed pair becomes a node, so an unmatched opener stays text.
+fn tag_paired<'a>(rest: &'a str, tag: &str) -> Option<&'a str> {
+    let after = rest.strip_prefix(&format!("<{tag}>"))?;
+    let close = after.find(&format!("</{tag}>"))?;
     if close == 0 {
         return None;
     }

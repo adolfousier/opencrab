@@ -484,6 +484,246 @@ impl Store {
         Ok(())
     }
 
+    /// Create symbol graph tables for code-graph feature.
+    ///
+    /// Three tables:
+    /// - `symbols`: function/struct/enum/trait/impl/import definitions
+    /// - `call_edges`: caller → callee relationships
+    /// - `imports`: module import paths
+    #[cfg(feature = "code-graph")]
+    pub fn ensure_symbol_tables(&self) -> Result<(), String> {
+        self.conn
+            .execute_batch(
+                r"
+                CREATE TABLE IF NOT EXISTS symbols (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol_name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    start_line INTEGER NOT NULL,
+                    end_line INTEGER NOT NULL,
+                    indexed_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(symbol_name);
+                CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path);
+                CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);
+
+                CREATE TABLE IF NOT EXISTS call_edges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    caller_symbol TEXT NOT NULL,
+                    callee_symbol TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    call_line INTEGER NOT NULL,
+                    indexed_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_call_edges_caller ON call_edges(caller_symbol);
+                CREATE INDEX IF NOT EXISTS idx_call_edges_callee ON call_edges(callee_symbol);
+
+                CREATE TABLE IF NOT EXISTS imports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    module_path TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    import_line INTEGER NOT NULL,
+                    indexed_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_imports_module ON imports(module_path);
+                CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_path);
+                ",
+            )
+            .map_err(|e| format!("ensure_symbol_tables: {e}"))?;
+        Ok(())
+    }
+
+    /// Row counts for the symbol graph tables: (symbols, call_edges, imports).
+    /// Used by logging and benchmark scaffolding.
+    #[cfg(feature = "code-graph")]
+    pub fn symbol_graph_counts(&self) -> Result<(i64, i64, i64), String> {
+        let symbols: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM symbols", [], |r| r.get(0))
+            .map_err(|e| format!("symbol_graph_counts symbols: {e}"))?;
+        let edges: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM call_edges", [], |r| r.get(0))
+            .map_err(|e| format!("symbol_graph_counts call_edges: {e}"))?;
+        let imports: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM imports", [], |r| r.get(0))
+            .map_err(|e| format!("symbol_graph_counts imports: {e}"))?;
+        Ok((symbols, edges, imports))
+    }
+
+    /// Insert a symbol into the symbol graph.
+    #[cfg(feature = "code-graph")]
+    pub fn insert_symbol(
+        &self,
+        symbol_name: &str,
+        kind: &str,
+        file_path: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> Result<(), String> {
+        let indexed_at = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r"
+                INSERT INTO symbols (symbol_name, kind, file_path, start_line, end_line, indexed_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ",
+                params![
+                    symbol_name,
+                    kind,
+                    file_path,
+                    start_line as i64,
+                    end_line as i64,
+                    indexed_at
+                ],
+            )
+            .map_err(|e| format!("insert_symbol: {e}"))?;
+        Ok(())
+    }
+
+    /// Insert a call edge (caller → callee).
+    #[cfg(feature = "code-graph")]
+    pub fn insert_call_edge(
+        &self,
+        caller_symbol: &str,
+        callee_symbol: &str,
+        file_path: &str,
+        call_line: usize,
+    ) -> Result<(), String> {
+        let indexed_at = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r"
+                INSERT INTO call_edges (caller_symbol, callee_symbol, file_path, call_line, indexed_at)
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                ",
+                params![
+                    caller_symbol,
+                    callee_symbol,
+                    file_path,
+                    call_line as i64,
+                    indexed_at
+                ],
+            )
+            .map_err(|e| format!("insert_call_edge: {e}"))?;
+        Ok(())
+    }
+
+    /// Insert an import.
+    #[cfg(feature = "code-graph")]
+    pub fn insert_import(
+        &self,
+        module_path: &str,
+        file_path: &str,
+        import_line: usize,
+    ) -> Result<(), String> {
+        let indexed_at = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r"
+                INSERT INTO imports (module_path, file_path, import_line, indexed_at)
+                VALUES (?1, ?2, ?3, ?4)
+                ",
+                params![module_path, file_path, import_line as i64, indexed_at],
+            )
+            .map_err(|e| format!("insert_import: {e}"))?;
+        Ok(())
+    }
+
+    /// Query symbols by name (exact match).
+    #[cfg(feature = "code-graph")]
+    pub fn query_symbols_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Vec<(String, String, usize, usize)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r"
+                SELECT kind, file_path, start_line, end_line
+                FROM symbols
+                WHERE symbol_name = ?1
+                ORDER BY (file_path LIKE '%/tests/%'), kind
+                ",
+            )
+            .map_err(|e| format!("query_symbols_by_name prepare: {e}"))?;
+
+        let rows = stmt
+            .query_map(params![name], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? as usize,
+                    row.get::<_, i64>(3)? as usize,
+                ))
+            })
+            .map_err(|e| format!("query_symbols_by_name: {e}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("query_symbols_by_name collect: {e}"))
+    }
+
+    /// Query call edges where the given symbol is the callee (who calls this function?).
+    #[cfg(feature = "code-graph")]
+    pub fn query_callers_of(&self, callee: &str) -> Result<Vec<(String, String, usize)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r"
+                SELECT caller_symbol, file_path, call_line
+                FROM call_edges
+                WHERE callee_symbol = ?1
+                ",
+            )
+            .map_err(|e| format!("query_callers_of prepare: {e}"))?;
+
+        let rows = stmt
+            .query_map(params![callee], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? as usize,
+                ))
+            })
+            .map_err(|e| format!("query_callers_of: {e}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("query_callers_of collect: {e}"))
+    }
+
+    /// Query call edges where the given symbol is the caller (what does this function call?).
+    #[cfg(feature = "code-graph")]
+    pub fn query_callees_of(&self, caller: &str) -> Result<Vec<(String, String, usize)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r"
+                SELECT callee_symbol, file_path, call_line
+                FROM call_edges
+                WHERE caller_symbol = ?1
+                ",
+            )
+            .map_err(|e| format!("query_callees_of prepare: {e}"))?;
+
+        let rows = stmt
+            .query_map(params![caller], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? as usize,
+                ))
+            })
+            .map_err(|e| format!("query_callees_of: {e}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("query_callees_of collect: {e}"))
+    }
+
     /// Insert (or replace) an embedding for one chunk of a content hash.
     /// `hash_seq` is `{hash}_{seq}` — the key format `vector_search.rs`
     /// reads, so it must not change.

@@ -82,6 +82,8 @@
 
 **Official docs:** [docs.opencrabs.com](https://docs.opencrabs.com) — comprehensive guides, architecture deep-dives, and reference material.
 
+The docs and the landing at [opencrabs.com](https://opencrabs.com) are available in six languages: English, Português (PT-PT), Español, Français, Русский and Bahasa Indonesia. Pick one from the language switcher in the menu bar; untranslated paragraphs fall back to English rather than going missing.
+
 ### Getting Started
 - [Installation & Quick Start](src/docs/start/GETTING_STARTED.md)
 - [Onboarding Wizard](src/docs/start/ONBOARDING.md)

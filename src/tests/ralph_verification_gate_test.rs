@@ -361,7 +361,12 @@ fn criteria_policy_parses_each_variant_lowercase() {
 /// from. A plan in one repo was gated on another repo's build.
 #[test]
 fn verification_runs_in_the_directory_it_is_given() {
-    let dir = std::env::temp_dir().join("opencrabs_ralph_cwd_test");
+    // Unique per process. A fixed name under the shared temp dir is one
+    // mutable global: two concurrent `cargo test` runs execute this test
+    // against the SAME directory, and whichever finishes first deletes it out
+    // from under the other. That made this fail intermittently in a full
+    // suite while passing in isolation.
+    let dir = std::env::temp_dir().join(format!("opencrabs_ralph_cwd_test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     // macOS reports /var/... as /private/var/..., so compare resolved paths.
     let expected = dir.canonicalize().expect("canonicalize temp dir");
@@ -382,7 +387,10 @@ fn verification_runs_in_the_directory_it_is_given() {
 /// when the two differ.
 #[test]
 fn verification_directory_is_not_the_process_cwd() {
-    let dir = std::env::temp_dir().join("opencrabs_ralph_cwd_differs");
+    let dir = std::env::temp_dir().join(format!(
+        "opencrabs_ralph_cwd_differs-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let expected = dir.canonicalize().expect("canonicalize temp dir");
     let process_cwd = std::env::current_dir().expect("process cwd");

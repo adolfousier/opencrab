@@ -131,6 +131,7 @@ pub(crate) fn render_inline(inline: &Inline) -> Value {
             "type": "strikethrough",
             "content": render_inlines(content),
         }),
+        Inline::Sub(content) => json!({ "type": "sub", "content": render_inlines(content) }),
         Inline::Code(text) => json!({ "type": "code", "text": text }),
         Inline::Math(text) => json!({ "type": "math", "text": text }),
         Inline::Link { content, url } => json!({

@@ -113,6 +113,11 @@ pub enum Inline {
     Bold(Vec<Inline>),
     Italic(Vec<Inline>),
     Strike(Vec<Inline>),
+    /// `<sub>` small text. The rich dialect renders it natively; classic
+    /// Telegram HTML has no `<sub>`, so the renderer drops the tag and keeps
+    /// the content. Parsed as a node rather than left as text so a lone
+    /// `<sub>` in prose still escapes to visible characters.
+    Sub(Vec<Inline>),
     /// Inline `code` — content is literal, never re-parsed.
     Code(String),
     /// Inline `$math$` — content is literal, never re-parsed.

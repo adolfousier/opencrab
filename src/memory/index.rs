@@ -179,6 +179,14 @@ pub(crate) fn index_file_sync_keyed(
         .insert_document(collection, doc_key, &title, &hash, &now, &now)
         .map_err(|e| format!("Failed to insert document: {e}"))?;
 
+    // Symbol-graph chokepoint: every indexing path funnels through here, so
+    // extracting at this one spot covers the cold external walk, the periodic
+    // sweep, and lazy refreshes alike (feature-gated, Rust files only).
+    #[cfg(feature = "code-graph")]
+    if doc_key.ends_with(".rs") {
+        super::symbol_extractor::extract_and_store(store, doc_key, body);
+    }
+
     tracing::debug!("Indexed {collection} document: {doc_key}");
     Ok(true)
 }
