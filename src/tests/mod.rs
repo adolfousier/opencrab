@@ -351,6 +351,8 @@ pub mod telegram_callback_session_topic_test;
 pub mod telegram_cancel_token_no_drop_test;
 pub mod telegram_dedup_approval_test;
 #[cfg(feature = "telegram")]
+pub mod telegram_general_topic_delivery_test;
+#[cfg(feature = "telegram")]
 #[cfg(feature = "telegram")]
 pub mod telegram_mentions_other_bot_test;
 #[cfg(feature = "telegram")]
@@ -364,7 +366,6 @@ pub mod telegram_session_gate_test;
 pub mod telegram_suggest_merge_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_table_render_test;
-#[cfg(feature = "telegram")]
 pub mod telegram_topic_routing_test;
 pub mod tool_search_child_registry_test;
 pub mod tools_md_regression_test;
