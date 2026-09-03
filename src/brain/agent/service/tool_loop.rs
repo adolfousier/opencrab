@@ -5891,16 +5891,18 @@ impl AgentService {
             // rate-limit fallback (#961). Normalize every call's name+args,
             // count how many recent calls collide with the current one;
             // nudge once, then break if the model keeps re-issuing
-            // near-duplicates. `read_file` is excluded: its chunked reads
-            // differ only in numeric offsets, which digit-stripping
-            // collapses into a false collision.
+            // near-duplicates. Every tool participates: numeric argument
+            // values (read_file start_line, plan task_order, timeouts) are
+            // preserved exactly by the signature (#82), so chunked reads
+            // and checklist progression no longer collide — the exclusion
+            // read_file once needed is gone, and its loops are guarded
+            // again.
             {
                 const NEAR_WINDOW: usize = 8;
                 const NEAR_NUDGE_AT: usize = 3;
                 const NEAR_BREAK_AT: usize = 4;
                 let normalized_call = tool_uses
                     .iter()
-                    .filter(|(_, name, _)| name.as_str() != "read_file")
                     .map(|(_, name, input)| {
                         crate::brain::agent::service::helpers::normalized_call_signature(
                             name.as_str(),
