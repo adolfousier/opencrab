@@ -1248,6 +1248,31 @@ default_model = "mistral"
 
 The name after `custom.` is a label you choose (e.g. `lm_studio`, `nvidia`, `groq`). The one with `enabled = true` is active. Keys go in `keys.toml` using the same label. All configured custom providers persist — switching via `/models` just toggles `enabled`.
 
+**Referring to your custom provider elsewhere.** That label is the provider's
+name everywhere in OpenCrabs. `custom` is the table it lives in, not part of the
+name, so wherever a key asks for a provider, write the bare label:
+
+```toml
+[providers.custom.myprovider]          # the name is "myprovider"
+base_url = "https://api.example.com/v1"
+default_model = "some-model"
+
+[agent]
+self_improvement_provider = "myprovider"          # right
+# self_improvement_provider = "custom:myprovider"  # wrong: that is the table path
+# self_improvement_provider = "custom.myprovider"  # wrong: same thing
+# self_improvement_provider = "myprovider/some-model"  # wrong: the model has its own key
+self_improvement_model = "some-model"
+```
+
+The same bare name goes in `subagent_provider`, `plan_provider`,
+`execute_provider`, the `[providers.fallback] providers` list, the
+`[image.vision] provider` override, and `/models myprovider/some-model`. A
+provider key never takes `<provider>/<model>`: the model belongs in the matching
+`_model` key. RSI corrects the `custom:` prefix and the `provider/model` split
+for its own key and says so in the log (see Troubleshooting), but the other keys
+take what you wrote, so get the name right once and it works everywhere.
+
 #### Free Prototyping with NVIDIA API + Kimi K2.5
 
 [Kimi K2.5](https://build.nvidia.com/moonshotai/kimi-k2.5) is a frontier-scale multimodal Mixture-of-Experts (MoE) model available **for free** on the NVIDIA API Catalog — no billing setup or credit card required. It handles complex reasoning and image/video understanding, making it a strong free alternative to paid models like Claude or Gemini for experimentation and agentic workflows.
@@ -4617,6 +4642,34 @@ If the bot still shows the old number after resetting, make sure you completed s
 | Bot doesn't reply to anyone | `response_policy` is too restrictive | Set `response_policy = "allowlist"` and add phone numbers to `allowed_phones` in `config.toml` |
 | Bot replies to everyone | `response_policy` is `open` | Set `response_policy = "allowlist"` or `"owner_only"` in `config.toml` |
 | Bot doesn't reply to self-chat | `allowed_phones` doesn't include the paired number | The paired number's self-chat is always allowed, regardless of `allowed_phones`. If it's not working, check that `response_policy` isn't `dm_only` with no owner set |
+
+### RSI Never Runs / Custom Provider Not Found
+
+**Symptom:** Mission Control shows "RSI has never run" with thousands of tool
+events unprocessed, or a log line says the self-improvement provider could not
+be built, while `rsi_enabled = true` and the provider works fine in chat.
+
+**Cause:** the provider was named by its config table path instead of its name.
+For `[providers.custom.myprovider]` the name is `myprovider`; writing
+`"custom:myprovider"` or `"custom.myprovider"` in `self_improvement_provider`
+(or `"myprovider/some-model"`, putting the model where the provider goes) never
+resolved to a provider, so every cycle died before it started.
+
+**Fix:**
+
+```toml
+[agent]
+self_improvement_provider = "myprovider"   # the bare section name
+self_improvement_model    = "some-model"   # the model goes here, not in the provider key
+```
+
+RSI now recognises both slips: it drops the `custom:` prefix and splits a
+`<provider>/<model>` value whose head is one of your configured providers, then
+logs `RSI: self_improvement_provider corrected to '<name>'` naming the canonical
+spelling. If you see that line, fix the config so it stops appearing. The other
+provider keys (`subagent_provider`, `plan_provider`, `execute_provider`, the
+fallback list, `[image.vision] provider`) take the value as written, so use the
+bare name there too. See **Custom (OpenAI-Compatible)** under Providers.
 
 ### Agent Hallucinating Tool Calls
 
