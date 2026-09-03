@@ -1,7 +1,10 @@
 //! PDF page rendering to PNG images.
 //!
 //! Renders individual PDF pages as PNG files using (in order of preference):
-//! 1. `pdfium-render` crate (bundled Pdfium — no external deps)
+//! 1. `pdfium-render` crate, bound to the system Pdfium library (feature
+//!    `pdfium`, on by default). Nothing is bundled: `bind_to_system_library`
+//!    needs libpdfium present, and returns an error when it is missing, which
+//!    is what falls through to the next strategy.
 //! 2. Shell fallback to `pdftoppm` (poppler-utils)
 //!
 //! Pages are processed in configurable batches to cap memory usage.
