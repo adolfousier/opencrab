@@ -519,7 +519,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | **Skills (cross-harness)** | Multi-stage workflow templates in the de-facto `SKILL.md` format used by Claude Code, Anthropic managed agents, and OpenClaw. Drop a `SKILL.md` under `~/.opencrabs/skills/<name>/` and it auto-registers as `/<name>` — no `commands.toml` entry needed. Works in the TUI **and** every connected channel (Telegram, Discord, Slack, WhatsApp). Built-ins ship with the binary (always version-matched); user skills override by file presence. Two built-ins out of the box: `/security-audit` (language-agnostic CVE & static-analysis audit, scores 0-100) and `/cost-estimate` (codebase valuation with AI-assisted ROI). Same `SKILL.md` is portable across harnesses |
 | **Mission Control** | Full-screen `/mission-control` dialog showing every actionable artifact in one place: pending RSI proposals (inbox cards), recent RSI activity (improvements log feed), the schedule queue (cron jobs + paused/active state), and a live **Analytics** panel (brain file sizes, tool usage with proportional bars, failure rates, RSI applied by dimension, phantom-detection and resolution rates, per-model reliability, stream-recovery counts) with **D / W / M / All** window tabs so a fixed 30-day view cannot hide a tool that has already recovered. Apply or reject inbox proposals inline with `a` / `r` — same machinery as the agent's `rsi_proposals` tool, byte-identical install. Tab between panels, j/k to navigate, Enter for the detail popup, Esc to close. Cron paused jobs flag in orange, active in teal — at-a-glance state |
 | **Skills picker** | Full-screen `/skills` dialog with a live filter input — start typing to narrow the list (case-insensitive on name + description), Tab / Shift-Tab cycle the filtered cards (wraps at the edges), Enter runs the selected skill (sends its body as a prompt to the agent), Esc closes. Built-in skills badge orange; user-installed skills badge teal. When the filter narrows to a single match, Enter just fires it — fastest path to launch a skill |
-| **Browser Automation** | Native browser control via CDP (Chrome DevTools Protocol). Auto-detects your default Chromium-based browser (Chrome, Brave, Edge, Arc, Vivaldi, Opera, Chromium) and uses its profile — your logins, cookies, and extensions carry over. 7 browser tools: navigate, click, type, screenshot, eval JS, extract content, wait for elements. Headed or headless mode with display auto-detection. **Note:** Firefox is not supported (no CDP) — if Firefox is your default, OpenCrabs falls back to the first available Chromium browser. Feature-gated under `browser` (included by default) |
+| **Browser Automation** | Native browser control via CDP (Chrome DevTools Protocol). Auto-detects your default Chromium-based browser (Chrome, Brave, Edge, Arc, Vivaldi, Opera, Chromium) and uses its profile — your logins, cookies, and extensions carry over. 9 browser tools: navigate, click, type, screenshot, eval JS, extract content, wait for elements, find/inventory elements, batched multi-action. Headed or headless mode with display auto-detection. **Note:** Firefox is not supported (no CDP) — if Firefox is your default, OpenCrabs falls back to the first available Chromium browser. Feature-gated under `browser` (included by default) |
 | **Natural Language Commands** | Tell OpenCrabs to create slash commands — it writes them to `commands.toml` autonomously via the `config_manager` tool |
 | **Live Settings** | Agent can read/write `config.toml` at runtime; Settings TUI screen (press `S`) shows current config; approval policy persists across restarts. Default: auto-approve (use `/approve` to change) |
 | **Web Search** | DuckDuckGo (built-in, no key needed) + EXA AI (neural, free via MCP) by default; Brave Search optional (key in `keys.toml`) |
@@ -2974,7 +2974,7 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `brave_search` | Web search via Brave Search (set key in `keys.toml` — free $5/mo credits at brave.com/search/api) |
 | `http_request` | Make HTTP requests |
 | `web_scrape` | Native URL-to-markdown scraping (zero AI, zero API cost). Fetches a URL, extracts clean markdown, keeps images as `![alt](url)` tags so the agent can vision only what it needs. Includes SSRF protection, sitemap crawling, and profile/project-aware markdown export. Surfaced via `tool_search` (deferred, not in core set) |
-| `memory_search` | Hybrid semantic search — FTS5 keyword + vector embeddings combined via RRF. `scope` picks the corpus: `memory` (daily logs, the default) for history, `brain` for rules and policy in your brain files, `all` for both. Local GGUF, OpenAI-compatible API, or FTS5-only mode |
+| `memory_search` | Hybrid semantic search — FTS5 keyword + vector embeddings combined via RRF. `scope` picks the corpus: `memory` (daily logs, the default) for history, `brain` for rules and policy in your brain files, `all` for both. Local GGUF, OpenAI-compatible API, or FTS5-only mode. With `.rs` files under `extra_paths`, structural queries ("who calls X") auto-route to the tree-sitter symbol graph (`code-graph` feature, on by default) |
 | `session_search` | Hybrid FTS5 + vector search across every past session's message history. Same backends as `memory_search` |
 
 #### Image & Video
@@ -3158,6 +3158,8 @@ Auto-detects your default Chromium-based browser and uses its native profile (co
 | `browser_eval` | Execute JavaScript in page context and return the result |
 | `browser_content` | Get page HTML or text-only content, optionally scoped by CSS selector |
 | `browser_wait` | Wait for a CSS selector to appear (polls every 200ms, default 10s timeout) |
+| `browser_find` | Find elements by css/xpath/text/aria pattern, or with no pattern inventory ALL visible interactive elements — each returned with a stable unique `data-opencrabs-match` selector + text + tag + visibility, so the follow-up `browser_click` is deterministic (kills the screenshot-discovery loop) |
+| `browser_act` | Batched multi-action in one call: ordered `click` / `fill` / `press` / `select` / `wait` array (max 10 actions, 120s budget). All selectors resolved up front — a stale reference rejects the whole batch instead of half-running it; aborts on first failure and reports the completed prefix; one screenshot at the end |
 
 > **Why no Firefox?** Browser automation uses Chrome DevTools Protocol (CDP). Firefox dropped CDP support entirely — it now uses WebDriver BiDi, which is a different protocol. All Chromium-based browsers speak CDP natively.
 
@@ -4497,6 +4499,20 @@ extra_paths = [
 # external_allowed_in_shared = false   # default: external results are owner-session-only
 # sweep_interval_secs = 300            # freshness sweep; changed files also caught lazily at search
 ```
+
+**Symbol graph for source code (feature: `code-graph`, on by default):** `.rs` files under `extra_paths` are additionally parsed with tree-sitter into a symbol graph — functions, structs, traits, impls, call edges, imports — stored in `symbols` / `call_edges` / `imports` tables alongside the FTS5+vector index. `memory_search` auto-routes structural queries ("who calls `retry_db_operation`", "where is X defined") to the graph lane; conceptual queries keep the text lane. Method calls are normalized to bare names (`store.insert_symbol(...)` indexes callee `insert_symbol`), enum-variant constructors (`Some` / `Ok`) are skipped, and production symbols rank above test symbols.
+
+Before/after benchmark against grep-locked ground truth on this repo (1,383 files → 12,649 symbols, 35,024 call edges, 5,415 imports; one-off index 5.8s, freshness sweep keeps it current):
+
+| Query class | Example | Before (FTS5+vector) | After (+ symbol graph) |
+|---|---|---|---|
+| Callers of a function | who calls `validate_input` | text chunks, no caller info | exact callers, file + line |
+| Callers, generic-heavy path | who calls `retry_db_operation` | text chunks | 4/5 callers, file + line |
+| Duplicate implementations | find all HTML-escape variants | 2 of 3 found | all 3, exact locations |
+| Structure of a module | what's in `tool_loop.rs` | file content only | + full function inventory |
+| Concept lookup | "context compaction" | strong | unchanged — text lane untouched |
+
+Known gap: a call nested inside a `.await.context()` chain within a generic function can drop its edge ([#1325](https://github.com/adolfousier/opencrabs/issues/1325)).
 
 
 Benchmarked with `cargo bench --bench memory` on release builds:
