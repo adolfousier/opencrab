@@ -20,9 +20,6 @@ use super::db::Store;
 use super::{COLLECTION_EXTERNAL, external_excludes, extra_paths_config};
 use std::path::PathBuf;
 
-#[cfg(feature = "code-graph")]
-use super::symbol_extractor::SymbolExtractor;
-
 /// One configured extra path after resolution.
 #[derive(Debug)]
 pub(crate) struct ResolvedRoot {
@@ -217,8 +214,9 @@ pub(crate) fn reindex_external(store: &Store) -> ExternalReport {
 
     let mut on_disk: Vec<String> = Vec::new();
 
-    #[cfg(feature = "code-graph")]
-    let mut symbol_extractor = SymbolExtractor::new().ok();
+    // Symbol extraction happens inside `index_file_sync_keyed` (the single
+    // indexing chokepoint), so both this cold walk and the periodic sweep
+    // populate the graph from one place.
 
     for root in &roots {
         for path in walk_root(root, &excludes) {
@@ -234,55 +232,6 @@ pub(crate) fn reindex_external(store: &Store) -> ExternalReport {
                     ) {
                         Ok(true) => {
                             report.indexed += 1;
-
-                            // Extract symbols from Rust files (code-graph feature)
-                            #[cfg(feature = "code-graph")]
-                            if path.extension().and_then(|s| s.to_str()) == Some("rs")
-                                && let Some(ref mut extractor) = symbol_extractor
-                            {
-                                match extractor.extract(&path, &body) {
-                                    Ok((symbols, call_edges)) => {
-                                        // Store symbols (excluding imports)
-                                        for sym in symbols.iter().filter(|s| {
-                                            s.kind != super::symbol_extractor::SymbolKind::Import
-                                        }) {
-                                            let _ = store.insert_symbol(
-                                                &sym.name,
-                                                &sym.kind.to_string(),
-                                                &key,
-                                                sym.start_line,
-                                                sym.end_line,
-                                            );
-                                        }
-
-                                        // Store call edges
-                                        for edge in call_edges {
-                                            let _ = store.insert_call_edge(
-                                                &edge.caller,
-                                                &edge.callee,
-                                                &key,
-                                                edge.line,
-                                            );
-                                        }
-
-                                        // Store imports separately
-                                        for sym in symbols.iter().filter(|s| {
-                                            s.kind == super::symbol_extractor::SymbolKind::Import
-                                        }) {
-                                            let _ = store.insert_import(
-                                                &sym.name,
-                                                &key,
-                                                sym.start_line,
-                                            );
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::debug!(
-                                            "code-graph: failed to extract symbols from {key}: {e}"
-                                        );
-                                    }
-                                }
-                            }
                         }
                         Ok(false) => {}
                         Err(e) => {

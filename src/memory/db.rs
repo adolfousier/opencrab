@@ -537,6 +537,25 @@ impl Store {
         Ok(())
     }
 
+    /// Row counts for the symbol graph tables: (symbols, call_edges, imports).
+    /// Used by logging and benchmark scaffolding.
+    #[cfg(feature = "code-graph")]
+    pub fn symbol_graph_counts(&self) -> Result<(i64, i64, i64), String> {
+        let symbols: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM symbols", [], |r| r.get(0))
+            .map_err(|e| format!("symbol_graph_counts symbols: {e}"))?;
+        let edges: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM call_edges", [], |r| r.get(0))
+            .map_err(|e| format!("symbol_graph_counts call_edges: {e}"))?;
+        let imports: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM imports", [], |r| r.get(0))
+            .map_err(|e| format!("symbol_graph_counts imports: {e}"))?;
+        Ok((symbols, edges, imports))
+    }
+
     /// Insert a symbol into the symbol graph.
     #[cfg(feature = "code-graph")]
     pub fn insert_symbol(
@@ -629,6 +648,7 @@ impl Store {
                 SELECT kind, file_path, start_line, end_line
                 FROM symbols
                 WHERE symbol_name = ?1
+                ORDER BY (file_path LIKE '%/tests/%'), kind
                 ",
             )
             .map_err(|e| format!("query_symbols_by_name prepare: {e}"))?;

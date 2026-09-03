@@ -248,9 +248,77 @@ impl SymbolExtractor {
     }
 
     fn extract_callee(&self, node: Node, source: &str) -> Option<String> {
-        // Extract the function being called
-        node.child_by_field_name("function")
-            .map(|n| n.utf8_text(source.as_bytes()).unwrap_or("").to_string())
+        // Extract the function being called.
+        // Receiver-qualified calls (`store.insert_symbol(..)`, `lines.push(..)`)
+        // are normalized to the bare method name (`insert_symbol`, `push`):
+        // the receiver is a local variable name that carries no lookup value,
+        // and callers-of queries search by bare method name. Module paths
+        // (`Arc::new`, `Vec::new`) keep their full path — no `.` receiver.
+        let raw = node
+            .child_by_field_name("function")
+            .map(|n| n.utf8_text(source.as_bytes()).unwrap_or("").to_string())?;
+        let callee = match raw.rsplit_once('.') {
+            Some((_, method)) => method.to_string(),
+            None => raw,
+        };
+        // Skip enum-variant constructor noise: `Some(x)`, `Ok(x)`, `Err(e)`.
+        // tree-sitter cannot distinguish these from function calls
+        // syntactically, and they otherwise dominate the edge table
+        // (1278 + 698 edges of garbage in the 1383-file repo benchmark).
+        if matches!(callee.as_str(), "Some" | "Ok" | "Err" | "None") {
+            return None;
+        }
+        Some(callee)
+    }
+}
+
+/// Extract symbols, call edges and imports from one Rust source file and
+/// store them in the symbol graph.
+///
+/// Called from the indexing chokepoint (`index::index_file_sync_keyed`) so
+/// every path that indexes content — cold external walk, periodic sweep,
+/// lazy refresh — populates the graph from one place. Creating a fresh
+/// `SymbolExtractor` per file is deliberate: the chokepoint is a free
+/// function with no state to carry a parser across calls, and parser
+/// construction is a cheap once-per-file allocation.
+#[cfg(feature = "code-graph")]
+pub(crate) fn extract_and_store(store: &super::db::Store, key: &str, body: &str) {
+    let mut extractor = match SymbolExtractor::new() {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::debug!("code-graph: extractor init failed: {e}");
+            return;
+        }
+    };
+    let path = std::path::Path::new(key);
+    match extractor.extract(path, body) {
+        Ok((symbols, call_edges)) => {
+            // Definitions (everything except imports)
+            for sym in symbols.iter().filter(|s| s.kind != SymbolKind::Import) {
+                if let Err(e) = store.insert_symbol(
+                    &sym.name,
+                    &sym.kind.to_string(),
+                    key,
+                    sym.start_line,
+                    sym.end_line,
+                ) {
+                    tracing::debug!("code-graph: insert_symbol {key} {}: {e}", sym.name);
+                }
+            }
+            // Caller -> callee edges
+            for edge in call_edges {
+                if let Err(e) = store.insert_call_edge(&edge.caller, &edge.callee, key, edge.line) {
+                    tracing::debug!("code-graph: insert_call_edge {key} {}: {e}", edge.caller);
+                }
+            }
+            // Imports tracked separately
+            for sym in symbols.iter().filter(|s| s.kind == SymbolKind::Import) {
+                if let Err(e) = store.insert_import(&sym.name, key, sym.start_line) {
+                    tracing::debug!("code-graph: insert_import {key} {}: {e}", sym.name);
+                }
+            }
+        }
+        Err(e) => tracing::debug!("code-graph: failed to extract symbols from {key}: {e}"),
     }
 }
 
@@ -345,5 +413,70 @@ impl Drawable for Circle {
         let (symbols, _edges) = extractor.extract(&path, source).unwrap();
 
         assert!(symbols.iter().any(|s| s.kind == SymbolKind::Impl));
+    }
+
+    #[test]
+    fn test_method_call_normalized_to_bare_name() {
+        // `store.insert_symbol(..)` must land as callee `insert_symbol`
+        // (receiver-qualified storage broke callers-of queries — benchmark
+        // found 0 callers of insert_symbol despite 37k edges).
+        let source = r#"
+fn populate(store: &Store) {
+    store.insert_symbol("a", "function", "f.rs", 1, 2);
+}
+"#;
+        let mut extractor = SymbolExtractor::new().unwrap();
+        let path = PathBuf::from("test.rs");
+        let (_symbols, edges) = extractor.extract(&path, source).unwrap();
+
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.caller == "populate" && e.callee == "insert_symbol")
+        );
+    }
+
+    #[test]
+    fn test_enum_variant_constructors_skipped() {
+        // Some/Ok/Err are not functions; they polluted the top of the
+        // callee table (1278 + 698 edges) before the denylist.
+        let source = r#"
+fn wrap(x: u32) -> Option<u32> {
+    let a = Some(x);
+    let b = Ok(1u32);
+    inner(a)
+}
+fn inner(_v: Option<u32>) {}
+"#;
+        let mut extractor = SymbolExtractor::new().unwrap();
+        let path = PathBuf::from("test.rs");
+        let (_symbols, edges) = extractor.extract(&path, source).unwrap();
+
+        assert!(!edges.iter().any(|e| e.callee == "Some" || e.callee == "Ok"));
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.caller == "wrap" && e.callee == "inner")
+        );
+    }
+
+    #[test]
+    fn test_module_path_call_kept_full() {
+        // `Arc::new` has no `.` receiver — a true module path, kept intact.
+        let source = r#"
+use std::sync::Arc;
+fn share() -> Arc<u32> {
+    Arc::new(1u32)
+}
+"#;
+        let mut extractor = SymbolExtractor::new().unwrap();
+        let path = PathBuf::from("test.rs");
+        let (_symbols, edges) = extractor.extract(&path, source).unwrap();
+
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.caller == "share" && e.callee == "Arc::new")
+        );
     }
 }

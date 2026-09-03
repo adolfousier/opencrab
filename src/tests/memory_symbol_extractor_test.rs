@@ -276,3 +276,54 @@ fn test_symbol_kinds() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].0, "function");
 }
+
+/// Benchmark scaffolding: populate the LIVE profile store's symbol graph
+/// from a real repository, bypassing the document layer (the external sweep
+/// already indexed the files as FTS documents; this backfills symbols for
+/// them in one pass).
+///
+/// Ignored by default — run explicitly with:
+///   cargo test --features code-graph --lib populate_live_symbol_graph -- --ignored --nocapture
+#[test]
+#[ignore = "writes to the live profile memory.db — benchmark scaffolding"]
+fn populate_live_symbol_graph() {
+    let repo = "/Users/adolfousierstudio/srv/rs/opencrabs";
+    let db_path = crate::config::opencrabs_home().join("memory/memory.db");
+    let store = Store::open(&db_path).expect("open live store");
+    store.ensure_symbol_tables().expect("ensure symbol tables");
+
+    let mut files = 0usize;
+    let mut failures = 0usize;
+    let mut stack = vec![std::path::PathBuf::from(repo)];
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if name != "target" && name != ".git" && name != "node_modules" {
+                    stack.push(path);
+                }
+            } else if name.ends_with(".rs") {
+                let key = path.to_string_lossy().to_string();
+                match std::fs::read_to_string(&path) {
+                    Ok(body) => {
+                        files += 1;
+                        crate::memory::symbol_extractor::extract_and_store(&store, &key, &body);
+                    }
+                    Err(_) => failures += 1,
+                }
+            }
+        }
+    }
+
+    let (symbols, edges, imports) = store.symbol_graph_counts().unwrap();
+    println!(
+        "populated: files={files} failures={failures} symbols={symbols} call_edges={edges} imports={imports}"
+    );
+    assert!(files > 1000, "expected the whole repo, got {files} files");
+    assert!(symbols > 0, "no symbols extracted");
+}
