@@ -1553,7 +1553,7 @@ impl Config {
 /// Used by migration so users can discover the feature by uncommenting lines in config.toml.
 /// Pure text-level operation — preserves all existing formatting and comments.
 fn inject_subagent_defaults(content: &str) -> Result<String> {
-    let comment_block = "\n# Sub-agent routing — override the parent session's provider for\n# spawned agents, team members, and background workers.\n# subagent_provider = \"anthropic\"    # e.g. openrouter, minimax, custom:ollama\n# subagent_model = \"claude-sonnet-4-6\"  # only used when subagent_provider is set\n";
+    let comment_block = "\n# Sub-agent routing — override the parent session's provider for\n# spawned agents, team members, and background workers.\n# subagent_provider = \"anthropic\"    # e.g. openrouter, minimax, or a [providers.custom.<name>] name such as ollama\n# subagent_model = \"claude-sonnet-4-6\"  # only used when subagent_provider is set\n";
     inject_into_agent_section(content, comment_block)
 }
 

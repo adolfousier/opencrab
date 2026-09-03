@@ -3060,6 +3060,34 @@ self_improvement_provider = "<your-provider-name>"   # provider for RSI cycles
 self_improvement_model    = "<model-id-on-that-provider>"   # paired model
 ```
 
+**The provider name is the config section name, nothing more.** For a built-in
+provider it is the section: `[providers.zhipu]` is `"zhipu"`. For a custom
+provider it is the last segment of the table path: `[providers.custom.moonshotai]`
+is `"moonshotai"`, not `"custom:moonshotai"` and not `"custom.moonshotai"`. The
+`custom` in the path says where the section lives, it is not part of the name,
+and every custom provider in `/models` is listed by that bare name. The provider
+key takes a provider only: `"zhipu/glm-5.3"` or `"zhipu:glm-5.3"` belongs across
+the two keys, `self_improvement_provider = "zhipu"` and
+`self_improvement_model = "glm-5.3"`. The same rule applies to
+`subagent_provider`, `plan_provider` and `execute_provider`.
+
+```toml
+[providers.custom.moonshotai]
+base_url = "https://api.moonshot.ai/v1"
+default_model = "kimi-k2"
+
+[agent]
+self_improvement_provider = "moonshotai"   # the section name, no "custom:" prefix
+self_improvement_model    = "kimi-k2"
+```
+
+RSI recognises the two common slips anyway: a `custom:` prefix is dropped, and a
+`<provider>/<model>` value whose head is one of your configured providers is
+split into the pair, with a warning in the log naming the canonical spelling.
+Before that, a prefixed value never built a provider and every cycle died
+silently before it started, which Mission Control reported as "RSI has never
+run".
+
 **Plan and Execute Provider and Model** — run `/plan` and `/execute` on different provider+model pairs, so designing and building each get the model they suit. Set them under `[agent]`, paired exactly like `subagent_provider`/`subagent_model`. All four are optional, and leaving them unset changes nothing: an install that sets none of them behaves exactly as before.
 
 ```toml
