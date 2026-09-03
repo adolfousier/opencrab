@@ -1,10 +1,12 @@
 // The `Backend` trait returns `Bytes` for sessions/prekeys. `bytes` is
 // not a direct dependency, so we name the identical (cargo-unified) type via
 // axum's public re-export.
-use super::*;
+use super::Store;
+use super::errors::{OptionalExt, db_err, interact_to_store_err, pool_err};
 use async_trait::async_trait;
 use axum::body::Bytes;
 use rusqlite::params;
+use wacore::store::error::{Result, StoreError};
 use wacore::store::traits::SignalStore;
 
 #[async_trait]

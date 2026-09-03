@@ -10,7 +10,7 @@
 //! It becomes possible the moment the user's `ssh` opens a reverse forward:
 //!
 //! ```text
-//! ssh -R 8765:localhost:8765 root@vps
+//! ssh -R 127.0.0.1:8765:localhost:8765 root@vps
 //! ```
 //!
 //! That is a real channel on the SAME connection, tunnelling back to a small
@@ -152,16 +152,58 @@ pub fn authorize(requested: &str, roots: &[PathBuf]) -> Result<PathBuf, Refusal>
     Ok(resolved)
 }
 
-/// The port the VPS side should dial, when the user opened the forward.
+/// Environment markers every shell prompt uses to tell an SSH session apart.
+/// A non-empty value for any of them means the terminal is on another
+/// machine, which is the only situation a drop tunnel can exist in.
+pub const SSH_MARKERS: [&str; 3] = ["SSH_CONNECTION", "SSH_TTY", "SSH_CLIENT"];
+
+/// A tunnel the VPS side may dial for a dropped file (#1311).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tunnel {
+    pub port: u16,
+    /// `true` when [`DROP_PORT_VAR`] named the port. A declared tunnel that
+    /// does not answer is an error worth showing. A probed one that does not
+    /// answer is the ordinary "no agent running" case and falls back to the
+    /// copy guidance without a word.
+    pub declared: bool,
+}
+
+/// Decide whether there is a tunnel to try, from the environment `var`
+/// reads. Pure so every branch is testable.
 ///
-/// `None` means no tunnel, which is the ordinary case and not an error: the
-/// caller falls back to telling the user how to copy the file across.
-pub fn tunnel_port() -> Option<u16> {
-    std::env::var(DROP_PORT_VAR).ok()?.trim().parse().ok()
+/// [`DROP_PORT_VAR`] set to a port declares the tunnel. Absent (or
+/// unparseable) over an SSH session means probe [`DEFAULT_DROP_PORT`], which
+/// is what the documented `ssh -R 127.0.0.1:8765:localhost:8765` opens: nobody should
+/// have to export a variable on the server for the documented flow to work.
+/// Off SSH there is nothing to dial.
+pub fn tunnel_from(var: impl Fn(&str) -> Option<String>) -> Option<Tunnel> {
+    if let Some(port) = var(DROP_PORT_VAR).and_then(|v| v.trim().parse().ok()) {
+        return Some(Tunnel {
+            port,
+            declared: true,
+        });
+    }
+    let over_ssh = SSH_MARKERS
+        .iter()
+        .any(|k| var(k).is_some_and(|v| !v.trim().is_empty()));
+    over_ssh.then_some(Tunnel {
+        port: DEFAULT_DROP_PORT,
+        declared: false,
+    })
+}
+
+/// [`tunnel_from`] over the live process environment.
+pub fn tunnel() -> Option<Tunnel> {
+    tunnel_from(|k| std::env::var(k).ok())
 }
 
 /// The `ssh` invocation that opens the tunnel, for documentation and for the
 /// message shown when no tunnel is present.
+///
+/// The bind address is spelled out: a bare `-R port:...` leaves it to the
+/// server's `GatewayPorts` setting, and `yes` there would put the laptop's
+/// served folders on every interface of the VPS. `127.0.0.1` is honoured
+/// regardless, so the line we hand out is loopback-only by construction.
 pub fn ssh_hint(user_and_host: &str, port: u16) -> String {
-    format!("ssh -R {port}:localhost:{port} {user_and_host}")
+    format!("ssh -R 127.0.0.1:{port}:localhost:{port} {user_and_host}")
 }

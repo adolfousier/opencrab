@@ -1,8 +1,10 @@
-use super::*;
+use super::Store;
+use super::errors::{OptionalExt, db_err, interact_to_store_err, pool_err};
 use async_trait::async_trait;
 use rusqlite::params;
 use wacore::appstate::hash::HashState;
 use wacore::appstate::processor::AppStateMutationMAC;
+use wacore::store::error::{Result, StoreError};
 use wacore::store::traits::{AppStateSyncKey, AppSyncStore};
 
 #[async_trait]

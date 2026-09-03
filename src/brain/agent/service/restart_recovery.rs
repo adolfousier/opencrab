@@ -125,36 +125,6 @@ pub fn deliver_or_park(session_id: Uuid, msg: QueuedUserMessage) -> bool {
     false
 }
 
-/// Park `msg` without consulting the route table at all (#21).
-///
-/// The caller already knows the session's own surface cannot take the
-/// message right now — that is what parking means. Going back through
-/// [`deliver_or_park`] would re-consult the very route whose surface just
-/// refused the message, and if the refusal is stable (insert-only routes,
-/// channel owned by a successor) the two functions bounce the message in a
-/// zero-sleep hot loop: two WARN lines per cycle, ~80% of a core and
-/// ~13 MB/s of log observed live on 2026-08-28, re-arming after every
-/// restart until the guard that caused it was deleted (#19).
-///
-/// A message parked here leaves only on a fresh [`claim_session`] for that
-/// session — re-run on every inbound message, so a live session still
-/// drains promptly — or on [`flush_parked`] when the grace period ends.
-#[allow(dead_code)] // upstream-dead: adolfo's tree runs no -D warnings gate (no ci.yml); fork pr-checks.yml requires it
-pub fn park_unconditional(session_id: Uuid, msg: QueuedUserMessage) {
-    match PARKED.lock() {
-        Ok(mut parked) => parked.push((session_id, msg)),
-        Err(e) => {
-            // Same shape as the park arm of deliver_or_park: the message is
-            // about to vanish, which is the exact failure this module
-            // exists to prevent.
-            tracing::error!(
-                target: "background_task",
-                "Could not park message for session {session_id}, it is lost: {e}"
-            );
-        }
-    }
-}
-
 /// Hand a newly routed session everything parked for it.
 ///
 /// Called when a surface registers a route, so a channel that connects after
@@ -332,9 +302,7 @@ pub async fn report_interrupted() -> usize {
         // landed on the local surface — the shape #940 fixed for completions
         // and left standing here. Startup runs before channels register, so
         // an unclaimed session parks rather than mis-delivers (#1037).
-        if !deliver_or_park(row.session_id, interrupted_message(&row)) {
-            super::boot_report::record_parked();
-        }
+        deliver_or_park(row.session_id, interrupted_message(&row));
         count += 1;
 
         // Clear per row, only after it is accounted for. clear_all() used to
@@ -394,11 +362,9 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
     let orphans = crate::brain::tools::subagent::reconcile::reconcile_orphaned_agents();
     let mut reported = 0usize;
     for orphan in orphans {
-        match Uuid::parse_str(&orphan.parent_session_id) {
+        match Uuid::parse_str(&orphan.session_id) {
             Ok(session_id) => {
-                if !deliver_or_park(session_id, subagent_interrupted_message(&orphan)) {
-                    super::boot_report::record_parked();
-                }
+                deliver_or_park(session_id, subagent_interrupted_message(&orphan));
                 reported += 1;
             }
             Err(e) => {
@@ -409,7 +375,7 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
                     "Sub-agent '{}' has an unparseable parent session '{}', its interruption \
                      cannot be reported: {e}",
                     orphan.label,
-                    orphan.parent_session_id
+                    orphan.session_id
                 );
             }
         }
@@ -443,14 +409,14 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
 /// not finish and hand the decision back, rather than letting the agent read
 /// an absent result as either success or failure.
 fn subagent_interrupted_message(
-    status: &crate::brain::tools::subagent::status::AgentStatus,
+    status: &crate::brain::agent::service::work_status::WorkStatus,
 ) -> QueuedUserMessage {
     let context_text = format!(
         "[SUB-AGENT INTERRUPTED] The sub-agent `{}` (id {}) was still running when OpenCrabs \
          restarted, so it was killed and produced no result. Its task was:\n\n```\n{}\n```\n\nIt \
          did NOT complete. Decide whether to spawn it again based on what you were doing; do not \
          assume it succeeded or failed.",
-        status.label, status.id, status.prompt
+        status.label, status.id, status.task
     );
     QueuedUserMessage {
         context_text,

@@ -652,10 +652,11 @@ fallback to `tool_search` on failure, never assume a tool is unavailable without
 brain rule only names the tool without the search reminder, the agent will guess parameters or skip \
 the tool entirely. Always include the search-then-call pattern.";
 
-/// Resolve the provider RSI cycles run on (#977), in preference order:
+/// Resolve the provider (and model) RSI cycles run on (#977), in preference order:
 ///
-/// 1. `[agent] self_improvement_provider` — explicit override, trusted as-is
-///    (a dead one is caught and demoted at runtime by the #469 fallback).
+/// 1. `[agent] self_improvement_provider` — explicit override, normalised
+///    (#1314) then trusted (a dead one is caught and demoted at runtime by
+///    the #469 fallback).
 /// 2. `[agent] default_provider` — the pair the user declared for their own
 ///    sessions, when it is healthy.
 /// 3. The first healthy entry of the `[providers.fallback]` chain, in the
@@ -666,11 +667,30 @@ the tool entirely. Always include the search-then-call pattern.";
 /// any install with an enabled keyed xiaomi section ran RSI on that expensive
 /// 1M-window pair regardless of what the user actually chatted on. No
 /// hardcoded provider preference survives this ladder.
-pub(crate) fn resolve_rsi_provider(config: &Config) -> String {
-    if let Some(explicit) = config.agent.self_improvement_provider.as_deref() {
-        return explicit.to_string();
+///
+/// The explicit override is normalised first: a `custom:` table-path prefix
+/// is dropped and a `<provider>/<model>` spelling is split, because a value
+/// taken verbatim fails to build a provider and every cycle dies before it
+/// starts (#1314). The returned `note` names what was corrected; the cycle
+/// logs it once.
+pub(crate) fn resolve_rsi_pair(config: &Config) -> crate::brain::provider_spec::ProviderPair {
+    let model_key = config.agent.self_improvement_model.as_deref();
+    match config.agent.self_improvement_provider.as_deref() {
+        Some(explicit) => crate::brain::provider_spec::normalize_in(
+            config,
+            crate::brain::provider_spec::ProviderKey::SELF_IMPROVEMENT,
+            explicit,
+            model_key,
+        ),
+        None => crate::brain::provider_spec::ProviderPair {
+            provider: resolve_rsi_provider_default(config),
+            model: model_key
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(str::to_string),
+            note: None,
+        },
     }
-    resolve_rsi_provider_default(config)
 }
 
 /// The ladder without the explicit self-improvement override — where a dead
@@ -984,8 +1004,17 @@ async fn run_rsi_agent_cycle(
     // old code started from the registry walk, which prefers xiaomi by
     // hardcoded order and put RSI on the expensive 1M-window pair.
     let active_provider = resolve_rsi_provider_default(config);
-    let provider_name_owned = resolve_rsi_provider(config);
-    let provider_name = provider_name_owned.as_str();
+    let pair = resolve_rsi_pair(config);
+    if let Some(note) = pair.note.as_deref() {
+        // Once per cycle, so a config that keeps the wrong spelling keeps
+        // being told the canonical one (#1314).
+        tracing::warn!(
+            "RSI: self_improvement_provider corrected to '{}': {note}",
+            pair.provider
+        );
+    }
+    let provider_name = pair.provider.as_str();
+    let configured_model = pair.model.clone();
 
     // #469 part A: a dead self_improvement_provider (missing key, typo,
     // removed section) must not kill the cycle — fall back to the user's
@@ -1065,7 +1094,7 @@ async fn run_rsi_agent_cycle(
                 .create_session_with_provider(
                     Some("RSI autonomous cycle".to_string()),
                     Some(provider_name.to_string()),
-                    config.agent.self_improvement_model.clone(),
+                    configured_model.clone(),
                     None,
                 )
                 .await?
@@ -1082,7 +1111,7 @@ async fn run_rsi_agent_cycle(
     // Re-checked every cycle, not just at creation, or a later config change
     // silently keeps the old pair, which is exactly the bug.
     {
-        let configured_model = config.agent.self_improvement_model.clone();
+        let configured_model = configured_model.clone();
         let pair_is_stale = rsi_pair_is_stale(
             session.provider_name.as_deref(),
             session.model.as_deref(),
@@ -1121,7 +1150,7 @@ async fn run_rsi_agent_cycle(
     // findings when the gated scan produced any).
     let prompt = build_cycle_prompt(opportunities, &stale_scan_prompt_block(&stale_input));
 
-    let model = config.agent.self_improvement_model.clone();
+    let model = configured_model;
 
     // Counted before and after so a cycle that ignores its capability gaps is
     // visible in the log instead of closing as a success (#842).

@@ -1148,7 +1148,7 @@ impl AgentService {
                 return;
             }
         };
-        let desired = super::plan_mode_provider::override_for(state, &config.agent);
+        let desired = super::plan_mode_provider::normalized_override_for(state, &config);
 
         // Cheap: both are in-memory map reads.
         let current_provider = self.provider_for_session(session_id);

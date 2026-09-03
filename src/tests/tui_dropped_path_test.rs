@@ -1,6 +1,6 @@
 //! Finding a drag-dropped path inside a typed message (#1288).
 //!
-//! `extract_image_paths` had two branches that disagreed about spaces. Case 1
+//! `extract_attachments` had two branches that disagreed about spaces. Case 1
 //! unescapes and resolves properly but requires the path to be the WHOLE
 //! message, so any trailing prose kills it. Case 2 handles prose but iterates
 //! `split_whitespace`, so `Screenshot 2026-09-01 at 18.18.16.png` shattered
@@ -44,7 +44,9 @@ fn test_a_spaced_path_followed_by_prose_still_attaches() {
     let f = Fixture::new("prose", "Screenshot 2026-09-01 at 18.18.16.png");
     let msg = format!("{} can you see this image by any chance", f.path);
 
-    let (clean, atts) = App::extract_image_paths(&msg);
+    let e = App::extract_attachments(&msg);
+
+    let (clean, atts) = (e.text, e.attachments);
     assert_eq!(
         atts.len(),
         1,
@@ -68,7 +70,9 @@ fn test_the_shell_escaped_form_attaches_too() {
     let f = Fixture::new("escaped", "My Shot 3.png");
     let msg = format!("{} what is in it", f.path.replace(' ', "\\ "));
 
-    let (_clean, atts) = App::extract_image_paths(&msg);
+    let e = App::extract_attachments(&msg);
+
+    let (_clean, atts) = (e.text, e.attachments);
     assert_eq!(atts.len(), 1, "#1288: escaped drop with prose must attach");
     assert_eq!(atts[0].path, f.path);
 }
@@ -80,7 +84,9 @@ fn test_longest_match_wins_over_a_trailing_fragment() {
     let f = Fixture::new("longest", "My File.png");
     let msg = format!("look at {} please", f.path);
 
-    let (_clean, atts) = App::extract_image_paths(&msg);
+    let e = App::extract_attachments(&msg);
+
+    let (_clean, atts) = (e.text, e.attachments);
     assert_eq!(atts.len(), 1);
     assert_eq!(
         atts[0].path, f.path,
@@ -96,7 +102,9 @@ fn test_a_path_from_another_machine_is_marked_not_forwarded() {
     let msg = "/Users/someone/Downloads/Screenshot 2026-09-01 at 18.18.16.png \
                can you see this image";
 
-    let (clean, atts) = App::extract_image_paths(msg);
+    let e = App::extract_attachments(msg);
+
+    let (clean, atts) = (e.text, e.attachments);
     assert!(atts.is_empty(), "nothing to attach: {atts:?}");
     assert!(
         clean.contains("[attachment unavailable:"),
@@ -120,12 +128,15 @@ fn test_a_path_from_another_machine_is_marked_not_forwarded() {
 fn test_a_space_free_path_and_a_url_still_work() {
     // The paths that already worked must keep working.
     let f = Fixture::new("plain", "nospace.png");
-    let (clean, atts) = App::extract_image_paths(&format!("{} describe it", f.path));
+    let e = App::extract_attachments(&format!("{} describe it", f.path));
+    let (clean, atts) = (e.text, e.attachments);
     assert_eq!(atts.len(), 1);
     assert_eq!(atts[0].path, f.path);
     assert!(clean.contains("describe it"));
 
-    let (_c, atts) = App::extract_image_paths("https://example.com/pic.png what is this");
+    let e = App::extract_attachments("https://example.com/pic.png what is this");
+
+    let (_c, atts) = (e.text, e.attachments);
     assert_eq!(atts.len(), 1, "URLs are still picked up");
     assert_eq!(atts[0].path, "https://example.com/pic.png");
 }
@@ -133,7 +144,8 @@ fn test_a_space_free_path_and_a_url_still_work() {
 #[test]
 fn test_prose_alone_is_untouched() {
     let msg = "can you look at the png file I mentioned earlier";
-    let (clean, atts) = App::extract_image_paths(msg);
+    let e = App::extract_attachments(msg);
+    let (clean, atts) = (e.text, e.attachments);
     assert!(atts.is_empty());
     assert_eq!(clean.trim(), msg, "ordinary prose must pass through");
 }
@@ -153,7 +165,8 @@ fn test_extension_must_end_at_a_word_boundary() {
 #[test]
 fn test_video_drops_are_flagged_as_video() {
     let f = Fixture::new("video", "Clip 1.mp4");
-    let (_clean, atts) = App::extract_image_paths(&format!("{} summarise it", f.path));
+    let e = App::extract_attachments(&format!("{} summarise it", f.path));
+    let (_clean, atts) = (e.text, e.attachments);
     assert_eq!(atts.len(), 1);
     assert!(atts[0].is_video, "#1288: a dropped video must stay a video");
 }

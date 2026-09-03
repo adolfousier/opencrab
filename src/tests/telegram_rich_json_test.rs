@@ -5,7 +5,7 @@
 //! `is_open`) — the native collapse the markdown input mode cannot express.
 
 use crate::channels::telegram::rich::ast::{Block, MermaidResult};
-use crate::channels::telegram::rich::parse_markdown;
+use crate::channels::telegram::rich::parse::parse_markdown;
 use crate::channels::telegram::rich::render_json::{input_rich_message, render_block};
 
 // ── top-level envelope ───────────────────────────────────────────────

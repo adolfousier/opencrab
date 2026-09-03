@@ -1,6 +1,8 @@
 //! Repository Module
 //!
-//! Repository pattern implementations for database access.
+//! Repository pattern implementations for database access. One module per
+//! table; [`traits`] holds the generic CRUD contract. This file is
+//! declarations only — no function definitions live here (CONTRIBUTING.md).
 
 pub mod analytics_event;
 pub mod background_task;
@@ -18,6 +20,7 @@ pub mod recent_paths;
 pub mod session;
 pub mod session_binding;
 pub mod tool_execution;
+mod traits;
 pub mod usage_ledger;
 
 pub use analytics_event::AnalyticsEventRepository;
@@ -36,25 +39,5 @@ pub use recent_paths::RecentPathsRepository;
 pub use session::{SessionListOptions, SessionRepository};
 pub use session_binding::SessionBindingRepository;
 pub use tool_execution::ToolExecutionRepository;
+pub use traits::Repository;
 pub use usage_ledger::UsageLedgerRepository;
-
-use anyhow::Result;
-
-/// Repository trait for common database operations
-#[async_trait::async_trait]
-pub trait Repository<T> {
-    /// Find entity by ID
-    async fn find_by_id(&self, id: &str) -> Result<Option<T>>;
-
-    /// Create a new entity
-    async fn create(&self, entity: &T) -> Result<()>;
-
-    /// Update an existing entity
-    async fn update(&self, entity: &T) -> Result<()>;
-
-    /// Delete an entity by ID
-    async fn delete(&self, id: &str) -> Result<()>;
-
-    /// List all entities
-    async fn list(&self) -> Result<Vec<T>>;
-}

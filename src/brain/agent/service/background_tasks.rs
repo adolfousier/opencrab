@@ -42,7 +42,7 @@ pub struct BackgroundTaskManager {
     running: Mutex<HashMap<Uuid, Vec<RunningTask>>>,
 }
 
-use super::detached_status::{self, DetachedFinish};
+use super::work_status::{CommandExit, WorkStatus};
 
 impl BackgroundTaskManager {
     pub fn new() -> Self {
@@ -110,7 +110,17 @@ impl BackgroundTaskManager {
         // spawn with label/command/session, so tasks_list consumers can see
         // what a detached command IS before it finishes. Best-effort: never
         // fatal to the command itself.
-        detached_status::write_started(task_id, session_id, &label, &command);
+        if let Err(e) = WorkStatus::new_command(
+            &task_id.to_string(),
+            &session_id.to_string(),
+            &label,
+            &command,
+        ) {
+            tracing::warn!(
+                target: "background_task",
+                "Could not write detached status for {task_id}: {e}"
+            );
+        }
         tokio::spawn(async move {
             // Log the START as well as the finish. Only completions were
             // logged, so a task that never finished left no trace of having
@@ -158,18 +168,23 @@ impl BackgroundTaskManager {
             // Gap 2 (#1160): rewrite the status file with exit info, so any
             // reader between process-exit and session-resume sees the
             // terminal state instead of a forever-running spawn record.
-            detached_status::write_finished(
-                task_id,
-                session_id,
+            if let Err(e) = WorkStatus::finish_command(
+                &task_id.to_string(),
+                &session_id.to_string(),
                 &label,
                 &command,
-                DetachedFinish {
+                CommandExit {
                     success: result.success,
                     code: result.code,
                     elapsed_secs,
                     output_bytes: result.output.len(),
                 },
-            );
+            ) {
+                tracing::warn!(
+                    target: "background_task",
+                    "Could not write detached status for {task_id}: {e}"
+                );
+            }
             let msg = completion_message(&label, &command, &result, elapsed_secs);
             if let Some(repo) = task_repo()
                 && let Err(e) = repo.clear(task_id).await

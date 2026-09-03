@@ -1,10 +1,10 @@
 //! spawn_agent tool — creates a child agent with forked context.
 //!
-//! Sub-agent progress is streamed to `~/.opencrabs/tmp/subagents/<agent_id>.json`
+//! Sub-agent progress is streamed to `~/.opencrabs/tmp/detached/<agent_id>.json`
 //! so the main orchestrator can track status without session_search.
 
 use super::manager::{SubAgent, SubAgentManager};
-use super::status::AgentStatus;
+use crate::brain::agent::service::work_status::{WorkState, WorkStatus};
 use crate::brain::tools::error::{Result, ToolError};
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
@@ -91,6 +91,9 @@ pub(crate) fn push_result(
     use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
 
     let msg = completion_message(label, agent_id, outcome);
+    // interrupt=true (fork #13): a sub-agent completion is the parent's own
+    // awaited work — it must reach the parent even mid-turn, exactly as
+    // before the gate existed.
     match deliver_to_session(parent_session_id, msg, true) {
         Delivery::Delivered => {
             tracing::info!(
@@ -360,19 +363,17 @@ impl Tool for SpawnAgentTool {
         // Load config and extract model override before entering block scope
         let config = crate::config::Config::load()
             .map_err(|e| ToolError::Execution(format!("Config load failed: {}", e)))?;
-        // Precedence: per-call model > config.subagent_model > None
-        // (when None, the child uses its provider's default model).
-        let model_override = call_model
-            .clone()
-            .or_else(|| config.agent.subagent_model.clone());
-
-        // Resolve the effective provider name with the same precedence:
-        // per-call provider > config.subagent_provider > parent default.
-        // Captured for the log line so users picking a model on a
-        // different provider can see which one was actually used.
-        let effective_provider_name = call_provider
-            .clone()
-            .or_else(|| config.agent.subagent_provider.clone());
+        // Precedence: per-call > config > parent default, for provider and
+        // model alike; the winning value is normalised so "custom:<name>"
+        // or "<provider>/<model>" resolves to the provider it names (#1316).
+        // When the model is None the child uses its provider's default.
+        let child = super::provider_pair::child_pair(
+            &config,
+            call_provider.as_deref(),
+            call_model.as_deref(),
+        );
+        let model_override = child.model.clone();
+        let effective_provider_name = child.provider.clone();
 
         // Build a minimal AgentService for the child
         let child_service = {
@@ -385,10 +386,9 @@ impl Tool for SpawnAgentTool {
                 match crate::brain::provider::create_provider_by_name(&config, provider_name).await
                 {
                     Ok(p) => {
-                        let source = if call_provider.is_some() {
-                            "per-call"
-                        } else {
-                            "config"
+                        let source = match child.source {
+                            super::provider_pair::ProviderSource::PerCall => "per-call",
+                            super::provider_pair::ProviderSource::Config => "config",
                         };
                         tracing::info!("Sub-agent using {source} provider '{provider_name}'");
                         p
@@ -487,7 +487,7 @@ impl Tool for SpawnAgentTool {
         // Create the status file in Pending state before spawning. new()
         // writes the file; we don't need the returned handle, but we do
         // propagate any write error.
-        let _ = AgentStatus::new(
+        let _ = WorkStatus::new_agent(
             &agent_id,
             &label,
             &child_session_id.to_string(),
@@ -512,8 +512,8 @@ impl Tool for SpawnAgentTool {
             tracing::info!("Sub-agent {} starting: {}", agent_id_clone, prompt_clone);
 
             // Transition to Running state.
-            let mut status = AgentStatus::read(&agent_id_clone).unwrap_or_else(|| {
-                AgentStatus::new(
+            let mut status = WorkStatus::read(&agent_id_clone).unwrap_or_else(|| {
+                WorkStatus::new_agent(
                     &agent_id_clone,
                     &label_clone,
                     &child_session_id.to_string(),
@@ -521,10 +521,8 @@ impl Tool for SpawnAgentTool {
                 )
                 .expect("status file")
             });
-            if !matches!(
-                status.state,
-                super::status::AgentState::Completed | super::status::AgentState::Failed
-            ) && let Err(e) = status.mark_running()
+            if !matches!(status.state, WorkState::Completed | WorkState::Failed)
+                && let Err(e) = status.mark_running()
             {
                 tracing::warn!("Failed to write running status: {e}");
             }

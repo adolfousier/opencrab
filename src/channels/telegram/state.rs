@@ -172,6 +172,11 @@ pub struct TelegramState {
     /// next message re-evaluates instead of trusting a stale snapshot — the
     /// exact staleness class Gap 2 of #1155 describes.
     solo_evaluated: Mutex<HashMap<i64, bool>>,
+    /// Skills signature at the time the command menus were last published
+    /// (#1317). Compared on every inbound message by `menu_refresh`; a
+    /// mismatch re-publishes the scoped menus so new/edited skills appear
+    /// in the `/` picker without a restart or config write.
+    menu_skills_sig: Mutex<Option<u64>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Persistent plan-card message per session (#580): the single Telegram
@@ -331,6 +336,7 @@ impl TelegramState {
             pending_followups: Mutex::new(HashMap::new()),
             stale_hosts: Mutex::new(VecDeque::new()),
             solo_evaluated: Mutex::new(HashMap::new()),
+            menu_skills_sig: Mutex::new(None),
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
             plan_card_store: Mutex::new(None),
@@ -530,6 +536,32 @@ impl TelegramState {
         self.solo_evaluated.lock().await.remove(&chat_id);
     }
 
+    /// Chats auto-registered as solo-owner groups (#1155): eligible and
+    /// currently menu-published. `menu_refresh` re-publishes exactly these
+    /// on skills changes, since `maybe_auto_register` evaluates each chat
+    /// once and never revisits an already-evaluated chat (#1317).
+    pub async fn solo_registered_chats(&self) -> Vec<i64> {
+        self.solo_evaluated
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, eligible)| **eligible)
+            .map(|(chat_id, _)| *chat_id)
+            .collect()
+    }
+
+    /// Skills signature at the last menu publish, if menus were ever
+    /// published in this process (#1317).
+    pub async fn menu_skills_sig(&self) -> Option<u64> {
+        *self.menu_skills_sig.lock().await
+    }
+
+    /// Record the skills signature the current menus were published
+    /// under (#1317).
+    pub async fn set_menu_skills_sig(&self, sig: u64) {
+        *self.menu_skills_sig.lock().await = Some(sig);
+    }
+
     /// Check if Telegram is currently connected.
     pub async fn is_connected(&self) -> bool {
         self.bot.lock().await.is_some()
@@ -703,6 +735,7 @@ impl TelegramState {
         options: Vec<String>,
     ) -> String {
         let token = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let count = options.len();
         let entry = PendingFollowupEntry {
             session_id,
             options,
@@ -713,6 +746,12 @@ impl TelegramState {
             .await
             .insert(token.clone(), entry.clone());
         self.persist_followup(&token, &entry).await;
+        // #1226: stash lifecycle used to be invisible — a register line lets
+        // every later tap be mapped to the arm that minted its token.
+        tracing::info!(
+            "Telegram followups: registered stash token {token} for session \
+             {session_id} ({count} options)"
+        );
         token
     }
 
@@ -781,8 +820,11 @@ impl TelegramState {
 
     /// Forget an unused registration (buttons never landed).
     pub(crate) async fn drop_pending_followup(&self, token: &str) {
-        self.pending_followups.lock().await.remove(token);
+        let existed = self.pending_followups.lock().await.remove(token).is_some();
         self.forget_followup(token).await;
+        if existed {
+            tracing::info!("Telegram followups: dropped unplaced stash token {token}");
+        }
     }
 
     /// Take a tapped follow-up suggestion by index, consuming the WHOLE set for
@@ -822,8 +864,9 @@ impl TelegramState {
         // rendering inside the bubble body. Without the rescued shape the
         // stale-shell tap can only try a blind markup strip, which on a rich
         // host is a guaranteed "message is not modified" no-op (the zombie).
-        let rescued: Vec<(String, MergedHost)> = {
+        let (removed, rescued): (usize, Vec<(String, MergedHost)>) = {
             let mut map = self.pending_followups.lock().await;
+            let before = map.len();
             let mut rescued = Vec::new();
             map.retain(|token, e| {
                 if e.session_id == session_id {
@@ -835,7 +878,7 @@ impl TelegramState {
                     true
                 }
             });
-            rescued
+            (before - map.len(), rescued)
         };
         if !rescued.is_empty() {
             let mut stale = self.stale_hosts.lock().await;
@@ -855,6 +898,15 @@ impl TelegramState {
             && let Err(e) = store.delete_session(&session_id.to_string()).await
         {
             tracing::warn!("Telegram followup store session-clear failed for {session_id}: {e}");
+        }
+        drop(guard);
+        if removed > 0 {
+            // #1226: the #597 wipe used to leave zero log lines, which made
+            // stale-shell taps impossible to explain from logs alone.
+            tracing::info!(
+                "Telegram followups: cleared {removed} stale stash entries for \
+                 session {session_id} (#597 — user sent their own message)"
+            );
         }
     }
 

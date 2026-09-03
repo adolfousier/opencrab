@@ -12,7 +12,7 @@
 //! present; the body excerpt is appended when the API itself
 //! returned an explanation.
 
-use crate::brain::tools::evolve::diagnose_releases_latest_status;
+use crate::brain::tools::evolve::release_check::diagnose_releases_latest_status;
 use reqwest::StatusCode;
 
 #[test]

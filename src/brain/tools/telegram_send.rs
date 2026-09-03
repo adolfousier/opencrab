@@ -112,8 +112,11 @@ pub(crate) async fn resolve_input_file(
 /// Resolve a forum-topic `thread_id` for a proactive Telegram send.
 ///
 /// Precedence:
+///   0. Explicit `thread_id: null` — "General / no thread". Distinct from
+///      the field being absent, which means "wherever this session lives".
 ///   1. Explicit `thread_id` field in the tool input — the agent
-///      asked for a specific topic, honour it. Lets cron jobs / the
+///      asked for a specific topic, honour it (thread 1 means General, so it
+///      resolves to no thread). Lets cron jobs / the
 ///      agent route messages to a topic OTHER than the most recent
 ///      one (e.g. "post the release notes in #announcements even
 ///      though the last message came from #dev").
@@ -134,19 +137,32 @@ pub(crate) async fn resolve_thread_id(
     session_id: Uuid,
     state: &TelegramState,
 ) -> Option<teloxide::types::ThreadId> {
+    // Explicit null is "post to General / no thread", and is distinct from
+    // the field being ABSENT, which means "wherever this session lives"
+    // (#1319). Without the distinction there was no way to express General at
+    // all: omitting the field fell through to the session topic below, which
+    // put the synthetic 1 back on the wire, so naming the topic and omitting
+    // it failed identically.
+    if matches!(input.get("thread_id"), Some(serde_json::Value::Null)) {
+        return None;
+    }
     if let Some(tid) = input.get("thread_id").and_then(value_as_i64)
         && let Ok(tid_i32) = i32::try_from(tid)
     {
-        return Some(teloxide::types::ThreadId(teloxide::types::MessageId(
-            tid_i32,
-        )));
+        // Through the boundary: an agent naming thread 1 means General, and
+        // General is addressed by the ABSENCE of a thread.
+        return crate::channels::telegram::session_resolve::delivery_thread_id(Some(tid_i32));
     }
     // Session origin topic — the forum topic this interaction started in, the
     // same in-memory map the interactive-question tool routed through (#450). This is why
     // a reply sent from a topic lands back in that topic without the agent
     // passing thread_id. Cold/cron sessions have no entry, so this is skipped.
     if let Some(tid) = state.session_topic(session_id).await {
-        return Some(teloxide::types::ThreadId(teloxide::types::MessageId(tid)));
+        // Returns even when the boundary yields None: a session bound to
+        // General has a KNOWN address (no thread), so falling through to the
+        // chat-wide lookup below would post into whichever topic spoke last
+        // (#1319).
+        return crate::channels::telegram::session_resolve::delivery_thread_id(Some(tid));
     }
     crate::channels::telegram::send::latest_thread_id_for_chat(chat_id).await
 }

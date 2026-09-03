@@ -302,18 +302,6 @@ pub fn plan_mode_state_of(plan: Option<&PlanDocument>, md_exists: bool) -> PlanM
     }
 }
 
-/// #20: whether plan approval REQUIRES an explicit human signal. Reads
-/// `[agent] plan_require_approval` fresh from disk each call (hot-reload
-/// friendly, same pattern as the isolation flag in `plan_tool`). Defaults
-/// TRUE — the tool auto-approve policy never satisfies the plan approval
-/// gate unless the operator explicitly opts out. Shared by the plan tool's
-/// init arms and the resume demotion below.
-pub(crate) fn plan_require_approval_enabled() -> bool {
-    crate::config::Config::load()
-        .map(|c| c.agent.plan_require_approval)
-        .unwrap_or(true)
-}
-
 /// Load the session plan, applying the legacy lifecycle rules:
 ///
 /// - legacy `Completed` → silently archive both files, return `None`
@@ -330,6 +318,18 @@ pub async fn load_plan(session_id: Uuid) -> Option<PlanDocument> {
 pub const MAX_PLAN_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// [`load_plan`] for callers that already hold the JSON path (TUI).
+/// #20: whether plan approval REQUIRES an explicit human signal. Reads
+/// `[agent] plan_require_approval` fresh from disk each call (hot-reload
+/// friendly, same pattern as the isolation flag in `plan_tool`). Defaults
+/// TRUE — the tool auto-approve policy never satisfies the plan approval
+/// gate unless the operator explicitly opts out. Shared by the plan tool's
+/// init arms and the resume demotion below.
+pub(crate) fn plan_require_approval_enabled() -> bool {
+    crate::config::Config::load()
+        .map(|c| c.agent.plan_require_approval)
+        .unwrap_or(true)
+}
+
 pub fn load_plan_from_path(path: &Path) -> Option<PlanDocument> {
     if let Ok(meta) = std::fs::metadata(path)
         && meta.len() > MAX_PLAN_FILE_SIZE
@@ -537,25 +537,11 @@ pub async fn archive_plan(session_id: Uuid) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Flag path for `session_id` inside its archive dir (#16). Dir-level core
-/// split out so tests can point it at a temp dir instead of the session's
-/// real archive location (mirrors the `recent_archive_in_dir` split, #1158).
-pub(crate) fn just_archived_flag_in_dir(
-    dir: &std::path::Path,
-    session_id: Uuid,
-) -> std::path::PathBuf {
-    dir.join(format!("just_archived_{session_id}.flag"))
-}
-
-/// Dir-level core of [`mark_plan_just_archived`] (#16).
-pub(crate) fn mark_just_archived_in_dir(dir: &std::path::Path, session_id: Uuid) {
-    if let Err(e) = std::fs::create_dir_all(dir) {
-        tracing::warn!("plan just-archived flag mkdir failed: {e}");
-        return;
-    }
-    if let Err(e) = std::fs::write(just_archived_flag_in_dir(dir, session_id), "1") {
-        tracing::warn!("plan just-archived flag write failed: {e}");
-    }
+/// Path of the durable "just archived" sidecar for `session_id`.
+async fn plan_just_archived_path(session_id: Uuid) -> std::path::PathBuf {
+    archive_dir(session_id)
+        .await
+        .join(format!("just_archived_{session_id}.flag"))
 }
 
 /// Stamp that this session's plan was archived on THIS settle.
@@ -569,56 +555,45 @@ pub(crate) fn mark_just_archived_in_dir(dir: &std::path::Path, session_id: Uuid)
 /// settlement past the window, the gate missed, and the archived card was
 /// deleted instead of finalized.
 pub async fn mark_plan_just_archived(session_id: Uuid) {
-    let dir = archive_dir(session_id).await;
-    mark_just_archived_in_dir(&dir, session_id);
-}
-
-/// Dir-level core of [`peek_plan_just_archived`] (#16).
-pub(crate) fn peek_just_archived_in_dir(dir: &std::path::Path, session_id: Uuid) -> bool {
-    just_archived_flag_in_dir(dir, session_id).exists()
-}
-
-/// Non-consuming check for the "just archived" stamp (#16).
-///
-/// The settle restick gate re-checks every settle (per-turn restick, #62),
-/// so a consuming read there would starve every later turn — gate sites
-/// peek; the one-shot consumer that finalizes the completed card still
-/// calls [`take_plan_just_archived`].
-///
-/// Finalization consumes the flag itself, and only after the completed card's
-/// post/edit is confirmed landed (or terminally impossible), so a
-/// flood-interrupted finalize leaves the flag in place and the next settle
-/// retries. Gate sites peek here, then call finalize.
-pub async fn peek_plan_just_archived(session_id: Uuid) -> bool {
-    let dir = archive_dir(session_id).await;
-    peek_just_archived_in_dir(&dir, session_id)
-}
-
-/// Dir-level core of [`take_plan_just_archived`] (#16). Returns `true`
-/// exactly once — for the consumer whose `remove_file` actually removed the
-/// flag; every later call returns `false`.
-pub(crate) fn take_just_archived_in_dir(dir: &std::path::Path, session_id: Uuid) -> bool {
-    match std::fs::remove_file(just_archived_flag_in_dir(dir, session_id)) {
-        Ok(()) => true,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-        Err(e) => {
-            tracing::debug!("plan just-archived flag remove failed: {e}");
-            false
-        }
+    let path = plan_just_archived_path(session_id).await;
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        tracing::warn!("plan just-archived flag mkdir failed: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(&path, "1") {
+        tracing::warn!("plan just-archived flag write failed: {e}");
     }
 }
 
 /// Consume the "just archived" stamp for `session_id`, one-shot.
 ///
-/// Returns `true` exactly once — for the consumer whose `remove_file`
-/// actually removed the sidecar; every later call returns `false`. Since #16
-/// the sole caller is `finalize_plan_card_locked`, which consumes AFTER the
-/// completion notice landed: pre-outcome consumption is exactly what lost
-/// the notice permanently when a flood-pacing hold aborted the settle before
-/// any API call.
+/// Returns `true` exactly once for the settle that archived the plan; every
+/// later call returns `false` (and removes the stale sidecar). The single
+/// consumer (the settle gate, or the `refresh_plan_card` no-live-plan re-stick
+/// on the resume path) is the one that finalizes — the one-shot guard stops
+/// both from finalizing the same completion into duplicate cards.
 pub async fn take_plan_just_archived(session_id: Uuid) -> bool {
-    let dir = archive_dir(session_id).await;
-    take_just_archived_in_dir(&dir, session_id)
+    let path = plan_just_archived_path(session_id).await;
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::debug!("plan just-archived flag remove failed: {e}");
+        }
+        true
+    } else {
+        false
+    }
+}
+
+/// Peek the "just archived" stamp WITHOUT consuming it (#62).
+///
+/// The settle restick gate re-checks every settle (per-turn restick), so a
+/// consuming read there would starve every later turn. Gate sites peek; the
+/// one-shot consumer that finalizes the completed card still calls
+/// [`take_plan_just_archived`].
+pub async fn peek_plan_just_archived(session_id: Uuid) -> bool {
+    plan_just_archived_path(session_id).await.exists()
 }
 
 /// True when the newest file under this session's `archive/` was written

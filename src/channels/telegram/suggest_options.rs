@@ -105,7 +105,7 @@ pub(crate) fn pick_rewrite(
                 // controls — they are rewritten to the picked state
                 // (success+✓+disabled / disabled) instead of stripped, so
                 // the bubble keeps showing what was chosen.
-                format!("{}\n\n{picked}", mark_picked_button(full, picked_idx))
+                format!("{full}\n\n{picked}", picked = mark_picked_button(full, picked_idx))
             } else {
                 // Classic hosts keep their buttons as reply markup (not in
                 // the body) — the empty-markup arm strips those; nothing to
@@ -213,27 +213,16 @@ pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
 /// (`sendRichMessage` probes, messages 29975 + 29991): a single full-width
 /// button fits <=50 chars on one line and wraps by 54. (The original
 /// "shared rows wrap at 11+8=19" claim was DISPROVEN by the 2026-08-31
-/// probes — see [`ROW_BUDGET_CHARS`] and fork issues #49/#52.)
+/// probes — see [`SHARED_ROW_MAX_CHARS`] and fork issue #49.)
 pub(crate) const MAX_BUTTON_CHARS: usize = 50;
-/// Shared-row BUDGET model (owner-directed, fork issues #52/#53): a row of
-/// N buttons fits only if total label chars + BUTTON_PADDING_CHARS per
-/// button stay within ROW_BUDGET_CHARS. B=36/pad=1 was solved on the raw
-/// html plane (probes 2026-08-31, thread 30134): 4×8 (36) and 2×15 (32)
-/// shared; 2×18 (38), 3×12 (39), 3×15 (48) cut. The live rich-plane smoke
-/// matrix (#52 evidence, 8/8 verdicts) then showed rich is tighter at the
-/// same char cost: Latin 4×8 cut one label, Cyrillic 4×8 cut all four, and
-/// Cyrillic 2×17 clipped half a glyph per button — while Latin 2×17 fit.
-/// Owner call 2026-08-31: single-language model, no script factor, margin
-/// over density — PAD raised to 2 so the budget sits 2–4 cost-units below
-/// the measured rich wall. New boundaries: 4×7 and 2×16 (cost 36) share;
-/// 4×8 (40) and 2×17 (38) stack. Supersedes #49's per-label bump (8→12)
-/// — right observation, wrong axis. Known residual: bubble-width variance
-/// can still clip a legal row on narrow plain-html bodies.
-pub(crate) const ROW_BUDGET_CHARS: usize = 36;
-/// Per-button padding inside the shared-row budget. Raised 1→2 (#53) as
-/// the rich-plane margin: rich's keyboard gutter eats more than html's,
-/// and the wider Cyrillic glyphs ride the same margin — no script factor.
-pub(crate) const BUTTON_PADDING_CHARS: usize = 2;
+/// Longest label allowed to share one row with its siblings. Recalibrated
+/// 2026-08-31 (live probes, fork issue #49): the real constraint is
+/// ROW-TOTAL width (~32 chars shared equally across the row, before the
+/// body-width-dependent truncation Alexey observed), not per-label chars —
+/// 4×8=32 held, 15+18=33 clipped ~2 symbols, and bubble width varies with
+/// the message body, so 12 keeps a safety margin under the worst bubble
+/// while doubling information per row vs the old 8.
+pub(crate) const SHARED_ROW_MAX_CHARS: usize = 12;
 /// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
 /// than 4 per row, so every target stays big enough for a finger.
 pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
@@ -254,11 +243,9 @@ pub(crate) enum SuggestLayout {
 
 pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     let width = |o: &String| o.chars().count();
-    let row_cost: usize = options
-        .iter()
-        .map(|o| width(o) + BUTTON_PADDING_CHARS)
-        .sum();
-    if options.len() <= MAX_NUMBERS_PER_ROW && row_cost <= ROW_BUDGET_CHARS {
+    if options.len() <= MAX_NUMBERS_PER_ROW
+        && options.iter().all(|o| width(o) <= SHARED_ROW_MAX_CHARS)
+    {
         SuggestLayout::SharedRow
     } else if options.iter().all(|o| width(o) <= MAX_BUTTON_CHARS) {
         SuggestLayout::Column
@@ -313,35 +300,6 @@ pub(crate) fn folded_list_html_p(options: &[String]) -> String {
 }
 
 /// The suggestion controls as native rich-button rows (Bot API 10.3
-/// #59: cut every `<tg-button-row>…</tg-button-row>` span out of a rich
-/// bubble body — the inverse of [`suggestion_rows_rich_html`]. Used by the
-/// host-aware stale-shell strip: the #597 clear killed the stash, but the
-/// buttons keep rendering inside the body until the body is rewritten clean.
-pub(crate) fn strip_button_rows(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(start) = rest.find("<tg-button-row>") {
-        match rest[start..].find("</tg-button-row>") {
-            Some(rel) => {
-                let end = start + rel + "</tg-button-row>".len();
-                out.push_str(&rest[..start]);
-                rest = &rest[end..];
-            }
-            None => break, // unterminated span: leave the remainder untouched
-        }
-    }
-    out.push_str(rest);
-    out.trim_end().to_string()
-}
-
-/// #59 (DRY): the empty reply-markup used to strip dead keyboards — one
-/// construction site instead of one per strip arm.
-pub(crate) fn empty_keyboard() -> teloxide::types::InlineKeyboardMarkup {
-    teloxide::types::InlineKeyboardMarkup::new(
-        Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
-    )
-}
-
 /// `<tg-button-row>`), laid out per the measured ladder. Primary style
 /// throughout — picked over app-default after Alexey compared both live.
 /// Callback payloads stay `followup:<session>:<idx>`, so taps route through
@@ -537,12 +495,6 @@ pub(crate) async fn render_suggestions(
             // The buttons never landed — drop the stash so a stale entry can't
             // swallow an unrelated future tap.
             state.drop_pending_followup(&token).await;
-            // #31: the trailer is content, not chrome — Fatal means NOTHING
-            // landed (merge-edit failures fall through to the standalone
-            // send), so the sign-off always ships alone here.
-            if let Some(t) = &trailer {
-                send_trailer_bubble(bot, chat_id, thread_id, t).await;
-            }
         }
         Err(PlaceErr::RetryAfter(wait)) => {
             // #30: a 429 here used to drop the stash at once — but BOTH arms
@@ -604,10 +556,6 @@ pub(crate) async fn render_suggestions(
                                  failed permanently: {e}"
                             );
                             state.drop_pending_followup(&token).await;
-                            // #31: nothing landed — the trailer ships alone.
-                            if let Some(t) = &trailer {
-                                send_trailer_bubble(&bot, chat_id, thread_id, t).await;
-                            }
                             return;
                         }
                         Err(PlaceErr::RetryAfter(w)) => {
@@ -625,11 +573,6 @@ pub(crate) async fn render_suggestions(
                      {MAX_DEFERRED_PLACEMENT_ATTEMPTS} deferred attempts (token {token}) — dropping"
                 );
                 state.drop_pending_followup(&token).await;
-                // #31: every attempt died inside a flood window — nothing
-                // landed, so the sign-off still ships on its own.
-                if let Some(t) = &trailer {
-                    send_trailer_bubble(&bot, chat_id, thread_id, t).await;
-                }
             });
         }
     }

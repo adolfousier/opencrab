@@ -136,7 +136,7 @@ fn plan_block_rich_structure_detected() {
     // The new format must trigger has_rich_structure so it goes
     // through try_send_intermediate_rich instead of HTML fallback.
     assert!(
-        crate::channels::telegram::rich::has_rich_structure(PLAN_BLOCK),
+        crate::channels::telegram::rich::detect::has_rich_structure(PLAN_BLOCK),
         "plan block must trigger rich detection"
     );
 }
@@ -152,7 +152,7 @@ fn old_emoji_format_does_not_trigger_rich() {
                       ▶️ 2. Second task\n  \
                       ⏸️ 3. Third task";
     assert!(
-        !crate::channels::telegram::rich::has_rich_structure(old_format),
+        !crate::channels::telegram::rich::detect::has_rich_structure(old_format),
         "old emoji format must NOT trigger rich detection (confirms the bug)"
     );
 }

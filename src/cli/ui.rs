@@ -21,12 +21,8 @@ pub(crate) fn register_config_dependent_tools(
     config: &crate::config::Config,
 ) {
     use crate::brain::tools::{
-        analyze_image::AnalyzeImageTool,
-        analyze_video::AnalyzeVideoTool,
-        brave_search::BraveSearchTool,
-        exa_search::ExaSearchTool,
-        generate_image::GenerateImageTool,
-        provider_vision::{ProviderVisionTool, VisionSetupHintTool},
+        analyze_video::AnalyzeVideoTool, brave_search::BraveSearchTool, exa_search::ExaSearchTool,
+        generate_image::GenerateImageTool, provider_vision::ProviderVisionTool,
         web_search::WebSearchTool,
     };
 
@@ -69,15 +65,19 @@ pub(crate) fn register_config_dependent_tools(
         registry.unregister("generate_image");
     }
 
-    // Vision (analyze_image): provider vision candidates roll through in
-    // order (#430); Gemini image.vision is strictly the final fallback and
-    // primary ONLY when no candidate exists.
-    let vision_cands = crate::brain::provider::factory::vision_candidates(config);
-    if !vision_cands.is_empty() {
-        let mut tool = ProviderVisionTool::new(vision_cands);
-        // Resilience: if Gemini image.vision is also configured, attach it as a
-        // fallback so analyze_image still works when the provider's own vision
-        // endpoint fails (model/proxy doesn't actually accept images).
+    // Vision (analyze_image): the session's current provider first, then the
+    // configured chain, then Gemini (#1318).
+    //
+    // Registered UNCONDITIONALLY, because the candidate list is resolved per
+    // request now. The old three-branch gate read a startup snapshot, so
+    // adding a vision provider to config.toml did nothing until restart and
+    // the "not configured" hint tool could be registered permanently over a
+    // config that had since gained vision. The hint is emitted at request
+    // time instead, when resolution genuinely finds nothing.
+    {
+        let mut tool = ProviderVisionTool::new();
+        // Gemini stays the LAST resort, attached when configured so
+        // analyze_image still works if every provider candidate fails.
         if config.image.vision.enabled
             && let Some(gkey) = config
                 .image
@@ -89,23 +89,6 @@ pub(crate) fn register_config_dependent_tools(
             tool = tool.with_gemini_fallback(gkey, config.image.vision.model.clone());
         }
         registry.register(Arc::new(tool));
-    } else if config.image.vision.enabled
-        && let Some(key) = config
-            .image
-            .vision
-            .api_key
-            .clone()
-            .filter(|k| !k.is_empty())
-    {
-        registry.register(Arc::new(AnalyzeImageTool::new(
-            key,
-            config.image.vision.model.clone(),
-        )));
-    } else {
-        // No vision backend at all — register a hint so the agent can tell the
-        // user how to enable it (provider vision_model or a Gemini key) rather
-        // than silently lacking analyze_image.
-        registry.register(Arc::new(VisionSetupHintTool));
     }
 
     // Video (analyze_video): registered whenever any vision backend exists —
@@ -1196,6 +1179,13 @@ async fn cmd_chat_inner(
     // they are not nudged a second time by it.
     let mut resumed_session_ids: std::collections::HashSet<uuid::Uuid> =
         std::collections::HashSet::new();
+
+    // #12/#1242 boot accounting: interrupted-row counts, user vs system
+    // origin split, and parked (route-unclaimed) sessions, read once by the
+    // end-of-boot summary line emitted further down.
+    let boot_found = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let boot_parked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let boot_found_system = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     {
         use crate::brain::agent::service::boot_report;
         let pending_repo = crate::db::PendingRequestRepository::new(db.pool().clone());
@@ -1205,6 +1195,7 @@ async fn cmd_chat_inner(
                     "Found {} interrupted request(s) — resuming on startup",
                     requests.len()
                 );
+                boot_found.store(requests.len(), std::sync::atomic::Ordering::Relaxed);
                 // Clear the table so these don't resume again if THIS run also crashes
                 if let Err(e) = pending_repo.clear_all().await {
                     tracing::warn!(error = %e, "failed to clear pending items");
@@ -1214,15 +1205,47 @@ async fn cmd_chat_inner(
                 // Dedup by session_id — only resume each session once
                 let mut seen = std::collections::HashSet::new();
                 for req in requests {
+                    // #12 AC3: account system-origin rows at ROW level (found
+                    // counts rows; the dedup below may skip duplicates, so the
+                    // user/system split is taken before it).
+                    if req.origin == "system" {
+                        boot_found_system.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     if let Ok(session_id) = uuid::Uuid::parse_str(&req.session_id) {
                         // Every row is a session that was mid-turn when the
                         // previous process died, duplicate rows included; the
                         // ledger dedups, so the summary counts sessions.
-                        boot_report::record_interrupted_origin(session_id, &req.origin);
+                        boot_report::record_interrupted(session_id);
                         if !seen.insert(session_id) {
                             continue;
                         }
                         resumed_session_ids.insert(session_id);
+                        // #12: a system-origin row is a PUSH-initiated turn
+                        // (session_notify / background-task completion) killed
+                        // mid-tool. Boot must NOT replay the LLM turn here —
+                        // re-running the interrupted tool call could
+                        // double-execute side effects (installs, binary swaps,
+                        // sends). Re-deliver the ORIGINAL push text through the
+                        // normal wake path instead: deliver_or_park → the #1224
+                        // route claim → the enqueue callback → a fresh tracked
+                        // push turn, deleted at exit and re-captured if killed
+                        // again — no perpetual rows (#729 holds).
+                        if req.origin == "system" {
+                            crate::brain::agent::service::restart_recovery::deliver_or_park(
+                                session_id,
+                                crate::brain::agent::QueuedUserMessage {
+                                    context_text: req.user_message.clone(),
+                                    display_text: format!(
+                                        "⚠️ A push-initiated turn was interrupted by a \
+                                         restart — re-delivering the push (session {})",
+                                        &session_id.simple().to_string()[..8]
+                                    ),
+                                    origin: crate::brain::agent::PushOrigin::Recovery,
+                                    bg_meta: None,
+                                },
+                            );
+                            continue;
+                        }
                         boot_report::record_resumed(session_id);
                         // Restore the session's saved working directory before
                         // resuming so the agent runs tools in the right CWD.
@@ -1298,6 +1321,7 @@ async fn cmd_chat_inner(
                             let chat = teloxide::types::ChatId(chat_id);
                             let agent = agent.clone();
                             let tg = tg.clone();
+                            let boot_parked_tg = boot_parked.clone();
                             tokio::spawn(async move {
                                 // This path always knew the bot might not be
                                 // up yet and waited for it. The bg-resume
@@ -1305,7 +1329,11 @@ async fn cmd_chat_inner(
                                 // (#1242). One definition now, so the two
                                 // startup flush paths cannot drift back into
                                 // disagreeing about what "ready" means.
-                                let Some(bot) = crate::channels::transport_ready::await_transport(
+                                // Gate only: the re-delivery below goes through
+                                // deliver_or_park, which does not need the bot
+                                // handle — the await exists so a boot window
+                                // that never opens is counted, not silent.
+                                let Some(_bot) = crate::channels::transport_ready::await_transport(
                                     "telegram",
                                     session_id,
                                     || tg.bot(),
@@ -1325,6 +1353,36 @@ async fn cmd_chat_inner(
                                         where you left off naturally. Do not mention the restart or \
                                         any interruption — just pick up seamlessly.]"
                                         .to_string();
+                                // Wait up to READY_WAIT_SECS for the bot to authenticate.
+                                // #1242: this used to give up silently — the pending rows
+                                // were already cleared above, so that was permanent loss.
+                                // Past the bound the prompt is PARKED: it rides
+                                // deliver_or_park until the #1224 route restore claims the
+                                // session; the enqueue callback then runs it through the
+                                // same full streaming pipeline.
+                                let Some(bot) = crate::channels::bg_resume::wait_ready(
+                                    || tg.bot(),
+                                    "startup resume: telegram bot",
+                                )
+                                .await
+                                else {
+                                    boot_parked_tg
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    crate::brain::agent::service::restart_recovery::deliver_or_park(
+                                        session_id,
+                                        crate::brain::agent::QueuedUserMessage {
+                                            context_text: prompt,
+                                            display_text: format!(
+                                                "🔁 Startup replay parked until its route \
+                                                 claim (#1242): session {}",
+                                                &session_id.simple().to_string()[..8]
+                                            ),
+                                            origin: crate::brain::agent::PushOrigin::Recovery,
+                                            bg_meta: None,
+                                        },
+                                    );
+                                    return;
+                                };
                                 // Resumed turns must land in the originating
                                 // forum topic, not the group's General channel
                                 // (issue #130 proactive path). Prefer the
@@ -1338,9 +1396,14 @@ async fn cmd_chat_inner(
                                 // That is today's behaviour, not a regression:
                                 // it can only improve once a topic is bound.
                                 let thread_id = match tg.session_topic(session_id).await {
-                                    Some(topic) => Some(teloxide::types::ThreadId(
-                                        teloxide::types::MessageId(topic),
-                                    )),
+                                    // Through the delivery boundary: a
+                                    // General-bound session has no thread,
+                                    // not thread 1 (#1319).
+                                    Some(topic) => {
+                                        crate::channels::telegram::session_resolve::delivery_thread_id(
+                                            Some(topic),
+                                        )
+                                    }
                                     None => {
                                         crate::channels::telegram::send::latest_thread_id_for_chat(
                                             chat.0,
@@ -1503,6 +1566,36 @@ async fn cmd_chat_inner(
     crate::brain::agent::service::boot_report::schedule_summary(
         crate::brain::agent::service::restart_recovery::ROUTE_GRACE,
     );
+
+    // #1242 (AC2): one end-of-boot line answering "did everything resume?" —
+    // emitted EVERY boot, zero counts included, delayed past READY_WAIT_SECS
+    // so parked outcomes settle before it fires.
+    {
+        let found = boot_found.clone();
+        let parked = boot_parked.clone();
+        let found_system = boot_found_system.clone();
+        let resumed: Vec<String> = resumed_session_ids
+            .iter()
+            .map(|id| id.simple().to_string()[..8].to_string())
+            .collect();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                crate::channels::bg_resume::READY_WAIT_SECS + 1,
+            ))
+            .await;
+            tracing::info!(
+                target: "boot-resume",
+                "Boot resume summary (#1242/#12): interrupted={} (user={} system={}) resumed={} [{}] parked_awaiting_route={}",
+                found.load(std::sync::atomic::Ordering::Relaxed),
+                found.load(std::sync::atomic::Ordering::Relaxed)
+                    - found_system.load(std::sync::atomic::Ordering::Relaxed),
+                found_system.load(std::sync::atomic::Ordering::Relaxed),
+                resumed.len(),
+                resumed.join(","),
+                parked.load(std::sync::atomic::Ordering::Relaxed)
+            );
+        });
+    }
 
     // Wake (#1227): recently-active bound sessions that were NOT mid-turn at
     // boot have no journal row, so they look dead until someone pokes one.

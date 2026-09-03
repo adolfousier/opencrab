@@ -7,6 +7,8 @@
 //! everywhere except inside table cells (preformatted text can't carry tags).
 
 use super::ast::{Align, Block, Inline, List, MermaidResult, Table};
+use super::mermaid;
+use super::parse::parse_markdown;
 
 /// Render a block list to a Telegram-HTML string. Block-level elements are
 /// separated by a blank line so paragraphs, headings, lists, and tables keep
@@ -363,4 +365,51 @@ fn escape(t: &str) -> String {
     t.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// Parse `text` and render it as Telegram HTML in one call (the fallback path).
+pub(crate) fn markdown_to_html(text: &str) -> String {
+    render_html(&parse_markdown(text))
+}
+
+/// Like [`markdown_to_html`] but wraps paragraphs in `<p>` tags. Used by the
+/// chrome_rich path where Telegram expects native paragraph elements.
+pub(crate) fn markdown_to_html_p(text: &str) -> String {
+    render_html_p(&parse_markdown(text))
+}
+
+/// Parse `text`, resolve any mermaid fences to rendered images (or legible
+/// failure blocks) via [`mermaid::resolve_blocks`], and render the result as
+/// Telegram HTML. Async because mermaid pre-validation makes an HTTP call to
+/// the renderer. This is the FALLBACK path, used when the primary
+/// markdown+media send fails (e.g. a Bot API server < 10.2 without the
+/// `media` field); the primary path keeps tables native via the markdown
+/// dialect's `media` array (#1044).
+///
+/// Gated on [`mermaid::should_render_mermaid`]: when the feature is off or
+/// the text has no mermaid fence, no HTTP is made and the output equals
+/// [`markdown_to_html`]. Every chrome surface that can embed images renders
+/// prose through this pair (or the `_p` variant) so a mermaid fence in plan
+/// prose degrades exactly like one in a final reply (#1142).
+pub(crate) async fn markdown_to_html_mermaid(text: &str) -> String {
+    let blocks = parse_markdown(text);
+    let resolved = if mermaid::should_render_mermaid(text) {
+        mermaid::resolve_blocks(blocks).await
+    } else {
+        blocks
+    };
+    render_html(&resolved)
+}
+
+/// Like [`markdown_to_html_mermaid`] but wraps paragraphs in `<p>` tags (and
+/// renders soft line breaks as `<br>`): the rich `sendRichMessage` HTML
+/// dialect used by the plan card's prose bodies (#1142).
+pub(crate) async fn markdown_to_html_mermaid_p(text: &str) -> String {
+    let blocks = parse_markdown(text);
+    let resolved = if mermaid::should_render_mermaid(text) {
+        mermaid::resolve_blocks(blocks).await
+    } else {
+        blocks
+    };
+    render_html_p(&resolved)
 }

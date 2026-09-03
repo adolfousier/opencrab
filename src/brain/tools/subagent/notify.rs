@@ -12,6 +12,22 @@ use crate::brain::tools::error::{Result, ToolError};
 use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
+use std::time::Duration;
+
+/// Resolved v2 delivery policy (fork #50).
+#[derive(Debug)]
+enum DeliveryMode {
+    /// Refuse while the target is mid-turn (the failsafe default).
+    Now,
+    /// Queue for the target's next tool-loop boundary (alias: interrupt=true).
+    TurnEnd,
+    /// Defer until the target has been quiet for `quiet_for`; `max_delay`
+    /// forces delivery into a busy turn (fork #43/#50).
+    Quiet {
+        quiet_for: Duration,
+        max_delay: Duration,
+    },
+}
 
 /// Tool that pushes a queued user message into another session.
 pub struct SessionNotifyTool;
@@ -32,6 +48,195 @@ fn redirect_message(target: uuid::Uuid, occupant: uuid::Uuid) -> String {
          instead, with provenance framing so the new owner can tell it apart from its own \
          work."
     )
+}
+
+/// Confirmation budget for `confirm: true`: how long the sender watches the
+/// receiving machinery for a wake before falling back to an honest
+/// "routed, unconfirmed" verdict.
+const CONFIRM_CAP: Duration = Duration::from_secs(10);
+
+/// Machine-readable send verdict (Notifications v2, fork #50): the external
+/// `notify_state` mirrors the internal `Delivery` enum 1:1 — delivered /
+/// queued / redirected / refused (+ `notify_reason`, `notify_occupant`, …) —
+/// so callers never parse prose. The human text stays in `output` for the
+/// calling model; the structured fields ride `metadata`.
+fn verdict(success: bool, state: &str, detail: String, extra: &[(&str, String)]) -> ToolResult {
+    let mut result = if success {
+        ToolResult::success(detail)
+    } else {
+        ToolResult::error(detail)
+    };
+    result = result.with_metadata("notify_state".into(), state.into());
+    for (key, value) in extra {
+        result = result.with_metadata((*key).to_string(), value.clone());
+    }
+    result
+}
+
+/// Post-route confirmation (owner-approved state-diag, 2026-09-01): watch
+/// the receiving machinery for a bounded budget instead of reporting
+/// "delivered" as a mere queue hand-off. The wake path is verifiable
+/// in-process — a channel-registered turn probe flips to true the moment
+/// the target's loop starts — so the sender gets `woke` (idle target
+/// started a turn), `queued_pending_drain` (already mid-turn; the message
+/// injects at its next tool-loop boundary), or an honest `delivered`
+/// (routed, but no wake observed within `cap`).
+async fn confirm_route(target: uuid::Uuid, cap: Duration) -> (&'static str, String, &'static str) {
+    use crate::brain::agent::service::session_routes::turn_probe;
+    let mid_turn = |t| turn_probe(t).is_some_and(|probe| probe());
+
+    if mid_turn(target) {
+        return (
+            "queued_pending_drain",
+            "Confirmed queued: the target is mid-turn; the message injects at its next \
+             tool-loop boundary."
+                .into(),
+            "mid_turn",
+        );
+    }
+    let deadline = tokio::time::Instant::now() + cap;
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if mid_turn(target) {
+            return (
+                "woke",
+                "Confirmed end-to-end: the target was idle and has started a turn on the \
+                 message."
+                    .into(),
+                "wake_confirmed",
+            );
+        }
+    }
+    (
+        "delivered",
+        format!(
+            "Routed to session {target}, but no wake was observed within {}s — the \
+             target may be parked (channel not claimed since boot) or slow to pick the \
+             message up. Re-check via session_search before resending.",
+            cap.as_secs()
+        ),
+        "unconfirmed",
+    )
+}
+
+/// Depth-3 status check (fork #50): `action: "status"` polls the receipt a
+/// send verdict carried. In-memory by design — receipts die with the
+/// process, so an unknown id after a restart reports honestly instead of
+/// guessing. DELIVERY ≠ QUEUE ACCEPTANCE becomes a query, not a hope: the
+/// tool-loop drain point stamps receipts `injected` when the target's queue
+/// is actually consumed.
+fn status_verdict(input: &Value) -> Result<ToolResult> {
+    use crate::brain::agent::service::notify_receipts::{self, ReceiptState};
+    let raw = input
+        .get("notify_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            ToolError::InvalidInput("'notify_id' is required for action 'status'".into())
+        })?;
+    let id: uuid::Uuid = raw
+        .parse()
+        .map_err(|_| ToolError::InvalidInput(format!("'notify_id' is not a valid UUID: {raw}")))?;
+    match notify_receipts::status(id) {
+        None => Ok(verdict(
+            false,
+            "unknown_id",
+            format!(
+                "No notification {id} is tracked in this process — receipts are in-memory \
+                 and do not survive restarts. A receipt stamped injected before a restart \
+                 counted as consumed."
+            ),
+            &[("notify_id", id.to_string())],
+        )),
+        Some(receipt) => {
+            let mut extra = vec![
+                ("notify_id", id.to_string()),
+                ("notify_target", receipt.target.to_string()),
+                ("queued_at", receipt.queued_at.to_rfc3339()),
+            ];
+            let detail = match receipt.state {
+                ReceiptState::Injected => {
+                    let at = receipt
+                        .injected_at
+                        .map(|t| t.to_rfc3339())
+                        .unwrap_or_default();
+                    extra.push(("injected_at", at.clone()));
+                    format!(
+                        "Notification {id} was INJECTED into session {}'s model context at \
+                         {at} — the receiving machinery consumed it.",
+                        receipt.target
+                    )
+                }
+                ReceiptState::Queued => format!(
+                    "Notification {id} is routed to session {} but NOT yet observed at a \
+                     tool-loop drain point (queued {}). Delivery ≠ queue acceptance: it \
+                     injects when that session's turn hits a boundary.",
+                    receipt.target,
+                    receipt.queued_at.to_rfc3339()
+                ),
+            };
+            Ok(verdict(true, receipt.state.as_str(), detail, &extra))
+        }
+    }
+}
+
+/// Resolve the v2 delivery policy against the deprecated `interrupt` alias
+/// (fork #50). `interrupt=true` was always "queue for the in-flight turn's
+/// next tool-loop boundary" — that is mode `turn-end`; unset/false was
+/// "refuse while streaming" — mode `now`. Both may be passed only when they
+/// agree; a disagreement is an error, never a silent precedence. `quiet`
+/// defers until the target has been idle for `quiet_for_secs` (starvation
+/// cap `max_delay_secs` forces delivery into a busy turn).
+fn resolve_mode(
+    mode: Option<&str>,
+    interrupt: Option<bool>,
+    delivery: Option<&Value>,
+) -> Result<DeliveryMode> {
+    fn secs(parent: Option<&Value>, key: &str, default: u64) -> Result<Duration> {
+        match parent.and_then(|d| d.get(key)) {
+            None => Ok(Duration::from_secs(default)),
+            Some(v) => {
+                let n = v.as_u64().ok_or_else(|| {
+                    ToolError::InvalidInput(format!(
+                        "delivery.{key} must be a non-negative integer"
+                    ))
+                })?;
+                Ok(Duration::from_secs(n))
+            }
+        }
+    }
+    let resolved = match mode {
+        None => None,
+        Some(known @ ("now" | "turn-end")) => Some(known),
+        Some("quiet") => {
+            // quiet contradicts interrupt=true by definition: quiet WAITS,
+            // turn-end DERAILS. interrupt=false/unset is the natural form.
+            if interrupt == Some(true) {
+                return Err(ToolError::InvalidInput(
+                    "delivery.mode 'quiet' and interrupt=true disagree — quiet defers, \
+                     interrupt derails"
+                        .into(),
+                ));
+            }
+            let quiet_for = secs(delivery, "quiet_for_secs", 60)?;
+            let max_delay = secs(delivery, "max_delay_secs", 1800)?;
+            return Ok(DeliveryMode::Quiet {
+                quiet_for,
+                max_delay,
+            });
+        }
+        Some(other) => {
+            return Err(ToolError::InvalidInput(format!(
+                "delivery.mode '{other}' is not available yet — use 'now', 'turn-end' or 'quiet'"
+            )));
+        }
+    };
+    match (resolved, interrupt) {
+        (Some("turn-end"), None | Some(true)) | (None, Some(true)) => Ok(DeliveryMode::TurnEnd),
+        (Some("now"), None | Some(false)) | (None, None | Some(false)) => Ok(DeliveryMode::Now),
+        _ => Err(ToolError::InvalidInput(
+            "delivery.mode and interrupt disagree — pass one, not both".into(),
+        )),
+    }
 }
 
 #[async_trait]
@@ -58,20 +263,52 @@ impl Tool for SessionNotifyTool {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["send", "status"],
+                    "description": "Operation on the notification family. 'send' (default when omitted) delivers; 'status' polls a receipt by notify_id — reports 'injected' (the receiving machinery stamped it at a tool-loop drain point), 'queued' (routed but not yet consumed), or 'unknown_id' (not tracked; receipts are in-memory and do not survive restarts)."
+                },
                 "target_session": {
                     "type": "string",
                     "description": "UUID of the target session (from session_search list/query, or the from=<id> header of a session_notify you received)"
                 },
                 "message": {
                     "type": "string",
-                    "description": "Text to deliver to the target session"
+                    "description": "Text to deliver to the target session (action 'send' only)"
+                },
+                "notify_id": {
+                    "type": "string",
+                    "description": "action 'status' only: the notification id from a send/deferred verdict's metadata"
+                },
+                "delivery": {
+                    "type": "object",
+                    "description": "Delivery policy. Omit for the default (mode 'now').",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["now", "turn-end", "quiet"],
+                            "description": "'now' (default): deliver immediately; REFUSES while the target is mid-turn. 'turn-end': queue the message for the target's next tool-loop boundary even while it streams. 'quiet': defer until the target has been idle for quiet_for_secs (any turn activity restarts the clock; max_delay_secs forces delivery into a busy turn so the notice cannot be starved forever); returns a deferred verdict with a notification id."
+                        },
+                        "quiet_for_secs": {
+                            "type": "integer",
+                            "description": "quiet mode only: idle window before delivery (default 60)."
+                        },
+                        "max_delay_secs": {
+                            "type": "integer",
+                            "description": "quiet mode only: starvation cap — deliver at latest this long after acceptance, even mid-turn (default 1800)."
+                        }
+                    }
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Verify end-to-end instead of reporting the route alone: after a successful route, spend up to ~10s watching the receiving machinery. The verdict then reports 'woke' (the idle target actually started a turn), 'queued_pending_drain' (the target was already mid-turn; the message injects at its next tool-loop boundary), or 'delivered' (routed, but no wake was observed within the cap). Applies to the 'delivered' and 'redirected' states only."
                 },
                 "interrupt": {
                     "type": "boolean",
-                    "description": "Deliver even if the target session is mid-turn. Default false: the tool REFUSES while the target is streaming, so a working session is never derailed. Set true only when the target must see this now; the message then queues for its next tool-loop boundary, framed as arrived-during-work."
+                    "description": "Deprecated alias for delivery.mode: true = 'turn-end', false/unset = 'now'. Prefer delivery.mode; passing both is allowed only when they agree."
                 }
             },
-            "required": ["target_session", "message"]
+            "required": ["target_session"]
         })
     }
 
@@ -91,6 +328,23 @@ impl Tool for SessionNotifyTool {
         let target: uuid::Uuid = target.parse().map_err(|_| {
             ToolError::InvalidInput(format!("'target_session' is not a valid UUID: {target}"))
         })?;
+
+        // v2 surface (fork #50): `action` dispatches the verb family. v1
+        // shipped "send" only; depth-3 receipts add "status" — a real
+        // consumer for the notification ids the send verdicts carry.
+        match input
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("send")
+        {
+            "send" => {}
+            "status" => return status_verdict(&input),
+            other => {
+                return Err(ToolError::InvalidInput(format!(
+                    "action '{other}' is not available yet — available: 'send', 'status'"
+                )));
+            }
+        }
 
         let message = input
             .get("message")
@@ -112,28 +366,109 @@ impl Tool for SessionNotifyTool {
         };
 
         // Failsafe default (fork #13): an unset interrupt must not derail a
-        // session that is mid-turn. The refusal names the remedy so the
-        // calling model learns the knob from the error itself — same pattern
-        // as the 429 RetryAfter help text.
-        let interrupt = input
-            .get("interrupt")
+        // session that is mid-turn. v2 (fork #50) re-expresses the knob as
+        // the delivery policy — the alias keeps old prompts working.
+        let delivery_obj = input.get("delivery");
+        let mode = resolve_mode(
+            delivery_obj
+                .and_then(|d| d.get("mode"))
+                .and_then(Value::as_str),
+            input.get("interrupt").and_then(Value::as_bool),
+            delivery_obj,
+        )?;
+
+        use crate::brain::agent::service::notify_receipts;
+        use crate::brain::agent::service::quiet_delivery;
+        use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
+
+        // Quiet mode (fork #43/#50): bank the notice, return the id. The
+        // deferred verdict is success-by-contract — accepted, not yet
+        // delivered; the id is the cancel/list handle from birth.
+        if let DeliveryMode::Quiet {
+            quiet_for,
+            max_delay,
+        } = mode
+        {
+            let id = quiet_delivery::defer_quiet(target, msg, quiet_for, max_delay);
+            // The deferred id is a first-class notification id: status-checkable
+            // like any send receipt (stamped injected when the release drains).
+            notify_receipts::record_queued(id, target);
+            return Ok(verdict(
+                true,
+                "deferred",
+                format!(
+                    "Deferred for session {target}: it will deliver once the session has been \
+                     quiet for {}s (hard cap {}s). Notification id {id}.",
+                    quiet_for.as_secs(),
+                    max_delay.as_secs()
+                ),
+                &[
+                    ("notify_target", target.to_string()),
+                    ("notify_id", id.to_string()),
+                    ("notify_reason", "quiet_window".into()),
+                ],
+            ));
+        }
+
+        let interrupt = matches!(mode, DeliveryMode::TurnEnd);
+        let confirm = input
+            .get("confirm")
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
-
+        // Depth-3 receipt (fork #50): every success-path verdict carries an
+        // id the sender can poll with action:"status" — the tool-loop drain
+        // point stamps it injected when the target's queue is consumed.
+        let notify_id = uuid::Uuid::new_v4();
         match deliver_to_session(target, msg, interrupt) {
-            Delivery::Delivered => Ok(ToolResult::success(format!(
-                "Delivered to session {target}. It will process the message on its next turn."
-            ))),
+            Delivery::Delivered => {
+                notify_receipts::record_queued(notify_id, target);
+                if confirm {
+                    let (state, detail, reason) = confirm_route(target, CONFIRM_CAP).await;
+                    return Ok(verdict(
+                        true,
+                        state,
+                        detail,
+                        &[
+                            ("notify_target", target.to_string()),
+                            ("notify_id", notify_id.to_string()),
+                            ("notify_reason", reason.into()),
+                        ],
+                    ));
+                }
+                Ok(verdict(
+                    true,
+                    "delivered",
+                    format!(
+                        "Delivered to session {target}. It will process the message on its next \
+                         turn. Poll action:\"status\" with notify_id for the injection stamp."
+                    ),
+                    &[
+                        ("notify_target", target.to_string()),
+                        ("notify_id", notify_id.to_string()),
+                    ],
+                ))
+            }
             // Queued, not lost: the target belongs to a channel that has not
             // claimed it since the last restart (#1206). Reporting this as a
             // failure would be the opposite of what happened.
-            Delivery::Parked => Ok(ToolResult::success(format!(
-                "Queued for session {target}. Its channel has not claimed it since the last \
-                 restart, so it will be delivered as soon as that channel next binds the \
-                 session."
-            ))),
+            Delivery::Parked => {
+                notify_receipts::record_queued(notify_id, target);
+                Ok(verdict(
+                    true,
+                    "queued",
+                    format!(
+                        "Queued for session {target}. Its channel has not claimed it since the \
+                         last restart, so it will be delivered as soon as that channel next \
+                         binds the session. Poll action:\"status\" with notify_id."
+                    ),
+                    &[
+                        ("notify_target", target.to_string()),
+                        ("notify_id", notify_id.to_string()),
+                        ("notify_reason", "awaiting_channel_claim".into()),
+                    ],
+                ))
+            }
             Delivery::RefusedInFlight { redirected_to } => {
                 let who = match redirected_to {
                     Some(to) => format!(
@@ -142,22 +477,294 @@ impl Tool for SessionNotifyTool {
                     ),
                     None => target.to_string(),
                 };
-                Ok(ToolResult::error(format!(
-                    "Refused: session {who} is mid-turn (a turn is streaming) and interrupt \
-                     was not set — delivering now would derail its current task. Retry when \
-                     the session goes idle, or resend with interrupt=true to queue the \
-                     message for its in-flight turn's next tool-loop boundary."
-                )))
+                let mut extra = vec![
+                    ("notify_target", target.to_string()),
+                    ("notify_reason", "mid_turn".to_string()),
+                ];
+                if let Some(to) = redirected_to {
+                    extra.push(("notify_redirected_to", to.to_string()));
+                }
+                Ok(verdict(
+                    false,
+                    "refused",
+                    format!(
+                        "Refused: session {who} is mid-turn (a turn is streaming) and interrupt \
+                         was not set — delivering now would derail its current task. Retry when \
+                         the session goes idle, or resend with interrupt=true to queue the \
+                         message for its in-flight turn's next tool-loop boundary."
+                    ),
+                    &extra,
+                ))
             }
-            Delivery::NoRoute => Ok(ToolResult::error(format!(
-                "No live route for session {target} in this process — it has not messaged \
-                 since boot, or belongs to another instance/profile. Use a2a_send for \
-                 cross-instance targets."
-            ))),
+            Delivery::NoRoute => Ok(verdict(
+                false,
+                "refused",
+                format!(
+                    "No live route for session {target} in this process — it has not messaged \
+                     since boot, or belongs to another instance/profile. Use a2a_send for \
+                     cross-instance targets."
+                ),
+                &[
+                    ("notify_target", target.to_string()),
+                    ("notify_reason", "no_route".to_string()),
+                ],
+            )),
             // The target no longer owns its channel (fork #17): the message
             // was redirected to the session that owns it NOW (fork #19) — a
             // success, not a refusal, and the reply names where it went.
-            Delivery::Redirected { to } => Ok(ToolResult::success(redirect_message(target, to))),
+            Delivery::Redirected { to } => {
+                notify_receipts::record_queued(notify_id, to);
+                if confirm {
+                    let (state, detail, reason) = confirm_route(to, CONFIRM_CAP).await;
+                    return Ok(verdict(
+                        true,
+                        state,
+                        format!("{detail} (redirected to {to} — see notify_occupant)"),
+                        &[
+                            ("notify_target", target.to_string()),
+                            ("notify_id", notify_id.to_string()),
+                            ("notify_occupant", to.to_string()),
+                            ("notify_reason", reason.into()),
+                        ],
+                    ));
+                }
+                Ok(verdict(
+                    true,
+                    "redirected",
+                    redirect_message(target, to),
+                    &[
+                        ("notify_target", target.to_string()),
+                        ("notify_id", notify_id.to_string()),
+                        ("notify_occupant", to.to_string()),
+                    ],
+                ))
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verdict_carries_state_and_extra_metadata() {
+        let result = verdict(
+            true,
+            "redirected",
+            "detail".into(),
+            &[
+                ("notify_target", "t".into()),
+                ("notify_occupant", "o".into()),
+            ],
+        );
+        assert!(result.success);
+        assert_eq!(result.metadata.get("notify_state").unwrap(), "redirected");
+        assert_eq!(result.metadata.get("notify_target").unwrap(), "t");
+        assert_eq!(result.metadata.get("notify_occupant").unwrap(), "o");
+    }
+
+    #[test]
+    fn verdict_refusal_is_error_with_state() {
+        let result = verdict(
+            false,
+            "refused",
+            "detail".into(),
+            &[("notify_reason", "mid_turn".into())],
+        );
+        assert!(!result.success);
+        assert_eq!(result.metadata.get("notify_state").unwrap(), "refused");
+        assert_eq!(result.metadata.get("notify_reason").unwrap(), "mid_turn");
+    }
+
+    #[test]
+    fn verdict_states_mirror_delivery_enum() {
+        // The v2 external vocabulary (fork #50): every internal Delivery
+        // variant maps to exactly one of these states.
+        const STATES: [&str; 4] = ["delivered", "queued", "redirected", "refused"];
+        for state in STATES {
+            let result = verdict(true, state, "d".into(), &[]);
+            assert_eq!(result.metadata.get("notify_state").unwrap(), state);
+        }
+    }
+
+    #[test]
+    fn resolve_mode_defaults_and_alias() {
+        use DeliveryMode::*;
+        // Default: refuse while streaming (the fork #13 failsafe).
+        assert!(matches!(resolve_mode(None, None, None).unwrap(), Now));
+        // The interrupt alias maps exactly onto the modes.
+        assert!(matches!(
+            resolve_mode(None, Some(true), None).unwrap(),
+            TurnEnd
+        ));
+        assert!(matches!(
+            resolve_mode(None, Some(false), None).unwrap(),
+            Now
+        ));
+        assert!(matches!(
+            resolve_mode(Some("now"), None, None).unwrap(),
+            Now
+        ));
+        assert!(matches!(
+            resolve_mode(Some("turn-end"), None, None).unwrap(),
+            TurnEnd
+        ));
+    }
+
+    #[test]
+    fn resolve_mode_agreeing_pair_passes_disagreement_rejected() {
+        use DeliveryMode::*;
+        assert!(matches!(
+            resolve_mode(Some("turn-end"), Some(true), None).unwrap(),
+            TurnEnd
+        ));
+        assert!(matches!(
+            resolve_mode(Some("now"), Some(false), None).unwrap(),
+            Now
+        ));
+        assert!(resolve_mode(Some("now"), Some(true), None).is_err());
+        assert!(resolve_mode(Some("turn-end"), Some(false), None).is_err());
+    }
+
+    #[test]
+    fn resolve_mode_rejects_unknown_modes() {
+        let err = resolve_mode(Some("warp"), None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not available yet"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_mode_quiet_defaults_and_custom_windows() {
+        use DeliveryMode::*;
+        let default = resolve_mode(Some("quiet"), None, None).unwrap();
+        assert!(
+            matches!(default, Quiet { quiet_for, max_delay }
+                if quiet_for == Duration::from_secs(60) && max_delay == Duration::from_secs(1800)),
+            "got: {default:?}"
+        );
+        let custom = serde_json::json!({ "quiet_for_secs": 300, "max_delay_secs": 60 });
+        let got = resolve_mode(Some("quiet"), None, Some(&custom)).unwrap();
+        assert!(
+            matches!(got, Quiet { quiet_for, max_delay }
+                if quiet_for == Duration::from_secs(300) && max_delay == Duration::from_secs(60)),
+            "got: {got:?}"
+        );
+        // Non-integer window is rejected, not silently defaulted.
+        let bad = serde_json::json!({ "quiet_for_secs": "soon" });
+        assert!(resolve_mode(Some("quiet"), None, Some(&bad)).is_err());
+    }
+
+    #[test]
+    fn resolve_mode_quiet_contradicts_interrupt_true() {
+        // quiet WAITS; interrupt=true DERAILS — passing both is an error,
+        // never a silent precedence.
+        assert!(resolve_mode(Some("quiet"), Some(true), None).is_err());
+        // interrupt=false is the natural form and passes.
+        assert!(resolve_mode(Some("quiet"), Some(false), None).is_ok());
+    }
+
+    // confirm_route (owner-approved state-diag, 2026-09-01): each test uses
+    // its own session uuid — the probe registry is a process-wide static.
+
+    #[tokio::test]
+    async fn confirm_reports_pending_drain_when_target_already_mid_turn() {
+        use crate::brain::agent::service::session_routes::register_turn_probe;
+        let session = uuid::Uuid::new_v4();
+        register_turn_probe(session, std::sync::Arc::new(|| true));
+        let (state, _, reason) = confirm_route(session, Duration::from_millis(100)).await;
+        assert_eq!(state, "queued_pending_drain");
+        assert_eq!(reason, "mid_turn");
+    }
+
+    #[tokio::test]
+    async fn confirm_reports_woke_when_probe_flips_true() {
+        use crate::brain::agent::service::session_routes::register_turn_probe;
+        let session = uuid::Uuid::new_v4();
+        register_turn_probe(session, std::sync::Arc::new(|| false));
+        // The idle target "starts a turn" 300ms after the send.
+        let wake = session;
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            register_turn_probe(wake, std::sync::Arc::new(|| true));
+        });
+        let (state, detail, reason) = confirm_route(session, Duration::from_secs(3)).await;
+        assert_eq!(state, "woke");
+        assert_eq!(reason, "wake_confirmed");
+        assert!(detail.contains("started a turn"), "got: {detail}");
+    }
+
+    #[tokio::test]
+    async fn confirm_times_out_to_honest_unconfirmed_delivered() {
+        use crate::brain::agent::service::session_routes::register_turn_probe;
+        let session = uuid::Uuid::new_v4();
+        // An idle target that never wakes: probe reads false throughout.
+        register_turn_probe(session, std::sync::Arc::new(|| false));
+        let (state, detail, reason) = confirm_route(session, Duration::from_millis(150)).await;
+        assert_eq!(state, "delivered");
+        assert_eq!(reason, "unconfirmed");
+        assert!(detail.contains("no wake was observed"), "got: {detail}");
+    }
+
+    #[test]
+    fn status_verdict_unknown_id_is_honest_failure() {
+        let input = serde_json::json!({ "notify_id": uuid::Uuid::new_v4().to_string() });
+        let result = status_verdict(&input).expect("verdict builds");
+        assert!(!result.success);
+        assert_eq!(result.metadata.get("notify_state").unwrap(), "unknown_id");
+    }
+
+    #[test]
+    fn status_verdict_requires_notify_id() {
+        let input = serde_json::json!({});
+        let err = status_verdict(&input).unwrap_err().to_string();
+        assert!(err.contains("'notify_id' is required"), "got: {err}");
+    }
+
+    #[test]
+    fn status_verdict_tracks_queued_then_injected_lifecycle() {
+        use crate::brain::agent::service::notify_receipts;
+        let (id, target) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        notify_receipts::record_queued(id, target);
+
+        let input = serde_json::json!({ "notify_id": id.to_string() });
+        let queued = status_verdict(&input).expect("verdict builds");
+        assert!(queued.success);
+        assert_eq!(queued.metadata.get("notify_state").unwrap(), "queued");
+        assert_eq!(
+            queued.metadata.get("notify_target").unwrap(),
+            target.to_string().as_str()
+        );
+        assert!(!queued.metadata.contains_key("injected_at"));
+        assert!(
+            queued.output.contains("NOT yet observed"),
+            "got: {}",
+            queued.output
+        );
+
+        assert_eq!(notify_receipts::mark_injected_for_target(target), 1);
+        let injected = status_verdict(&input).expect("verdict builds");
+        assert_eq!(injected.metadata.get("notify_state").unwrap(), "injected");
+        assert!(injected.metadata.contains_key("injected_at"));
+        assert!(
+            injected.output.contains("INJECTED"),
+            "got: {}",
+            injected.output
+        );
+    }
+
+    #[test]
+    fn schema_ships_status_verb_and_notify_id_param() {
+        let tool = SessionNotifyTool;
+        let schema = tool.input_schema();
+        assert_eq!(
+            schema["properties"]["action"]["enum"],
+            serde_json::json!(["send", "status"])
+        );
+        assert!(schema["properties"]["notify_id"].is_object());
+        // 'message' moved off required so status calls validate; the send
+        // path still refuses a missing/empty message at execute time.
+        assert_eq!(schema["required"], serde_json::json!(["target_session"]));
     }
 }

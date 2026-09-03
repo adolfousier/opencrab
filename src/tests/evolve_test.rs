@@ -3,7 +3,8 @@
 //! Tests for version comparison, platform detection, asset naming,
 //! and install method detection.
 
-use crate::brain::tools::evolve::{has_platform_asset, is_newer};
+use crate::brain::tools::evolve::is_newer;
+use crate::brain::tools::evolve::release_check::has_platform_asset;
 use crate::utils::install::{InstallMethod, binary_name, platform_suffix};
 
 // ─── Version comparison ─────────────────────────────────────────────────────

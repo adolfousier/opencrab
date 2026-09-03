@@ -21,13 +21,6 @@ use uuid::Uuid;
 struct Ledger {
     /// Sessions that were mid-turn when the previous process died.
     interrupted: BTreeSet<Uuid>,
-    /// Of those, how many were user-initiated turns vs system-initiated
-    /// (fork inventory: #12 pending-origin).
-    interrupted_user: usize,
-    interrupted_system: usize,
-    /// Boot reports that landed in the PARKED queue because no surface had
-    /// claimed their session yet (fork inventory: the fork's boot_parked_tg).
-    parked: usize,
     /// Sessions a resume was actually dispatched for, after dedup.
     resumed: BTreeSet<Uuid>,
     /// Resumes whose answer reached its surface.
@@ -53,33 +46,8 @@ fn with<R>(f: impl FnOnce(&mut Ledger) -> R) -> Option<R> {
 }
 
 /// A session was mid-turn when the previous process died.
-#[allow(dead_code)] // upstream-dead: adolfo's tree runs no -D warnings gate (no ci.yml); fork pr-checks.yml requires it
 pub fn record_interrupted(session_id: Uuid) {
     with(|l| l.interrupted.insert(session_id));
-}
-
-/// The same, split by who owned the turn (fork inventory: #12 pending-origin
-/// rows carry "user" or "system"). Anything that is not "system" counts as
-/// user, so legacy rows with an empty origin still land on the user side.
-/// The split only counts a session once, mirroring the deduped `interrupted`
-/// total: duplicate rows for one session are one dead turn, not two.
-pub fn record_interrupted_origin(session_id: Uuid, origin: &str) {
-    with(|l| {
-        if l.interrupted.insert(session_id) {
-            if origin == "system" {
-                l.interrupted_system += 1;
-            } else {
-                l.interrupted_user += 1;
-            }
-        }
-    });
-}
-
-/// A boot report went to the PARKED queue because no surface had claimed its
-/// session yet. Counted only from the boot recovery paths: this ledger
-/// describes the boot, not every park the process ever does.
-pub fn record_parked() {
-    with(|l| l.parked += 1);
 }
 
 /// A resume was dispatched for `session_id`.
@@ -105,21 +73,17 @@ pub fn record_failed() {
 /// is zero, because "this boot had nothing to recover" is the fact that
 /// makes its absence meaningful on the boots that did.
 pub fn summary_line() -> String {
-    let (interrupted, user, system, resumed, delivered, failed, parked) = with(|l| {
+    let (interrupted, resumed, delivered, failed) = with(|l| {
         (
             l.interrupted.len(),
-            l.interrupted_user,
-            l.interrupted_system,
             l.resumed.iter().map(Uuid::to_string).collect::<Vec<_>>(),
             l.delivered,
             l.failed,
-            l.parked,
         )
     })
     .unwrap_or_default();
     format!(
-        "[boot] interrupted={interrupted} user={user} system={system} resumed=[{}] \
-delivered={delivered} failed={failed} parked={parked}",
+        "[boot] interrupted={interrupted} resumed=[{}] delivered={delivered} failed={failed}",
         resumed.join(" ")
     )
 }
@@ -169,24 +133,8 @@ mod tests {
         let _g = guard();
         assert_eq!(
             summary_line(),
-            "[boot] interrupted=0 user=0 system=0 resumed=[] delivered=0 failed=0 parked=0"
+            "[boot] interrupted=0 resumed=[] delivered=0 failed=0"
         );
-    }
-
-    #[test]
-    fn the_split_counts_sessions_and_legacy_rows_land_on_user() {
-        let _g = guard();
-        record_interrupted_origin(uuid(1), "user");
-        record_interrupted_origin(uuid(2), "system");
-        record_interrupted_origin(uuid(3), "");
-        // A duplicate row for session 1 must not double-count the split.
-        record_interrupted_origin(uuid(1), "user");
-        record_parked();
-        let line = summary_line();
-        assert!(line.contains("interrupted=3"), "line was: {line}");
-        assert!(line.contains("user=2"), "line was: {line}");
-        assert!(line.contains("system=1"), "line was: {line}");
-        assert!(line.contains("parked=1"), "line was: {line}");
     }
 
     #[test]

@@ -100,10 +100,9 @@ pub(crate) fn make_approval_callback(
             );
 
             // Resolve forum topic_id for this session (#249)
-            let topic_id = state
-                .session_topic(info.session_id)
-                .await
-                .map(|tid| teloxide::types::ThreadId(teloxide::types::MessageId(tid)));
+            let topic_id = super::session_resolve::delivery_thread_id(
+                state.session_topic(info.session_id).await,
+            );
 
             match super::send::message_in_thread(&bot, ChatId(chat_id), topic_id, &text)
                 .parse_mode(ParseMode::Html)

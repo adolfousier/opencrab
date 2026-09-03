@@ -1,3 +1,6 @@
+use crate::brain::agent::service::phantom_lang::config::{
+    LANG_EN, LANG_ES, LANG_FR, LANG_PT, LANG_RU,
+};
 use crate::brain::agent::service::phantom_lang::*;
 
 #[test]

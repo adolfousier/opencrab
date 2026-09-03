@@ -12,7 +12,7 @@
 //!
 //! Fixtures are synthetic and carry no real credentials.
 
-use crate::memory::{memory_embedding_key_in, needs_embedding_key};
+use crate::memory::keys::{memory_embedding_key_in, needs_embedding_key};
 
 #[test]
 fn a_key_under_the_documented_section_is_found() {

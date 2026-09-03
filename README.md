@@ -31,6 +31,53 @@
 
 ---
 
+## Table of Contents
+
+- [📚 Documentation](#-documentation)
+- [Why OpenCrabs?](#why-opencrabs)
+- [📊 Benchmarks](#-benchmarks)
+- [🎬 Full onboard](#-full-onboard)
+- [🎬 Demo](#-demo)
+- [🖥️ Split Panes](#-split-panes)
+- [🎯 Core Features](#-core-features)
+- [🔄 Migrating from Other Tools](#-migrating-from-other-tools)
+- [🌐 Supported AI Providers](#-supported-ai-providers)
+- [🖼️ Image Generation & Vision](#-image-generation--vision)
+- [📄 Document Generation](#-document-generation)
+- [🤝 Agent-to-Agent (A2A) Protocol](#-agent-to-agent-a2a-protocol)
+- [🚀 Quick Start](#-quick-start)
+- [🧙 Onboarding Wizard](#-onboarding-wizard)
+- [🔑 API Keys (keys.toml)](#-api-keys-keystoml)
+- [🔐 Secret Sanitization & Redaction](#-secret-sanitization--redaction)
+- [🏠 Using Local LLMs](#-using-local-llms)
+- [📝 Configuration](#-configuration)
+- [🛠️ Configuration (config.toml)](#-configuration-configtoml)
+- [🧠 Epistemic Engine](#-epistemic-engine)
+- [🛡️ Safety Gates (~/.opencrabs/safety/)](#-safety-gates-opencrabssafety)
+- [📋 Commands (commands.toml)](#-commands-commandstoml)
+- [🔌 Dynamic Tools (tools.toml)](#-dynamic-tools-toolstoml)
+- [💰 Pricing Customization (usage_pricing.toml)](#-pricing-customization-usage_pricingtoml)
+- [🔧 Tool System](#-tool-system)
+- [⌨️ Keyboard Shortcuts](#-keyboard-shortcuts)
+- [🔍 Debug and Logging](#-debug-and-logging)
+- [🧠 Brain System & 3-Tier Memory](#-brain-system--3-tier-memory)
+- [🎯 /goal — Autonomous Goal Loop](#-goal--autonomous-goal-loop)
+- [⏰ Cron Jobs & Heartbeats](#-cron-jobs--heartbeats)
+- [🏗️ Architecture](#-architecture)
+- [📁 Project Structure](#-project-structure)
+- [🛠️ Development](#-development)
+- [🐛 Platform Notes](#-platform-notes)
+- [🔧 Troubleshooting](#-troubleshooting)
+- [🧩 Companion Tools](#-companion-tools)
+- [⚠️ Disclaimers](#-disclaimers)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+- [🙏 Acknowledgments](#-acknowledgments)
+- [📞 Support](#-support)
+- [✨ Stay Tuned](#-stay-tuned)
+
+---
+
 ## 📚 Documentation
 
 **Official docs:** [docs.opencrabs.com](https://docs.opencrabs.com) — comprehensive guides, architecture deep-dives, and reference material.
@@ -121,41 +168,46 @@ This isn't a privacy policy checkbox. It's an architectural decision. There is n
 
 ---
 
-## Table of Contents
+## 📊 Benchmarks
 
-- [Screenshots](#-screenshots)
-- [Why OpenCrabs?](#why-opencrabs)
-- [Core Features](#-core-features)
-- [CLI Commands](#cli)
-- [Migrating from Other Tools](#-migrating-from-other-tools)
-- [Supported AI Providers](#-supported-ai-providers)
-- [Agent-to-Agent (A2A) Protocol](#-agent-to-agent-a2a-protocol)
-- [Quick Start](#-quick-start)
-- [Onboarding Wizard](#-onboarding-wizard)
-- [API Keys (keys.toml)](#-api-keys-keystoml)
-- [Configuration (config.toml)](#-configuration-configtoml)
-- [Epistemic Engine](#-epistemic-engine)
-- [Safety Gates (~/.opencrabs/safety/)](#-safety-gates-opencrabssafety)
-- [Commands (commands.toml)](#-commands-commandstoml)
-- [Dynamic Tools (tools.toml)](#-dynamic-tools-toolstoml)
-- [Using Local LLMs](#-using-local-llms)
-- [Configuration](#-configuration)
-- [Tool System](#-tool-system)
-- [Keyboard Shortcuts](#-keyboard-shortcuts)
-- [Brain System & 3-Tier Memory](#-brain-system--3-tier-memory)
-- [Debug and Logging](#-debug-and-logging)
-- [/goal — Autonomous Goal Loop](#-goal-autonomous-goal-loop)
-- [Cron Jobs & Heartbeats](#-cron-jobs--heartbeats)
-- [Architecture](#-architecture)
-- [Project Structure](#-project-structure)
-- [Development](#-development)
-- [Platform Notes](#-platform-notes)
-- [Troubleshooting](#-troubleshooting)
-- [Companion Tools](#-companion-tools)
-- [Disclaimers](#-disclaimers)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Acknowledgments](#-acknowledgments)
+Measured on live workspaces, not fixtures. Full reports, including what each one explicitly did **not** measure, live in [`src/eval/results/`](src/eval/results/).
+
+### Memory retrieval ([full report](src/eval/results/memory-retrieval-2026-08-12.md))
+
+Every figure was measured on a live workspace: 9 brain files, 158 daily notes, 93 session documents, 258 MB.
+
+| Metric | Before | After |
+|---|---|---|
+| Rule-lookup hit rate (`scope="brain"`) | 2/5 | **5/5** |
+| Cost of one rule lookup | 33,443 chars (whole `AGENTS.md`) | **~1,000 chars (−97%)** |
+| precision@2, per-turn recall ranking | 0.625 | **0.917** |
+| Multilingual precision/recall@2 (6 languages) | not measured | **1.000 / 1.000** |
+| Worst index staleness | 15 hours | **current (refresh on write and on search)** |
+| Empty placeholder vectors | 495 | **0** |
+| Indexed vector rows | 1,944 | **5,744** |
+
+End-to-end check: a fact from **54 days back** (why a monthly invoice cron job had missed its schedule) was recovered in 9 steps, 1m 40s, starting from `memory_search` and reading the primary sources it located. Full chain in the [report](src/eval/results/memory-retrieval-2026-08-12.md).
+
+### Recall quality ([full report](src/eval/results/memory-recall-v1.md))
+
+Fixture-scored (13-section corpus, 12 positive + 12 negative queries), then sanity-checked against a real 156-section memory file and 437 real user messages:
+
+| Metric | Before (hit count ≥ 2) | After (normalized BM25 ≥ 0.35) |
+|---|---|---|
+| precision@2 | 0.625 | **0.917** |
+| recall@2 | **1.000** | 0.917 |
+| False-positive rate | 0.417 | **0.250** |
+| Memory injected into messages (real corpus) | 89.5% | **17.4%** |
+
+Recall falling is the point: the old rule answered almost everything, which is exactly why its precision was poor. The six-language eval (en, ru, es, pt, fr, id) scores 1.000 / 1.000 with per-language recall 3/3, and building it caught two real tokenizer bugs: accent-sensitive matching and Cyrillic combining marks.
+
+### Chunked embeddings ([full report](src/eval/results/memory-chunking.md))
+
+25.5% of vector rows were empty placeholders, making those documents invisible to the semantic half of hybrid search, and nothing over the size guard had ever been chunked. Both fixed; ranking is now per chunk instead of per averaged document vector.
+
+### Latency (criterion, release build)
+
+`cargo bench --bench memory`, in-memory SQLite: FTS search 2.57 ms at 50 docs, vector search 1.02 ms, hybrid RRF fusion 3.49 ms, indexing 214 µs per file. Full tables in the [Development section](#-development).
 
 ---
 
@@ -635,22 +687,29 @@ Dragging a file onto your terminal inserts **text**: the path as your *local*
 machine sees it. When the TUI runs over SSH that path names a file on your
 laptop while the process is on the server, so there is nothing local to attach.
 
+Either way the outcome is the same: **the file is copied onto the server,
+under the user you connected as, and attached from there.** It lands in
+`<home>/tmp/` under its own filename (`Screenshot 2026-09-02.png` stays
+`Screenshot 2026-09-02.png`; a timestamp is added only if that name is already
+taken), and the TUI prints a receipt naming the source, the size and where it
+landed. The model never sees your laptop path. What differs is who does the
+copy.
+
 **If OpenCrabs is only installed on the server**, you get a ready-to-run `scp`
-line instead, addressed to that host with the path quoted so it survives
-spaces. That works from every OS with nothing extra installed, and is the
-honest floor:
+line, addressed to that host with the path quoted so it survives spaces. That
+works from every OS with nothing extra installed, and is the honest floor:
 
 ```
-scp '/Users/you/Screenshot 2026-09-01 at 18.18.16.png' root@188.166.147.13:~/.opencrabs/tmp/
+scp '/Users/you/Screenshot 2026-09-02.png' root@188.166.147.13:~/.opencrabs/tmp/
 ```
 
-**If you also have OpenCrabs on the machine you drag from**, it can pull the
-file across **the SSH connection you already opened**, with no copy step. Two
-steps, once:
+**If you also have OpenCrabs on the machine you drag from**, the TUI pulls the
+file across **the SSH connection you already opened**, so the copy happens on
+its own. Two steps, once:
 
-**1. On the machine you drag files from** (this needs the OpenCrabs binary
-there — it is the one part of this that is not server-side), run the agent and
-leave it running:
+**1. On the machine you drag files from**, run the agent and leave it running.
+This needs the OpenCrabs binary there (it is the one part of this that is not
+server-side), but no config, keys or onboarding: it is a plain file server.
 
 ```bash
 opencrabs drop-agent
@@ -663,11 +722,15 @@ once and forget it:
 # before
 alias son='ssh root@188.166.147.13'
 # after
-alias son='ssh -R 8765:localhost:8765 root@188.166.147.13'
+alias son='ssh -R 127.0.0.1:8765:localhost:8765 root@188.166.147.13'
 ```
 
-That is it. Drop a file into the remote TUI and it attaches like any local
-file.
+That is it. Nothing to set on the server: over SSH the TUI probes
+`localhost:8765` for the agent on every remote drop and falls back to the `scp`
+line when nothing answers. If you forward a different port, tell the server
+side with `OPENCRABS_DROP_PORT=<port>` in that shell. When the variable is set
+the tunnel is required, so a pull that fails is reported instead of falling
+back.
 
 **Where it lands** follows the same rules as every other share:
 
@@ -688,7 +751,7 @@ opens a real channel on that same connection, which the agent answers.
 **Works everywhere.** `ssh -R` is standard on Windows (built-in OpenSSH),
 Linux and macOS, and the agent is an OpenCrabs subcommand, so any client OS
 works. It never touches the terminal escape stream, so it also works from any
-terminal emulator **and through `tmux`/`screen`** — unlike kitty's transfer or
+terminal emulator **and through `tmux`/`screen`**, unlike kitty's transfer or
 zmodem, which the multiplexer swallows.
 
 **What the agent will and will not serve.** It hands files to whatever holds
@@ -697,9 +760,9 @@ the far end of the tunnel, so it is deliberately narrow:
 | | |
 |---|---|
 | Serves from | `Desktop`, `Downloads`, `Pictures`, `Documents`, `Movies` |
-| Listens on | `127.0.0.1` only, reachable solely through your forward |
+| Listens on | `127.0.0.1` on your machine. On the server, through the forward, `localhost:8765` for **every process on that box**, not only your TUI |
 | Refuses | anything outside those roots, `..` traversal, symlinks pointing out of a root, directories, files over 64 MB |
-| Logs | every path served **and every path refused** |
+| Logs | every path served **and every path refused**, to the terminal it runs in |
 
 Serve somewhere else with `--root`, repeatable:
 
@@ -709,9 +772,37 @@ opencrabs drop-agent --root ~/work/screenshots --root ~/Desktop
 
 The default is not `$HOME` on purpose: a server that asked for
 `~/.ssh/id_ed25519` is refused by construction rather than by you having
-remembered to restrict it. Note that the forwarded port is reachable by other
-users on that server, so only use this on a box you trust — which is already
-true, since you are running a shell there.
+remembered to restrict it.
+
+**What you are exposing.** Read this before leaving the agent running.
+
+- **There is no authentication.** A request is a bare path on a TCP line, and
+  holding the far end of the socket is the only credential. The served-roots
+  allowlist above is the entire security model.
+- **Anything on the server can read your served folders while the tunnel is
+  up.** The forward makes the agent answer on the server's `localhost:8765`,
+  which every process there can dial: other users on a shared box, other
+  services, and **the agent's own tools**. A `bash` tool call on the server can
+  pull any file inside your roots. A prompt-injected model can therefore read
+  from your Desktop or Downloads without you dropping anything. Serve the
+  narrowest `--root` you can and open the tunnel only while you are actually
+  dropping files.
+- **Exposure lasts the whole SSH session**, not the moment of a drop. `-R`
+  opens the channel when you connect and keeps it until you disconnect, and the
+  agent answers whenever it is running.
+- **Check `GatewayPorts` on the server.** By default sshd binds a reverse
+  forward to loopback. With `GatewayPorts yes` in `sshd_config` it binds on
+  every interface, and your served folders are reachable from the internet
+  through the VPS. The `127.0.0.1:` in front of the port in the alias above
+  is what prevents that: an explicit bind address is honoured regardless of
+  `GatewayPorts`. Keep it.
+
+- **On your own machine** the listener is loopback only. Nothing off the
+  laptop reaches it except through a forward you opened.
+
+Only use this against a server you control alone. Never against a shared or
+untrusted host, never with the agent left running as a service, and never with
+a root wider than the files you intend to drop.
 
 Sending the file through a connected chat channel (Telegram, Discord, Slack)
 also puts it on the server, which is often quickest on a headless box and
@@ -1156,6 +1247,33 @@ default_model = "mistral"
 ```
 
 The name after `custom.` is a label you choose (e.g. `lm_studio`, `nvidia`, `groq`). The one with `enabled = true` is active. Keys go in `keys.toml` using the same label. All configured custom providers persist — switching via `/models` just toggles `enabled`.
+
+**Referring to your custom provider elsewhere.** That label is the provider's
+name everywhere in OpenCrabs. `custom` is the table it lives in, not part of the
+name, so wherever a key asks for a provider, write the bare label:
+
+```toml
+[providers.custom.myprovider]          # the name is "myprovider"
+base_url = "https://api.example.com/v1"
+default_model = "some-model"
+
+[agent]
+self_improvement_provider = "myprovider"          # right
+# self_improvement_provider = "custom:myprovider"  # wrong: that is the table path
+# self_improvement_provider = "custom.myprovider"  # wrong: same thing
+# self_improvement_provider = "myprovider/some-model"  # wrong: the model has its own key
+self_improvement_model = "some-model"
+```
+
+The same bare name goes in `subagent_provider`, `plan_provider`,
+`execute_provider`, the `[providers.fallback] providers` list, the
+`[image.vision] provider` override, and `/models myprovider/some-model`. A
+provider key never takes `<provider>/<model>`: the model belongs in the matching
+`_model` key. All four `[agent]` keys (`self_improvement_`, `subagent_`, `plan_`
+and `execute_provider`) correct the `custom:` prefix and the `provider/model`
+split and say so in the log (see Troubleshooting); the fallback list and the
+vision override take what you wrote, so get the name right once and it works
+everywhere.
 
 #### Free Prototyping with NVIDIA API + Kimi K2.5
 
@@ -2969,6 +3087,35 @@ self_improvement_provider = "<your-provider-name>"   # provider for RSI cycles
 self_improvement_model    = "<model-id-on-that-provider>"   # paired model
 ```
 
+**The provider name is the config section name, nothing more.** For a built-in
+provider it is the section: `[providers.zhipu]` is `"zhipu"`. For a custom
+provider it is the last segment of the table path: `[providers.custom.moonshotai]`
+is `"moonshotai"`, not `"custom:moonshotai"` and not `"custom.moonshotai"`. The
+`custom` in the path says where the section lives, it is not part of the name,
+and every custom provider in `/models` is listed by that bare name. The provider
+key takes a provider only: `"zhipu/glm-5.3"` or `"zhipu:glm-5.3"` belongs across
+the two keys, `self_improvement_provider = "zhipu"` and
+`self_improvement_model = "glm-5.3"`. The same rule applies to
+`subagent_provider`, `plan_provider` and `execute_provider`.
+
+```toml
+[providers.custom.moonshotai]
+base_url = "https://api.moonshot.ai/v1"
+default_model = "kimi-k2"
+
+[agent]
+self_improvement_provider = "moonshotai"   # the section name, no "custom:" prefix
+self_improvement_model    = "kimi-k2"
+```
+
+RSI, and the `subagent_`, `plan_` and `execute_provider` keys, recognise the two
+common slips anyway: a `custom:` prefix is dropped, and a `<provider>/<model>`
+value whose head is one of your configured providers is split into the pair,
+with a warning in the log naming the canonical spelling.
+Before that, a prefixed value never built a provider and every cycle died
+silently before it started, which Mission Control reported as "RSI has never
+run".
+
 **Plan and Execute Provider and Model** — run `/plan` and `/execute` on different provider+model pairs, so designing and building each get the model they suit. Set them under `[agent]`, paired exactly like `subagent_provider`/`subagent_model`. All four are optional, and leaving them unset changes nothing: an install that sets none of them behaves exactly as before.
 
 ```toml
@@ -4266,7 +4413,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (7,290 tests across 735 test modules; 32 slower tests are
+# Run tests (7,566 tests across 747 test modules; 33 slower tests are
 # #[ignore]d to keep the default run fast — profile tests that touch
 # ~/.opencrabs, browser end-to-end tests, and opencode provider tests.
 # Opt in with `cargo test --all-features -- --ignored` when needed)
@@ -4498,6 +4645,37 @@ If the bot still shows the old number after resetting, make sure you completed s
 | Bot doesn't reply to anyone | `response_policy` is too restrictive | Set `response_policy = "allowlist"` and add phone numbers to `allowed_phones` in `config.toml` |
 | Bot replies to everyone | `response_policy` is `open` | Set `response_policy = "allowlist"` or `"owner_only"` in `config.toml` |
 | Bot doesn't reply to self-chat | `allowed_phones` doesn't include the paired number | The paired number's self-chat is always allowed, regardless of `allowed_phones`. If it's not working, check that `response_policy` isn't `dm_only` with no owner set |
+
+### RSI Never Runs / Custom Provider Not Found
+
+**Symptom:** Mission Control shows "RSI has never run" with thousands of tool
+events unprocessed, or a log line says the self-improvement provider could not
+be built, while `rsi_enabled = true` and the provider works fine in chat.
+
+**Cause:** the provider was named by its config table path instead of its name.
+For `[providers.custom.myprovider]` the name is `myprovider`; writing
+`"custom:myprovider"` or `"custom.myprovider"` in `self_improvement_provider`
+(or `"myprovider/some-model"`, putting the model where the provider goes) never
+resolved to a provider, so every cycle died before it started.
+
+**Fix:**
+
+```toml
+[agent]
+self_improvement_provider = "myprovider"   # the bare section name
+self_improvement_model    = "some-model"   # the model goes here, not in the provider key
+```
+
+All four `[agent]` provider keys now recognise both slips: they drop the
+`custom:` prefix and split a `<provider>/<model>` value whose head is one of your
+configured providers, then log a line such as
+`RSI: self_improvement_provider corrected to '<name>'`,
+`Sub-agent provider corrected to '<name>'` or
+`Plan-mode routing: plan_provider corrected to '<name>'` naming the canonical
+spelling. If you see one of those lines, fix the config so it stops appearing.
+The `[providers.fallback] providers` list and `[image.vision] provider` take the
+value as written, so use the bare name there too. See **Custom
+(OpenAI-Compatible)** under Providers.
 
 ### Agent Hallucinating Tool Calls
 

@@ -224,12 +224,15 @@ impl Tool for TeamCreateTool {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
-            let model_override = member_model
-                .clone()
-                .or_else(|| config.agent.subagent_model.clone());
-            let effective_provider_name = member_provider
-                .clone()
-                .or_else(|| config.agent.subagent_provider.clone());
+            // Per-member > config, normalised the same way spawn resolves
+            // it (#1316).
+            let child = super::super::provider_pair::child_pair(
+                &config,
+                member_provider.as_deref(),
+                member_model.as_deref(),
+            );
+            let model_override = child.model.clone();
+            let effective_provider_name = child.provider.clone();
 
             // Create session for this agent
             let session_service = crate::services::SessionService::new(service_context.clone());
@@ -249,10 +252,9 @@ impl Tool for TeamCreateTool {
                 match crate::brain::provider::create_provider_by_name(&config, provider_name).await
                 {
                     Ok(p) => {
-                        let source = if member_provider.is_some() {
-                            "per-member"
-                        } else {
-                            "config"
+                        let source = match child.source {
+                            super::super::provider_pair::ProviderSource::PerCall => "per-member",
+                            super::super::provider_pair::ProviderSource::Config => "config",
                         };
                         tracing::info!(
                             "Team member '{label}' using {source} provider '{provider_name}'"

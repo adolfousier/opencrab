@@ -16,8 +16,8 @@
 //! hangs; failure paths yield [`MermaidResult::Failed`].
 
 use super::ast::{Block, MermaidResult};
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -437,16 +437,6 @@ pub(crate) async fn resolve(source: &str) -> MermaidResult {
     // Not a usable image: surface the renderer's own error text (mermaid.ink
     // returns a plain-text parse error) so the failure block is legible.
     let body = resp.text().await.unwrap_or_default();
-    // Failure telemetry (#64): the success leg logs `render ok`; without a
-    // matching warn here a non-200 is invisible in the daemon log and
-    // incidents get argued from absence. Parse rejections (4xx) also warn —
-    // the #37 preflight consumes them, but the render attempt itself should
-    // still leave a receipt.
-    tracing::warn!(
-        status,
-        note = %error_note(status, &body),
-        "mermaid.ink render failed"
-    );
     finish(source, classify_render_failure(status, &body))
 }
 

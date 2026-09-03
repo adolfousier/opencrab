@@ -185,3 +185,23 @@ fn test_the_multiplexer_case_explains_itself() {
         "the user should learn WHY the better tier is unavailable: {g}"
     );
 }
+
+#[test]
+fn test_guidance_names_the_drop_tunnel_for_ssh_sessions_only() {
+    let e = env(&[
+        ("SSH_CONNECTION", "10.0.0.2 51234 10.0.0.1 22"),
+        ("USER", "root"),
+    ]);
+    let g = guidance(&e, "/Users/me/a.png", "/root/.opencrabs/tmp");
+    assert!(g.contains("opencrabs drop-agent"), "{g}");
+    assert!(
+        g.contains("ssh -R 127.0.0.1:8765:localhost:8765 root@10.0.0.1"),
+        "the forward must be addressed to this host as the client reached it: {g}"
+    );
+
+    let local = guidance(&env(&[("TERM", "xterm")]), "/nope/a.png", "/dest");
+    assert!(
+        !local.contains("drop-agent"),
+        "a missing local file is not a remote-copy problem: {local}"
+    );
+}

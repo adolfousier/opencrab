@@ -156,22 +156,23 @@ impl Tool for ResumeAgentTool {
         // Build a new AgentService for the resumed run
         let config = crate::config::Config::load()
             .map_err(|e| ToolError::Execution(format!("Config load failed: {}", e)))?;
-        let subagent_model = call_model
-            .clone()
-            .or_else(|| config.agent.subagent_model.clone());
-        let effective_provider_name = call_provider
-            .clone()
-            .or_else(|| config.agent.subagent_provider.clone());
+        // Per-call > config, normalised the same way spawn resolves it (#1316).
+        let child = super::provider_pair::child_pair(
+            &config,
+            call_provider.as_deref(),
+            call_model.as_deref(),
+        );
+        let subagent_model = child.model.clone();
+        let effective_provider_name = child.provider.clone();
 
         let child_service = {
             let provider = if let Some(ref provider_name) = effective_provider_name {
                 match crate::brain::provider::create_provider_by_name(&config, provider_name).await
                 {
                     Ok(p) => {
-                        let source = if call_provider.is_some() {
-                            "per-call"
-                        } else {
-                            "config"
+                        let source = match child.source {
+                            super::provider_pair::ProviderSource::PerCall => "per-call",
+                            super::provider_pair::ProviderSource::Config => "config",
                         };
                         tracing::info!(
                             "Resumed sub-agent using {source} provider '{provider_name}'"

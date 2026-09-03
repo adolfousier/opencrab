@@ -140,7 +140,7 @@ fn frame_fallback_routes_through_provider_vision_when_no_gemini() {
         .join("\n");
 
     assert!(
-        code.contains("provider_vision") && code.contains("ProviderVisionTool::new"),
+        code.contains("provider_vision") && code.contains("ProviderVisionTool::with_candidates"),
         "the frame fallback must construct a ProviderVisionTool from the provider \
          vision creds when no Gemini key is present (#281)."
     );

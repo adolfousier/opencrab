@@ -713,7 +713,9 @@ mod active_provider_vision {
 // --- Vision fallback chain ([providers.fallback].vision) ---
 
 mod vision_fallback_chain {
-    use crate::brain::provider::factory::{active_provider_vision, vision_candidates};
+    use crate::brain::provider::factory::{
+        active_provider_vision, vision_candidates, vision_candidates_for,
+    };
     use crate::config::{Config, FallbackProviderConfig, ProviderConfig, ProviderConfigs};
     use std::collections::BTreeMap;
 
@@ -772,10 +774,16 @@ mod vision_fallback_chain {
     }
 
     #[test]
-    fn scan_outranks_chain_and_chain_dedups() {
-        // Owner contract (#430): providers with vision_model + key come
-        // FIRST (scan, REGISTRATIONS order), THEN the chain. Chain entries
-        // that the scan already collected dedup away.
+    fn the_chain_decides_the_order_not_the_scan() {
+        // Inverted deliberately (#1318). The scan used to run FIRST and,
+        // because dedup keeps the first occurrence, a provider it found held
+        // its scan position — so a configured chain could never reorder
+        // anything and only contributed entries the scan had missed. Measured
+        // cost: four candidates tried and failed on every image while
+        // providers named in the chain were never reached.
+        //
+        // `openai` here has a vision_model and would have won the old scan.
+        // It is not in the chain, so it must not be tried.
         let mut config = two_providers_config();
         config.providers.fallback = Some(FallbackProviderConfig {
             enabled: true,
@@ -784,23 +792,77 @@ mod vision_fallback_chain {
         });
 
         let cands = vision_candidates(&config);
-        assert_eq!(cands.len(), 2, "openai + minimax, chain entry deduped");
-        assert_eq!(cands[0].0, "openai-key", "scan winner first");
-        assert_eq!(cands[1].0, "minimax-key");
-        // First candidate is what active_provider_vision reports.
-        let (api_key, _, _) = active_provider_vision(&config).unwrap();
-        assert_eq!(api_key, "openai-key");
+        assert_eq!(cands.len(), 1, "chain only: {cands:?}");
+        assert_eq!(cands[0].0, "minimax-key", "the configured entry wins");
     }
 
     #[test]
-    fn all_candidates_present_for_roll_through() {
-        // Every provider with vision_model + key is a candidate: the tool
-        // rolls through them at request time (next next next), so a dead
-        // first candidate no longer kills provider vision (#430).
+    fn the_session_provider_is_tried_before_the_chain() {
+        // Owner contract (#1318): current provider, then chain, then Gemini.
+        let mut config = two_providers_config();
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["minimax".into()],
+            ..Default::default()
+        });
+
+        let cands = vision_candidates_for(&config, Some("openai"));
+        assert_eq!(cands.len(), 2, "current provider + chain: {cands:?}");
+        assert_eq!(cands[0].0, "openai-key", "the session's provider is first");
+        assert_eq!(cands[1].0, "minimax-key");
+    }
+
+    #[test]
+    fn a_session_provider_already_in_the_chain_is_not_tried_twice() {
+        let mut config = two_providers_config();
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["minimax".into(), "openai".into()],
+            ..Default::default()
+        });
+
+        let cands = vision_candidates_for(&config, Some("openai"));
+        assert_eq!(cands.len(), 2, "deduped: {cands:?}");
+        assert_eq!(
+            cands[0].0, "openai-key",
+            "and it keeps the CURRENT-provider position, not its chain one"
+        );
+    }
+
+    #[test]
+    fn a_session_provider_without_vision_just_falls_to_the_chain() {
+        let mut config = two_providers_config();
+        config.providers.openai.as_mut().unwrap().vision_model = None;
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["minimax".into()],
+            ..Default::default()
+        });
+
+        let cands = vision_candidates_for(&config, Some("openai"));
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].0, "minimax-key");
+    }
+
+    #[test]
+    fn roll_through_covers_the_chain_while_capability_still_sees_everything() {
+        // Two different questions, and conflating them was the bug (#1318).
+        // "What do we TRY, in order?" is the chain. "Can we see AT ALL?" is
+        // the scan, which registration gates and file_extract rely on.
         let config = two_providers_config();
-        let cands = vision_candidates(&config);
-        let models: Vec<&str> = cands.iter().map(|c| c.2.as_str()).collect();
-        assert_eq!(models, vec!["gpt-5-nano", "MiniMax-Text-01"]);
+
+        assert!(
+            vision_candidates(&config).is_empty(),
+            "nothing configured to try: no chain, no session provider"
+        );
+
+        let scanned = crate::brain::provider::factory::any_provider_vision(&config);
+        let capable: Vec<&str> = scanned.iter().map(|c| c.2.as_str()).collect();
+        assert_eq!(
+            capable,
+            vec!["gpt-5-nano", "MiniMax-Text-01"],
+            "capability still sees every provider that can serve vision"
+        );
     }
 
     #[test]
@@ -914,7 +976,7 @@ mod vision_fallback_chain {
         let mut config = two_providers_config();
         config.providers.openai.as_mut().unwrap().api_key = None;
 
-        let cands = vision_candidates(&config);
+        let cands = crate::brain::provider::factory::any_provider_vision(&config);
         assert_eq!(cands.len(), 1, "only minimax remains: {cands:?}");
         assert_eq!(cands[0].0, "minimax-key");
     }

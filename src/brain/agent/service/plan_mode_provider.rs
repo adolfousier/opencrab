@@ -12,6 +12,8 @@
 //! Everything here is pure. Deciding what the pair SHOULD be is separable from
 //! the swap that installs it, and only the decision needs exhaustive tests.
 
+use crate::brain::provider_spec::{ProviderKey, normalize_in};
+use crate::config::Config;
 use crate::config::types::AgentConfig;
 use crate::utils::plan_files::PlanModeState;
 
@@ -60,6 +62,36 @@ pub fn override_for(state: PlanModeState, agent: &AgentConfig) -> Option<ModeOve
     Some(ModeOverride {
         provider: provider.cloned(),
         model: model.cloned(),
+    })
+}
+
+/// [`override_for`] with the provider value normalised against `config`
+/// (#1316): `"custom:myprovider"` or `"myprovider/some-model"` in
+/// `plan_provider` / `execute_provider` resolves to the provider it names
+/// instead of being handed to the swap verbatim. Logs one warning naming the
+/// canonical spelling when a correction was applied. A bare name, and the
+/// `None` no-op, pass through untouched.
+pub fn normalized_override_for(state: PlanModeState, config: &Config) -> Option<ModeOverride> {
+    let over = override_for(state, &config.agent)?;
+    let Some(provider) = over.provider.as_deref() else {
+        return Some(over);
+    };
+    let key = if state.is_editing() {
+        ProviderKey::PLAN
+    } else {
+        ProviderKey::EXECUTE
+    };
+    let pair = normalize_in(config, key, provider, over.model.as_deref());
+    if let Some(note) = pair.note.as_deref() {
+        tracing::warn!(
+            "Plan-mode routing: {} corrected to '{}': {note}",
+            key.provider,
+            pair.provider
+        );
+    }
+    Some(ModeOverride {
+        provider: Some(pair.provider),
+        model: pair.model,
     })
 }
 

@@ -76,7 +76,10 @@ fn test_schema_requires_target_and_message() {
         .iter()
         .map(|v| v.as_str().expect("required entry is a string"))
         .collect();
-    assert_eq!(required, vec!["target_session", "message"]);
+    // v2 (#1273): only target_session is required — `message` became optional
+    // with the action verb family (action=status polls a receipt, sends no text).
+    // Mirrors the in-file schema test in subagent/notify.rs.
+    assert_eq!(required, vec!["target_session"]);
     assert!(schema["properties"]["target_session"].is_object());
     assert!(schema["properties"]["message"].is_object());
 }
@@ -109,7 +112,7 @@ fn test_an_unroutable_session_is_reported_as_such() {
     );
 }
 
-// ── In-flight gate (fork #13, shipped upstream as the failsafe valve) ────
+// ── In-flight gate (fork #13) ────────────────────────────────────────────
 
 #[test]
 fn test_inflight_target_refuses_without_interrupt() {
@@ -168,7 +171,7 @@ fn test_no_probe_fails_open() {
 }
 
 #[tokio::test]
-#[allow(clippy::await_holding_lock)]
+#[expect(clippy::await_holding_lock)]
 async fn test_tool_reports_refusal_with_remedy() {
     let _guard = test_guard();
     let session = Uuid::new_v4();
@@ -195,7 +198,7 @@ async fn test_tool_reports_refusal_with_remedy() {
 }
 
 #[tokio::test]
-#[allow(clippy::await_holding_lock)]
+#[expect(clippy::await_holding_lock)]
 async fn test_tool_interrupt_param_reaches_delivery() {
     let _guard = test_guard();
     let session = Uuid::new_v4();

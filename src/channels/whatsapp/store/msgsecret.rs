@@ -1,6 +1,8 @@
-use super::*;
+use super::Store;
+use super::errors::{OptionalExt, db_err, interact_to_store_err, pool_err};
 use async_trait::async_trait;
 use rusqlite::params;
+use wacore::store::error::Result;
 use wacore::store::traits::{
     MsgSecretEntry, MsgSecretStore, merge_msg_secret_expiry, merge_msg_secret_message_ts,
 };

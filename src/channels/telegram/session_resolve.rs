@@ -80,6 +80,30 @@ pub fn topic_session_id(is_topic_message: bool, thread_id: Option<i32>) -> Optio
 /// DMs / non-forum groups (#1220).
 pub const GENERAL_TOPIC_ID: i32 = 1;
 
+/// The `message_thread_id` to put on the wire for a session scoped to `topic`.
+///
+/// [`GENERAL_TOPIC_ID`] is a SESSION-SCOPING KEY, never an address. #1220
+/// invented it so a forum's General topic would not collide with a DM on the
+/// same chat, and that is right — but General messages carry no
+/// `message_thread_id` at all, so sending `1` asks Telegram for a thread that
+/// does not exist and every message-CREATING call is refused with
+/// `Bad Request: message thread not found` (#1319).
+///
+/// Edits hid this for a long time: they address a `message_id` and never
+/// consult a thread, so a General-bound session kept updating its status
+/// cards in place and only failed the moment it had something new to say.
+///
+/// Every sender goes through here rather than converting the stored topic
+/// itself. Six call sites were each doing their own `ThreadId(MessageId(t))`,
+/// and patching six is an invitation for a seventh to reintroduce it.
+pub fn delivery_thread_id(topic: Option<i32>) -> Option<teloxide::types::ThreadId> {
+    match topic {
+        // General: the absence of a thread IS the address.
+        Some(GENERAL_TOPIC_ID) | None => None,
+        Some(real) => Some(teloxide::types::ThreadId(teloxide::types::MessageId(real))),
+    }
+}
+
 /// #1220: normalize a raw topic resolution for KNOWN forum chats.
 ///
 /// `raw` is the output of [`topic_session_id`]; `known_forum` is the

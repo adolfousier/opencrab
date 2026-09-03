@@ -10,6 +10,8 @@
 
 use slack_morphism::prelude::*;
 
+use super::SlackState;
+
 /// One step in a group, in the order it happened.
 ///
 /// Narration lives here rather than in its own chat message so the agent's
@@ -162,4 +164,41 @@ pub(crate) fn render(group: &GroupState, ts: &SlackTs) -> SlackMessageContent {
     SlackMessageContent::new()
         .with_text(text)
         .with_blocks(blocks)
+}
+
+impl SlackState {
+    /// Retained tool groups; older ones stop being toggleable (their last
+    /// rendered state stays on screen, like Telegram's frozen blocks).
+    const TOOL_GROUP_CAP: usize = 20;
+
+    /// Insert or update the group for a message ts, PRESERVING the user's
+    /// expanded/collapsed choice on updates (a completing tool must not
+    /// snap an expanded group shut). Prunes the oldest beyond the cap.
+    /// Returns the stored state so callers render exactly what is kept.
+    pub(crate) async fn upsert_tool_group(&self, ts: String, mut group: GroupState) -> GroupState {
+        let mut guard = self.tool_groups.lock().await;
+        let (order, map) = &mut *guard;
+        match map.get(&ts) {
+            Some(existing) => group.expanded = existing.expanded,
+            None => {
+                order.push(ts.clone());
+                while order.len() > Self::TOOL_GROUP_CAP {
+                    let oldest = order.remove(0);
+                    map.remove(&oldest);
+                }
+            }
+        }
+        map.insert(ts, group.clone());
+        group
+    }
+
+    /// Flip a group's expanded state; returns the new state for re-render,
+    /// or None when the group aged out of retention.
+    pub(crate) async fn toggle_tool_group(&self, ts: &str) -> Option<GroupState> {
+        let mut guard = self.tool_groups.lock().await;
+        let (_, map) = &mut *guard;
+        let group = map.get_mut(ts)?;
+        group.expanded = !group.expanded;
+        Some(group.clone())
+    }
 }

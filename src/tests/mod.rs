@@ -269,6 +269,8 @@ pub mod memory_search_test;
 pub mod memory_store_profile_test;
 pub mod memory_store_test;
 pub mod menu_auto_solo_test;
+#[cfg(feature = "telegram")]
+pub mod menu_refresh_test;
 pub mod message_split_markup_test;
 pub mod mimo_tool_call_hint_test;
 pub mod mission_control_command_test;
@@ -306,6 +308,7 @@ pub mod progress_callback_fanout_test;
 pub mod project_runner_test;
 pub mod provider_matches_session_test;
 pub mod provider_models_isolation_test;
+pub mod provider_spec_test;
 pub mod queued_message_join_test;
 pub mod ralph_loop_config_test;
 pub mod ralph_receipt_binding_test;
@@ -349,6 +352,8 @@ pub mod telegram_callback_session_topic_test;
 pub mod telegram_cancel_token_no_drop_test;
 pub mod telegram_dedup_approval_test;
 #[cfg(feature = "telegram")]
+pub mod telegram_general_topic_delivery_test;
+#[cfg(feature = "telegram")]
 #[cfg(feature = "telegram")]
 pub mod telegram_mentions_other_bot_test;
 #[cfg(feature = "telegram")]
@@ -362,7 +367,6 @@ pub mod telegram_session_gate_test;
 pub mod telegram_suggest_merge_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_table_render_test;
-#[cfg(feature = "telegram")]
 pub mod telegram_topic_routing_test;
 pub mod tool_search_child_registry_test;
 pub mod tools_md_regression_test;
@@ -587,6 +591,7 @@ pub mod tts_fallback_chain_test;
 pub mod voice_openai_compatible_test;
 pub mod voice_voicebox_test;
 //pub mod streaming_test;
+pub mod drop_landing_test;
 pub mod drop_transfer_test;
 pub mod eval_baseline_test;
 pub mod eval_before_after_test;
@@ -657,6 +662,7 @@ pub mod slash_models_target_test;
 pub mod split_pane_test;
 pub mod subagent_compaction_preamble_test;
 pub mod subagent_natural_completion_test;
+pub mod subagent_provider_pair_test;
 pub mod subagent_push_result_test;
 pub mod subagent_session_ttl_test;
 pub mod subagent_test;

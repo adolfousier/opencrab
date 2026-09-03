@@ -21,6 +21,26 @@ fn utf8_char_len(b: u8) -> usize {
     }
 }
 
+/// A file pulled across the drop tunnel and written locally (#1311).
+pub(crate) struct PulledDrop {
+    /// The client's filename, for display.
+    pub name: String,
+    /// Where it landed on this machine.
+    pub path: String,
+    /// Size of the copy.
+    pub bytes: usize,
+}
+
+/// What scanning a message for dropped paths produced (#1311).
+pub(crate) struct Extraction {
+    /// The message with the attached paths removed.
+    pub text: String,
+    pub attachments: Vec<ImageAttachment>,
+    /// Receipts to show in the chat, one per file that was copied onto this
+    /// machine, so a pull over the drop tunnel is never silent.
+    pub notices: Vec<String>,
+}
+
 impl App {
     /// Read the persisted approval policy from config.toml.
     /// Returns `(auto_session, auto_always)` flags.
@@ -2026,29 +2046,21 @@ impl App {
     /// or forwarded in a chat channel, and which is keyed by platform. A drop
     /// is neither, and filing it there would tell the agent something untrue.
     ///
-    /// Stamped on disk and named for display, mirroring `attach_clipboard_image`:
-    /// two screenshots called `Screenshot.png` must not clobber each other,
-    /// and `ImageAttachment` carries the display name separately anyway.
-    fn pull_dropped_file(port: u16, client_path: &str) -> anyhow::Result<(String, String)> {
+    /// Named after the client's file so the directory stays readable, with a
+    /// timestamp spliced in only on collision (#1311): two screenshots called
+    /// `Screenshot.png` must not clobber each other, but the ordinary case
+    /// should be a file you can recognise.
+    fn pull_dropped_file(port: u16, client_path: &str) -> anyhow::Result<PulledDrop> {
         let bytes = crate::utils::drop_agent::fetch(port, client_path)?;
         let dir = crate::config::opencrabs_home().join("tmp");
         std::fs::create_dir_all(&dir)?;
 
-        let source = std::path::Path::new(client_path);
-        let display = source
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "dropped-file".to_string());
-        let ext = source
-            .extension()
-            .map(|e| format!(".{}", e.to_string_lossy()))
-            .unwrap_or_default();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-
-        let dest = dir.join(format!("dropped-{stamp}{ext}"));
+        let dest =
+            crate::utils::drop_landing::landing_path(&dir, client_path, stamp, |p| p.exists());
         std::fs::write(&dest, &bytes)?;
         tracing::info!(
             "drop tunnel: pulled {} ({} bytes) to {}",
@@ -2056,10 +2068,17 @@ impl App {
             bytes.len(),
             dest.display()
         );
-        Ok((display, dest.to_string_lossy().to_string()))
+        Ok(PulledDrop {
+            name: crate::utils::drop_landing::client_file_name(client_path),
+            path: dest.to_string_lossy().to_string(),
+            bytes: bytes.len(),
+        })
     }
 
-    pub(crate) fn extract_image_paths(text: &str) -> (String, Vec<ImageAttachment>) {
+    /// Scan `text` for dropped media paths and turn them into attachments,
+    /// with a receipt for every file that had to be copied onto this machine.
+    pub(crate) fn extract_attachments(text: &str) -> Extraction {
+        let mut notices: Vec<String> = Vec::new();
         let trimmed = text.trim();
         let lower = trimmed.to_lowercase();
 
@@ -2075,26 +2094,28 @@ impl App {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| real.clone());
-                return (
-                    String::new(),
-                    vec![ImageAttachment {
+                return Extraction {
+                    text: String::new(),
+                    attachments: vec![ImageAttachment {
                         name,
                         path: real,
                         is_video: is_video_single,
                     }],
-                );
+                    notices,
+                };
             }
             // URL (no spaces — just check prefix)
             if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
                 let name = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
-                return (
-                    String::new(),
-                    vec![ImageAttachment {
+                return Extraction {
+                    text: String::new(),
+                    attachments: vec![ImageAttachment {
                         name,
                         path: trimmed.to_string(),
                         is_video: is_video_single,
                     }],
-                );
+                    notices,
+                };
             }
         }
 
@@ -2118,10 +2139,11 @@ impl App {
             } else {
                 format!("Call `parse_document(path='{real}')` to read it.")
             };
-            return (
-                format!("[User attached a document: {name} ({real}). {how}]"),
-                vec![],
-            );
+            return Extraction {
+                text: format!("[User attached a document: {name} ({real}). {how}]"),
+                attachments: vec![],
+                notices,
+            };
         }
 
         // Case 1c: Entire pasted text is a single text file path (handles spaces in path)
@@ -2141,7 +2163,11 @@ impl App {
                 } else {
                     content
                 };
-                return (format!("[File: {}]\n```\n{}\n```", name, truncated), vec![]);
+                return Extraction {
+                    text: format!("[File: {}]\n```\n{}\n```", name, truncated),
+                    attachments: vec![],
+                    notices,
+                };
             }
         }
 
@@ -2194,33 +2220,40 @@ impl App {
                             });
                             rewritten.replace_range(start..end, "");
                         }
-                        // The path is real, just not on this machine — a drop
+                        // The path is real, just not on this machine: a drop
                         // from a laptop into a session running over SSH. Say
                         // so in the message itself: forwarding it as prose
                         // sent the agent hunting through the attachments dir
                         // and cost a whole turn before it worked that out.
-                        // The file is on the user's machine. If they opened
-                        // the reverse tunnel, pull it across the SSH
-                        // connection they already made and attach it like any
-                        // local drop (#1289).
-                        Dropped::Elsewhere { path, .. }
-                            if crate::utils::drop_transfer::tunnel_port().is_some() =>
-                        {
-                            let port = crate::utils::drop_transfer::tunnel_port()
-                                .expect("guarded by the match arm");
-                            match Self::pull_dropped_file(port, &path) {
-                                Ok((name, local)) => {
-                                    let lower = local.to_lowercase();
+                        //
+                        // If the user opened the reverse tunnel, pull the file
+                        // across the SSH connection they already made and
+                        // attach the local copy like any other drop (#1289).
+                        // Over SSH the default port is probed even without
+                        // OPENCRABS_DROP_PORT, so the documented `ssh -R`
+                        // alias is enough on its own; only a DECLARED tunnel
+                        // that fails is reported as an error (#1311).
+                        Dropped::Elsewhere { path, .. } => {
+                            let attempt = crate::utils::drop_transfer::tunnel()
+                                .map(|t| (t, Self::pull_dropped_file(t.port, &path)));
+                            match attempt {
+                                Some((_, Ok(pulled))) => {
+                                    let lower = pulled.path.to_lowercase();
                                     let is_video =
                                         VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
+                                    notices.push(crate::utils::drop_landing::pulled_notice(
+                                        &pulled.name,
+                                        &pulled.path,
+                                        pulled.bytes,
+                                    ));
                                     attachments.push(ImageAttachment {
-                                        name,
-                                        path: local,
+                                        name: pulled.name,
+                                        path: pulled.path,
                                         is_video,
                                     });
                                     rewritten.replace_range(start..end, "");
                                 }
-                                Err(e) => {
+                                Some((tunnel, Err(e))) if tunnel.declared => {
                                     // Never silently claim an attachment that
                                     // did not arrive.
                                     tracing::warn!("drop tunnel: {path}: {e:#}");
@@ -2232,27 +2265,35 @@ impl App {
                                         ),
                                     );
                                 }
+                                other => {
+                                    if let Some((tunnel, Err(e))) = other {
+                                        tracing::debug!(
+                                            "drop tunnel: nothing answering the probe on port {}: \
+                                             {e:#}; falling back to copy guidance",
+                                            tunnel.port
+                                        );
+                                    }
+                                    // Name the transfer that actually works for
+                                    // this terminal (#1289) rather than only
+                                    // reporting the absence: over SSH the file
+                                    // IS reachable, just not from here.
+                                    let env = crate::tui::remote_upload::Env::current();
+                                    // Same destination a tunnel-pulled file
+                                    // lands in, so copying by hand and copying
+                                    // automatically put the file in the same
+                                    // place.
+                                    let dest = crate::config::opencrabs_home().join("tmp");
+                                    let advice = crate::tui::remote_upload::guidance(
+                                        &env,
+                                        &path,
+                                        &dest.to_string_lossy(),
+                                    );
+                                    rewritten.replace_range(
+                                        start..end,
+                                        &format!("[attachment unavailable: {advice}]"),
+                                    );
+                                }
                             }
-                        }
-                        Dropped::Elsewhere { path, .. } => {
-                            // Name the transfer that actually works for this
-                            // terminal (#1289) rather than only reporting the
-                            // absence: over SSH the file IS reachable, just
-                            // not from here.
-                            let env = crate::tui::remote_upload::Env::current();
-                            // Same destination a tunnel-pulled file lands in,
-                            // so copying by hand and copying automatically put
-                            // the file in the same place.
-                            let dest = crate::config::opencrabs_home().join("tmp");
-                            let advice = crate::tui::remote_upload::guidance(
-                                &env,
-                                &path,
-                                &dest.to_string_lossy(),
-                            );
-                            rewritten.replace_range(
-                                start..end,
-                                &format!("[attachment unavailable: {advice}]"),
-                            );
                         }
                     }
                 }
@@ -2350,7 +2391,11 @@ impl App {
             }
             result.push_str(&file_content);
         }
-        (result, attachments)
+        Extraction {
+            text: result,
+            attachments,
+            notices,
+        }
     }
 
     /// Replace `<<IMG:/path>>` and `<<VID:/path>>` markers with readable
