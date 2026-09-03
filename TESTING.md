@@ -673,6 +673,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Rich Json | 12 | `src/tests/telegram_rich_json_test.rs` |
 | Tests — Telegram Rich Parse | 29 | `src/tests/telegram_rich_parse_test.rs` |
 | Tests — Telegram Rich | 11 | `src/tests/telegram_rich_test.rs` |
+| Tests — Telegram Rich Transport Retry | 8 | `src/tests/telegram_rich_transport_retry_test.rs` |
 | Tests — Telegram Rich Wrap P | 9 | `src/tests/telegram_rich_wrap_p_test.rs` |
 | Tests — Telegram Send Caption | 9 | `src/tests/telegram_send_caption_test.rs` |
 | Tests — Telegram Send Input File | 5 | `src/tests/telegram_send_input_file_test.rs` |
@@ -689,6 +690,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Table Render | 2 | `src/tests/telegram_table_render_test.rs` |
 | Tests — Telegram Target Resolver | 9 | `src/tests/telegram_target_resolver_test.rs` |
 | Tests — Telegram Thread Id Lookup | 8 | `src/tests/telegram_thread_id_lookup_test.rs` |
+| Tests — Telegram Token Redaction | 6 | `src/tests/telegram_token_redaction_test.rs` |
 | Tests — Telegram Tool Group | 65 | `src/tests/telegram_tool_group_test.rs` |
 | Tests — Telegram Topic Listing | 6 | `src/tests/telegram_topic_listing_test.rs` |
 | Tests — Telegram Topic Routing | 3 | `src/tests/telegram_topic_routing_test.rs` |
