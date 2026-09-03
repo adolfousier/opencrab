@@ -214,21 +214,6 @@ impl ProviderError {
             // with zero retries (2026-06-07). Real client errors return
             // JSON, never HTML, so this never masks an invalid_model /
             // validation / auth problem.
-            // ...unless that HTML page is the gateway deliberately blocking
-            // us. A WAF block is not a node having a moment: it is a refusal,
-            // usually the end of a rate-limit escalation, and answering it
-            // with the full retry budget risks extending the block. Observed
-            // 2026-09-01, when an account already taking 429s all week
-            // (peaking at 76 in a day) drew an Aliyun block page for HTTP 405,
-            // and every occurrence spent four attempts arguing with it (#1332).
-            ProviderError::ApiError {
-                status, message, ..
-            } if (400..500).contains(status)
-                && is_html_error_body(message)
-                && is_waf_block_body(message) =>
-            {
-                false
-            }
             ProviderError::ApiError {
                 status, message, ..
             } if (400..500).contains(status) && is_html_error_body(message) => true,
@@ -560,33 +545,6 @@ pub(crate) fn is_html_error_body(message: &str) -> bool {
         || head.contains("<html")
         || head.contains("<head")
         || head.contains("<body")
-}
-
-/// True when an HTML error body is a WAF/edge **block** page rather than a
-/// transient infrastructure error page.
-///
-/// [`is_html_error_body`] deliberately makes a 4xx carrying HTML retryable,
-/// because a CDN or load-balancer error page usually clears on the next
-/// attempt. A block page is the opposite: the gateway has decided to refuse
-/// us, typically after sustained rate limiting, so retrying is both futile and
-/// counterproductive.
-///
-/// Scans a larger prefix than `is_html_error_body` because the block wording
-/// sits well past the page's `<style>` block, after roughly a kilobyte of
-/// markup. `chars().take()` keeps this char-boundary-safe on a body with
-/// non-ASCII text.
-pub(crate) fn is_waf_block_body(message: &str) -> bool {
-    let head: String = message
-        .trim_start()
-        .chars()
-        .take(2048)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    // The page's own wording, then the structural markers Aliyun's block
-    // template carries (the message element and its asset host).
-    head.contains("has been blocked")
-        || head.contains("block_message")
-        || head.contains("errors.aliyun.com")
 }
 
 /// True when an HTTP 400 response body looks like a proxy passthrough of
