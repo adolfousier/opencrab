@@ -6,6 +6,7 @@ use super::data::{
     ActivityStats, CacheStats, DailyStats, DashboardData, ModelEntry, ProjectStats, ToolStats,
     fmt_cost, fmt_tokens,
 };
+use crate::tui::render::palette;
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -17,11 +18,11 @@ use ratatui::{
 const LABEL: Style = Style::new().fg(Color::DarkGray);
 const BOLD: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 const DIM: Style = Style::new().fg(Color::DarkGray);
-const ACCENT: Style = Style::new().fg(Color::Rgb(215, 100, 20));
+const ACCENT: Style = Style::new().fg(palette::ORANGE);
 
 fn card_block(title: &str, focused: bool) -> Block<'_> {
     let border_color = if focused {
-        Color::Rgb(215, 100, 20)
+        palette::ORANGE
     } else {
         Color::DarkGray
     };
