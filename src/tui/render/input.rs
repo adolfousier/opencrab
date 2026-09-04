@@ -3,8 +3,8 @@
 //! Text input area with cursor and slash command autocomplete dropdown.
 
 use super::super::app::App;
+use super::theme::{self, Role};
 use super::utils::format_token_count_raw;
-use crate::tui::render::palette;
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -53,7 +53,9 @@ fn spans_with_selection(
         } else if is_cursor && in_sel {
             Span::styled(
                 ch.to_string(),
-                Style::default().fg(Color::White).bg(palette::SELECTION_BG),
+                Style::default()
+                    .fg(Color::White)
+                    .bg(theme::role(Role::SelectionBg)),
             )
         } else {
             Span::raw(ch.to_string())
@@ -103,7 +105,7 @@ pub(super) fn render_queue(f: &mut Frame, app: &App, area: Rect) -> u16 {
         )
     };
 
-    let dim_style = Style::default().fg(palette::GRAY_MID);
+    let dim_style = Style::default().fg(theme::role(Role::GrayMid));
     // Show the last queued message as preview
     let flat = last_msg.replace('\n', " ");
     let content_width = area.width.saturating_sub(2) as usize; // borders
@@ -124,7 +126,10 @@ pub(super) fn render_queue(f: &mut Frame, app: &App, area: Rect) -> u16 {
     let line = Line::from(vec![
         Span::styled(count_label, dim_style),
         Span::styled(preview, dim_style.add_modifier(Modifier::ITALIC)),
-        Span::styled("  (Up to edit)", Style::default().fg(palette::GRAY_DARK)),
+        Span::styled(
+            "  (Up to edit)",
+            Style::default().fg(theme::role(Role::GrayDark)),
+        ),
     ]);
 
     let queue_height = 2u16;
@@ -138,7 +143,7 @@ pub(super) fn render_queue(f: &mut Frame, app: &App, area: Rect) -> u16 {
     let para = Paragraph::new(vec![line]).block(
         Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(palette::GRAY_DIM)),
+            .border_style(Style::default().fg(theme::role(Role::GrayDim))),
     );
     f.render_widget(para, queue_area);
     queue_height
@@ -162,8 +167,12 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
         })
         .unwrap_or(false);
 
-    let cursor_style = Style::default().fg(Color::Black).bg(palette::GRAY);
-    let selection_style = Style::default().bg(palette::SELECTION_BG).fg(Color::White);
+    let cursor_style = Style::default()
+        .fg(Color::Black)
+        .bg(theme::role(Role::Gray));
+    let selection_style = Style::default()
+        .bg(theme::role(Role::SelectionBg))
+        .fg(Color::White);
 
     // Compute selection byte range from drag coordinates
     let sel_from_to: Option<(usize, usize)> = if app.input_drag_selecting {
@@ -252,7 +261,7 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
 
     if app.input_buffer.is_empty() {
         let mut spans = vec![
-            Span::styled("\u{276F} ", Style::default().fg(palette::GRAY_MID)),
+            Span::styled("\u{276F} ", Style::default().fg(theme::role(Role::GrayMid))),
             Span::styled(" ", cursor_style),
         ];
         // Single follow-up suggestion → gray ghost text after the cursor; Tab
@@ -262,11 +271,11 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
         if app.followup_suggestions.len() == 1 {
             spans.push(Span::styled(
                 app.followup_suggestions[0].clone(),
-                Style::default().fg(palette::GRAY_MID),
+                Style::default().fg(theme::role(Role::GrayMid)),
             ));
             spans.push(Span::styled(
                 "  \u{21e5} Tab",
-                Style::default().fg(palette::GRAY_DARK),
+                Style::default().fg(theme::role(Role::GrayDark)),
             ));
         }
         input_lines.push(Line::from(spans));
@@ -293,18 +302,18 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
 
             let prefix = if line_idx == 0 {
                 if is_queued {
-                    Span::styled("⏳", Style::default().fg(palette::ORANGE))
+                    Span::styled("⏳", Style::default().fg(theme::role(Role::Accent)))
                 } else if buf.starts_with('!') {
                     // Shell-mode prefix: brighter + orange so the prompt
                     // caret itself screams "this is shell, not LLM".
                     Span::styled(
                         "$ ",
                         Style::default()
-                            .fg(palette::ORANGE)
+                            .fg(theme::role(Role::Accent))
                             .add_modifier(Modifier::BOLD),
                     )
                 } else {
-                    Span::styled("\u{276F} ", Style::default().fg(palette::GRAY_MID))
+                    Span::styled("\u{276F} ", Style::default().fg(theme::role(Role::GrayMid)))
                 }
             } else {
                 Span::raw("  ")
@@ -415,9 +424,9 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
     // as a shell command (via `sh -c`) instead of sending it to the LLM.
     // This cue existed pre-drag-copy refactor and was lost in the rewrite.
     let border_style = if app.input_buffer.starts_with('!') {
-        Style::default().fg(palette::ORANGE) // ACCENT_GOLD / shell mode
+        Style::default().fg(theme::role(Role::Accent)) // ACCENT_GOLD / shell mode
     } else {
-        Style::default().fg(palette::GRAY)
+        Style::default().fg(theme::role(Role::Gray))
     };
 
     // Context usage indicator (right-side bottom title)
@@ -426,7 +435,7 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
         let context_color = if pct > 80.0 {
             Color::Red
         } else if pct > 60.0 {
-            palette::ORANGE
+            theme::role(Role::Accent)
         } else {
             Color::Cyan
         };
@@ -464,18 +473,18 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
                     // Highlight focused attachment — inverted colors
                     Style::default()
                         .fg(Color::Black)
-                        .bg(palette::TEAL_VIVID)
+                        .bg(theme::role(Role::TealVivid))
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
-                        .fg(palette::TEAL_VIVID)
+                        .fg(theme::role(Role::TealVivid))
                         .add_modifier(Modifier::BOLD)
                 };
                 let mut result = vec![Span::styled(label, style)];
                 if i + 1 < app.attachments.len() {
                     result.push(Span::styled(
                         " | ",
-                        Style::default().fg(palette::TEAL_VIVID),
+                        Style::default().fg(theme::role(Role::TealVivid)),
                     ));
                 }
                 result
@@ -484,14 +493,14 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
         let mut all_spans = vec![Span::styled(
             " [",
             Style::default()
-                .fg(palette::TEAL_VIVID)
+                .fg(theme::role(Role::TealVivid))
                 .add_modifier(Modifier::BOLD),
         )];
         all_spans.extend(spans);
         all_spans.push(Span::styled(
             "] ",
             Style::default()
-                .fg(palette::TEAL_VIVID)
+                .fg(theme::role(Role::TealVivid))
                 .add_modifier(Modifier::BOLD),
         ));
         Line::from(all_spans).alignment(Alignment::Right)
@@ -520,7 +529,7 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
         .map(|text| {
             Line::from(Span::styled(
                 format!(" ⏳ {text} "),
-                Style::default().fg(palette::WARNING),
+                Style::default().fg(theme::role(Role::Warning)),
             ))
             .alignment(Alignment::Right)
         });
@@ -788,7 +797,7 @@ pub(super) fn render_slash_autocomplete(f: &mut Frame, app: &App, input_area: Re
     let dropdown = Paragraph::new(padded_lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::GRAY)),
+            .border_style(Style::default().fg(theme::role(Role::Gray))),
     );
     f.render_widget(dropdown, dropdown_area);
 }
@@ -869,7 +878,7 @@ pub(super) fn render_followup(f: &mut Frame, app: &App, input_area: Rect) {
     let dropdown = Paragraph::new(padded_lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::GRAY)),
+            .border_style(Style::default().fg(theme::role(Role::Gray))),
     );
     f.render_widget(dropdown, dropdown_area);
 }
@@ -936,7 +945,7 @@ pub(super) fn render_emoji_picker(f: &mut Frame, app: &App, input_area: Rect) {
     let dropdown = Paragraph::new(padded).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::GRAY)),
+            .border_style(Style::default().fg(theme::role(Role::Gray))),
     );
     f.render_widget(dropdown, dropdown_area);
 }
@@ -949,7 +958,7 @@ pub(super) fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let orange = palette::ORANGE;
+    let orange = theme::role(Role::Accent);
 
     // --- Session name (left) ---
     let session_name = app
@@ -1040,9 +1049,9 @@ pub(super) fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(
             provider_model_text,
-            Style::default().fg(palette::BLUE_SLATE),
+            Style::default().fg(theme::role(Role::BlueSlate)),
         ),
-        Span::styled(short_dir, Style::default().fg(palette::BLUE_SLATE)),
+        Span::styled(short_dir, Style::default().fg(theme::role(Role::BlueSlate))),
     ];
     if let Some(ref branch) = git_branch {
         spans.push(Span::styled(
@@ -1076,7 +1085,7 @@ pub(super) fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled("  ·  ", Style::default().fg(Color::DarkGray)));
         spans.push(Span::styled(
             format!("{:.0} tok/s", tps),
-            Style::default().fg(palette::SUCCESS),
+            Style::default().fg(theme::role(Role::Success)),
         ));
     }
 
@@ -1096,7 +1105,7 @@ pub(super) fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled("  ·  ", Style::default().fg(Color::DarkGray)));
         spans.push(Span::styled(
             format!("[{}/{}]", focused_idx, pane_count),
-            Style::default().fg(palette::SUCCESS),
+            Style::default().fg(theme::role(Role::Success)),
         ));
     }
 

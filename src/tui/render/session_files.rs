@@ -3,7 +3,7 @@
 //! Displays files tracked for a session with navigation and actions.
 
 use super::super::app::App;
-use crate::tui::render::palette;
+use super::theme::{self, Role};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -21,14 +21,14 @@ pub(super) fn render_session_files(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "  [↑↓] ",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Navigate  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[Enter] ",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Open  ", Style::default().fg(Color::Reset)),
@@ -40,7 +40,7 @@ pub(super) fn render_session_files(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "[O] ",
             Style::default()
-                .fg(palette::ORANGE)
+                .fg(theme::role(Role::Accent))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Folder  ", Style::default().fg(Color::Reset)),
@@ -75,7 +75,7 @@ pub(super) fn render_session_files(f: &mut Frame, app: &App, area: Rect) {
                 count,
                 if count == 1 { "" } else { "s" }
             ),
-            Style::default().fg(palette::BLUE_STEEL),
+            Style::default().fg(theme::role(Role::BlueSteel)),
         )));
         lines.push(Line::from(""));
 
@@ -97,7 +97,7 @@ pub(super) fn render_session_files(f: &mut Frame, app: &App, area: Rect) {
 
             let name_style = if is_selected {
                 Style::default()
-                    .fg(palette::ORANGE)
+                    .fg(theme::role(Role::Accent))
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Reset)
@@ -113,7 +113,7 @@ pub(super) fn render_session_files(f: &mut Frame, app: &App, area: Rect) {
                 let size_str = format_size(size);
                 spans.push(Span::styled(
                     format!(" ({})", size_str),
-                    Style::default().fg(palette::GRAY_MID),
+                    Style::default().fg(theme::role(Role::GrayMid)),
                 ));
             }
 
@@ -140,10 +140,10 @@ pub(super) fn render_session_files(f: &mut Frame, app: &App, area: Rect) {
                 .title(Span::styled(
                     " Session Files ",
                     Style::default()
-                        .fg(palette::ORANGE)
+                        .fg(theme::role(Role::Accent))
                         .add_modifier(Modifier::BOLD),
                 ))
-                .border_style(Style::default().fg(palette::GRAY)),
+                .border_style(Style::default().fg(theme::role(Role::Gray))),
         )
         .wrap(Wrap { trim: false });
 

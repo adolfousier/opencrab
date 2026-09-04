@@ -21,8 +21,9 @@
 use super::card;
 use crate::tui::app::App;
 use crate::tui::app::skills_dialog::matching;
-use crate::tui::render::palette;
 
+use super::super::palette;
+use super::super::theme::{self, Role};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
@@ -52,18 +53,18 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
     let title = format!(" Filter (skills: {}) ", app.skills.len());
     let block = Block::default()
         .title(title)
-        .title_style(palette::title_style(palette::TEAL))
+        .title_style(palette::title_style(theme::role(Role::AccentTeal)))
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
-        .border_style(Style::default().fg(palette::TEAL));
+        .border_style(Style::default().fg(theme::role(Role::AccentTeal)));
     let line = Line::from(vec![
-        Span::styled(" > ", Style::default().fg(palette::TEAL)),
+        Span::styled(" > ", Style::default().fg(theme::role(Role::AccentTeal))),
         Span::styled(
             app.skills_dialog.filter.clone(),
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(theme::role(Role::TextPrimary)),
         ),
         // Soft cursor — block char in dim grey trailing the input.
-        Span::styled("▎", Style::default().fg(palette::TEXT_DIM)),
+        Span::styled("▎", Style::default().fg(theme::role(Role::TextDim))),
     ]);
     let para = Paragraph::new(line).block(block);
     frame.render_widget(para, area);

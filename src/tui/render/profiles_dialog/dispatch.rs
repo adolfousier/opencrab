@@ -19,8 +19,9 @@
 
 use crate::tui::app::App;
 use crate::tui::app::profiles_dialog::state::{ProfileAction, matching};
-use crate::tui::render::palette;
 
+use super::super::palette;
+use super::super::theme::{self, Role};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
@@ -71,17 +72,17 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
     let title = format!(" Filter (profiles: {}) ", state.profiles.len());
     let block = Block::default()
         .title(title)
-        .title_style(palette::title_style(palette::TEAL))
+        .title_style(palette::title_style(theme::role(Role::AccentTeal)))
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
-        .border_style(Style::default().fg(palette::TEAL));
+        .border_style(Style::default().fg(theme::role(Role::AccentTeal)));
     let line = Line::from(vec![
-        Span::styled(" > ", Style::default().fg(palette::TEAL)),
+        Span::styled(" > ", Style::default().fg(theme::role(Role::AccentTeal))),
         Span::styled(
             state.filter.clone(),
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(theme::role(Role::TextPrimary)),
         ),
-        Span::styled("▎", Style::default().fg(palette::TEXT_DIM)),
+        Span::styled("▎", Style::default().fg(theme::role(Role::TextDim))),
     ]);
     let para = Paragraph::new(line).block(block);
     frame.render_widget(para, area);
@@ -129,17 +130,17 @@ fn draw_profile_list(frame: &mut Frame, app: &App, area: Rect) {
 
         let marker = if is_active { "[*]" } else { "[ ]" };
         let marker_style = if is_active {
-            Style::default().fg(palette::TEAL)
+            Style::default().fg(theme::role(Role::AccentTeal))
         } else {
             palette::dim()
         };
 
         let name_style = if is_selected {
             Style::default()
-                .fg(palette::TEXT_PRIMARY)
+                .fg(theme::role(Role::TextPrimary))
                 .add_modifier(ratatui::style::Modifier::BOLD)
         } else {
-            Style::default().fg(palette::TEXT_PRIMARY)
+            Style::default().fg(theme::role(Role::TextPrimary))
         };
 
         let desc = entry.description.as_deref().unwrap_or("").to_string();
@@ -148,7 +149,7 @@ fn draw_profile_list(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 if is_selected { " > " } else { "   " },
                 if is_selected {
-                    Style::default().fg(palette::TEAL)
+                    Style::default().fg(theme::role(Role::AccentTeal))
                 } else {
                     palette::dim()
                 },
@@ -204,7 +205,7 @@ fn draw_create_flow(frame: &mut Frame, app: &App, area: Rect) {
     let title_line = Line::from(Span::styled(
         " Create New Profile",
         Style::default()
-            .fg(palette::TEAL)
+            .fg(theme::role(Role::AccentTeal))
             .add_modifier(ratatui::style::Modifier::BOLD),
     ));
     let hint = if is_name_step {
@@ -228,17 +229,17 @@ fn draw_create_flow(frame: &mut Frame, app: &App, area: Rect) {
     let label = if is_name_step { "Name" } else { "Description" };
     let block = Block::default()
         .title(format!(" {} ", label))
-        .title_style(palette::title_style(palette::TEAL))
+        .title_style(palette::title_style(theme::role(Role::AccentTeal)))
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
-        .border_style(Style::default().fg(palette::TEAL));
+        .border_style(Style::default().fg(theme::role(Role::AccentTeal)));
     let line = Line::from(vec![
-        Span::styled(" > ", Style::default().fg(palette::TEAL)),
+        Span::styled(" > ", Style::default().fg(theme::role(Role::AccentTeal))),
         Span::styled(
             input_value.clone(),
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(theme::role(Role::TextPrimary)),
         ),
-        Span::styled("▎", Style::default().fg(palette::TEXT_DIM)),
+        Span::styled("▎", Style::default().fg(theme::role(Role::TextDim))),
     ]);
     let para = Paragraph::new(line).block(block);
     frame.render_widget(para, chunks[1]);
@@ -251,7 +252,7 @@ fn draw_confirm_delete(frame: &mut Frame, area: Rect, name: &str) {
         Line::from(Span::styled(
             format!("  Delete profile '{}'?", name),
             Style::default()
-                .fg(palette::TEXT_PRIMARY)
+                .fg(theme::role(Role::TextPrimary))
                 .add_modifier(ratatui::style::Modifier::BOLD),
         )),
         Line::default(),
@@ -265,9 +266,9 @@ fn draw_confirm_delete(frame: &mut Frame, area: Rect, name: &str) {
         )),
         Line::default(),
         Line::from(vec![
-            Span::styled("  y", Style::default().fg(palette::TEAL)),
+            Span::styled("  y", Style::default().fg(theme::role(Role::AccentTeal))),
             Span::styled(": confirm  ", palette::dim()),
-            Span::styled("Esc", Style::default().fg(palette::TEAL)),
+            Span::styled("Esc", Style::default().fg(theme::role(Role::AccentTeal))),
             Span::styled(": cancel", palette::dim()),
         ]),
     ];
@@ -292,7 +293,7 @@ fn draw_migrate_flow(frame: &mut Frame, app: &App, area: Rect) {
     let title_line = Line::from(Span::styled(
         " Migrate Profile",
         Style::default()
-            .fg(palette::TEAL)
+            .fg(theme::role(Role::AccentTeal))
             .add_modifier(ratatui::style::Modifier::BOLD),
     ));
     let hint = if is_from_step {
@@ -320,17 +321,17 @@ fn draw_migrate_flow(frame: &mut Frame, app: &App, area: Rect) {
     };
     let block = Block::default()
         .title(format!(" {} ", label))
-        .title_style(palette::title_style(palette::TEAL))
+        .title_style(palette::title_style(theme::role(Role::AccentTeal)))
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
-        .border_style(Style::default().fg(palette::TEAL));
+        .border_style(Style::default().fg(theme::role(Role::AccentTeal)));
     let line = Line::from(vec![
-        Span::styled(" > ", Style::default().fg(palette::TEAL)),
+        Span::styled(" > ", Style::default().fg(theme::role(Role::AccentTeal))),
         Span::styled(
             input_value.clone(),
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(theme::role(Role::TextPrimary)),
         ),
-        Span::styled("▎", Style::default().fg(palette::TEXT_DIM)),
+        Span::styled("▎", Style::default().fg(theme::role(Role::TextDim))),
     ]);
     let para = Paragraph::new(line).block(block);
     frame.render_widget(para, chunks[1]);

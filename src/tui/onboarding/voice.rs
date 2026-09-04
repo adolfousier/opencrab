@@ -9,11 +9,15 @@ use ratatui::text::{Line, Span};
 
 use super::types::{SttProvider, TtsProvider, VoiceField, WizardAction};
 use super::wizard::OnboardingWizard;
-use crate::tui::render::palette;
+use crate::tui::render::theme::{self, Role};
 
 // Brand colors (match onboarding_render.rs)
-const BRAND_BLUE: Color = palette::BLUE_VIVID;
-const ACCENT_GOLD: Color = palette::ORANGE;
+fn brand_blue() -> Color {
+    theme::role(Role::BlueVivid)
+}
+fn accent_gold() -> Color {
+    theme::role(Role::Accent)
+}
 
 // ─── Key handling ───────────────────────────────────────────────────────────
 
@@ -467,7 +471,7 @@ pub fn render(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
         lines.push(Line::from(Span::styled(
             "  Voice Superpowers",
             Style::default()
-                .fg(ACCENT_GOLD)
+                .fg(accent_gold())
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
@@ -541,7 +545,7 @@ pub fn render(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Span::styled(
                 "  > ",
                 Style::default()
-                    .fg(ACCENT_GOLD)
+                    .fg(accent_gold())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
@@ -604,7 +608,11 @@ fn render_groq_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  Groq Key: ",
-            Style::default().fg(if focused { BRAND_BLUE } else { Color::DarkGray }),
+            Style::default().fg(if focused {
+                brand_blue()
+            } else {
+                Color::DarkGray
+            }),
         ),
         Span::styled(
             format!("{}{}", display, cursor),
@@ -634,7 +642,11 @@ fn render_local_stt_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWi
 
     lines.push(Line::from(Span::styled(
         "  Select model size:",
-        Style::default().fg(if focused { BRAND_BLUE } else { Color::DarkGray }),
+        Style::default().fg(if focused {
+            brand_blue()
+        } else {
+            Color::DarkGray
+        }),
     )));
 
     #[cfg(feature = "local-stt")]
@@ -751,7 +763,11 @@ fn render_local_tts_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWi
 
     lines.push(Line::from(Span::styled(
         "  Select voice:",
-        Style::default().fg(if focused { BRAND_BLUE } else { Color::DarkGray }),
+        Style::default().fg(if focused {
+            brand_blue()
+        } else {
+            Color::DarkGray
+        }),
     )));
 
     #[cfg(feature = "local-tts")]
@@ -817,7 +833,7 @@ fn render_tts_api_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {}{} ", prefix, marker),
-                Style::default().fg(if is_sel { ACCENT_GOLD } else { Color::Gray }),
+                Style::default().fg(if is_sel { accent_gold() } else { Color::Gray }),
             ),
             Span::styled(
                 voice.to_string(),
@@ -928,12 +944,12 @@ fn render_radio(lines: &mut Vec<Line<'static>>, focused: bool, selected: bool, l
     lines.push(Line::from(vec![
         Span::styled(
             if focused && selected { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             if selected { "(*)" } else { "( )" },
             Style::default().fg(if selected {
-                ACCENT_GOLD
+                accent_gold()
             } else {
                 Color::DarkGray
             }),
@@ -971,7 +987,11 @@ fn render_text_field(
     } else {
         value.to_string()
     };
-    let color = if focused { BRAND_BLUE } else { Color::DarkGray };
+    let color = if focused {
+        brand_blue()
+    } else {
+        Color::DarkGray
+    };
     let text_color = if value.is_empty() {
         Color::DarkGray
     } else if focused {
@@ -1001,7 +1021,10 @@ fn render_progress_bar(lines: &mut Vec<Line<'static>>, progress: f64) {
     let empty = bar_width - filled;
     lines.push(Line::from(vec![
         Span::styled("  ", Style::default()),
-        Span::styled("\u{2588}".repeat(filled), Style::default().fg(ACCENT_GOLD)),
+        Span::styled(
+            "\u{2588}".repeat(filled),
+            Style::default().fg(accent_gold()),
+        ),
         Span::styled(
             "\u{2591}".repeat(empty),
             Style::default().fg(Color::DarkGray),

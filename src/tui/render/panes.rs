@@ -1,9 +1,9 @@
 //! Split pane rendering — draws pane borders, labels, and delegates chat rendering.
 
+use super::theme::{self, Role};
 use super::utils::wrap_line_with_padding;
 use crate::tui::app::{App, DisplayMessage};
 use crate::tui::pane::PaneId;
-use crate::tui::render::palette;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -329,11 +329,11 @@ pub(super) fn focused_pane_border(f: &mut Frame, app: &App, area: Rect) -> Rect 
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette::SUCCESS))
+        .border_style(Style::default().fg(theme::role(Role::Success)))
         .title(Span::styled(
             format!(" {} ", session_label),
             Style::default()
-                .fg(palette::SUCCESS)
+                .fg(theme::role(Role::Success))
                 .add_modifier(Modifier::BOLD),
         ))
         .padding(Padding::horizontal(0));

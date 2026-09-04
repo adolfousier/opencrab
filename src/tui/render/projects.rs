@@ -3,7 +3,7 @@
 //! Displays projects with sessions, create/delete/assign actions.
 
 use super::super::app::App;
-use crate::tui::render::palette;
+use super::theme::{self, Role};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -30,28 +30,28 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "  [↑↓] ",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Navigate  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[Enter] ",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("View  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[N] ",
             Style::default()
-                .fg(palette::SUCCESS)
+                .fg(theme::role(Role::Success))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("New  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[A] ",
             Style::default()
-                .fg(palette::BLUE_SKY)
+                .fg(theme::role(Role::BlueSky))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Assign  ", Style::default().fg(Color::Reset)),
@@ -74,7 +74,7 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(Span::styled(
             format!("  New project name: {}▌", app.project_name_input),
             Style::default()
-                .fg(palette::SUCCESS)
+                .fg(theme::role(Role::Success))
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
@@ -110,7 +110,7 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
         let count = app.projects.len();
         lines.push(Line::from(Span::styled(
             format!("  {} project{}", count, if count == 1 { "" } else { "s" }),
-            Style::default().fg(palette::BLUE_STEEL),
+            Style::default().fg(theme::role(Role::BlueSteel)),
         )));
         lines.push(Line::from(""));
 
@@ -121,7 +121,7 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
 
             let name_style = if is_selected {
                 Style::default()
-                    .fg(palette::SUCCESS)
+                    .fg(theme::role(Role::Success))
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Reset)
@@ -157,10 +157,10 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
                 .title(Span::styled(
                     " Projects ",
                     Style::default()
-                        .fg(palette::SUCCESS)
+                        .fg(theme::role(Role::Success))
                         .add_modifier(Modifier::BOLD),
                 ))
-                .border_style(Style::default().fg(palette::GRAY)),
+                .border_style(Style::default().fg(theme::role(Role::Gray))),
         )
         .wrap(Wrap { trim: false });
 
@@ -176,21 +176,21 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "  [↑↓] ",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Navigate  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[Enter] ",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Open  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[U] ",
             Style::default()
-                .fg(palette::ORANGE)
+                .fg(theme::role(Role::Accent))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Unassign  ", Style::default().fg(Color::Reset)),
@@ -208,7 +208,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(Span::styled(
             format!("  📁 {}", project.name),
             Style::default()
-                .fg(palette::SUCCESS)
+                .fg(theme::role(Role::Success))
                 .add_modifier(Modifier::BOLD),
         )));
         if let Some(ref desc) = project.description {
@@ -234,7 +234,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
         let count = app.project_sessions.len();
         lines.push(Line::from(Span::styled(
             format!("  {} session{}", count, if count == 1 { "" } else { "s" }),
-            Style::default().fg(palette::BLUE_STEEL),
+            Style::default().fg(theme::role(Role::BlueSteel)),
         )));
         lines.push(Line::from(""));
 
@@ -245,7 +245,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
 
             let title_style = if is_selected {
                 Style::default()
-                    .fg(palette::SUCCESS)
+                    .fg(theme::role(Role::Success))
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Reset)
@@ -274,7 +274,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
             if session.token_count > 0 {
                 spans.push(Span::styled(
                     format!("  {} tok", format_token_count(session.token_count)),
-                    Style::default().fg(palette::GRAY_MID),
+                    Style::default().fg(theme::role(Role::GrayMid)),
                 ));
             }
 
@@ -295,10 +295,10 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
                 .title(Span::styled(
                     title,
                     Style::default()
-                        .fg(palette::SUCCESS)
+                        .fg(theme::role(Role::Success))
                         .add_modifier(Modifier::BOLD),
                 ))
-                .border_style(Style::default().fg(palette::GRAY)),
+                .border_style(Style::default().fg(theme::role(Role::Gray))),
         )
         .wrap(Wrap { trim: false });
 

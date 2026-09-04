@@ -8,13 +8,13 @@ use super::theme;
 use crate::brain::mission_control::{McScheduleItem, McScheduleKind};
 use crate::tui::app::App;
 
-use crate::tui::render::palette;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use super::super::theme::{self as render_theme, Role};
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let entries = &app.mc.schedule;
@@ -85,7 +85,7 @@ fn build_line(item: &McScheduleItem, inner_w: usize, selected: bool) -> Line<'st
         Span::styled(
             badge_text,
             Style::default()
-                .fg(palette::INK)
+                .fg(render_theme::role(Role::Ink))
                 .bg(badge_color)
                 .add_modifier(Modifier::BOLD),
         ),
@@ -105,7 +105,7 @@ fn build_line(item: &McScheduleItem, inner_w: usize, selected: bool) -> Line<'st
 
     if selected {
         for span in &mut spans {
-            span.style = span.style.bg(palette::SURFACE_PANEL);
+            span.style = span.style.bg(render_theme::role(Role::SurfacePanel));
         }
     }
     Line::from(spans)

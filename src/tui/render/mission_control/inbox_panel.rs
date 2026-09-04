@@ -8,16 +8,16 @@ use super::theme;
 use crate::brain::mission_control::{McInboxItem, McInboxKind, inbox_service};
 use crate::tui::app::App;
 
-use crate::tui::render::palette;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use super::super::theme::{self as render_theme, Role};
 
 /// Idle card border — same neutral grey as the Sessions list rows.
-const CARD_BORDER_IDLE: Color = palette::TEXT_MUTED;
+fn card_border_idle() -> Color { render_theme::role(Role::TextMuted) }
 /// Selected card border — teal, matches the inbox panel's accent.
 const CARD_BORDER_SELECTED: Color = theme::TEAL;
 
@@ -92,7 +92,7 @@ fn card_lines(item: &McInboxItem, card_w: usize, selected: bool) -> Vec<Line<'st
     let border_color = if selected {
         CARD_BORDER_SELECTED
     } else {
-        CARD_BORDER_IDLE
+        card_border_idle()
     };
     let bd = Style::default().fg(border_color);
 
@@ -108,8 +108,8 @@ fn card_lines(item: &McInboxItem, card_w: usize, selected: bool) -> Vec<Line<'st
     let kind_color = match item.kind {
         McInboxKind::ProposedTool => theme::ORANGE,
         McInboxKind::ProposedCommand => theme::TEAL,
-        McInboxKind::ProposedSkill => palette::AMBER_MUTED,
-        McInboxKind::ProposedBrainDedup => palette::PURPLE_SOFT,
+        McInboxKind::ProposedSkill => render_theme::role(Role::AmberMuted),
+        McInboxKind::ProposedBrainDedup => render_theme::role(Role::PurpleSoft),
     };
 
     // Header: label (bold) + kind badge
@@ -133,7 +133,7 @@ fn card_lines(item: &McInboxItem, card_w: usize, selected: bool) -> Vec<Line<'st
         Span::styled(
             format!(" {} ", item.kind.label()),
             Style::default()
-                .fg(palette::INK)
+                .fg(render_theme::role(Role::Ink))
                 .bg(kind_color)
                 .add_modifier(Modifier::BOLD),
         ),

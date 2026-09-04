@@ -3,7 +3,7 @@
 //! File picker, directory picker, model selector, usage dialog, restart dialog, and update prompt.
 
 use super::super::app::App;
-use crate::tui::render::palette;
+use super::theme::{self, Role};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -21,13 +21,13 @@ pub(super) fn render_file_picker(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "📁 File Picker",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             app.file_picker_current_dir.to_string_lossy().to_string(),
-            Style::default().fg(palette::ORANGE),
+            Style::default().fg(theme::role(Role::Accent)),
         ),
     ]));
 
@@ -42,7 +42,7 @@ pub(super) fn render_file_picker(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("  🔍 ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 &app.file_picker_search,
-                Style::default().fg(palette::ORANGE),
+                Style::default().fg(theme::role(Role::Accent)),
             ),
         ]));
     }
@@ -91,10 +91,10 @@ pub(super) fn render_file_picker(f: &mut Frame, app: &App, area: Rect) {
         let style = if is_selected {
             Style::default()
                 .fg(Color::Black)
-                .bg(palette::GRAY)
+                .bg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD)
         } else if is_dir {
-            Style::default().fg(palette::GRAY)
+            Style::default().fg(theme::role(Role::Gray))
         } else {
             Style::default().fg(Color::Reset)
         };
@@ -122,7 +122,7 @@ pub(super) fn render_file_picker(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "[↑↓]",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Navigate  ", Style::default().fg(Color::Reset)),
@@ -144,11 +144,11 @@ pub(super) fn render_file_picker(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(palette::GRAY))
+                .border_style(Style::default().fg(theme::role(Role::Gray)))
                 .title(Span::styled(
                     " Select a file ",
                     Style::default()
-                        .fg(palette::GRAY)
+                        .fg(theme::role(Role::Gray))
                         .add_modifier(Modifier::BOLD),
                 )),
         )
@@ -166,13 +166,13 @@ pub(super) fn render_directory_picker(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "📂 Directory Picker",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             app.file_picker_current_dir.to_string_lossy().to_string(),
-            Style::default().fg(palette::ORANGE),
+            Style::default().fg(theme::role(Role::Accent)),
         ),
     ]));
     lines.push(Line::from(""));
@@ -205,10 +205,10 @@ pub(super) fn render_directory_picker(f: &mut Frame, app: &App, area: Rect) {
         let style = if is_selected {
             Style::default()
                 .fg(Color::Black)
-                .bg(palette::GRAY)
+                .bg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(palette::GRAY)
+            Style::default().fg(theme::role(Role::Gray))
         };
 
         let prefix = if is_selected { "▶ " } else { "  " };
@@ -244,7 +244,7 @@ pub(super) fn render_directory_picker(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "[↑↓]",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Navigate  ", Style::default().fg(Color::Reset)),
@@ -258,14 +258,14 @@ pub(super) fn render_directory_picker(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "[Space/Tab]",
             Style::default()
-                .fg(palette::TEAL_BRIGHT)
+                .fg(theme::role(Role::TealBright))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Select here  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[.]",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -290,11 +290,11 @@ pub(super) fn render_directory_picker(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(palette::GRAY))
+                .border_style(Style::default().fg(theme::role(Role::Gray)))
                 .title(Span::styled(
                     " Change working directory ",
                     Style::default()
-                        .fg(palette::GRAY)
+                        .fg(theme::role(Role::Gray))
                         .add_modifier(Modifier::BOLD),
                 )),
         )

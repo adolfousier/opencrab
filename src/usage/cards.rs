@@ -6,7 +6,7 @@ use super::data::{
     ActivityStats, CacheStats, DailyStats, DashboardData, ModelEntry, ProjectStats, ToolStats,
     fmt_cost, fmt_tokens,
 };
-use crate::tui::render::palette;
+use crate::tui::render::theme::{self, Role};
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -18,11 +18,13 @@ use ratatui::{
 const LABEL: Style = Style::new().fg(Color::DarkGray);
 const BOLD: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 const DIM: Style = Style::new().fg(Color::DarkGray);
-const ACCENT: Style = Style::new().fg(palette::ORANGE);
+fn accent() -> Style {
+    Style::new().fg(theme::role(Role::Accent))
+}
 
 fn card_block(title: &str, focused: bool) -> Block<'_> {
     let border_color = if focused {
-        palette::ORANGE
+        theme::role(Role::Accent)
     } else {
         Color::DarkGray
     };
@@ -31,7 +33,7 @@ fn card_block(title: &str, focused: bool) -> Block<'_> {
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(
             format!(" {} ", title),
-            if focused { ACCENT } else { LABEL },
+            if focused { accent() } else { LABEL },
         ))
 }
 
@@ -41,7 +43,7 @@ pub fn render_summary(f: &mut Frame, data: &DashboardData, area: Rect, period_la
     let s = &data.summary;
     let version = crate::VERSION;
     let line = Line::from(vec![
-        Span::styled(format!("v{version}  "), ACCENT),
+        Span::styled(format!("v{version}  "), accent()),
         Span::styled("Tokens: ", LABEL),
         Span::styled(fmt_tokens(s.total_tokens), BOLD),
         Span::styled("  Cost: ", LABEL),
@@ -50,7 +52,7 @@ pub fn render_summary(f: &mut Frame, data: &DashboardData, area: Rect, period_la
         Span::styled(format!("{}", s.session_count), BOLD),
         Span::styled("  Calls: ", LABEL),
         Span::styled(format!("{}", s.call_count), BOLD),
-        Span::styled(format!("  [{}]", period_label), ACCENT),
+        Span::styled(format!("  [{}]", period_label), accent()),
     ]);
     let block = Block::default()
         .borders(Borders::BOTTOM)
@@ -108,7 +110,7 @@ pub fn render_daily(f: &mut Frame, daily: &[DailyStats], area: Rect, focused: bo
         };
         lines.push(Line::from(vec![
             Span::styled(format!(" {:>5} ", short_date), DIM),
-            Span::styled(bar, ACCENT),
+            Span::styled(bar, accent()),
             Span::raw(pad),
             Span::styled(
                 format!(" {:>width$}", fmt_tokens(day.tokens), width = max_cost_len),
@@ -285,7 +287,7 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
         };
 
         // Parent row (bold model name, no prefix)
-        let cost_style = if m.estimated { ACCENT } else { LABEL };
+        let cost_style = if m.estimated { accent() } else { LABEL };
         let cost_str = if m.estimated {
             format!("~{}", fmt_cost(m.cost))
         } else {
@@ -445,7 +447,7 @@ pub fn render_tools(f: &mut Frame, tools: &[ToolStats], area: Rect, focused: boo
         };
         lines.push(Line::from(vec![
             Span::styled(format!(" {:<width$}", name, width = name_width), BOLD),
-            Span::styled(bar, ACCENT),
+            Span::styled(bar, accent()),
             Span::raw(pad),
             Span::styled(
                 format!(" {:>width$}", tool.call_count, width = count_width),
@@ -571,7 +573,7 @@ pub fn render_activities(f: &mut Frame, activities: &[ActivityStats], area: Rect
         let one_shot = format!("{}%", act.one_shot_pct as u32);
         lines.push(Line::from(vec![
             Span::styled(format!(" {:<width$}", category, width = cat_width), BOLD),
-            Span::styled(bar, ACCENT),
+            Span::styled(bar, accent()),
             Span::raw(pad),
             Span::styled(
                 format!(" {:>width$}", fmt_cost(act.cost), width = cost_width),
@@ -669,19 +671,19 @@ pub fn render_cache_efficiency(
 
 pub fn render_footer(f: &mut Frame, area: Rect) {
     let line = Line::from(vec![
-        Span::styled("Tab", ACCENT),
+        Span::styled("Tab", accent()),
         Span::styled(" navigate  ", DIM),
-        Span::styled("Enter", ACCENT),
+        Span::styled("Enter", accent()),
         Span::styled(" details  ", DIM),
-        Span::styled("T", ACCENT),
+        Span::styled("T", accent()),
         Span::styled(" today  ", DIM),
-        Span::styled("W", ACCENT),
+        Span::styled("W", accent()),
         Span::styled(" week  ", DIM),
-        Span::styled("M", ACCENT),
+        Span::styled("M", accent()),
         Span::styled(" month  ", DIM),
-        Span::styled("A", ACCENT),
+        Span::styled("A", accent()),
         Span::styled(" all  ", DIM),
-        Span::styled("Esc", ACCENT),
+        Span::styled("Esc", accent()),
         Span::styled(" close", DIM),
     ]);
     let p = Paragraph::new(vec![line])

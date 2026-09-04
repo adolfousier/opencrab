@@ -2,7 +2,7 @@
 //!
 //! Provides structured error information for display in the TUI.
 
-use crate::tui::render::palette;
+use crate::tui::render::theme::{self, Role};
 use chrono::{DateTime, Utc};
 
 /// Error severity levels
@@ -23,8 +23,8 @@ impl ErrorSeverity {
     pub fn color(&self) -> ratatui::style::Color {
         use ratatui::style::Color;
         match self {
-            ErrorSeverity::Info => palette::GRAY,
-            ErrorSeverity::Warning => palette::ORANGE,
+            ErrorSeverity::Info => theme::role(Role::Gray),
+            ErrorSeverity::Warning => theme::role(Role::Accent),
             ErrorSeverity::Error => Color::Red,
             ErrorSeverity::Critical => Color::Magenta,
         }

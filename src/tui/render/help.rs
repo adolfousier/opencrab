@@ -3,7 +3,7 @@
 //! Help screen, plan mode view, plan mode help bar, and settings screen.
 
 use super::super::app::App;
-use crate::tui::render::palette;
+use super::theme::{self, Role};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -30,7 +30,7 @@ pub(super) fn render_help(f: &mut Frame, app: &App, area: Rect) {
         Line::from(Span::styled(
             format!(" {} ", title),
             Style::default()
-                .fg(palette::ORANGE)
+                .fg(theme::role(Role::Accent))
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         ))
     }
@@ -145,7 +145,7 @@ pub(super) fn render_help(f: &mut Frame, app: &App, area: Rect) {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled(" 📖 ", Style::default().fg(palette::ORANGE)),
+            Span::styled(" 📖 ", Style::default().fg(theme::role(Role::Accent))),
             Span::styled(
                 "docs.opencrabs.com",
                 Style::default()
@@ -258,10 +258,10 @@ pub(super) fn render_help(f: &mut Frame, app: &App, area: Rect) {
                 .title(Span::styled(
                     " 📚 Help & Commands ",
                     Style::default()
-                        .fg(palette::ORANGE)
+                        .fg(theme::role(Role::Accent))
                         .add_modifier(Modifier::BOLD),
                 ))
-                .border_style(Style::default().fg(palette::GRAY)),
+                .border_style(Style::default().fg(theme::role(Role::Gray))),
         )
         .scroll((app.help_scroll_offset as u16, 0));
 
@@ -269,7 +269,7 @@ pub(super) fn render_help(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(palette::GRAY)),
+                .border_style(Style::default().fg(theme::role(Role::Gray))),
         )
         .scroll((app.help_scroll_offset as u16, 0));
 
@@ -283,7 +283,7 @@ pub(super) fn render_settings(f: &mut Frame, app: &App, area: Rect) {
         Line::from(Span::styled(
             format!("  {} ", title),
             Style::default()
-                .fg(palette::BLUE_SLATE)
+                .fg(theme::role(Role::BlueSlate))
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         ))
     }
@@ -292,7 +292,7 @@ pub(super) fn render_settings(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled(
                 format!("   {:<20}", key),
-                Style::default().fg(palette::ORANGE),
+                Style::default().fg(theme::role(Role::Accent)),
             ),
             Span::styled(val, Style::default().fg(Color::Reset)),
         ])
@@ -307,7 +307,7 @@ pub(super) fn render_settings(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled(
                 format!("   {:<20}", label),
-                Style::default().fg(palette::ORANGE),
+                Style::default().fg(theme::role(Role::Accent)),
             ),
             Span::styled(dot, Style::default().fg(color)),
             Span::styled(
@@ -382,14 +382,14 @@ pub(super) fn render_settings(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 "  [↑↓ PgUp/Dn]",
                 Style::default()
-                    .fg(palette::BLUE_SLATE)
+                    .fg(theme::role(Role::BlueSlate))
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" Scroll  ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 "[Esc]",
                 Style::default()
-                    .fg(palette::ORANGE)
+                    .fg(theme::role(Role::Accent))
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" Back", Style::default().fg(Color::DarkGray)),
@@ -410,10 +410,10 @@ pub(super) fn render_settings(f: &mut Frame, app: &App, area: Rect) {
                 .title(Span::styled(
                     " Settings ",
                     Style::default()
-                        .fg(palette::BLUE_SLATE)
+                        .fg(theme::role(Role::BlueSlate))
                         .add_modifier(Modifier::BOLD),
                 ))
-                .border_style(Style::default().fg(palette::GRAY)),
+                .border_style(Style::default().fg(theme::role(Role::Gray))),
         )
         .scroll((app.help_scroll_offset as u16, 0));
 
