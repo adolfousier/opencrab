@@ -1111,40 +1111,45 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
 
-        // Blank line to separate content from status spinner
-        lines.push(Line::from(""));
+        // The spinner claims a turn is running, so it is gated on the turn
+        // actually running. The streamed text above is NOT gated: hiding it
+        // would make content the user is reading vanish on cancel (#1342).
+        if app.is_processing {
+            // Blank line to separate content from status spinner
+            lines.push(Line::from(""));
 
-        // Spinner at BOTTOM of streaming content so it's always visible
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame = spinner_frames[app.animation_frame % spinner_frames.len()];
+            // Spinner at BOTTOM of streaming content so it's always visible
+            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let frame = spinner_frames[app.animation_frame % spinner_frames.len()];
 
-        let elapsed = app
-            .processing_started_at
-            .map(|t| t.elapsed().as_secs())
-            .unwrap_or(0);
+            let elapsed = app
+                .processing_started_at
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(0);
 
-        let mut spans = vec![
-            Span::styled(
-                format!("{} ", frame),
-                Style::default()
-                    .fg(Color::Rgb(120, 120, 120))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "🦀 OpenCrabs ",
-                Style::default()
-                    .fg(Color::Gray)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "is responding...",
-                Style::default().fg(Color::Rgb(215, 100, 20)),
-            ),
-        ];
-        if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
-            spans.push(Span::styled(meta, Style::default().fg(Color::DarkGray)));
+            let mut spans = vec![
+                Span::styled(
+                    format!("{} ", frame),
+                    Style::default()
+                        .fg(Color::Rgb(120, 120, 120))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "🦀 OpenCrabs ",
+                    Style::default()
+                        .fg(Color::Gray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "is responding...",
+                    Style::default().fg(Color::Rgb(215, 100, 20)),
+                ),
+            ];
+            if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
+                spans.push(Span::styled(meta, Style::default().fg(Color::DarkGray)));
+            }
+            lines.push(Line::from(spans));
         }
-        lines.push(Line::from(spans));
     }
 
     // Render standalone reasoning during thinking-only phase
@@ -1152,6 +1157,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // streaming_response=None but reasoning is already streaming in
     // Hide when user has scrolled up so the viewport stays frozen.
     if !has_pending_approval
+        && app.is_processing
         && app.auto_scroll
         && app.streaming_response.is_none()
         && let Some(ref reasoning) = app.streaming_reasoning

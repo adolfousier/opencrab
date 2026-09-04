@@ -48,8 +48,14 @@ pub(super) fn render_inactive_pane(f: &mut Frame, app: &App, pane_id: PaneId, ar
     // cached message snapshot. `None` when the session has no
     // sidecar entry (either it's idle or never had a turn while
     // off-screen).
+    // Only a session with a turn still in flight renders live rows. A
+    // cancelled session's sidecar entry is cleared on abort, but guarding here
+    // too means a stale entry from any other path cannot be drawn as a live
+    // turn, which is what left "is thinking" running forever in split view
+    // after a cancel (#1342).
     let live = pane
         .session_id
+        .filter(|sid| app.is_session_processing(*sid))
         .and_then(|sid| app.background_sessions.get(&sid));
 
     let block = Block::default()

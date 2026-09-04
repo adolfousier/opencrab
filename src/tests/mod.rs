@@ -553,6 +553,7 @@ pub mod toml_hot_reload_test;
 pub mod transport_ready_test;
 pub mod truncation_join_test;
 pub mod tui_app_state_test;
+pub mod tui_cancel_indicator_test;
 pub mod tui_components_logo_test;
 pub mod tui_events_test;
 pub mod tui_highlight_test;

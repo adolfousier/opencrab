@@ -1096,6 +1096,17 @@ impl App {
     /// themselves. Cleanup happens in `complete_response_for` (drops
     /// the entry when its turn finalises) and `demote_to_background`
     /// (snapshots foreground state in, drops empty entries).
+    /// Whether `session_id` still has a turn in flight.
+    ///
+    /// `processing_sessions` is the cross-session source of truth: the
+    /// foreground `is_processing` flag is derived from it on every focus
+    /// switch, so this answers for a focused and an off-screen session alike.
+    /// Cancelling removes the entry, which is what makes this the guard that
+    /// stops a cancelled turn's queued events being applied (#1342).
+    pub(crate) fn is_session_processing(&self, session_id: uuid::Uuid) -> bool {
+        self.processing_sessions.contains(&session_id)
+    }
+
     pub(crate) fn session_state_mut(
         &mut self,
         session_id: Uuid,
@@ -1139,7 +1150,11 @@ impl App {
             tps_tracker: self.tps_tracker.clone(),
             pending_messages: prior_pending,
         };
-        if bg.has_live_state() {
+        // A cancelled turn has no live state to preserve. Snapshotting it
+        // anyway is how a just-aborted session got its streaming fields copied
+        // straight back into the sidecar, where `panes.rs` drew them as a
+        // running turn for the rest of the session (#1342).
+        if bg.has_live_state() && self.is_session_processing(session_id) {
             self.background_sessions.insert(session_id, bg);
         }
     }
@@ -1962,6 +1977,13 @@ impl App {
                         .map(|s| s.len())
                         .unwrap_or(0)
                 );
+                // Drop chunks for a turn that has been cancelled. The agent
+                // task is aborted, but events it already emitted keep draining
+                // from the channel, and applying them re-populated the
+                // streaming state the abort had just cleared (#1342).
+                if !self.is_session_processing(session_id) {
+                    return Ok(());
+                }
                 // Route to foreground OR the per-session background
                 // sidecar so the inactive pane sees streaming chunks
                 // live instead of catching up on focus switch.
@@ -2008,6 +2030,12 @@ impl App {
                 }
             }
             TuiEvent::ReasoningChunk { session_id, text } => {
+                // Same cancellation guard as ResponseChunk: a cancelled turn's
+                // queued reasoning was what left the pane showing "is thinking"
+                // after the abort had cleared it (#1342).
+                if !self.is_session_processing(session_id) {
+                    return Ok(());
+                }
                 // Route to foreground OR background sidecar. The
                 // routing helper handles empty/whitespace filtering
                 // and the foreground-only `scroll_offset = 0` nudge
