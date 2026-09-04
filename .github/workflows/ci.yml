@@ -353,6 +353,14 @@ jobs:
         #                      set was narrowed off `default-fancy`.
         #   RUSTSEC-2026-0187  lopdf — gone. printpdf 0.12.7 moved off lopdf 0.39;
         #                      the ignore had been stale.
+        #   chacha20 (yanked)  gone. `cargo update` moved it 0.10.1 -> 0.10.2.
+        #                      It never had an ignore: audit does not fail on
+        #                      yanked, so it had been passing silently.
+        #
+        # The nine below are each at their upstream's LATEST published release,
+        # verified against crates.io on 2026-09-04, so there is no version to
+        # move to from here. A routine `cargo update` will not shift them; only
+        # an upstream release or dropping the dependency will.
         run: cargo audit --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0002 --ignore RUSTSEC-2026-0173 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0253 --ignore RUSTSEC-2026-0258
 
   # ── Stage 5: Coverage (on-demand only) ───────────────────────────────────
