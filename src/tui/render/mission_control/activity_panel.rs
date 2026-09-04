@@ -8,6 +8,7 @@ use super::theme;
 use crate::brain::mission_control::{McActivity, McActivityLevel};
 use crate::tui::app::App;
 
+use crate::tui::render::palette;
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -81,7 +82,7 @@ fn build_line(entry: &McActivity, inner_w: usize, selected: bool) -> Line<'stati
     if selected {
         // Subtle background + bold to mark the focused row.
         for span in &mut spans {
-            span.style = span.style.bg(Color::Rgb(30, 30, 45));
+            span.style = span.style.bg(palette::SURFACE_PANEL);
         }
         spans.last_mut().unwrap().style =
             spans.last_mut().unwrap().style.add_modifier(Modifier::BOLD);
