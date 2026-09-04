@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::brain::agent::service::AgentService;
-use crate::brain::provider::error::should_try_next_provider;
+use crate::brain::provider::error::{should_try_next_provider, with_chain_summary};
 use crate::brain::provider::fallback::substitute_model;
 use crate::brain::provider::{
     LLMRequest, LLMResponse, Message, Provider, ProviderError, ProviderStream, TokenUsage,
@@ -38,6 +38,8 @@ enum Behaviour {
     QuotaExhausted,
     /// Not fall-through-able: nothing downstream should be tried.
     Fatal,
+    /// The payload does not fit this provider's window (#1379).
+    TooLong,
     /// Never answers. CLI providers ship no request timeout, so this is what
     /// a wedged summariser actually looks like (#1255) — not an error, just
     /// silence for as long as the process lives.
@@ -113,6 +115,7 @@ impl Provider for CountingMock {
                 "Insufficient balance or no resource package. Please recharge.".to_string(),
             )),
             Behaviour::Fatal => Err(ProviderError::Internal("mock fatal".to_string())),
+            Behaviour::TooLong => Err(ProviderError::ContextLengthExceeded(0)),
             Behaviour::Hangs => {
                 futures::future::pending::<()>().await;
                 unreachable!("a hanging provider never returns")
@@ -294,6 +297,59 @@ fn a_substitute_without_a_default_keeps_the_requested_model() {
         substitute_model(&configured, "whatever-was-asked"),
         "mine",
         "the configured default wins whenever there is one"
+    );
+}
+
+/// A context-length rejection walks the chain (#1379): a summariser the
+/// primary refused on size is one a wider-window fallback can accept, and the
+/// primary that just refused is not asked again.
+#[tokio::test]
+async fn context_overflow_on_primary_reaches_the_first_fallback() {
+    let primary_mock = CountingMock::new("cfc-primary-overflow", Behaviour::TooLong);
+    let primary_calls = primary_mock.call_counter();
+    let primary: Arc<dyn Provider> = Arc::new(primary_mock);
+    let wide = CountingMock::new("cfc-wide", Behaviour::Ok);
+    let wide_calls = wide.call_counter();
+    let chain: Vec<Arc<dyn Provider>> = vec![Arc::new(wide)];
+
+    let response = AgentService::complete_compaction_request(
+        &primary,
+        &chain,
+        request("mock-default"),
+        &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
+    )
+    .await
+    .expect("the wider fallback summarises");
+
+    assert_eq!(response.id, "cfc-wide-response");
+    assert_eq!(
+        primary_calls.load(Ordering::SeqCst),
+        1,
+        "refused once, never re-asked"
+    );
+    assert_eq!(wide_calls.load(Ordering::SeqCst), 1);
+}
+
+/// The policy itself, and the property the chat path relies on: an
+/// exhausted chain hands the tool loop the same variant, so its emergency
+/// compaction still recognises the overflow.
+#[test]
+fn context_length_exceeded_advances_the_chain_and_survives_the_summary() {
+    let err = ProviderError::ContextLengthExceeded(0);
+    assert!(
+        !err.is_retryable(),
+        "sanity: re-sending to the same provider is pointless"
+    );
+    assert!(
+        should_try_next_provider(&err),
+        "#1379: but the next provider may have the room"
+    );
+
+    let wrapped = with_chain_summary(err, "tried: a, b".to_string());
+    assert!(
+        matches!(wrapped, ProviderError::ContextLengthExceeded(0)),
+        "the chain summary must not change the variant the tool loop matches on"
     );
 }
 
