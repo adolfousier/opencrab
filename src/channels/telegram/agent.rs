@@ -484,11 +484,18 @@ impl TelegramAgent {
                                         // working: take_pending_followup consumes
                                         // the whole set, so the other buttons are
                                         // already dead after one tap.
-                                        let picked =
-                                            crate::channels::telegram::handler::md_to_html(
-                                                &crate::channels::telegram::suggest_options::
-                                                    picked_block(&text, chooser.as_deref()),
-                                            );
+                                        // #96: the pick record is built per plane —
+                                        // md-plane hosts append it as plain markdown,
+                                        // html hosts as html (see pick_rewrite).
+                                        let pick_line = crate::channels::telegram::
+                                            suggest_options::picked_block(
+                                            &text,
+                                            chooser.as_deref(),
+                                        );
+                                        let picked = crate::channels::telegram::markdown::md_to_html(
+                                            &pick_line,
+                                        );
+                                        let picked_md = pick_line;
                                         let mut echo_deferred = false;
                                         let recorded = match prompt_msg_id {
                                             Some(mid) => {
@@ -524,7 +531,8 @@ impl TelegramAgent {
                                                         host_info.as_ref().map(|(full, rich, md)| {
                                                             (full.as_str(), *rich, md.as_deref())
                                                         }),
-                                                        picked,
+                                                        &picked,
+                                                        &picked_md,
                                                         picked_idx,
                                                     );
                                                 let outcome: Result<(), String> = match rewrite.clone() {
@@ -617,7 +625,7 @@ impl TelegramAgent {
                                                                     // safely outside the 429 window
                                                                     // that killed attempt 1 (#68).
                                                                     let echo = crate::channels::telegram::
-                                                                        handler::md_to_html(
+                                                                        markdown::md_to_html(
                                                                             &crate::channels::telegram::
                                                                                 suggest_options::echo_fallback(
                                                                                     &echo_text,
@@ -658,7 +666,7 @@ impl TelegramAgent {
                                                     // visible in logs, not just failure.
                                                     tracing::info!(
                                                         "Telegram followup tap: pick recorded \
-                                                         on msg {mid}, keyboard stripped"
+                                                         on msg {mid}, keyboard stripped from markup"
                                                     );
                                                     true
                                                 }
@@ -671,7 +679,7 @@ impl TelegramAgent {
                                             // but better than losing the record of
                                             // what was chosen.
                                             let echo =
-                                                crate::channels::telegram::handler::md_to_html(
+                                                crate::channels::telegram::markdown::md_to_html(
                                                     &crate::channels::telegram::suggest_options::
                                                         echo_fallback(&text, chooser.as_deref()),
                                                 );
@@ -786,7 +794,7 @@ impl TelegramAgent {
                                         &bot,
                                         chat_id,
                                         thread_id,
-                                        &crate::channels::telegram::handler::md_to_html(&help),
+                                        &crate::channels::telegram::markdown::md_to_html(&help),
                                         Some(teloxide::types::ParseMode::Html),
                                         "system",
                                         "model_switch_help",
@@ -820,7 +828,7 @@ impl TelegramAgent {
                                         &resp.current_model,
                                         &page,
                                     ));
-                                    let text = crate::channels::telegram::handler::md_to_html(
+                                    let text = crate::channels::telegram::markdown::md_to_html(
                                         &picker::page_text(
                                             &resp.provider_name,
                                             &resp.current_model,
@@ -911,7 +919,7 @@ impl TelegramAgent {
                                             match agent_clone.send_message(sid, prompt, None).await {
                                                 Ok(resp) => {
                                                     let clean = crate::utils::sanitize::strip_llm_artifacts(&resp.content);
-                                                    let html = crate::channels::telegram::handler::md_to_html(&clean);
+                                                    let html = crate::channels::telegram::markdown::md_to_html(&clean);
                                                     crate::channels::telegram::send::best_effort_note(
                                                         &bot_clone, chat_id, thread_id, &html,
                                                         Some(teloxide::types::ParseMode::Html),
@@ -961,7 +969,7 @@ impl TelegramAgent {
                                             &page,
                                         );
                                     let keyboard = InlineKeyboardMarkup::new(rows);
-                                    let text = crate::channels::telegram::handler::md_to_html(
+                                    let text = crate::channels::telegram::markdown::md_to_html(
                                         &picker::page_text(
                                             &resp.provider_name,
                                             &resp.current_model,
@@ -1393,7 +1401,7 @@ impl TelegramAgent {
                                     let rows = crate::channels::telegram::handler::build_cd_keyboard(&resp);
                                     let keyboard = teloxide::types::InlineKeyboardMarkup::new(rows);
                                     if let Some(msg) = &query.message {
-                                        let html = crate::channels::telegram::handler::md_to_html(&resp.text);
+                                        let html = crate::channels::telegram::markdown::md_to_html(&resp.text);
                                         super::edit_retry::edit_text_ui(
                                             bot.clone(),
                                             msg.chat().id,
@@ -1454,7 +1462,7 @@ impl TelegramAgent {
 
                                         let keyboard = InlineKeyboardMarkup::new(rows);
                                         if let Some(msg) = &query.message {
-                                            let html = crate::channels::telegram::handler::md_to_html(&text);
+                                            let html = crate::channels::telegram::markdown::md_to_html(&text);
                                             super::edit_retry::edit_text_ui(
                                                 bot.clone(),
                                                 msg.chat().id,
@@ -1513,7 +1521,7 @@ impl TelegramAgent {
                                         )],
                                     ]);
                                     if let Some(msg) = &query.message {
-                                        let html = crate::channels::telegram::handler::md_to_html(&text);
+                                        let html = crate::channels::telegram::markdown::md_to_html(&text);
                                         super::edit_retry::edit_text_ui(
                                             bot.clone(),
                                             msg.chat().id,
@@ -1538,7 +1546,7 @@ impl TelegramAgent {
                                                 files.len(), active, name, name
                                             );
                                             if let Some(msg) = &query.message {
-                                                let html = crate::channels::telegram::handler::md_to_html(&text);
+                                                let html = crate::channels::telegram::markdown::md_to_html(&text);
                                                 super::edit_retry::edit_text_ui(
                                                     bot.clone(),
                                                     msg.chat().id,
@@ -1587,7 +1595,7 @@ impl TelegramAgent {
                                         )],
                                     ]);
                                     if let Some(msg) = &query.message {
-                                        let html = crate::channels::telegram::handler::md_to_html(&text);
+                                        let html = crate::channels::telegram::markdown::md_to_html(&text);
                                         super::edit_retry::edit_text_ui(
                                             bot.clone(),
                                             msg.chat().id,
@@ -1606,7 +1614,7 @@ impl TelegramAgent {
                                         Ok(()) => {
                                             let text = format!("✅ Profile `{}` deleted.", name);
                                             if let Some(msg) = &query.message {
-                                                let html = crate::channels::telegram::handler::md_to_html(&text);
+                                                let html = crate::channels::telegram::markdown::md_to_html(&text);
                                                 super::edit_retry::edit_text_ui(
                                                     bot.clone(),
                                                     msg.chat().id,
@@ -1642,7 +1650,7 @@ impl TelegramAgent {
                                     let rows = crate::channels::telegram::handler::build_profiles_keyboard(&resp);
                                     let keyboard = InlineKeyboardMarkup::new(rows);
                                     if let Some(msg) = &query.message {
-                                        let html = crate::channels::telegram::handler::md_to_html(&resp.text);
+                                        let html = crate::channels::telegram::markdown::md_to_html(&resp.text);
                                         super::edit_retry::edit_text_ui(
                                             bot.clone(),
                                             msg.chat().id,
@@ -1908,7 +1916,7 @@ impl TelegramAgent {
                                         })
                                         .unwrap_or((teloxide::types::ChatId(0), None));
                                     let echo =
-                                        crate::channels::telegram::handler::md_to_html(
+                                        crate::channels::telegram::markdown::md_to_html(
                                             &format!("> 🔘 {data}"),
                                         );
                                     let _ =
