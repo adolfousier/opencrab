@@ -522,6 +522,9 @@ pub struct App {
     /// drag-select text natively (terminal handles selection + clipboard).
     /// Toggled with F12. Defaults to true (mouse capture on).
     pub mouse_capture_enabled: bool,
+    /// Interactive theme picker (#1371). `Some` = dialog open; all keys are
+    /// intercepted and routed through the picker's pure state machine.
+    pub theme_picker: Option<crate::tui::render::theme_picker::ThemePickerState>,
     pub selected_session_index: usize,
     pub should_quit: bool,
     /// Pending resize dimensions — runner pre-resizes buffers to avoid blink
@@ -910,6 +913,7 @@ impl App {
             prev_rendered_lines: 0,
             auto_scroll: true,
             mouse_capture_enabled: true,
+            theme_picker: None,
             selected_session_index: 0,
             should_quit: false,
             pending_resize: None,
@@ -3225,6 +3229,48 @@ impl App {
                     self.sudo_input.push(c);
                 }
                 _ => {}
+            }
+            return Ok(());
+        }
+
+        // Theme picker dialog (#1371) intercepts all keys while open. The
+        // state machine is pure — every global effect (live preview, apply
+        // + persist, Esc revert) executes here in one place.
+        if self.theme_picker.is_some() {
+            let (origin, action) = {
+                let picker = self
+                    .theme_picker
+                    .as_mut()
+                    .expect("theme_picker checked Some above");
+                (picker.origin, picker.handle_key(&event, 10))
+            };
+            use crate::tui::render::theme_picker::PickerAction;
+            match action {
+                PickerAction::Preview(t) => crate::tui::render::theme::set(t),
+                PickerAction::Apply(t) => {
+                    crate::tui::render::theme::set(t);
+                    if let Err(e) = crate::config::Config::write_key_string(
+                        "tui",
+                        "theme",
+                        &format!("\"{}\"", t.name),
+                    ) {
+                        self.push_system_message(format!(
+                            "Applied '{}' (live). Persist failed: {e}",
+                            t.name
+                        ));
+                    } else {
+                        self.push_system_message(format!(
+                            "Theme switched to '{}' — applied live and persisted.",
+                            t.name
+                        ));
+                    }
+                    self.theme_picker = None;
+                }
+                PickerAction::Cancel => {
+                    crate::tui::render::theme::set(origin);
+                    self.theme_picker = None;
+                }
+                PickerAction::None => {}
             }
             return Ok(());
         }

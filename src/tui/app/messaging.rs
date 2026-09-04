@@ -827,7 +827,14 @@ impl App {
                 let sub = parts.next().unwrap_or("");
                 let arg = parts.next().map(str::trim).unwrap_or("");
                 match sub {
-                    "" | "list" | "ls" => {
+                    "" => {
+                        // Bare /theme opens the interactive picker (#1371);
+                        // `list` keeps the text surface for habits/scripts.
+                        self.theme_picker = Some(
+                            crate::tui::render::theme_picker::ThemePickerState::open(),
+                        );
+                    }
+                    "list" | "ls" => {
                         let active_name = theme::active().name;
                         let mut lines: Vec<String> = Vec::new();
                         lines.push("Built-in themes:".to_string());

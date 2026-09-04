@@ -24,6 +24,7 @@ mod session_files;
 mod sessions;
 pub(crate) mod skills_dialog;
 pub(crate) mod theme;
+pub(crate) mod theme_picker;
 // Boot-apply in tui::runner references presets::by_name at startup.
 pub(crate) mod presets;
 #[cfg(test)]
