@@ -756,6 +756,7 @@ pub mod quiet_delivery_test;
 pub mod read_state_test;
 pub mod repetition_error_message_test;
 pub mod restart_recovery_test;
+pub mod shell_scan_test;
 pub mod slack_handler_test;
 pub mod subagent_notify_test;
 mod telegram_acl_test;
