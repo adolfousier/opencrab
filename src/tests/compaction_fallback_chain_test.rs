@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::brain::agent::service::AgentService;
 use crate::brain::provider::error::should_try_next_provider;
+use crate::brain::provider::fallback::substitute_model;
 use crate::brain::provider::{
     LLMRequest, LLMResponse, Message, Provider, ProviderError, ProviderStream, TokenUsage,
 };
@@ -47,6 +48,8 @@ struct CountingMock {
     name: String,
     behaviour: Behaviour,
     models: Vec<String>,
+    /// What `default_model()` answers; the model a substitute runs (#1374).
+    default: String,
     calls: Arc<AtomicUsize>,
     /// Model string of the last request this mock received.
     last_model: Arc<std::sync::Mutex<Option<String>>>,
@@ -58,6 +61,7 @@ impl CountingMock {
             name: name.to_string(),
             behaviour,
             models: Vec::new(),
+            default: "mock-default".to_string(),
             calls: Arc::new(AtomicUsize::new(0)),
             last_model: Arc::new(std::sync::Mutex::new(None)),
         }
@@ -67,6 +71,13 @@ impl CountingMock {
     /// to be remapped to `default_model()` before it is sent.
     fn with_models(mut self, models: &[&str]) -> Self {
         self.models = models.iter().map(|m| m.to_string()).collect();
+        self
+    }
+
+    /// What this provider is configured to run. Empty models a provider that
+    /// publishes no default.
+    fn with_default(mut self, default: &str) -> Self {
+        self.default = default.to_string();
         self
     }
 
@@ -121,7 +132,7 @@ impl Provider for CountingMock {
     }
 
     fn default_model(&self) -> &str {
-        "mock-default"
+        &self.default
     }
 
     fn supported_models(&self) -> Vec<String> {
@@ -198,6 +209,91 @@ async fn fallback_model_is_remapped_when_unsupported() {
         seen.lock().unwrap().as_deref(),
         Some("mock-default"),
         "a cross-provider model must never be sent to a fallback"
+    );
+}
+
+/// A substitute runs its own configured model even when it lists the one the
+/// failed request carried (#1374): `models[]` is capability, `default_model`
+/// is intent, and carrying the model along meant the chain never tried
+/// anything different.
+#[tokio::test]
+async fn a_fallback_listing_the_requested_model_still_runs_its_own_default() {
+    let primary: Arc<dyn Provider> = Arc::new(CountingMock::new(
+        "cfc-primary-shared",
+        Behaviour::QuotaExhausted,
+    ));
+    let substitute = CountingMock::new("cfc-substitute", Behaviour::Ok)
+        .with_models(&["shared-model", "substitute-default"])
+        .with_default("substitute-default");
+    let seen = substitute.model_spy();
+    let chain: Vec<Arc<dyn Provider>> = vec![Arc::new(substitute)];
+
+    AgentService::complete_compaction_request(
+        &primary,
+        &chain,
+        request("shared-model"),
+        &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
+    )
+    .await
+    .expect("the substitute answers");
+
+    assert_eq!(
+        seen.lock().unwrap().as_deref(),
+        Some("substitute-default"),
+        "the carried model must not ride along just because the substitute lists it"
+    );
+}
+
+/// Two chain entries on the same endpoint, each configured for a different
+/// model, produce two different requests instead of one request twice
+/// (#1374: the observed 3 x 300s of byte-identical retries).
+#[tokio::test]
+async fn two_providers_sharing_an_endpoint_get_different_requests() {
+    let primary: Arc<dyn Provider> = Arc::new(
+        CountingMock::new("cfc-host-a", Behaviour::QuotaExhausted)
+            .with_models(&["big", "mid", "small"])
+            .with_default("big"),
+    );
+    let mid = CountingMock::new("cfc-host-b", Behaviour::QuotaExhausted)
+        .with_models(&["big", "mid", "small"])
+        .with_default("mid");
+    let small = CountingMock::new("cfc-host-c", Behaviour::Ok)
+        .with_models(&["big", "mid", "small"])
+        .with_default("small");
+    let seen_mid = mid.model_spy();
+    let seen_small = small.model_spy();
+    let chain: Vec<Arc<dyn Provider>> = vec![Arc::new(mid), Arc::new(small)];
+
+    AgentService::complete_compaction_request(
+        &primary,
+        &chain,
+        request("big"),
+        &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
+    )
+    .await
+    .expect("the last substitute answers");
+
+    assert_eq!(seen_mid.lock().unwrap().as_deref(), Some("mid"));
+    assert_eq!(seen_small.lock().unwrap().as_deref(), Some("small"));
+}
+
+/// A substitute with no usable default keeps the requested model rather than
+/// being sent an empty model id.
+#[test]
+fn a_substitute_without_a_default_keeps_the_requested_model() {
+    let bare = CountingMock::new("cfc-no-default", Behaviour::Ok).with_default("  ");
+    assert_eq!(
+        substitute_model(&bare, "whatever-was-asked"),
+        "whatever-was-asked"
+    );
+
+    let configured = CountingMock::new("cfc-with-default", Behaviour::Ok).with_default("mine");
+    assert_eq!(
+        substitute_model(&configured, "whatever-was-asked"),
+        "mine",
+        "the configured default wins whenever there is one"
     );
 }
 

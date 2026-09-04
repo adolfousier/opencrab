@@ -124,10 +124,12 @@ fn request_for(model: &str) -> LLMRequest {
 }
 
 #[tokio::test]
-async fn swap_reports_the_pinned_model_not_the_provider_defaults() {
-    // The session is pinned to "shared-pinned" — not either provider's
-    // default — and the fallback supports it, so no remap happens and both
-    // sides of the swap ran on that exact model.
+async fn swap_reports_the_fallbacks_own_default_even_when_it_lists_the_pinned_model() {
+    // The session is pinned to "shared-pinned" and the fallback lists it, but
+    // a substitute runs its configured default_model (#1374): models[] is
+    // capability, default_model is intent. The alert names what each side
+    // actually ran: the pinned model on the failing primary, the fallback's
+    // default on the succeeding side.
     let primary = Arc::new(ModelAwareMock::new(
         "primary",
         "primary-default",
@@ -149,8 +151,8 @@ async fn swap_reports_the_pinned_model_not_the_provider_defaults() {
 
     assert_eq!(
         fallback.seen_model().as_deref(),
-        Some("shared-pinned"),
-        "a supported model must not be remapped"
+        Some("fallback-default"),
+        "a substitute runs its own configured model, even one that lists the pinned model (#1374)"
     );
 
     let swap = provider
@@ -163,8 +165,8 @@ async fn swap_reports_the_pinned_model_not_the_provider_defaults() {
         "the alert must name the model the failing request carried, not the primary's default"
     );
     assert_eq!(
-        swap.to_model, "shared-pinned",
-        "the alert must name the model the succeeding request carried, not the fallback's default"
+        swap.to_model, "fallback-default",
+        "the alert must name the model the succeeding request actually carried"
     );
 }
 
@@ -239,7 +241,10 @@ async fn streaming_swap_reports_the_same_models_as_completion() {
         .take_swap_event()
         .expect("promoting a fallback must record a swap event");
     assert_eq!(swap.from_model, "shared-pinned");
-    assert_eq!(swap.to_model, "shared-pinned");
+    assert_eq!(
+        swap.to_model, "fallback-default",
+        "the streaming chain applies the same substitute rule as completion (#1374)"
+    );
 }
 
 #[tokio::test]

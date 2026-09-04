@@ -503,13 +503,11 @@ impl AgentService {
             if name == primary_name {
                 continue;
             }
-            // Never send a provider a model it doesn't publish — same
-            // invariant the chat path and `FallbackProvider` enforce.
-            let mut fb_request = request.clone();
-            let supported = fallback.supported_models();
-            if !supported.is_empty() && !supported.iter().any(|m| m == &fb_request.model) {
-                fb_request.model = fallback.default_model().to_string();
-            }
+            // A substitute runs its own configured model, not the one the
+            // failed request carried; the same rule the chat chain applies,
+            // through the same function (#1374).
+            let fb_request =
+                crate::brain::provider::fallback::substitute_request(fallback.as_ref(), &request);
             tracing::info!(
                 "Compaction: trying fallback provider '{}' (model '{}')",
                 name,
