@@ -99,7 +99,8 @@ pub(crate) enum PickRewrite {
 /// pick record alone.
 pub(crate) fn pick_rewrite(
     host: Option<(&str, bool, Option<&str>)>,
-    picked: String,
+    picked_html: &str,
+    picked_md: &str,
     picked_idx: usize,
 ) -> PickRewrite {
     match host {
@@ -111,20 +112,34 @@ pub(crate) fn pick_rewrite(
                 // the bubble keeps showing what was chosen. `mark_picked_button`
                 // is a byte-level `<tg-button` scan, plane-agnostic — the
                 // same rewrite serves the html and markdown planes.
-                let body = format!("{}\n\n{picked}", mark_picked_button(full, picked_idx));
-                if markdown.is_some() {
-                    PickRewrite::RichMarkdownHost(body)
+                //
+                // #96: each plane must redraw in ITS OWN plane. The md-plane
+                // host's `markdown` column carries the `<tg-button>` rows as
+                // raw widget markup (the only html the rich-markdown renderer
+                // accepts); rewriting the `full` HTML strip-source instead
+                // posts `<p>`/`<b>` tags into the markdown field — Telegram
+                // renders them literally (tag soup). Markdown hosts get
+                // `mark_picked_button(markdown)` + the pick line as plain
+                // markdown; html hosts keep the html rewrite.
+                if let Some(md) = markdown {
+                    PickRewrite::RichMarkdownHost(format!(
+                        "{}\n\n{picked_md}",
+                        mark_picked_button(md, picked_idx)
+                    ))
                 } else {
-                    PickRewrite::RichHost(body)
+                    PickRewrite::RichHost(format!(
+                        "{}\n\n{picked_html}",
+                        mark_picked_button(full, picked_idx)
+                    ))
                 }
             } else {
                 // Classic hosts keep their buttons as reply markup (not in
                 // the body) — the empty-markup arm strips those; nothing to
                 // rewrite here.
-                PickRewrite::ClassicHost(format!("{full}\n\n{picked}"))
+                PickRewrite::ClassicHost(format!("{full}\n\n{picked_html}"))
             }
         }
-        None => PickRewrite::Standalone(picked),
+        None => PickRewrite::Standalone(picked_html.to_string()),
     }
 }
 
