@@ -351,6 +351,7 @@ fn witness_top_level_sections_match_known_list() {
         "brain",
         "browser",
         "doctor",
+        "tui",
     ]
     .to_vec();
     known.sort_unstable();
