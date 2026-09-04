@@ -66,6 +66,54 @@ fn is_collapsed_table_line(line: &str) -> bool {
     false
 }
 
+/// Insert one blank line before any table block whose preceding line is
+/// non-blank (#95). Telegram's rich-markdown parser accepts a GFM table only
+/// as a standalone block: a table that directly follows a text line renders
+/// as raw pipes (probe matrix A/B/C/D — blank line present = rendered,
+/// abutting = raw). Detection reuses [`try_parse`], so exactly the blocks the
+/// AST parser accepts get normalized — prose with stray pipes is never
+/// touched. Code fences (``` and ~~~) are never mutated, the pass is
+/// idempotent, and pipe-free input returns unchanged.
+pub(crate) fn ensure_blank_line_before_tables(text: &str) -> String {
+    if !text.contains('|') {
+        return text.to_string();
+    }
+    let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 1);
+    let mut in_fence = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = &lines[i];
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            out.push(line.clone());
+            i += 1;
+            continue;
+        }
+        if !in_fence {
+            if let Some((_, consumed)) = try_parse(&lines, i) {
+                let prev_is_text = out.last().is_some_and(|prev| !prev.trim().is_empty());
+                if prev_is_text {
+                    out.push(String::new());
+                }
+                for _ in 0..consumed {
+                    out.push(lines[i].clone());
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        out.push(line.clone());
+        i += 1;
+    }
+    let mut result = out.join("\n");
+    if text.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 /// If a table begins at `lines[start]` (a pipe row immediately followed by a
 /// separator row), parse it and return the table plus the index just past it.
 pub(super) fn try_parse(lines: &[String], start: usize) -> Option<(Table, usize)> {
