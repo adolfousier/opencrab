@@ -359,6 +359,23 @@ fn witness_top_level_sections_match_known_list() {
         sections, known,
         "compiled schema and known-section list drifted — sync both consciously"
     );
+
+    // Triangle closure: the loader's runtime typo-warning list must match the
+    // same schema. Before this assertion existed the const was referenced only
+    // by a comment and drifted (tui + doctor missing) while this test stayed
+    // green — the exact regression that shipped false "Unknown keys" warnings.
+    // `gateway` is a serde alias accepted by the loader but canonicalized
+    // before lookup, so it lives only in the loader list.
+    let mut loader_known: Vec<&str> = crate::config::Config::KNOWN_TOP_LEVEL_KEYS
+        .iter()
+        .copied()
+        .filter(|k| *k != "gateway")
+        .collect();
+    loader_known.sort_unstable();
+    assert_eq!(
+        known, loader_known,
+        "loader's KNOWN_TOP_LEVEL_KEYS drifted from the schema — add the section to src/config/types/loader.rs"
+    );
 }
 
 // ---------------------------------------------------------------- providers

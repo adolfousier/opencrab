@@ -432,7 +432,11 @@ impl Config {
     }
 
     /// Known top-level sections in config.toml.
-    const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
+    ///
+    /// Pinned to the compiled schema by the drift-guard test in
+    /// `src/tests/rsi_stale_scan_test.rs` — extend that test's array when a
+    /// section is added here (or vice versa).
+    pub(crate) const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
         "provider_registry",
         "database",
         "logging",
@@ -448,6 +452,8 @@ impl Config {
         "memory",
         "brain",
         "browser",
+        "doctor",
+        "tui",
     ];
 
     /// Check for unknown top-level keys and log warnings.
