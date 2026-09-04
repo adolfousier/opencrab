@@ -2980,6 +2980,23 @@ impl OpenAIProvider {
             reasoning_effort = knobs.effort.map(str::to_string);
         }
 
+        // z.ai GLM-5.x: Preserved Thinking, so a tool loop stops re-deriving
+        // the whole chain on every step (#1348). Omitted for every other
+        // host and for GLM-4.x, which keep their current behaviour.
+        if let Some(glm) = super::glm_reasoning::thinking_for(
+            &self.base_url,
+            &request.model,
+            self.enable_thinking_setting,
+        ) {
+            if glm.off_ignored {
+                tracing::warn!(
+                    "enable_thinking = false is ignored by {}: GLM-5.3 and later cannot turn thinking off",
+                    request.model
+                );
+            }
+            thinking = Some(glm.to_json());
+        }
+
         // Carry reasoning across turns instead of re-deriving it each turn
         // (#1033). Sent on every DashScope request, ungated by family.
         let preserve_thinking =
