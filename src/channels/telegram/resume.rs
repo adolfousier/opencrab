@@ -114,6 +114,32 @@ pub(crate) fn build_enqueue_callback(
                 crate::brain::agent::PushOrigin::BackgroundTask
                     | crate::brain::agent::PushOrigin::SessionNotify
             ) {
+                // #1377: a BARE background-task ack (typed bg_meta card) folds
+                // into the session's settled flow card — one line in the
+                // collapsible block, header counter re-stamped from the live
+                // registry — instead of a standalone bubble. Notify pushes
+                // keep their N4 document card (prose/tables ARE the content);
+                // no-meta redeliveries (#1242) and cardless sessions keep the
+                // bubble path below.
+                let folded = if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask {
+                    match msg.bg_meta.clone() {
+                        Some(meta) => {
+                            fold_bg_ack_into_flow_card(
+                                &bot,
+                                chat_id,
+                                &state,
+                                &agent,
+                                session_id,
+                                &meta,
+                            )
+                            .await
+                        }
+                        None => false,
+                    }
+                } else {
+                    false
+                };
+                if !folded {
                 // #15: receipt cards. A bg completion carries the typed
                 // payload (icon/label/duration/tail) in `bg_meta` — the card
                 // renders from it, never by parsing the `[System: ...]`
@@ -213,6 +239,7 @@ pub(crate) fn build_enqueue_callback(
                         }
                     }
                 }
+                } // #1377: end of the not-folded (standalone bubble) lane
             }
 
             // One streaming turn per session (#845). Several detached commands
@@ -754,6 +781,20 @@ pub(crate) async fn resume_session_inner(
     super::flow_chrome::refresh_sections(&streaming, &agent, session_id).await;
     // Crash-resume settle render (#1211 G2 Final): queued, never dropped.
     refresh_flow(&bot, chat_id, &streaming, super::governor::EditClass::Final).await;
+    // #1377: if a flow card survived to settle, register its state handle so
+    // later background-task completions fold their acks into THIS card
+    // instead of spraying standalone bubbles. Overwritten by the next
+    // settle; cleared on teardown (delivery.rs).
+    if streaming
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .open_group_msg_id
+        .is_some()
+    {
+        telegram_state
+            .register_flow_state(session_id, Arc::clone(&streaming))
+            .await;
+    }
     // Settle the plan card too (#580): final checklist state + the Approve/
     // Discard keyboard, which is now gated to turn end on the card.
     let plan_kb = {
@@ -939,6 +980,64 @@ fn receipt_fence(tail: &str) -> String {
         }
     }
     "`".repeat(if longest >= 3 { longest + 1 } else { 3 })
+}
+
+/// Fold a bare background-task ack into the session's settled flow card
+/// (#1377). Appends ONE system line (`✅ \`label\` 🕒 duration · preview`) to
+/// the collapsible block, re-stamps the header counters from the live
+/// registry (so "⏳ Waiting for N background tasks" decrements and flips to
+/// "✅ Finished" at zero), and re-renders the card in place via the normal
+/// governor path (Status class: droppable under flood, self-healing next
+/// tick). Returns false — caller falls back to the standalone bubble — when
+/// the session has no registered settled card or the card was torn down.
+pub(crate) async fn fold_bg_ack_into_flow_card(
+    bot: &Bot,
+    chat_id: i64,
+    state: &Arc<TelegramState>,
+    agent: &Arc<AgentService>,
+    session_id: Uuid,
+    meta: &crate::brain::agent::BgTaskMeta,
+) -> bool {
+    let Some(streaming) = state.flow_state_for(session_id).await else {
+        return false;
+    };
+    // Same shapes as the receipt card summary: backtick-stripped label,
+    // humanized duration, first-line tail preview (capped like the notify
+    // card's peek — the full tail stays in the resumed answer/logs).
+    let icon = if meta.success { "✅" } else { "❌" };
+    let stripped = meta.label.replace('`', "");
+    let label = stripped.trim();
+    let label = if label.is_empty() {
+        "background task"
+    } else {
+        label
+    };
+    let duration = background_tasks::format_elapsed(meta.elapsed_secs);
+    let preview = first_line_preview(&meta.tail);
+    let line = if preview.is_empty() {
+        format!("{icon} `{label}` 🕒 {duration}")
+    } else {
+        format!("{icon} `{label}` 🕒 {duration} · {preview}")
+    };
+    let (bg_indicator, bg_count) = super::delivery::bg_indicator_for(agent, session_id);
+    {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        if s.open_group_msg_id.is_none() {
+            return false;
+        }
+        s.flow_entries
+            .push(crate::channels::telegram::flow::FlowEntry::System(line));
+        s.bg_indicator = bg_indicator;
+        s.bg_count = bg_count;
+    }
+    super::flow::refresh_flow(
+        bot,
+        teloxide::types::ChatId(chat_id),
+        &streaming,
+        super::governor::EditClass::Status,
+    )
+    .await;
+    true
 }
 
 /// Background-task receipt card (#15, owner-locked shape P3f): ONE collapsed

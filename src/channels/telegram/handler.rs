@@ -2705,6 +2705,19 @@ pub(crate) async fn handle_message(
         super::governor::EditClass::Final,
     )
     .await;
+    // #1377: register the settled card's state handle so later background-task
+    // completions fold their acks into THIS card instead of standalone
+    // bubbles. Same contract as the resume path's registration.
+    if streaming
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .open_group_msg_id
+        .is_some()
+    {
+        telegram_state
+            .register_flow_state(session_id, Arc::clone(&streaming))
+            .await;
+    }
     // Settle the persistent plan card (#580, #621): remove the old card first
     // so refresh_plan_card posts a fresh one at the bottom. This re-stick keeps
     // the card at the latest position instead of editing a buried message far
