@@ -59,3 +59,36 @@ pub(crate) fn candidates(matches: &[&Session]) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+/// Resolve `--session <arg>` against the DB: an existing session id resumes,
+/// `None` creates a fresh one titled `default_title` (#1368).
+///
+/// This is the async tier of the same concern the pure helpers above cover:
+/// every CLI surface that can resume a session funnels through here so the
+/// id rules (full UUID passthrough, case-insensitive prefix, ambiguity
+/// candidates) cannot drift between commands. Archived sessions are
+/// resumable, matching `session get`/`notify`.
+pub(crate) async fn resolve_or_create_session(
+    session_service: &crate::services::SessionService,
+    arg: Option<&str>,
+    default_title: &str,
+) -> anyhow::Result<crate::db::models::Session> {
+    use crate::db::repository::SessionListOptions;
+
+    let Some(id) = arg else {
+        return session_service
+            .create_session(Some(default_title.to_string()))
+            .await;
+    };
+    let sessions = session_service
+        .list_sessions(SessionListOptions {
+            include_archived: true,
+            ..Default::default()
+        })
+        .await?;
+    let uuid = resolve_session_id(&sessions, id).map_err(anyhow::Error::msg)?;
+    session_service
+        .get_session(uuid)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("session not found: {id}"))
+}

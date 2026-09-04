@@ -685,6 +685,7 @@ pub(crate) async fn cmd_run(
     prompt: String,
     auto_approve: bool,
     format: OutputFormat,
+    session_id: Option<String>,
 ) -> Result<()> {
     use crate::{
         brain::{agent::AgentService, tools::registry::ToolRegistry},
@@ -743,12 +744,18 @@ pub(crate) async fn cmd_run(
         .with_auto_approve_tools(auto_approve)
         .with_subagent_manager(subagent_manager);
 
-    // Create or get session
+    // Create or resume session (#1368): `agent --session <prefix|uuid>`
+    // continues an existing conversation instead of starting fresh. The id
+    // is echoed in every output format below so scripts can close the loop
+    // without scraping `session list`.
     let session_service = SessionService::new(service_context);
-
-    let session = session_service
-        .create_session(Some("CLI Run".to_string()))
-        .await?;
+    let session = crate::cli::session_resolve::resolve_or_create_session(
+        &session_service,
+        session_id.as_deref(),
+        "CLI Run",
+    )
+    .await?;
+    let short_id = &session.id.to_string()[..8];
 
     // Send through the full tool loop so headless runs actually execute tools
     // (#492). Plain send_message() is a single completion with no tool
@@ -777,6 +784,7 @@ pub(crate) async fn cmd_run(
                 response.usage.input_tokens + response.usage.output_tokens
             );
             println!("💰 Cost: ${:.6}", response.cost);
+            println!("🆔 Session: {short_id} (resume: opencrabs agent --session {short_id})");
         }
         OutputFormat::Json => {
             let output = serde_json::json!({
@@ -787,6 +795,7 @@ pub(crate) async fn cmd_run(
                 },
                 "cost": response.cost,
                 "model": response.model,
+                "session_id": session.id.to_string(),
             });
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
@@ -799,6 +808,7 @@ pub(crate) async fn cmd_run(
                 response.usage.input_tokens + response.usage.output_tokens
             );
             println!("**Cost:** ${:.6}", response.cost);
+            println!("**Session:** {short_id}");
         }
     }
 
@@ -962,6 +972,7 @@ pub(crate) async fn cmd_logs(operation: LogCommands) -> Result<()> {
 pub(crate) async fn cmd_agent_interactive(
     config: &crate::config::Config,
     auto_approve: bool,
+    session_id: Option<String>,
 ) -> Result<()> {
     use crate::{
         brain::{agent::AgentService, tools::registry::ToolRegistry},
@@ -1023,15 +1034,22 @@ pub(crate) async fn cmd_agent_interactive(
         .with_subagent_manager(subagent_manager);
 
     let session_service = SessionService::new(service_context);
-    let session = session_service
-        .create_session(Some("CLI Agent".to_string()))
-        .await?;
+    // Create or resume (#1368): `agent --session <prefix|uuid>` continues an
+    // existing conversation instead of starting a fresh REPL.
+    let session = crate::cli::session_resolve::resolve_or_create_session(
+        &session_service,
+        session_id.as_deref(),
+        "CLI Agent",
+    )
+    .await?;
 
+    let short_id = &session.id.to_string()[..8];
     println!(
         "🦀 OpenCrabs Agent — {} ({})",
         provider.name(),
         provider.default_model()
     );
+    println!("Session: {short_id} — resume later with: opencrabs agent --session {short_id}");
     println!("Type /exit or Ctrl+D to quit\n");
 
     // Run one turn (a typed line or a background-task completion) and print its
