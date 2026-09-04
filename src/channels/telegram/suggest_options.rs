@@ -593,6 +593,7 @@ pub(crate) async fn render_suggestions(
             message_id: mid,
             new_html,
             rich,
+            new_markdown: None,
         }
     });
 
@@ -727,6 +728,10 @@ struct MergePayload {
     message_id: MessageId,
     new_html: String,
     rich: bool,
+    /// Markdown-plane payload (#79 piece 4): when set, the merge edit and
+    /// every later redraw ride `edit_rich_markdown`; `new_html` then only
+    /// feeds the host record's strip source.
+    new_markdown: Option<String>,
 }
 
 /// Placement error class (#30): decides whether the stash survives the
@@ -826,6 +831,7 @@ async fn place_once(
                             message_id: mid,
                             html: mp.new_html.clone(),
                             rich: mp.rich,
+                            markdown: mp.new_markdown.clone(),
                         },
                     )
                     .await;

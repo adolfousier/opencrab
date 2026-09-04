@@ -47,6 +47,7 @@ async fn repo_roundtrip_saves_loads_and_deletes() {
         message_id: 4242,
         html: "<b>answer</b>".to_string(),
         rich: true,
+        markdown: None,
     });
     repo.save(&hosted).await.unwrap();
     assert_eq!(repo.load_all().await.unwrap(), vec![hosted.clone()]);
@@ -85,6 +86,7 @@ async fn store_hydration_restores_armed_keyboards() {
         message_id: 99,
         html: "<p>answer</p>".to_string(),
         rich: false,
+        markdown: None,
     });
     repo.save(&prior).await.unwrap();
 
@@ -124,6 +126,7 @@ async fn register_and_take_mirror_the_store() {
                 message_id: MessageId(7),
                 html: "html".to_string(),
                 rich: false,
+                markdown: None,
             },
         )
         .await;

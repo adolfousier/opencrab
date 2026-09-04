@@ -159,6 +159,11 @@ pub(crate) fn build_migrations() -> Migrations<'static> {
         M::up(include_str!(
             "../migrations/20260902000001_add_pending_followups.sql"
         )),
+        M::up(include_str!(
+            // FORK (#79 piece 4): markdown-plane host bodies for merged
+            // suggest controls — table-bearing answers keep their tables.
+            "../migrations/20260904000000_add_pending_followups_host_markdown.sql"
+        )),
     ])
 }
 
@@ -366,7 +371,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    pub const MIGRATION_COUNT: usize = 38;
+    pub const MIGRATION_COUNT: usize = 39;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
