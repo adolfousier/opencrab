@@ -86,7 +86,18 @@ rand = "0.9"
 urlencoding = "2.1"
 
 # Syntax & Parsing
-syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+syntect = { version = "5.2", default-features = false, features = [
+    # Only the bundled binary dumps are ever loaded (`load_defaults_newlines`
+    # / `ThemeSet::load_defaults` in tui/highlight.rs), so the YAML syntax
+    # loader, the plist theme loader, the dump *writer* and the HTML emitter
+    # are all unreachable. `default-fancy` pulls them in, and with them
+    # yaml-rust, which is unmaintained (RUSTSEC-2024-0320, #1344).
+    "parsing",
+    "default-syntaxes",
+    "default-themes",
+    "dump-load",
+    "regex-fancy",
+] }
 pulldown-cmark = "0.13"
 strip-ansi = "0.1"
 tree-sitter = { version = "0.24", optional = true }
@@ -173,7 +184,7 @@ scraper = "0.27.0"
 htmd = "0.5.4"
 rust_xlsxwriter = "0.96.0"
 docx-rs = "0.4.20"
-printpdf = { version = "0.11.3", features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+printpdf = { version = "0.12.7", features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 
 [dev-dependencies]
 rstest = "0.25"
