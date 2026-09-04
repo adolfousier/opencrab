@@ -151,6 +151,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Compact context now",
     },
     SlashCommand {
+        name: "/theme",
+        description: "List / set / reset the TUI color theme (/theme set dracula)",
+    },
+    SlashCommand {
         name: "/stop",
         description: "Abort the running turn (same as Esc x2)",
     },
