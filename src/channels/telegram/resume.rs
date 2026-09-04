@@ -1042,7 +1042,7 @@ pub(crate) fn background_task_title(display_text: &str) -> String {
 /// them), chat names from `getChat`. Best-effort: any lookup failure falls
 /// back to the short session id (the same prefix `session_search list`
 /// displays).
-async fn sender_label(
+pub(crate) async fn sender_label(
     state: &TelegramState,
     bot: &teloxide::Bot,
     sender: Uuid,
@@ -1097,7 +1097,7 @@ async fn local_topic_name(chat_id: i64, thread_id: i32) -> Option<String> {
 
 /// Short session id: first 8 hex chars of the uuid (matches `session_search`
 /// list's short-id prefix display).
-fn short_session_id(uuid: Uuid) -> String {
+pub(crate) fn short_session_id(uuid: Uuid) -> String {
     uuid.simple().to_string()[..8].to_owned()
 }
 
@@ -1164,41 +1164,4 @@ pub async fn wake_recently_active(
         );
     }
     scheduled
-}
-
-#[cfg(test)]
-mod sender_label_dm_tests {
-    use super::*;
-
-    /// Owner ruling 2026-08-28: a session sitting in a DM with the bot must
-    /// be labelled with the BOT's username, never the reader's own name —
-    /// the reader IS the chat's human side, so handing it back as the
-    /// sender is useless.
-    #[tokio::test]
-    async fn dm_session_labels_the_bot_not_the_reader() {
-        let state = TelegramState::new();
-        state.set_bot_username("test_bot".to_owned()).await;
-        let sender = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
-        state.register_session_chat(sender, 12345, None).await;
-        let bot = teloxide::Bot::new("42:TEST");
-        assert_eq!(
-            sender_label(&state, &bot, sender, -100_999).await,
-            "test_bot"
-        );
-    }
-
-    /// Empty get_me cache (shouldn't happen post-boot): the DM arm must
-    /// degrade to the short session id, never to a getChat lookup that
-    /// would return the reader's own profile.
-    #[tokio::test]
-    async fn dm_session_without_cached_bot_username_falls_back_to_short_id() {
-        let state = TelegramState::new();
-        let sender = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
-        state.register_session_chat(sender, 12345, None).await;
-        let bot = teloxide::Bot::new("42:TEST");
-        assert_eq!(
-            sender_label(&state, &bot, sender, -100_999).await,
-            short_session_id(sender)
-        );
-    }
 }
