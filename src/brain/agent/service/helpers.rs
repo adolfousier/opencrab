@@ -708,6 +708,22 @@ impl AgentService {
                                     stop_reason = Some(StopReason::EndTurn);
                                     break;
                                 }
+                                // A `!!!!!` style run (GLM-5.3-Flash degeneration,
+                                // #1351): end the stream the same way, so the
+                                // empty-answer nudge path takes over.
+                                if let Some((ch, len)) = super::reasoning_run::degenerate_run(
+                                    &reasoning_window,
+                                    super::reasoning_run::MIN_RUN,
+                                ) {
+                                    tracing::warn!(
+                                        "🔁 Same-character run in reasoning after {} bytes \
+                                         ({len} x {ch:?}). Model output has degenerated. \
+                                         Terminating stream.",
+                                        reasoning_buf.len(),
+                                    );
+                                    stop_reason = Some(StopReason::EndTurn);
+                                    break;
+                                }
                             }
                             ContentDelta::ThinkingDelta { thinking } => {
                                 // Anthropic native thinking_delta — same as reasoning
@@ -738,6 +754,19 @@ impl AgentService {
                                     tracing::warn!(
                                         "🔁 Repetition detected in thinking after {} bytes. \
                                          Model appears to be looping in its thinking. \
+                                         Terminating stream.",
+                                        reasoning_buf.len(),
+                                    );
+                                    stop_reason = Some(StopReason::EndTurn);
+                                    break;
+                                }
+                                if let Some((ch, len)) = super::reasoning_run::degenerate_run(
+                                    &reasoning_window,
+                                    super::reasoning_run::MIN_RUN,
+                                ) {
+                                    tracing::warn!(
+                                        "🔁 Same-character run in thinking after {} bytes \
+                                         ({len} x {ch:?}). Model output has degenerated. \
                                          Terminating stream.",
                                         reasoning_buf.len(),
                                     );
