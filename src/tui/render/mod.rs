@@ -23,6 +23,10 @@ mod projects;
 mod session_files;
 mod sessions;
 pub(crate) mod skills_dialog;
+// TEMP(#1364): allow(dead_code) until the S2 codemod lands role() consumers;
+// removed with the codemod commit.
+#[allow(dead_code)]
+pub(crate) mod theme;
 mod title;
 mod tools;
 pub(crate) mod utils;
