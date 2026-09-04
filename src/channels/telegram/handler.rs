@@ -2908,6 +2908,7 @@ pub(crate) async fn handle_message(
             options,
             merge_host,
             trailer,
+            Some(channel_msg_repo.clone()),
         )
         .await;
     }

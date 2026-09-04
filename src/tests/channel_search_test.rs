@@ -848,3 +848,113 @@ mod tool {
         );
     }
 }
+
+// --- Cross-turn glue target lookup (#91) ---
+
+mod glue_target {
+    use crate::db::Database;
+    use crate::db::models::ChannelMessage;
+    use crate::db::repository::channel_message::ChannelMessageRepository;
+
+    async fn setup() -> (Database, ChannelMessageRepository) {
+        let db = Database::connect_in_memory()
+            .await
+            .expect("Failed to create database");
+        db.run_migrations().await.expect("Failed to run migrations");
+        let repo = ChannelMessageRepository::new(db.pool().clone());
+        (db, repo)
+    }
+
+    fn bot_row(
+        chat_id: &str,
+        thread: Option<&str>,
+        content: &str,
+        pmid: &str,
+        plane: Option<&str>,
+    ) -> ChannelMessage {
+        ChannelMessage::new(
+            "telegram".into(),
+            chat_id.into(),
+            Some("Kanban".into()),
+            "bot:opencrabs".into(),
+            "OpenCrabs".into(),
+            content.into(),
+            "text".into(),
+            Some(pmid.into()),
+        )
+        .with_thread(thread.map(|t| t.into()), None)
+        .with_ship_plane(plane.map(|p| p.into()))
+    }
+
+    #[tokio::test]
+    async fn returns_newest_rich_md_target() {
+        let (_db, repo) = setup().await;
+        for row in [
+            bot_row("-1001", Some("2"), "old answer", "100", Some("rich-md")),
+            bot_row("-1001", Some("2"), "newest answer", "200", Some("rich-md")),
+        ] {
+            repo.insert(&row).await.unwrap();
+        }
+        let got = repo
+            .last_bot_rich_md("telegram", "-1001", Some("2"), 900)
+            .await
+            .unwrap();
+        assert_eq!(
+            got,
+            Some(("200".into(), "newest answer".into())),
+            "newest rich-md row must win"
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_classic_and_unmarked_rows() {
+        let (_db, repo) = setup().await;
+        // Classic-plane bot answer: authored by the bot, but no plane marker —
+        // its stored content is NOT a re-editable shipped body.
+        repo.insert(&bot_row("-1001", Some("2"), "classic answer", "100", None))
+            .await
+            .unwrap();
+        // User-authored row with a plane marker: the marker alone must not
+        // qualify a row — bot authorship is a hard filter.
+        let user_row = {
+            let mut r = bot_row("-1001", Some("2"), "user text", "101", Some("rich-md"));
+            r.sender_id = "user1".into();
+            r
+        };
+        repo.insert(&user_row).await.unwrap();
+        let got = repo
+            .last_bot_rich_md("telegram", "-1001", Some("2"), 900)
+            .await
+            .unwrap();
+        assert_eq!(
+            got, None,
+            "classic plane and non-bot rows are not glue targets"
+        );
+    }
+
+    #[tokio::test]
+    async fn staleness_window_and_thread_guards() {
+        let (_db, repo) = setup().await;
+        repo.insert(&bot_row(
+            "-1001",
+            Some("2"),
+            "answer",
+            "100",
+            Some("rich-md"),
+        ))
+        .await
+        .unwrap();
+        // Same row, but the caller's staleness window expired -> no target.
+        let got = repo
+            .last_bot_rich_md("telegram", "-1001", Some("2"), 0)
+            .await
+            .unwrap();
+        assert_eq!(got, None, "expired answers are not glue targets");
+        // Same row, but a different thread -> no target.
+        let got = repo
+            .last_bot_rich_md("telegram", "-1001", Some("3"), 900)
+            .await
+            .unwrap();
+        assert_eq!(got, None, "other threads are not glue targets");
+    }
+}
