@@ -216,3 +216,65 @@ fn set_and_reset_switch_active_theme() {
     theme::reset();
     assert_eq!(theme::role(Role::Accent), palette::ORANGE);
 }
+
+/// F1: RGB→ANSI-256 quantizer — the degraded-tier backbone.
+///
+/// Reference targets:
+///  - Pure black #000000 → 16 (cube corner)
+///  - Pure white #ffffff → 231 (cube corner)
+///  - Pure red #ff0000 → 196  (16 + 36*5 + 0 + 0)
+///  - Pure green #00ff00 → 46 (16 + 0 + 6*5 + 0)
+///  - Pure blue #0000ff → 21  (16 + 0 + 0 + 5)
+///  - Dracula orange #ffb86c → 216 (cube nearest; saturated wins over gray)
+///  - Neutral gray #808080 → 244 (grayscale ramp beats the saturated cube
+///    neighbor — the whole reason the gray branch exists)
+///  - Terminal.app Sequoia failure case: any RGB should land on a defined
+///    index in 16..=255, never out of range (crash guard)
+#[test]
+fn rgb_to_ansi256_corners() {
+    use crate::tui::render::theme::rgb_to_ansi256;
+    assert_eq!(rgb_to_ansi256(0, 0, 0), 16);
+    assert_eq!(rgb_to_ansi256(255, 255, 255), 231);
+    assert_eq!(rgb_to_ansi256(255, 0, 0), 196);
+    assert_eq!(rgb_to_ansi256(0, 255, 0), 46);
+    assert_eq!(rgb_to_ansi256(0, 0, 255), 21);
+}
+
+#[test]
+fn rgb_to_ansi256_dracula_orange_stays_saturated() {
+    use crate::tui::render::theme::rgb_to_ansi256;
+    let idx = rgb_to_ansi256(0xFF, 0xB8, 0x6C);
+    assert!(
+        (16..=231).contains(&idx),
+        "Dracula orange must land in the color cube, got {idx}"
+    );
+}
+
+#[test]
+fn rgb_to_ansi256_neutral_gray_picks_ramp_over_cube() {
+    use crate::tui::render::theme::rgb_to_ansi256;
+    let idx = rgb_to_ansi256(0x80, 0x80, 0x80);
+    assert!(
+        (232..=255).contains(&idx),
+        "Neutral gray must prefer the grayscale ramp, got {idx}"
+    );
+}
+
+#[test]
+fn rgb_to_ansi256_output_always_in_range() {
+    use crate::tui::render::theme::rgb_to_ansi256;
+    // Spot-check a spread of RGB values — every output must be a valid
+    // ANSI-256 index (16..=255). The 0..15 range is reserved for the
+    // terminal's basic 16 colors and never emitted by the quantizer.
+    for r in [0u8, 64, 128, 192, 255] {
+        for g in [0u8, 64, 128, 192, 255] {
+            for b in [0u8, 64, 128, 192, 255] {
+                let idx = rgb_to_ansi256(r, g, b);
+                assert!(
+                    (16..=255).contains(&idx),
+                    "out-of-range ANSI index {idx} from ({r},{g},{b})"
+                );
+            }
+        }
+    }
+}

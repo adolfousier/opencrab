@@ -120,6 +120,60 @@ pub struct ThemeColors {
     pub purple_soft: Color,
 }
 
+/// Quantize an RGB color to the nearest ANSI-256 index.
+///
+/// Uses the 216-color cube (indices 16–231) with 6 steps per channel:
+/// `16 + 36*r + 6*g + b` where r,g,b ∈ 0..5. Steps snap to the nearest
+/// of `[0, 95, 135, 175, 215, 255]`. Falls back to the 24 grayscale
+/// ramp (232–255) only when the cube distance is worse — a pure neutral
+/// gray is better served by a gray step than a saturated cube neighbor.
+///
+/// Output is the raw ANSI-256 index; callers wrap it in `Color::Indexed`
+/// when feeding ratatui.
+pub fn rgb_to_ansi256(r: u8, g: u8, b: u8) -> u8 {
+    const CUBE_STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+
+    let snap = |v: u8| -> u8 {
+        let mut best = 0u8;
+        let mut best_d = u16::MAX;
+        for (i, &step) in CUBE_STEPS.iter().enumerate() {
+            let d = (v as i16 - step as i16).unsigned_abs();
+            if d < best_d {
+                best_d = d;
+                best = i as u8;
+            }
+        }
+        best
+    };
+
+    let ri = snap(r);
+    let gi = snap(g);
+    let bi = snap(b);
+    let cube_idx = 16 + 36 * ri + 6 * gi + bi;
+    let cr = CUBE_STEPS[ri as usize];
+    let cg = CUBE_STEPS[gi as usize];
+    let cb = CUBE_STEPS[bi as usize];
+    let cube_dist = sq_diff(r, cr) + sq_diff(g, cg) + sq_diff(b, cb);
+
+    // 24-step grayscale ramp: 232 = #080808, 255 = #eeeeee, step ≈ 10.25
+    let gray_level = ((r as u16 + g as u16 + b as u16) / 3) as u8;
+    let gray_idx = ((gray_level as u16).saturating_sub(3) / 10).min(23) as u8;
+    let gv = 8u16 + 10u16 * gray_idx as u16;
+    let gray_dist = sq_diff(r, gv as u8) + sq_diff(g, gv as u8) + sq_diff(b, gv as u8);
+
+    if gray_dist < cube_dist {
+        232 + gray_idx
+    } else {
+        cube_idx
+    }
+}
+
+#[inline]
+fn sq_diff(a: u8, b: u8) -> u32 {
+    let d = a as i16 - b as i16;
+    (d * d) as u32
+}
+
 impl ThemeColors {
     /// Resolve one role. Panics never: every role has a field.
     pub fn get(&self, role: Role) -> Color {
