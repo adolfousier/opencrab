@@ -430,6 +430,23 @@ pub(crate) fn seed_brain_templates(profile_dir: &Path) {
     }
 }
 
+/// Ensure the active profile's home carries the full set of brain-file
+/// templates. Called at every CLI entrypoint (#1382) so a brain exists no
+/// matter how the user arrived: wizard aborted midway, daemon-only install,
+/// docker, channel-first setup, or `opencrabs init` (which writes config
+/// only). Templates are compiled into the binary (`include_str!`), so this
+/// needs no network and works on first open, offline.
+///
+/// Safe on every boot: `seed_brain_templates` is idempotent and
+/// never-overwrite, so user-customized and AI-generated brain content
+/// survive untouched. The #926 guarantee still holds — the wizard's
+/// finalize step overwrites static templates with AI-generated content
+/// when the user completes BrainSetup.
+pub fn ensure_brain_seeded() {
+    let home = crate::config::opencrabs_home();
+    seed_brain_templates(&home);
+}
+
 /// List all profiles (always includes "default").
 pub fn list_profiles() -> Result<Vec<ProfileEntry>> {
     let registry = ProfileRegistry::load()?;

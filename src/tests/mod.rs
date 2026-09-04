@@ -86,6 +86,7 @@ pub mod brain_provider_response_id_test;
 pub mod brain_provider_trait_test;
 pub mod brain_provider_types_test;
 pub mod brain_sections_test;
+pub mod brain_seed_entrypoint_test;
 pub mod brain_self_update_test;
 pub mod brain_templates_test;
 pub mod brain_tokenizer_test;

@@ -144,6 +144,9 @@ async fn spawn_cron_scheduler_for_profile(profile_name: String) {
     let name = profile_name.clone();
     let result: anyhow::Result<()> =
         crate::config::profile::with_profile_home_async(Some(&profile_name), async move {
+            // Non-active profiles never ran the onboarding wizard — ensure
+            // they still carry a brain before their cron jobs fire (#1382).
+            crate::config::profile::ensure_brain_seeded();
             // One scheduler per profile machine-wide (#444). If another process
             // (a `-p <name>` daemon, or the TUI running this profile) already
             // owns this profile's scheduler, skip — polling the same cron_jobs

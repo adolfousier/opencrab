@@ -512,6 +512,12 @@ pub async fn run() -> Result<()> {
         }
     }
 
+    // Seed the active profile's brain templates before any command runs
+    // (#1382): wizard abort, daemon-only, docker, channel-first, or `init`
+    // must all leave the user with a working personality on first open.
+    // Compiled-in templates, offline-safe, idempotent, never overwrites.
+    crate::config::profile::ensure_brain_seeded();
+
     match cli.command {
         None | Some(Commands::Chat { .. }) => {
             // Default: Interactive TUI mode
