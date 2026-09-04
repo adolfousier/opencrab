@@ -141,7 +141,7 @@ pub(crate) async fn send_rich_markdown_target_id(
     // #95: Telegram's rich parser refuses a table that abuts a text line —
     // insert the missing blank line before any detected table block. The pass
     // is idempotent, fence-safe, and reuses the AST table parser for detection.
-    let markdown = super::table::ensure_blank_line_before_tables(markdown);
+    let markdown = super::ensure_blank_line_before_tables(markdown);
     let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let result = post_rich(
         &url,
@@ -409,7 +409,7 @@ pub(crate) async fn send_rich_markdown_media_target_id(
     // #95: same normalization as the plain markdown dialect — the media path
     // renders pipe tables natively too, so an abutting table needs the blank
     // line here as well.
-    let markdown = super::table::ensure_blank_line_before_tables(markdown);
+    let markdown = super::ensure_blank_line_before_tables(markdown);
     let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let body = build_body_markdown_media_target(chat_id, thread_id, reply_to, &markdown, media);
 
