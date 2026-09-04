@@ -303,7 +303,7 @@ api_key = "YOUR_GEMINI_KEY"
 
 > **Gotcha:** `[image.vision] api_key = "..."` in `config.toml` is silently ignored — the field carries `#[serde(skip)]` for security. Use `keys.toml` `[image]` section, or `[providers.image.gemini]` in config.toml + the key in keys.toml.
 
-> **Vision-only provider override:** Set `[image.vision] provider = "name"` to route vision requests through a specific provider regardless of its `enabled` flag. Useful when you have a vision-only provider (e.g., OpenRouter proxying Gemini) with `enabled = false` for chat but want it to serve `analyze_image` and `analyze_video`. An unresolvable name falls through to the normal provider scan.
+> **Pinning vision to a provider:** set `[providers.fallback] vision = ["name"]` to try that provider first for `analyze_image` and `analyze_video`, regardless of its `enabled` flag (vision needs only `vision_model` plus a key). Names follow the same rule as every other provider key: the bare section name, so `[providers.custom.myprovider]` is `"myprovider"`. An entry that does not resolve is skipped with a warning and resolution falls through to the normal provider scan. There is no `[image.vision] provider` key; that section configures the Gemini backend only.
 
 **Diagnostic:** when vision is unavailable for any reason, `is_vision_available` logs the exact cause at INFO level in `~/.opencrabs/logs/opencrabs.YYYY-MM-DD` — search for `target=vision`.
 
@@ -1347,13 +1347,13 @@ self_improvement_model = "some-model"
 
 The same bare name goes in `subagent_provider`, `plan_provider`,
 `execute_provider`, the `[providers.fallback] providers` list, the
-`[image.vision] provider` override, and `/models myprovider/some-model`. A
+`[providers.fallback] vision` list, and `/models myprovider/some-model`. A
 provider key never takes `<provider>/<model>`: the model belongs in the matching
-`_model` key. All four `[agent]` keys (`self_improvement_`, `subagent_`, `plan_`
-and `execute_provider`) correct the `custom:` prefix and the `provider/model`
-split and say so in the log (see Troubleshooting); the fallback list and the
-vision override take what you wrote, so get the name right once and it works
-everywhere.
+`_model` key. All of them correct the `custom:` prefix and the `provider/model`
+split and say so in the log (see Troubleshooting): the four `[agent]` keys
+(`self_improvement_`, `subagent_`, `plan_` and `execute_provider`) and both
+`[providers.fallback]` lists (`providers` and `vision`). Get the name right
+once and it works everywhere.
 
 #### Free Prototyping with NVIDIA API + Kimi K2.5
 
@@ -1384,7 +1384,7 @@ api_key = "nvapi-..."
 
 **Per-session provider:** Each session remembers which provider and model it was using. Switch to Claude in one session, Kimi in another — when you `/sessions` switch between them, the provider restores automatically. No need to `/models` every time. New sessions inherit the current provider.
 
-**What `enabled = false` actually means:** it only removes the provider from the default-selection scan above. It does NOT disable the provider. By-name usage ignores the flag entirely: per-session provider restoration, `/models` switching, the `[fallback]` chain, and the `[image.vision] provider` override can all still reach a provider marked `enabled = false`. Such a provider works perfectly fine when it has an API key, or when its CLI is authenticated and working on the same machine. Think of `enabled = false` as "not the default", not "dead" (#270).
+**What `enabled = false` actually means:** it only removes the provider from the default-selection scan above. It does NOT disable the provider. By-name usage ignores the flag entirely: per-session provider restoration, `/models` switching, the `[fallback]` chain, and the `[providers.fallback] vision` list can all still reach a provider marked `enabled = false`. Such a provider works perfectly fine when it has an API key, or when its CLI is authenticated and working on the same machine. Think of `enabled = false` as "not the default", not "dead" (#270).
 
 ### Fallback Providers
 
@@ -4787,11 +4787,10 @@ All four `[agent]` provider keys now recognise both slips: they drop the
 configured providers, then log a line such as
 `RSI: self_improvement_provider corrected to '<name>'`,
 `Sub-agent provider corrected to '<name>'` or
-`Plan-mode routing: plan_provider corrected to '<name>'` naming the canonical
+`Plan-mode routing: plan_provider corrected to '<name>'` or
+`Fallback chain: '<entry>' corrected to '<name>'` naming the canonical
 spelling. If you see one of those lines, fix the config so it stops appearing.
-The `[providers.fallback] providers` list and `[image.vision] provider` take the
-value as written, so use the bare name there too. See **Custom
-(OpenAI-Compatible)** under Providers.
+See **Custom (OpenAI-Compatible)** under Providers.
 
 ### Agent Hallucinating Tool Calls
 
