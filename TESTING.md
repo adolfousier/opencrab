@@ -741,7 +741,9 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — TUI Remote Upload | 12 | `src/tests/tui_remote_upload_test.rs` |
 | Tests — TUI Render Clear | 4 | `src/tests/tui_render_clear_test.rs` |
 | Tests — TUI Render Utils | 12 | `src/tests/tui_render_utils_test.rs` |
+| Tests — TUI Theme Picker | 10 | `src/tui/render/theme_picker.rs` |
 | Tests — TUI Tool Stack | 10 | `src/tests/tui_tool_stack_test.rs` |
+| Tests — TUI User Themes | 10 | `src/tui/render/user_themes.rs` |
 | Tests — Turn Duration | 6 | `src/tests/turn_duration_test.rs` |
 | Tests — Turn Ranges | 40 | `src/tests/turn_ranges_test.rs` |
 | Tests — Usage Activity Columns | 9 | `src/tests/usage_activity_columns_test.rs` |
