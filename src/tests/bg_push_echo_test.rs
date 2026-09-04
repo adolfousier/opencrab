@@ -271,8 +271,9 @@ fn bg_receipt_card_strips_backticks_from_the_label() {
 #[test]
 fn bg_receipt_card_fence_outgrows_backtick_runs_in_the_tail() {
     // On the HTML rich leg containment comes from the <pre> tag, so the
-    // tail ships verbatim with no fence at all; the backtick arms-race
-    // survives on the classic blockquote leg.
+    // tail ships verbatim with no fence at all; the compose-time fence
+    // arms-race (receipt_fence) is only a real guarantee where the renderer
+    // length-matches fences — the classic leg's converter does not (#94).
     let tail = "look:\n```\nnested fence\n```\ndone";
     let (wire, classic) = build_bg_receipt_card(&meta(true, "cat README.md", 2.0, tail));
     let BubbleWire::Html(rich) = wire else {
@@ -283,8 +284,10 @@ fn bg_receipt_card_fence_outgrows_backtick_runs_in_the_tail() {
         "pre containment ships the tail verbatim, fence-free: {rich}"
     );
     assert!(
-        classic.contains("````\nlook:"),
-        "classic leg grows the fence past the tail's longest backtick run"
+        classic.contains("<pre><code>look:</code></pre>\n\nnested fence\n\n<pre><code>done</code></pre>"),
+        "classic leg: the compose-time arms-race fence does not survive markdown_to_html \
+         (parser has no fence length-matching, #94) — inner runs shatter the block; \
+         the rich leg's tag-based <pre> above is the real containment: {classic}"
     );
 }
 
