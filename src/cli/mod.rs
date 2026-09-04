@@ -11,6 +11,7 @@ pub(crate) mod doctor_fix;
 pub(crate) mod headless_callbacks;
 pub(crate) mod migrate;
 pub(crate) mod session_notify;
+pub(crate) mod session_resolve;
 pub(crate) mod session_set_model;
 pub(crate) mod tool_setup;
 mod ui;

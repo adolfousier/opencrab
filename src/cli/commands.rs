@@ -1599,7 +1599,7 @@ pub(crate) async fn cmd_session(
                     ..Default::default()
                 })
                 .await?;
-            let uuid = crate::cli::session_set_model::resolve_session_id(&sessions, &id)
+            let uuid = crate::cli::session_resolve::resolve_session_id(&sessions, &id)
                 .map_err(anyhow::Error::msg)?;
             match session_svc.get_session(uuid).await? {
                 Some(s) => {
@@ -1632,7 +1632,7 @@ pub(crate) async fn cmd_session(
                     ..Default::default()
                 })
                 .await?;
-            let uuid = crate::cli::session_set_model::resolve_session_id(&sessions, &id)
+            let uuid = crate::cli::session_resolve::resolve_session_id(&sessions, &id)
                 .map_err(anyhow::Error::msg)?;
             crate::cli::session_notify::run(
                 config,

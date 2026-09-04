@@ -1843,11 +1843,33 @@ async fn cmd_chat_inner(
         app.force_onboard = true;
     }
 
-    // Resume a specific session (e.g. after /rebuild restart)
-    if let Some(ref sid) = session_id
-        && let Ok(uuid) = uuid::Uuid::parse_str(sid)
-    {
-        app.resume_session_id = Some(uuid);
+    // Resume a specific session (e.g. after /rebuild restart). Accepts a full
+    // UUID or the prefix that `session list` shows, routed through the shared
+    // resolver so every CLI session-id entry point resolves identically.
+    if let Some(ref sid) = session_id {
+        match uuid::Uuid::parse_str(sid) {
+            Ok(uuid) => app.resume_session_id = Some(uuid),
+            Err(_) => {
+                let session_svc = crate::services::SessionService::new(service_context.clone());
+                match session_svc
+                    .list_sessions(crate::db::repository::SessionListOptions {
+                        include_archived: true,
+                        ..Default::default()
+                    })
+                    .await
+                {
+                    Ok(sessions) => {
+                        match crate::cli::session_resolve::resolve_session_id(&sessions, sid) {
+                            Ok(uuid) => app.resume_session_id = Some(uuid),
+                            Err(e) => eprintln!("could not resolve --session '{sid}': {e}"),
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("could not list sessions to resolve --session '{sid}': {e}")
+                    }
+                }
+            }
+        }
     }
 
     // Spawn cron scheduler — polls every 60s, executes jobs in the user's active session.

@@ -8,7 +8,7 @@
 //! case-insensitive prefix match where 0 is an error, 1 resolves, and
 //! several list the candidates.
 
-use crate::cli::session_set_model::resolve_session_id;
+use crate::cli::session_resolve::resolve_session_id;
 use crate::db::models::Session;
 
 /// Two deterministic ids sharing arfonzo's literal 8-char prefix.
