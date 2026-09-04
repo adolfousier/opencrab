@@ -6,7 +6,7 @@ use crate::brain::skills::{Skill, SkillSource};
 use crate::tui::render::palette;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -17,7 +17,7 @@ pub fn draw(frame: &mut ratatui::Frame, area: Rect, skill: &Skill, selected: boo
     let border_color = if selected {
         palette::TEAL
     } else {
-        Color::Rgb(80, 80, 100)
+        palette::TEXT_MUTED
     };
 
     // Source badge: orange = built-in, teal = user. Same colour rules
@@ -44,7 +44,7 @@ pub fn draw(frame: &mut ratatui::Frame, area: Rect, skill: &Skill, selected: boo
         Span::styled(
             format!(" {source_label} "),
             Style::default()
-                .fg(Color::Rgb(20, 20, 30))
+                .fg(palette::INK)
                 .bg(badge_color)
                 .add_modifier(Modifier::BOLD),
         ),
