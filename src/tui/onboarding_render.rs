@@ -8,6 +8,7 @@ use super::onboarding::{
     TrelloField, WizardMode,
 };
 use super::provider_selector::CUSTOM_PROVIDER_IDX;
+use crate::tui::render::palette;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
@@ -17,9 +18,9 @@ use ratatui::{
 };
 
 /// Main color palette (matches existing OpenCrabs theme)
-const BRAND_BLUE: Color = Color::Rgb(120, 120, 120);
-const BRAND_GOLD: Color = Color::Rgb(215, 100, 20);
-const ACCENT_GOLD: Color = Color::Rgb(215, 100, 20);
+const BRAND_BLUE: Color = palette::GRAY;
+const BRAND_GOLD: Color = palette::ORANGE;
+const ACCENT_GOLD: Color = palette::ORANGE;
 
 /// Render the entire onboarding wizard
 /// The `[start, end)` slice of a list to draw so that `selected` stays visible
@@ -433,7 +434,7 @@ fn render_whatsapp_qr_popup(f: &mut Frame, qr_text: &str, area: Rect) {
     };
 
     // Build content lines — white block chars on dark bg (inverted QR, scannable by phone)
-    let qr_style = Style::default().fg(Color::White).bg(Color::Rgb(18, 18, 18));
+    let qr_style = Style::default().fg(Color::White).bg(palette::SURFACE_QR);
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(qr_h as usize + 3);
     lines.push(Line::from(Span::styled(
         " Open WhatsApp › Linked Devices › Link a Device ",
@@ -454,8 +455,8 @@ fn render_whatsapp_qr_popup(f: &mut Frame, qr_text: &str, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(120, 120, 120)))
-        .style(Style::default().bg(Color::Rgb(18, 18, 18)));
+        .border_style(Style::default().fg(palette::GRAY))
+        .style(Style::default().bg(palette::SURFACE_QR));
 
     let para = Paragraph::new(lines)
         .block(block)
@@ -2717,7 +2718,7 @@ fn render_brain_setup(
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("  {} — rolling with defaults", err),
-            Style::default().fg(Color::Rgb(215, 100, 20)),
+            Style::default().fg(palette::ORANGE),
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
