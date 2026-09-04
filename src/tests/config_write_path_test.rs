@@ -37,17 +37,38 @@ fn test_the_real_paths_are_accepted() {
         "channels.telegram",
         "channels.telegram.groups",
         "providers.stt",
-        "voice",
         "logging",
         "debug",
         "database",
         "provider_registry",
+        // The #1385 drift: all eight of these were refused by the write gate
+        // despite being real tables serde loads fine.
+        "daemon",
+        "a2a",
+        "image",
+        "cron",
+        "memory",
+        "brain",
+        "browser",
+        "doctor",
     ] {
         assert!(
             validate_write_path(section).is_ok(),
             "#1199: rejected a real section: {section}"
         );
     }
+}
+
+#[test]
+fn voice_is_not_a_writable_section() {
+    // #1385: `voice` used to sit in CONFIG_SECTIONS, so writes passed the
+    // gate and created a `[voice.*]` table serde silently discards. It is a
+    // derived read-only view; the rejection must say where the keys live.
+    let err = validate_write_path("voice").expect_err("must reject voice writes");
+    assert!(
+        err.contains("providers.stt") && err.contains("providers.tts"),
+        "must name the real tables, got: {err}"
+    );
 }
 
 #[test]

@@ -376,6 +376,19 @@ fn witness_top_level_sections_match_known_list() {
         known, loader_known,
         "loader's KNOWN_TOP_LEVEL_KEYS drifted from the schema — add the section to src/config/types/loader.rs"
     );
+
+    // Third leg (#1385): the #1199 write gate keeps its own copy of the
+    // schema. Nothing pinned it, so it drifted — a phantom `voice` entry
+    // (writes passed the gate, serde discarded the table) and eight real
+    // sections missing (writes to `daemon`, `memory`, `brain`… refused as
+    // orphans). `voice` is a derived read view, not a table, so it correctly
+    // appears in none of the three lists.
+    let mut gate: Vec<&str> = crate::config::sections::CONFIG_SECTIONS.to_vec();
+    gate.sort_unstable();
+    assert_eq!(
+        sections, gate,
+        "CONFIG_SECTIONS drifted from the schema — sync src/config/sections.rs"
+    );
 }
 
 // ---------------------------------------------------------------- providers

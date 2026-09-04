@@ -15,14 +15,33 @@
 ///
 /// A write path must START at one of these. Anything else is an orphan by
 /// construction, whatever it looks like.
+///
+/// Pinned to the compiled schema by the drift guard in
+/// `src/tests/rsi_stale_scan_test.rs` (#1385): this list once carried a
+/// phantom `voice` entry and lacked eight real sections (`daemon`, `a2a`,
+/// `image`, `cron`, `memory`, `brain`, `browser`, `doctor`), so writes to
+/// real sections were refused while writes to `voice` created tables serde
+/// silently discarded.
+///
+/// `voice` is deliberately absent: it is a derived read-only view over
+/// `providers.stt`/`providers.tts`, not a table. `config read voice` still
+/// works (dispatched before section resolution); writes get a tailored
+/// rejection in [`validate_write_path`].
 pub const CONFIG_SECTIONS: &[&str] = &[
     "agent",
-    "voice",
-    "logging",
-    "debug",
+    "a2a",
+    "brain",
+    "browser",
     "channels",
-    "provider_registry",
+    "cron",
+    "daemon",
     "database",
+    "debug",
+    "doctor",
+    "image",
+    "logging",
+    "memory",
+    "provider_registry",
     "providers",
     "tui",
 ];
@@ -85,6 +104,18 @@ pub fn validate_write_path(section: &str) -> Result<(), String> {
     let head = trimmed.split('.').next().unwrap_or(trimmed).to_lowercase();
     if CONFIG_SECTIONS.contains(&head.as_str()) {
         return Ok(());
+    }
+
+    // `voice` reads like a section (the derived view) so people try to write
+    // it; steer them at the real tables instead of a generic rejection (#1385
+    // — before this, the write passed the gate and serde discarded the table).
+    if head == "voice" {
+        return Err(
+            "'voice' is a derived, read-only view over providers.stt/providers.tts — \
+             it cannot be written. Set the underlying keys instead (e.g. \
+             providers.stt.model, providers.tts.voice)."
+                .to_string(),
+        );
     }
 
     // A known child written as if it were top-level: the single most likely
