@@ -9,10 +9,11 @@ use ratatui::text::{Line, Span};
 
 use super::types::{SttProvider, TtsProvider, VoiceField, WizardAction};
 use super::wizard::OnboardingWizard;
+use crate::tui::render::palette;
 
 // Brand colors (match onboarding_render.rs)
-const BRAND_BLUE: Color = Color::Rgb(60, 130, 246);
-const ACCENT_GOLD: Color = Color::Rgb(215, 100, 20);
+const BRAND_BLUE: Color = palette::BLUE_VIVID;
+const ACCENT_GOLD: Color = palette::ORANGE;
 
 // ─── Key handling ───────────────────────────────────────────────────────────
 
