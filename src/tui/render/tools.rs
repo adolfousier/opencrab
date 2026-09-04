@@ -2,6 +2,7 @@
 //!
 //! Tool group display, inline approval dialogs, and approval policy menu.
 
+use crate::tui::render::palette;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -46,7 +47,7 @@ pub(super) fn render_tool_group<'a>(
         } else {
             " (ctrl+o to expand)"
         },
-        Style::default().fg(Color::Rgb(100, 100, 100)),
+        Style::default().fg(palette::GRAY_MID),
     ));
     lines.push(Line::from(header_spans));
 
@@ -97,7 +98,7 @@ pub(super) fn render_tool_group<'a>(
                         Span::styled(
                             format!("{}:", key),
                             Style::default()
-                                .fg(Color::Rgb(100, 100, 100))
+                                .fg(palette::GRAY_MID)
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ]));
@@ -133,10 +134,7 @@ pub(super) fn render_tool_group<'a>(
                                 format!("    {}    ", continuation),
                                 Style::default().fg(Color::DarkGray),
                             ),
-                            Span::styled(
-                                vline.clone(),
-                                Style::default().fg(Color::Rgb(170, 170, 170)),
-                            ),
+                            Span::styled(vline.clone(), Style::default().fg(palette::GRAY_SOFT)),
                         ]);
                         for wrapped in
                             super::utils::wrap_line_with_padding(full_line, content_width, "  ")
@@ -153,7 +151,7 @@ pub(super) fn render_tool_group<'a>(
                             Span::styled(
                                 format!("... ({} more lines)", total - 200),
                                 Style::default()
-                                    .fg(Color::Rgb(120, 120, 120))
+                                    .fg(palette::GRAY)
                                     .add_modifier(Modifier::ITALIC),
                             ),
                         ]));
@@ -168,21 +166,21 @@ pub(super) fn render_tool_group<'a>(
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("    {}  {} ", continuation, frame),
-                        Style::default().fg(Color::Rgb(120, 120, 120)),
+                        Style::default().fg(palette::GRAY),
                     ),
-                    Span::styled("running...", Style::default().fg(Color::Rgb(215, 100, 20))),
+                    Span::styled("running...", Style::default().fg(palette::ORANGE)),
                 ]));
             } else {
                 // Show tool output details (with secrets redacted)
                 if let Some(ref details) = call.details {
                     let detail_lines =
                         collapse_build_output(&crate::utils::redact_secrets(details));
-                    let default_detail_style = Style::default().fg(Color::Rgb(90, 90, 90));
+                    let default_detail_style = Style::default().fg(palette::GRAY_DETAIL);
                     for detail_line in detail_lines.iter().take(200) {
                         let line_style = if detail_line.starts_with("+ ") {
-                            Style::default().fg(Color::Rgb(60, 185, 185))
+                            Style::default().fg(palette::TEAL_VIVID)
                         } else if detail_line.starts_with("- ") {
-                            Style::default().fg(Color::Rgb(220, 80, 80))
+                            Style::default().fg(palette::ERROR)
                         } else if detail_line.starts_with("@@ ") {
                             Style::default().fg(Color::Cyan)
                         } else {
@@ -210,7 +208,7 @@ pub(super) fn render_tool_group<'a>(
                             Span::styled(
                                 format!("... ({} more lines)", detail_lines.len() - 200),
                                 Style::default()
-                                    .fg(Color::Rgb(120, 120, 120))
+                                    .fg(palette::GRAY)
                                     .add_modifier(Modifier::ITALIC),
                             ),
                         ]));
@@ -277,7 +275,7 @@ pub(super) fn render_inline_approval<'a>(
                 } else {
                     "  [V] expand full details  [←→] navigate  [Enter] confirm"
                 },
-                Style::default().fg(Color::Rgb(80, 80, 80)),
+                Style::default().fg(palette::GRAY_DIM),
             )]));
 
             // Expanded details: show all params fully, no truncation
@@ -304,7 +302,7 @@ pub(super) fn render_inline_approval<'a>(
                                 Span::styled("      ", Style::default()),
                                 Span::styled(
                                     vline.clone(),
-                                    Style::default().fg(Color::Rgb(200, 200, 200)),
+                                    Style::default().fg(palette::GRAY_LIGHT),
                                 ),
                             ]);
                             for wrapped in
@@ -319,7 +317,7 @@ pub(super) fn render_inline_approval<'a>(
                                 Span::styled(
                                     format!("... ({} more lines)", total - 60),
                                     Style::default()
-                                        .fg(Color::Rgb(120, 120, 120))
+                                        .fg(palette::GRAY)
                                         .add_modifier(Modifier::ITALIC),
                                 ),
                             ]));
@@ -338,7 +336,7 @@ pub(super) fn render_inline_approval<'a>(
                         Span::styled("      ", Style::default()),
                         Span::styled(
                             approval.capabilities.join(", "),
-                            Style::default().fg(Color::Rgb(215, 100, 20)),
+                            Style::default().fg(palette::ORANGE),
                         ),
                     ]));
                 }
@@ -353,7 +351,7 @@ pub(super) fn render_inline_approval<'a>(
             )]));
             let options = [
                 ("Yes", Color::Cyan),
-                ("Always", Color::Rgb(215, 100, 20)),
+                ("Always", palette::ORANGE),
                 ("No", Color::Red),
             ];
             for (i, (label, color)) in options.iter().enumerate() {
@@ -475,7 +473,7 @@ pub(super) fn render_approve_menu<'a>(
 
     match &menu.state {
         ApproveMenuState::Pending => {
-            let gold = Color::Rgb(215, 100, 20);
+            let gold = palette::ORANGE;
 
             lines.push(Line::from(vec![Span::styled(
                 "  TOOL APPROVAL POLICY",
@@ -540,7 +538,7 @@ pub(super) fn render_approve_menu<'a>(
         ApproveMenuState::Selected(choice) => {
             let (label, color) = match choice {
                 0 => ("Approve-only", Color::Cyan),
-                1 => ("Allow all (session)", Color::Rgb(215, 100, 20)),
+                1 => ("Allow all (session)", palette::ORANGE),
                 2 => ("Yolo mode", Color::Red),
                 _ => ("Cancelled", Color::DarkGray),
             };
