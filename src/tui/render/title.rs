@@ -1,6 +1,6 @@
 //! The one-row app title bar shown above the full-screen modes.
 
-use crate::tui::render::palette;
+use super::theme::{self, Role};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -37,7 +37,7 @@ pub(super) fn render_app_title(f: &mut Frame, area: Rect) {
         Span::styled(
             " 🦀 OpenCrabs AI Agent",
             Style::default()
-                .fg(palette::GRAY)
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
