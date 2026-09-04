@@ -869,10 +869,34 @@ impl TelegramState {
             .and_then(|e| e.host.clone())
     }
 
-    /// #59: peek the dead-host record of a #597-cleared stash entry WITHOUT
-    /// consuming it — the stale-shell tap needs the host SHAPE (rich body
-    /// buttons vs glued/classic reply-markup) to pick the right strip; the
-    /// record is forgotten only after the strip succeeds (`forget_stale_host`).
+    /// #91: does any live suggestion keyboard — pending or stale-but-not-yet-
+    /// stripped — already ride this message? The cross-turn glue refuses such
+    /// targets: a second keyboard on one bubble breaks the first one's taps,
+    /// and a #59 stale strip would later rip the glue's fresh buttons off.
+    pub(crate) async fn message_hosts_live_keyboard(
+        &self,
+        mid: teloxide::types::MessageId,
+    ) -> bool {
+        if self
+            .pending_followups
+            .lock()
+            .await
+            .values()
+            .any(|e| e.host.as_ref().is_some_and(|h| h.message_id == mid))
+        {
+            return true;
+        }
+        self.stale_hosts
+            .lock()
+            .await
+            .iter()
+            .any(|(_, h)| h.message_id == mid)
+    }
+
+    /// #59: the host shape of an expired token's bubble, if its keyboard
+    /// still renders somewhere. Read-only — the record survives until the
+    /// strip is confirmed, so repeated taps on the same zombie stay
+    /// log-attributable instead of silently degrading to the blind strip.
     pub(crate) async fn peek_stale_host(&self, token: &str) -> Option<MergedHost> {
         self.stale_hosts
             .lock()

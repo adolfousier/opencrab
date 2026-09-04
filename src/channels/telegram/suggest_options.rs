@@ -21,6 +21,12 @@ use super::TelegramState;
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 
+/// Cross-turn glue staleness window (#91): the conversation's last rich-md
+/// answer only wears fresh controls while it is still "now" — older answers
+/// fall back to the standalone bubble, because options glued onto a stale
+/// shell read as fresh, answerable questions (the exact #1226 confusion).
+const CROSS_TURN_GLUE_MAX_AGE_SECS: i64 = 900;
+
 /// Body for the standalone fallback bubble (#1226 item 4). Prose mode keeps
 /// just the folded list (it has no buttons, nothing can expire); button
 /// modes carry the bare lamp plus an expiry marker — this fallback fires
@@ -549,6 +555,12 @@ pub(crate) async fn render_suggestions(
     // shape: its own bubble after placement — content, not chrome, so it
     // ships even when the buttons die.
     trailer: Option<String>,
+    // #91 cross-turn glue: the channel-message repo, when the surface has
+    // one. When this turn captured no merge host, the glue rung looks up the
+    // conversation's last rich-markdown answer and hangs the controls off
+    // THAT bubble instead of posting the bare standalone fallback. None =
+    // glue unavailable (no db surface / tests), standalone as before.
+    glue_repo: Option<crate::db::repository::ChannelMessageRepository>,
 ) {
     if options.is_empty() {
         // Stash cleared between delivery and render (mid-turn tap, newer
@@ -658,13 +670,45 @@ pub(crate) async fn render_suggestions(
             new_html,
             rich,
             new_markdown,
+            glue: false,
         }
     });
 
-    // Standalone fallback (no merge candidate, or the edit lost a race / grew
-    // too old): the header sentence is still gone per #tg-suggest-merge —
-    // prose mode shows just the numbered list, button modes need SOME text
-    // for the Bot API to accept the message, so they degrade to the bare 💡.
+    // #91 cross-turn glue: when this turn produced no bubble of its own, the
+    // glue rung looks up the conversation's LAST rich-markdown answer and
+    // hangs the controls off THAT bubble — one message instead of the bare
+    // standalone fallback. Guards live in the lookup (staleness window,
+    // thread match) and in the target check (no live keyboard may already
+    // ride the target — ours would clobber it, and a #59 strip would later
+    // rip the fresh buttons off). Computed ONCE, like the merge payload, so
+    // a Retry-After deferral re-sends byte-identical content.
+    let placement_payload = if merge_payload.is_none() {
+        match glue_repo.as_ref() {
+            Some(repo) => {
+                cross_turn_glue(
+                    state,
+                    repo,
+                    chat_id,
+                    thread_id,
+                    &token,
+                    &layout,
+                    &options,
+                    trailer.as_ref(),
+                )
+                .await
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+    let placement_payload = placement_payload.or(merge_payload);
+
+    // Standalone fallback (no merge candidate, no glue target, or the edit
+    // lost a race / grew too old): the header sentence is still gone per
+    // #tg-suggest-merge — prose mode shows just the numbered list, button
+    // modes need SOME text for the Bot API to accept the message, so they
+    // degrade to the bare 💡.
     let standalone_body = standalone_fallback_body(&layout, &options);
 
     let option_count = options.len();
@@ -676,7 +720,7 @@ pub(crate) async fn render_suggestions(
         &token,
         option_count,
         &keyboard,
-        merge_payload.as_ref(),
+        placement_payload.as_ref(),
         &standalone_body,
     )
     .await
@@ -733,7 +777,7 @@ pub(crate) async fn render_suggestions(
                         &token,
                         option_count,
                         &keyboard,
-                        merge_payload.as_ref(),
+                        placement_payload.as_ref(),
                         &standalone_body,
                     )
                     .await
@@ -783,6 +827,72 @@ pub(crate) async fn render_suggestions(
     }
 }
 
+/// #91 cross-turn glue: build a placement payload that hangs this turn's
+/// controls off the conversation's LAST rich-markdown answer, or `None` when
+/// no legal target exists (no recent answer, wrong plane, or a live keyboard
+/// already riding it — the standalone bubble fires instead). Same-thread and
+/// staleness guards live in the repo lookup; the clobber guard runs here
+/// against the in-memory registries.
+#[allow(clippy::too_many_arguments)]
+async fn cross_turn_glue(
+    state: &Arc<TelegramState>,
+    repo: &crate::db::repository::ChannelMessageRepository,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    token: &str,
+    layout: &SuggestLayout,
+    options: &[String],
+    trailer: Option<&String>,
+) -> Option<MergePayload> {
+    let target = repo
+        .last_bot_rich_md(
+            "telegram",
+            &chat_id.0.to_string(),
+            thread_id.map(|t| t.0.to_string()).as_deref(),
+            CROSS_TURN_GLUE_MAX_AGE_SECS,
+        )
+        .await
+        .ok()
+        .flatten()?;
+    let mid = MessageId(target.0.parse().ok()?);
+    if state.message_hosts_live_keyboard(mid).await {
+        tracing::info!(
+            "Telegram suggest_options: cross-turn glue skipped — msg {} already \
+             hosts a keyboard (#91)",
+            mid.0
+        );
+        return None;
+    }
+    // Payload mirrors the markdown-merge arm exactly (#79 piece 4): stored
+    // markdown + folded list (prose mode) + in-body button rows + trailer,
+    // with the html conversion kept only as the strip source.
+    let mut new_md = target.1;
+    if *layout == SuggestLayout::NumberedProse {
+        new_md.push('\n');
+        new_md.push_str(&folded_list_markdown(options));
+    }
+    new_md.push('\n');
+    new_md.push_str(&suggestion_rows_rich_html(options, token));
+    if let Some(t) = trailer {
+        new_md.push('\n');
+        new_md.push_str(t);
+    }
+    let strip_source = super::rich::markdown_to_html_p(&new_md);
+    tracing::info!(
+        "Telegram suggest_options: cross-turn glue target msg {} (token {token}, \
+         {} options)",
+        mid.0,
+        options.len()
+    );
+    Some(MergePayload {
+        message_id: mid,
+        new_html: strip_source,
+        rich: true,
+        new_markdown: Some(new_md),
+        glue: true,
+    })
+}
+
 /// Pre-built merge-edit payload (#30): computed ONCE per suggestion block so
 /// a deferred re-placement after a Retry-After re-sends byte-identical
 /// content. `rich` picks the wire: rich bubbles edit via the rich API with
@@ -796,6 +906,12 @@ struct MergePayload {
     /// every later redraw ride `edit_rich_markdown`; `new_html` then only
     /// feeds the host record's strip source.
     new_markdown: Option<String>,
+    /// #91 cross-turn glue: the controls hang off the PREVIOUS turn's
+    /// bubble (its last rich-md answer) instead of this turn's answer.
+    /// Wording-only today — the wire path is identical to a markdown merge —
+    /// but the log lines name the arm, so a tap on a glued keyboard maps
+    /// back to the rung that placed it.
+    glue: bool,
 }
 
 /// Placement error class (#30): decides whether the stash survives the
@@ -993,10 +1109,13 @@ async fn place_once(
         match outcome {
             Ok(()) => {
                 // Name the arm, the host message and the token so any tap can
-                // be mapped back to its panel from logs alone.
+                // be mapped back to its panel from logs alone. Glue (#91)
+                // names its rung: the controls hang off the previous turn's
+                // bubble, not this turn's answer.
                 tracing::info!(
-                    "Telegram suggest_options: keyboard merged onto msg {mid} \
+                    "Telegram suggest_options: keyboard {} msg {mid} \
                      ({} host, token {token}, {option_count} options)",
+                    if mp.glue { "glued onto" } else { "merged onto" },
                     if mp.new_markdown.is_some() {
                         "rich-md"
                     } else if mp.rich {

@@ -1007,7 +1007,9 @@ pub(crate) async fn deliver_final_response(
             // Hand the merge candidate to the turn state (#tg-suggest-merge):
             // handler.rs reads it immediately after this returns and passes it
             // into render_suggestions. None (rich / voice / suppressed paths)
-            // means suggestions fall back to their standalone block as before.
+            // means suggestions fall to the #91 cross-turn glue rung — the
+            // conversation's last rich-md answer wears the controls — or the
+            // standalone block when no legal glue target exists.
             if final_bubble.is_some() {
                 streaming
                     .lock()
