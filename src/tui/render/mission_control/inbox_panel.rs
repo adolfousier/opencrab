@@ -8,30 +8,35 @@ use super::theme;
 use crate::brain::mission_control::{McInboxItem, McInboxKind, inbox_service};
 use crate::tui::app::App;
 
+use super::super::theme::{self as render_theme, Role};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use super::super::theme::{self as render_theme, Role};
 
 /// Idle card border — same neutral grey as the Sessions list rows.
-fn card_border_idle() -> Color { render_theme::role(Role::TextMuted) }
+fn card_border_idle() -> Color {
+    render_theme::role(Role::TextMuted)
+}
 /// Selected card border — teal, matches the inbox panel's accent.
-const CARD_BORDER_SELECTED: Color = theme::TEAL;
+/// fn not const: resolves through the runtime theme so `/theme set` applies.
+fn card_border_selected() -> Color {
+    theme::teal()
+}
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let items = inbox_service::list();
     let panel_border_color = if focused {
-        theme::BORDER_INBOX_FOCUS
+        theme::border_inbox_focus()
     } else {
-        theme::BORDER_IDLE
+        theme::border_idle()
     };
     let title = format!(" Inbox ({}) ", items.len());
     let block = Block::default()
         .title(title)
-        .title_style(theme::title_style(theme::BORDER_INBOX_FOCUS))
+        .title_style(theme::title_style(theme::border_inbox_focus()))
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
         .border_style(Style::default().fg(panel_border_color));
@@ -41,7 +46,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
             Span::raw("\n  "),
             Span::styled(
                 "No pending proposals.",
-                Style::default().fg(theme::TEXT_DIM),
+                Style::default().fg(theme::text_dim()),
             ),
         ]))
         .block(block);
@@ -90,7 +95,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
 
 fn card_lines(item: &McInboxItem, card_w: usize, selected: bool) -> Vec<Line<'static>> {
     let border_color = if selected {
-        CARD_BORDER_SELECTED
+        card_border_selected()
     } else {
         card_border_idle()
     };
@@ -106,8 +111,8 @@ fn card_lines(item: &McInboxItem, card_w: usize, selected: bool) -> Vec<Line<'st
     // kind = soft amber so it sits between tool and command without
     // colliding with either focus colour.
     let kind_color = match item.kind {
-        McInboxKind::ProposedTool => theme::ORANGE,
-        McInboxKind::ProposedCommand => theme::TEAL,
+        McInboxKind::ProposedTool => theme::orange(),
+        McInboxKind::ProposedCommand => theme::teal(),
         McInboxKind::ProposedSkill => render_theme::role(Role::AmberMuted),
         McInboxKind::ProposedBrainDedup => render_theme::role(Role::PurpleSoft),
     };
@@ -126,7 +131,7 @@ fn card_lines(item: &McInboxItem, card_w: usize, selected: bool) -> Vec<Line<'st
         Span::styled(
             label,
             Style::default()
-                .fg(theme::TEXT_PRIMARY)
+                .fg(theme::text_primary())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
@@ -152,7 +157,7 @@ fn card_lines(item: &McInboxItem, card_w: usize, selected: bool) -> Vec<Line<'st
     let body_summary = Line::from(vec![
         Span::styled(" │", bd),
         Span::raw(" ".repeat(label_pad)),
-        Span::styled(summary, Style::default().fg(theme::TEXT_SECONDARY)),
+        Span::styled(summary, Style::default().fg(theme::text_secondary())),
         Span::raw(pad_right_to(
             inner.saturating_sub(label_pad + summary_chars),
         )),
@@ -168,7 +173,7 @@ fn card_lines(item: &McInboxItem, card_w: usize, selected: bool) -> Vec<Line<'st
     let footer = Line::from(vec![
         Span::styled(" │", bd),
         Span::raw(" ".repeat(label_pad)),
-        Span::styled(footer_truncated, Style::default().fg(theme::TEXT_DIM)),
+        Span::styled(footer_truncated, Style::default().fg(theme::text_dim())),
         Span::raw(pad_right_to(inner.saturating_sub(label_pad + footer_chars))),
         Span::styled("│", bd),
     ]);

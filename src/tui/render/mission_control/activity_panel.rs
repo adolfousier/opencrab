@@ -8,6 +8,7 @@ use super::theme;
 use crate::brain::mission_control::{McActivity, McActivityLevel};
 use crate::tui::app::App;
 
+use super::super::theme::{self as render_theme, Role};
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -15,19 +16,18 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use super::super::theme::{self as render_theme, Role};
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let entries = &app.mc.activity;
     let border_color = if focused {
-        theme::BORDER_ACTIVITY_FOCUS
+        theme::border_activity_focus()
     } else {
-        theme::BORDER_IDLE
+        theme::border_idle()
     };
     let title = format!(" Activity ({}) ", entries.len());
     let block = Block::default()
         .title(title)
-        .title_style(theme::title_style(theme::BORDER_ACTIVITY_FOCUS))
+        .title_style(theme::title_style(theme::border_activity_focus()))
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
         .border_style(Style::default().fg(border_color));
@@ -35,7 +35,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     if entries.is_empty() {
         let empty = Paragraph::new(Line::from(vec![
             Span::raw("\n  "),
-            Span::styled("No activity yet.", Style::default().fg(theme::TEXT_DIM)),
+            Span::styled("No activity yet.", Style::default().fg(theme::text_dim())),
         ]))
         .block(block);
         frame.render_widget(empty, area);
@@ -74,9 +74,9 @@ fn build_line(entry: &McActivity, inner_w: usize, selected: bool) -> Line<'stati
         Span::raw(" "),
         Span::styled("●", Style::default().fg(dot_color)),
         Span::raw("  "),
-        Span::styled(stamp, Style::default().fg(theme::TEXT_DIM)),
+        Span::styled(stamp, Style::default().fg(theme::text_dim())),
         Span::raw("  "),
-        Span::styled(detail, Style::default().fg(theme::TEXT_PRIMARY)),
+        Span::styled(detail, Style::default().fg(theme::text_primary())),
     ];
 
     if selected {
@@ -92,10 +92,10 @@ fn build_line(entry: &McActivity, inner_w: usize, selected: bool) -> Line<'stati
 
 fn level_color(level: McActivityLevel) -> Color {
     match level {
-        McActivityLevel::Success => theme::TEAL,
-        McActivityLevel::Warn => theme::ORANGE,
+        McActivityLevel::Success => theme::teal(),
+        McActivityLevel::Warn => theme::orange(),
         McActivityLevel::Error => Color::Red,
-        McActivityLevel::Info => theme::WHITE,
+        McActivityLevel::Info => theme::white(),
     }
 }
 

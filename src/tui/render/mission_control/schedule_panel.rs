@@ -8,25 +8,25 @@ use super::theme;
 use crate::brain::mission_control::{McScheduleItem, McScheduleKind};
 use crate::tui::app::App;
 
+use super::super::theme::{self as render_theme, Role};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use super::super::theme::{self as render_theme, Role};
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let entries = &app.mc.schedule;
     let border_color = if focused {
-        theme::BORDER_SCHEDULE_FOCUS
+        theme::border_schedule_focus()
     } else {
-        theme::BORDER_IDLE
+        theme::border_idle()
     };
     let title = format!(" Schedule ({}) ", entries.len());
     let block = Block::default()
         .title(title)
-        .title_style(theme::title_style(theme::BORDER_SCHEDULE_FOCUS))
+        .title_style(theme::title_style(theme::border_schedule_focus()))
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
         .border_style(Style::default().fg(border_color));
@@ -34,7 +34,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     if entries.is_empty() {
         let empty = Paragraph::new(Line::from(vec![
             Span::raw("\n  "),
-            Span::styled("No scheduled jobs.", Style::default().fg(theme::TEXT_DIM)),
+            Span::styled("No scheduled jobs.", Style::default().fg(theme::text_dim())),
         ]))
         .block(block);
         frame.render_widget(empty, area);
@@ -73,9 +73,9 @@ fn build_line(item: &McScheduleItem, inner_w: usize, selected: bool) -> Line<'st
     let label = trunc(&item.label, label_max);
 
     let badge_color = if item.awaiting_user {
-        theme::ORANGE
+        theme::orange()
     } else {
-        theme::TEAL
+        theme::teal()
     };
 
     let mut spans = vec![
@@ -93,13 +93,13 @@ fn build_line(item: &McScheduleItem, inner_w: usize, selected: bool) -> Line<'st
         Span::styled(
             label,
             Style::default()
-                .fg(theme::TEXT_PRIMARY)
+                .fg(theme::text_primary())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
         Span::styled(
             item.schedule.clone(),
-            Style::default().fg(theme::TEXT_SECONDARY),
+            Style::default().fg(theme::text_secondary()),
         ),
     ];
 

@@ -149,9 +149,13 @@ pub fn title_style(accent: Color) -> Style {
 }
 
 pub fn muted() -> Style {
-    Style::default().fg(TEXT_MUTED)
+    Style::default().fg(crate::tui::render::theme::role(
+        crate::tui::render::theme::Role::TextMuted,
+    ))
 }
 
 pub fn dim() -> Style {
-    Style::default().fg(TEXT_DIM)
+    Style::default().fg(crate::tui::render::theme::role(
+        crate::tui::render::theme::Role::TextDim,
+    ))
 }

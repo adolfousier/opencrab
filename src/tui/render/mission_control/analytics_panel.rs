@@ -55,13 +55,13 @@ pub(crate) fn render(
     focused: bool,
 ) {
     let border_color = if focused {
-        theme::BORDER_ANALYTICS_FOCUS
+        theme::border_analytics_focus()
     } else {
-        theme::BORDER_IDLE
+        theme::border_idle()
     };
     let block = Block::default()
         .title(" Analytics ")
-        .title_style(theme::title_style(theme::BORDER_ANALYTICS_FOCUS))
+        .title_style(theme::title_style(theme::border_analytics_focus()))
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
         .border_style(Style::default().fg(border_color));
@@ -154,12 +154,12 @@ fn render_card(frame: &mut Frame, title: &str, kind: CardKind, a: &McAnalytics, 
         .title(format!(" {title} "))
         .title_style(
             Style::default()
-                .fg(theme::BORDER_ANALYTICS_FOCUS)
+                .fg(theme::border_analytics_focus())
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
-        .border_style(Style::default().fg(theme::BORDER_IDLE));
+        .border_style(Style::default().fg(theme::border_idle()));
     let card_inner = block.inner(rect);
     frame.render_widget(block, rect);
 
@@ -208,16 +208,16 @@ fn tabs_line(active: TimeWindow) -> Line<'static> {
         }
         let style = if *window == active {
             Style::default()
-                .fg(theme::BORDER_ANALYTICS_FOCUS)
+                .fg(theme::border_analytics_focus())
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme::TEXT_DIM)
+            Style::default().fg(theme::text_dim())
         };
         spans.push(Span::styled(format!("[{label}]"), style));
     }
     spans.push(Span::styled(
         "  D/W/M/A to switch",
-        Style::default().fg(theme::TEXT_DIM),
+        Style::default().fg(theme::text_dim()),
     ));
     Line::from(spans)
 }
@@ -312,14 +312,14 @@ fn phantom_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
                 "{} detected, {} resolved ({:.1}%)",
                 a.phantom.total, a.phantom.resolved, a.phantom.resolved_pct
             ),
-            Style::default().fg(theme::GREEN),
+            Style::default().fg(theme::green()),
         ),
     ])];
     for (model, total, resolved) in a.phantom.by_model.iter().take(6) {
         lines.push(value_row(
             model,
             format!("{total} ({resolved} resolved)"),
-            theme::TEXT_SECONDARY,
+            theme::text_secondary(),
             w,
         ));
     }
@@ -331,7 +331,7 @@ fn rsi_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
     a.rsi_top_dimensions
         .iter()
         .take(8)
-        .map(|(dim, n)| value_row(dim, n.to_string(), theme::GREEN, w))
+        .map(|(dim, n)| value_row(dim, n.to_string(), theme::green(), w))
         .collect()
 }
 
@@ -340,7 +340,14 @@ fn brain_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
     a.brain_files
         .iter()
         .take(14)
-        .map(|f| value_row(&f.name, format!("{:.1} KB", f.kb), theme::TEXT_SECONDARY, w))
+        .map(|f| {
+            value_row(
+                &f.name,
+                format!("{:.1} KB", f.kb),
+                theme::text_secondary(),
+                w,
+            )
+        })
         .collect()
 }
 
@@ -363,8 +370,11 @@ fn top_tools_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
 fn summary_row(label: &str, value: String) -> Line<'static> {
     Line::from(vec![
         Span::raw(" "),
-        Span::styled(format!("{label:<6}"), Style::default().fg(theme::TEXT_DIM)),
-        Span::styled(value, Style::default().fg(theme::GREEN)),
+        Span::styled(
+            format!("{label:<6}"),
+            Style::default().fg(theme::text_dim()),
+        ),
+        Span::styled(value, Style::default().fg(theme::green())),
     ])
 }
 
@@ -385,10 +395,10 @@ fn model_row(model: &str, fail_rate: f64, phantom_rate: f64, w: usize) -> Line<'
         Span::raw(" "),
         Span::styled(icon, Style::default().fg(icon_color)),
         Span::raw(" "),
-        Span::styled(name, Style::default().fg(theme::TEXT_PRIMARY)),
+        Span::styled(name, Style::default().fg(theme::text_primary())),
         Span::raw(" ".repeat(gap)),
         Span::styled(fail, Style::default().fg(fail_color(fail_rate))),
-        Span::styled(ph, Style::default().fg(theme::TEXT_SECONDARY)),
+        Span::styled(ph, Style::default().fg(theme::text_secondary())),
     ])
 }
 
@@ -399,9 +409,9 @@ fn model_status(fail_rate: f64, phantom_rate: f64) -> (&'static str, Color) {
     if fail_rate >= 15.0 || phantom_rate >= 10.0 {
         ("✗", Color::Red)
     } else if fail_rate >= 5.0 || phantom_rate > 0.0 {
-        ("⚠", theme::ORANGE)
+        ("⚠", theme::orange())
     } else {
-        ("✓", theme::GREEN)
+        ("✓", theme::green())
     }
 }
 
@@ -417,12 +427,15 @@ fn tool_bar_row(t: &McToolStat, max: i64, w: usize) -> Line<'static> {
         Span::raw("  "),
         Span::styled(
             pad(&trunc(&t.name, name_w), name_w),
-            Style::default().fg(theme::TEXT_PRIMARY),
+            Style::default().fg(theme::text_primary()),
         ),
-        Span::styled(format!("{bar:<bar_w$}"), Style::default().fg(theme::GREEN)),
+        Span::styled(
+            format!("{bar:<bar_w$}"),
+            Style::default().fg(theme::green()),
+        ),
         Span::styled(
             format!("{:>6}", t.total),
-            Style::default().fg(theme::TEXT_SECONDARY),
+            Style::default().fg(theme::text_secondary()),
         ),
         Span::styled(
             format!(" {:>3.0}%", t.fail_rate),
@@ -441,7 +454,7 @@ fn value_row(name: &str, value: String, value_color: Color, w: usize) -> Line<'s
         .max(1);
     Line::from(vec![
         Span::raw("  "),
-        Span::styled(name, Style::default().fg(theme::TEXT_PRIMARY)),
+        Span::styled(name, Style::default().fg(theme::text_primary())),
         Span::raw(" ".repeat(gap)),
         Span::styled(value, Style::default().fg(value_color)),
     ])
@@ -460,9 +473,9 @@ fn fail_color(rate: f64) -> Color {
     if rate >= 25.0 {
         Color::Red
     } else if rate >= 10.0 {
-        theme::ORANGE
+        theme::orange()
     } else {
-        theme::TEXT_SECONDARY
+        theme::text_secondary()
     }
 }
 
