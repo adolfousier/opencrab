@@ -3,6 +3,7 @@
 use super::utils::wrap_line_with_padding;
 use crate::tui::app::{App, DisplayMessage};
 use crate::tui::pane::PaneId;
+use crate::tui::render::palette;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -328,11 +329,11 @@ pub(super) fn focused_pane_border(f: &mut Frame, app: &App, area: Rect) -> Rect 
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(80, 200, 120)))
+        .border_style(Style::default().fg(palette::SUCCESS))
         .title(Span::styled(
             format!(" {} ", session_label),
             Style::default()
-                .fg(Color::Rgb(80, 200, 120))
+                .fg(palette::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ))
         .padding(Padding::horizontal(0));
