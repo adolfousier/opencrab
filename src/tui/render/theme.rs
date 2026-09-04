@@ -18,7 +18,7 @@
 //! Decorative cycles (project badge rotation in `palette`) are
 //! deliberately NOT roles: they are preset-agnostic by design.
 
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 
 use ratatui::style::Color;
 
@@ -226,7 +226,7 @@ fn sq_diff(a: u8, b: u8) -> u32 {
 }
 
 impl ThemeColors {
-    /// Resolve one role. Panics never: every role has a field.
+    /// Resolve one role (rgb tier). Panics never: every role has a field.
     pub fn get(&self, role: Role) -> Color {
         match role {
             Role::Accent => self.accent,
@@ -272,6 +272,56 @@ impl ThemeColors {
             Role::SurfaceCodeAlt => self.surface_code_alt,
             Role::Ink => self.ink,
             Role::PurpleSoft => self.purple_soft,
+        }
+    }
+
+    /// Resolve one role (ansi tier). Mirrors `get()` but returns from
+    /// the `ansi` field. Used on non-truecolor terminals.
+    pub fn get_ansi(&self, role: Role) -> Color {
+        match role {
+            Role::Accent => Color::Indexed(self.ansi.accent),
+            Role::AccentTeal => Color::Indexed(self.ansi.accent_teal),
+            Role::AccentSoft => Color::Indexed(self.ansi.accent_soft),
+            Role::TextPrimary => Color::Indexed(self.ansi.text_primary),
+            Role::TextSecondary => Color::Indexed(self.ansi.text_secondary),
+            Role::TextMuted => Color::Indexed(self.ansi.text_muted),
+            Role::TextDim => Color::Indexed(self.ansi.text_dim),
+            Role::Gray => Color::Indexed(self.ansi.gray),
+            Role::GrayMid => Color::Indexed(self.ansi.gray_mid),
+            Role::GrayDetail => Color::Indexed(self.ansi.gray_detail),
+            Role::GrayDim => Color::Indexed(self.ansi.gray_dim),
+            Role::GrayDark => Color::Indexed(self.ansi.gray_dark),
+            Role::GrayBase => Color::Indexed(self.ansi.gray_base),
+            Role::GrayLight => Color::Indexed(self.ansi.gray_light),
+            Role::GraySoft => Color::Indexed(self.ansi.gray_soft),
+            Role::GrayMuted => Color::Indexed(self.ansi.gray_muted),
+            Role::Success => Color::Indexed(self.ansi.success),
+            Role::AnalyticsGreen => Color::Indexed(self.ansi.analytics_green),
+            Role::GreenCheck => Color::Indexed(self.ansi.green_check),
+            Role::Error => Color::Indexed(self.ansi.error),
+            Role::ErrorSoft => Color::Indexed(self.ansi.error_soft),
+            Role::ErrorFaded => Color::Indexed(self.ansi.error_faded),
+            Role::Warning => Color::Indexed(self.ansi.warning),
+            Role::WarningMuted => Color::Indexed(self.ansi.warning_muted),
+            Role::AmberMuted => Color::Indexed(self.ansi.amber_muted),
+            Role::TealVivid => Color::Indexed(self.ansi.teal_vivid),
+            Role::TealBright => Color::Indexed(self.ansi.teal_bright),
+            Role::TealMuted => Color::Indexed(self.ansi.teal_muted),
+            Role::TealCalm => Color::Indexed(self.ansi.teal_calm),
+            Role::BlueSlate => Color::Indexed(self.ansi.blue_slate),
+            Role::BlueSteel => Color::Indexed(self.ansi.blue_steel),
+            Role::BlueLink => Color::Indexed(self.ansi.blue_link),
+            Role::BlueSky => Color::Indexed(self.ansi.blue_sky),
+            Role::BlueSoft => Color::Indexed(self.ansi.blue_soft),
+            Role::BlueVivid => Color::Indexed(self.ansi.blue_vivid),
+            Role::BlueCode => Color::Indexed(self.ansi.blue_code),
+            Role::SelectionBg => Color::Indexed(self.ansi.selection_bg),
+            Role::SurfacePanel => Color::Indexed(self.ansi.surface_panel),
+            Role::SurfaceQr => Color::Indexed(self.ansi.surface_qr),
+            Role::SurfaceCode => Color::Indexed(self.ansi.surface_code),
+            Role::SurfaceCodeAlt => Color::Indexed(self.ansi.surface_code_alt),
+            Role::Ink => Color::Indexed(self.ansi.ink),
+            Role::PurpleSoft => Color::Indexed(self.ansi.purple_soft),
         }
     }
 }
@@ -383,6 +433,25 @@ pub static CRAB_DARK: Theme = Theme {
 /// const-eval constraints on the lock's initializer.
 static ACTIVE: RwLock<Option<&'static Theme>> = RwLock::new(None);
 
+/// Truecolor capability cache. `None` means not yet probed; defaults
+/// to true on first `role()` call if `init_capability()` wasn't invoked.
+static TRUECOLOR: OnceLock<bool> = OnceLock::new();
+
+/// Probe terminal truecolor support once. Call at TUI boot before any
+/// render. `crossterm::style::available_color_count()` returns `u16::MAX`
+/// for truecolor terminals, 256 for 256-color, 8 for basic.
+pub fn init_capability() {
+    let count = crossterm::style::available_color_count();
+    let _ = TRUECOLOR.set(count == u16::MAX);
+}
+
+/// Current truecolor capability. Defaults to true if not yet probed
+/// (safe: rgb values render correctly on truecolor terminals, and
+/// non-truecolor terminals will just show the rgb as-is).
+pub fn is_truecolor() -> bool {
+    *TRUECOLOR.get().unwrap_or(&true)
+}
+
 /// Currently active theme (crab-dark until [`set`] is called).
 pub fn active() -> &'static Theme {
     ACTIVE
@@ -403,7 +472,14 @@ pub fn reset() {
 }
 
 /// Resolve a role against the active theme. The one call render sites
-/// make after the S2 codemod.
+/// make after the S2 codemod. Dispatches rgb vs ansi based on the
+/// terminal's truecolor capability (probed once at boot via
+/// [`init_capability`]).
 pub fn role(role: Role) -> Color {
-    active().colors.get(role)
+    let theme = active();
+    if is_truecolor() {
+        theme.colors.get(role)
+    } else {
+        theme.colors.get_ansi(role)
+    }
 }

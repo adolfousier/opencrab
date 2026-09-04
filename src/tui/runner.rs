@@ -181,6 +181,12 @@ pub async fn run(mut app: App) -> Result<()> {
     // redirection to avoid racing with ratatui's escape-sequence writes.
     crate::utils::fd_suppress::set_tui_active(true);
 
+    // Probe terminal truecolor capability once. Must run after terminal
+    // setup (raw mode + alternate screen) so crossterm's env-var checks
+    // see the right state. Result is cached for all subsequent `role()`
+    // calls.
+    render::theme::init_capability();
+
     // Force a full clear so stale content from a previous exec() restart
     // is wiped.
     terminal.clear()?;
