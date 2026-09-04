@@ -835,28 +835,18 @@ impl App {
                             let marker = if t.name == active_name { " *" } else { "" };
                             lines.push(format!("  • {}{}", t.name, marker));
                         }
-                        // User presets (S3) — listed if the directory exists
-                        let user_dir = crate::config::opencrabs_home().join("themes");
-                        if user_dir.is_dir()
-                            && let Ok(entries) = std::fs::read_dir(&user_dir)
-                        {
-                            let mut names: Vec<String> = entries
-                                .filter_map(|e| e.ok())
-                                .filter(|e| e.path().extension().is_some_and(|ext| ext == "toml"))
-                                .filter_map(|e| {
-                                    e.path()
-                                        .file_stem()
-                                        .map(|s| s.to_string_lossy().into_owned())
-                                })
-                                .collect();
-                            names.sort();
-                            if !names.is_empty() {
-                                lines.push("User presets (~/.opencrabs/themes/):".to_string());
-                                for n in names {
-                                    let marker = if n == active_name { " *" } else { "" };
-                                    lines.push(format!("  • {}{}", n, marker));
-                                }
+                        // User presets (S3): rescan on every list so file edits
+                        // hot-load; rejected files surface with their reason.
+                        let report = crate::tui::render::user_themes::reload();
+                        if !report.themes.is_empty() {
+                            lines.push("User presets (~/.opencrabs/themes/):".to_string());
+                            for t in &report.themes {
+                                let marker = if t.name == active_name { " *" } else { "" };
+                                lines.push(format!("  • {}{}", t.name, marker));
                             }
+                        }
+                        for r in &report.rejected {
+                            lines.push(format!("  ✗ {} — {}", r.file, r.reason));
                         }
                         lines.push(format!("\nActive: {}", active_name));
                         lines.push("Use: /theme set <name> · /theme reset".to_string());
@@ -865,7 +855,9 @@ impl App {
                     "set" => {
                         if arg.is_empty() {
                             self.push_system_message("Usage: /theme set <name>".to_string());
-                        } else if let Some(t) = presets::by_name(arg) {
+                        } else if let Some(t) = presets::by_name(arg)
+                            .or_else(|| crate::tui::render::user_themes::find(arg))
+                        {
                             theme::set(t);
                             // Persist to config.toml; ConfigWatcher reload
                             // re-applies on next boot / config change.

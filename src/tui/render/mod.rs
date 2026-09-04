@@ -23,9 +23,6 @@ mod projects;
 mod session_files;
 mod sessions;
 pub(crate) mod skills_dialog;
-// TEMP(#1364): allow(dead_code) until the S2 codemod lands role() consumers;
-// removed with the codemod commit.
-#[allow(dead_code)]
 pub(crate) mod theme;
 // Boot-apply in tui::runner references presets::by_name at startup.
 pub(crate) mod presets;
@@ -33,6 +30,7 @@ pub(crate) mod presets;
 mod presets_test;
 mod title;
 mod tools;
+pub(crate) mod user_themes;
 pub(crate) mod utils;
 
 // Re-export for sibling modules (e.g. onboarding_render)

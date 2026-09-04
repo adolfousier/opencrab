@@ -72,12 +72,11 @@ pub enum Role {
     PurpleSoft,     // palette::PURPLE_SOFT
 }
 
-/// A complete role-to-color mapping for one theme.
-#[derive(Debug, Clone)]
 /// ANSI-256 palette: 43 u8 indices (16..=255) paralleling ThemeColors.
 /// Derived from the RGB values via `rgb_to_ansi256` — never hand-written.
 /// Used by the truecolor-fallback tier: when the terminal cannot render
 /// 24-bit color, roles resolve to the nearest ANSI-256 index.
+#[derive(Debug)]
 pub struct AnsiColors {
     pub accent: u8,
     pub accent_teal: u8,
@@ -124,6 +123,8 @@ pub struct AnsiColors {
     pub purple_soft: u8,
 }
 
+/// A complete role-to-color mapping for one theme.
+#[derive(Debug)]
 pub struct ThemeColors {
     pub accent: Color,
     pub accent_teal: Color,
@@ -328,6 +329,7 @@ impl ThemeColors {
 
 /// A named theme. `crab_dark` below is the default and must stay
 /// byte-identical to the S1 palette (regression-tested in `presets`).
+#[derive(Debug)]
 pub struct Theme {
     pub name: &'static str,
     pub colors: ThemeColors,
