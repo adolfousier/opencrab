@@ -36,7 +36,7 @@ impl Tool for WriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file on the filesystem. Creates the file if it doesn't exist, overwrites if it does."
+        "Write content to a file on the filesystem. Creates the file if it doesn't exist, overwrites if it does. Keep one call under ~300 lines / ~12 KB: the content is generated as a single tool-call argument, and a larger one streams for minutes and gets cut. Split bigger files by concern (see the LARGE FILES rule) and add parts with edit_file."
     }
 
     fn input_schema(&self) -> Value {

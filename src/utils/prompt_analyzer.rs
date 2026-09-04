@@ -422,8 +422,11 @@ impl PromptAnalyzer {
                 lang_name,
                 snippet
             );
-            transformations
-                .push("\n\n**TOOL HINT**: Use the `write_file` tool to create new files.");
+            transformations.push(
+                "\n\n**TOOL HINT**: Use the `write_file` tool to create new files. Keep each \
+                 call under ~300 lines; split a larger file by concern (shell + js/ + css/) \
+                 and add parts with `edit_file`.",
+            );
         }
 
         // Check for edit_file keywords
