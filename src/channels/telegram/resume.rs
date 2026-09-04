@@ -982,6 +982,48 @@ fn receipt_fence(tail: &str) -> String {
     "`".repeat(if longest >= 3 { longest + 1 } else { 3 })
 }
 
+/// Pure line builder for the folded ack (#1377): same shapes as the receipt
+/// card summary — backtick-stripped label (empty → "background task"),
+/// humanized duration, first-line tail preview. Empty tail drops the
+/// preview suffix entirely.
+pub(crate) fn bg_ack_line(meta: &crate::brain::agent::BgTaskMeta) -> String {
+    let icon = if meta.success { "✅" } else { "❌" };
+    let stripped = meta.label.replace('`', "");
+    let label = stripped.trim();
+    let label = if label.is_empty() {
+        "background task"
+    } else {
+        label
+    };
+    let duration = background_tasks::format_elapsed(meta.elapsed_secs);
+    let preview = first_line_preview(&meta.tail);
+    if preview.is_empty() {
+        format!("{icon} `{label}` 🕒 {duration}")
+    } else {
+        format!("{icon} `{label}` 🕒 {duration} · {preview}")
+    }
+}
+
+/// Pure state mutation for the fold (#1377): append the ack line as system
+/// chrome (never reclaimed as the turn's answer, #1253) and re-stamp the
+/// header counters. Refuses (returns false, touches nothing) when the state
+/// has no card — the caller then falls back to the standalone bubble lane.
+pub(crate) fn apply_bg_ack_fold(
+    s: &mut crate::channels::telegram::flow::StreamingState,
+    line: String,
+    bg_indicator: Option<String>,
+    bg_count: Option<usize>,
+) -> bool {
+    if s.open_group_msg_id.is_none() {
+        return false;
+    }
+    s.flow_entries
+        .push(crate::channels::telegram::flow::FlowEntry::System(line));
+    s.bg_indicator = bg_indicator;
+    s.bg_count = bg_count;
+    true
+}
+
 /// Fold a bare background-task ack into the session's settled flow card
 /// (#1377). Appends ONE system line (`✅ \`label\` 🕒 duration · preview`) to
 /// the collapsible block, re-stamps the header counters from the live
@@ -1001,34 +1043,14 @@ pub(crate) async fn fold_bg_ack_into_flow_card(
     let Some(streaming) = state.flow_state_for(session_id).await else {
         return false;
     };
-    // Same shapes as the receipt card summary: backtick-stripped label,
-    // humanized duration, first-line tail preview (capped like the notify
-    // card's peek — the full tail stays in the resumed answer/logs).
-    let icon = if meta.success { "✅" } else { "❌" };
-    let stripped = meta.label.replace('`', "");
-    let label = stripped.trim();
-    let label = if label.is_empty() {
-        "background task"
-    } else {
-        label
-    };
-    let duration = background_tasks::format_elapsed(meta.elapsed_secs);
-    let preview = first_line_preview(&meta.tail);
-    let line = if preview.is_empty() {
-        format!("{icon} `{label}` 🕒 {duration}")
-    } else {
-        format!("{icon} `{label}` 🕒 {duration} · {preview}")
-    };
+    let line = bg_ack_line(meta);
     let (bg_indicator, bg_count) = super::delivery::bg_indicator_for(agent, session_id);
-    {
+    let folded = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        if s.open_group_msg_id.is_none() {
-            return false;
-        }
-        s.flow_entries
-            .push(crate::channels::telegram::flow::FlowEntry::System(line));
-        s.bg_indicator = bg_indicator;
-        s.bg_count = bg_count;
+        apply_bg_ack_fold(&mut s, line, bg_indicator, bg_count)
+    };
+    if !folded {
+        return false;
     }
     super::flow::refresh_flow(
         bot,

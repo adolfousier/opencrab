@@ -54,7 +54,7 @@ pub(crate) enum DisplayItem {
 /// sanitized intermediate text (escaped at render time). Interleaving both in
 /// one ordered flow lets tool calls and intermediate text share a single
 /// collapsed block instead of each landing as a separate message.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum FlowEntry {
     /// A tool call at this index in `tool_msgs`.
     Tool(usize),
