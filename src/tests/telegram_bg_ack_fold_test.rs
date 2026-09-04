@@ -24,11 +24,7 @@ fn base_state(with_card: bool) -> StreamingState {
         thinking: String::new(),
         tool_msgs: Vec::new(),
         display_queue: Vec::new(),
-        open_group_msg_id: if with_card {
-            Some(MessageId(42))
-        } else {
-            None
-        },
+        open_group_msg_id: if with_card { Some(MessageId(42)) } else { None },
         rich_transport_failures: 0,
         flow_entries: Vec::new(),
         flow_status: None,

@@ -125,12 +125,7 @@ pub(crate) fn build_enqueue_callback(
                     match msg.bg_meta.clone() {
                         Some(meta) => {
                             fold_bg_ack_into_flow_card(
-                                &bot,
-                                chat_id,
-                                &state,
-                                &agent,
-                                session_id,
-                                &meta,
+                                &bot, chat_id, &state, &agent, session_id, &meta,
                             )
                             .await
                         }
@@ -140,105 +135,107 @@ pub(crate) fn build_enqueue_callback(
                     false
                 };
                 if !folded {
-                // #15: receipt cards. A bg completion carries the typed
-                // payload (icon/label/duration/tail) in `bg_meta` — the card
-                // renders from it, never by parsing the `[System: ...]`
-                // context text. Notify pushes carry no meta: the card is
-                // built from the sender label + markdown body (N4 shape).
-                // #1225: session_notify pushes carry a mechanical
-                // `[session-notify from=<uuid>]` header — the raw id is
-                // replaced with a human label (topic name for same-chat
-                // pushes, chat name / chat+topic for cross-chat, per
-                // Alexey's rule). The CLI lane (#1258) stamps
-                // `from=cli:<label>` instead — no sender session exists,
-                // so the carried label renders verbatim, zero lookups.
-                let (echo_md, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
-                    build_bg_receipt_card(&meta)
-                } else {
-                    let (sender, body) = split_bg_echo_parts(&msg.context_text);
-                    match sender {
-                        Some(NotifySender::Session(s)) => {
-                            let label = sender_label(&state, &bot, s, chat_id).await;
-                            build_notify_receipt_card(&label, &body)
-                        }
-                        Some(NotifySender::CliTooling(label)) => {
-                            build_notify_receipt_card(label, &body)
-                        }
-                        // Defensive: a BackgroundTask push without meta
-                        // (parked by an older binary, #1242 redelivery) keeps
-                        // the #1234 flat bold-title shape. Borrow note:
-                        // `msg` is moved wholesale later in this callback.
-                        None if msg.origin == crate::brain::agent::PushOrigin::BackgroundTask => {
-                            let title = background_task_title(&msg.display_text);
-                            build_bg_echo_bubble(&body, &title)
-                        }
-                        None => build_bg_echo_bubble(&body, "⚙️ background task result"),
-                    }
-                };
-                // #1234/#15: the card rides the CANONICAL markdown→rich
-                // outbox (the same pipeline as every cron/kanal message);
-                // the native-rich route renders the <details> collapse, the
-                // fenced tail and pipe tables server-side. The classic
-                // blockquote above is the degraded-path source: computed up
-                // front, only touched if the outbox send fails.
-                let sent_rich = match super::send::send_markdown_outbox(
-                    &bot,
-                    teloxide::types::ChatId(chat_id),
-                    thread_id,
-                    &echo_md,
-                    "bg-resume",
-                    "-",
-                    None,
-                )
-                .await
-                {
-                    Ok(_) => true,
-                    Err(e) => {
-                        tracing::warn!("[bg-resume] #1234 rich echo failed, using HTML: {e}");
-                        false
-                    }
-                };
-                if !sent_rich {
-                    let mut echo = bot
-                        .send_message(teloxide::types::ChatId(chat_id), classic_html.clone())
-                        .parse_mode(teloxide::types::ParseMode::Html);
-                    // Forum topics address a thread; DMs and non-forum groups must
-                    // omit the parameter entirely (E0308: not an unwrap decision).
-                    if let Some(tid) = thread_id {
-                        echo = echo.message_thread_id(tid);
-                    }
-                    // 429 discipline (#816): the raw send_message used to race
-                    // the resumed stream + typing loop into the same chat and
-                    // drop silently — 11/11 real echo sends failed that way on
-                    // 2026-08-26 (per-chat flood windows, compiler batch log).
-                    // Wait the window out (shared wait_out policy) and retry ONCE
-                    // with fresh content, matching delivery.rs / flow.rs.
-                    match echo.await {
-                        Ok(_) => {}
-                        Err(teloxide::RequestError::RetryAfter(secs)) => {
-                            super::rate_limit::wait_out(
-                                "bg-resume echo",
-                                secs.duration(),
-                                " on first delivery, retrying once",
-                            )
-                            .await;
-                            let mut retry = bot
-                                .send_message(teloxide::types::ChatId(chat_id), classic_html)
-                                .parse_mode(teloxide::types::ParseMode::Html);
-                            if let Some(tid) = thread_id {
-                                retry = retry.message_thread_id(tid);
+                    // #15: receipt cards. A bg completion carries the typed
+                    // payload (icon/label/duration/tail) in `bg_meta` — the card
+                    // renders from it, never by parsing the `[System: ...]`
+                    // context text. Notify pushes carry no meta: the card is
+                    // built from the sender label + markdown body (N4 shape).
+                    // #1225: session_notify pushes carry a mechanical
+                    // `[session-notify from=<uuid>]` header — the raw id is
+                    // replaced with a human label (topic name for same-chat
+                    // pushes, chat name / chat+topic for cross-chat, per
+                    // Alexey's rule). The CLI lane (#1258) stamps
+                    // `from=cli:<label>` instead — no sender session exists,
+                    // so the carried label renders verbatim, zero lookups.
+                    let (echo_md, classic_html) = if let Some(meta) = msg.bg_meta.clone() {
+                        build_bg_receipt_card(&meta)
+                    } else {
+                        let (sender, body) = split_bg_echo_parts(&msg.context_text);
+                        match sender {
+                            Some(NotifySender::Session(s)) => {
+                                let label = sender_label(&state, &bot, s, chat_id).await;
+                                build_notify_receipt_card(&label, &body)
                             }
-                            if let Err(e) = retry.await {
-                                tracing::warn!(
-                                    "[bg-resume] #1221 echo bubble failed on 429 retry: {e}"
-                                );
+                            Some(NotifySender::CliTooling(label)) => {
+                                build_notify_receipt_card(label, &body)
                             }
+                            // Defensive: a BackgroundTask push without meta
+                            // (parked by an older binary, #1242 redelivery) keeps
+                            // the #1234 flat bold-title shape. Borrow note:
+                            // `msg` is moved wholesale later in this callback.
+                            None if msg.origin
+                                == crate::brain::agent::PushOrigin::BackgroundTask =>
+                            {
+                                let title = background_task_title(&msg.display_text);
+                                build_bg_echo_bubble(&body, &title)
+                            }
+                            None => build_bg_echo_bubble(&body, "⚙️ background task result"),
                         }
+                    };
+                    // #1234/#15: the card rides the CANONICAL markdown→rich
+                    // outbox (the same pipeline as every cron/kanal message);
+                    // the native-rich route renders the <details> collapse, the
+                    // fenced tail and pipe tables server-side. The classic
+                    // blockquote above is the degraded-path source: computed up
+                    // front, only touched if the outbox send fails.
+                    let sent_rich = match super::send::send_markdown_outbox(
+                        &bot,
+                        teloxide::types::ChatId(chat_id),
+                        thread_id,
+                        &echo_md,
+                        "bg-resume",
+                        "-",
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(_) => true,
                         Err(e) => {
-                            tracing::warn!("[bg-resume] #1221 echo bubble failed to send: {e}");
+                            tracing::warn!("[bg-resume] #1234 rich echo failed, using HTML: {e}");
+                            false
+                        }
+                    };
+                    if !sent_rich {
+                        let mut echo = bot
+                            .send_message(teloxide::types::ChatId(chat_id), classic_html.clone())
+                            .parse_mode(teloxide::types::ParseMode::Html);
+                        // Forum topics address a thread; DMs and non-forum groups must
+                        // omit the parameter entirely (E0308: not an unwrap decision).
+                        if let Some(tid) = thread_id {
+                            echo = echo.message_thread_id(tid);
+                        }
+                        // 429 discipline (#816): the raw send_message used to race
+                        // the resumed stream + typing loop into the same chat and
+                        // drop silently — 11/11 real echo sends failed that way on
+                        // 2026-08-26 (per-chat flood windows, compiler batch log).
+                        // Wait the window out (shared wait_out policy) and retry ONCE
+                        // with fresh content, matching delivery.rs / flow.rs.
+                        match echo.await {
+                            Ok(_) => {}
+                            Err(teloxide::RequestError::RetryAfter(secs)) => {
+                                super::rate_limit::wait_out(
+                                    "bg-resume echo",
+                                    secs.duration(),
+                                    " on first delivery, retrying once",
+                                )
+                                .await;
+                                let mut retry = bot
+                                    .send_message(teloxide::types::ChatId(chat_id), classic_html)
+                                    .parse_mode(teloxide::types::ParseMode::Html);
+                                if let Some(tid) = thread_id {
+                                    retry = retry.message_thread_id(tid);
+                                }
+                                if let Err(e) = retry.await {
+                                    tracing::warn!(
+                                        "[bg-resume] #1221 echo bubble failed on 429 retry: {e}"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("[bg-resume] #1221 echo bubble failed to send: {e}");
+                            }
                         }
                     }
-                }
                 } // #1377: end of the not-folded (standalone bubble) lane
             }
 
