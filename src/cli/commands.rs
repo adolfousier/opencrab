@@ -1593,7 +1593,14 @@ pub(crate) async fn cmd_session(
             Ok(())
         }
         SessionCommands::Get { id } => {
-            let uuid = uuid::Uuid::parse_str(&id).context("Invalid session ID")?;
+            let sessions = session_svc
+                .list_sessions(crate::db::repository::SessionListOptions {
+                    include_archived: true,
+                    ..Default::default()
+                })
+                .await?;
+            let uuid = crate::cli::session_set_model::resolve_session_id(&sessions, &id)
+                .map_err(anyhow::Error::msg)?;
             match session_svc.get_session(uuid).await? {
                 Some(s) => {
                     println!("🦀 Session {}\n", s.id);
@@ -1619,9 +1626,17 @@ pub(crate) async fn cmd_session(
             interrupt,
             format,
         } => {
+            let sessions = session_svc
+                .list_sessions(crate::db::repository::SessionListOptions {
+                    include_archived: true,
+                    ..Default::default()
+                })
+                .await?;
+            let uuid = crate::cli::session_set_model::resolve_session_id(&sessions, &id)
+                .map_err(anyhow::Error::msg)?;
             crate::cli::session_notify::run(
                 config,
-                &id,
+                &uuid.to_string(),
                 &text,
                 title.as_deref(),
                 sender.as_deref(),

@@ -156,6 +156,7 @@ pub mod chunk_hash_cache_test;
 pub mod claude_cli_model_test;
 pub mod cli_arg_too_long_test;
 pub mod cli_headless_tools_test;
+pub mod cli_session_id_prefix_test;
 pub mod cli_session_set_model_test;
 pub mod cli_supported_models_test;
 pub mod cli_test;

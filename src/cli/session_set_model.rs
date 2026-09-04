@@ -75,7 +75,7 @@ pub(crate) fn resolve_targets(
     }
 }
 
-fn candidates(matches: &[&Session]) -> String {
+pub(crate) fn candidates(matches: &[&Session]) -> String {
     matches
         .iter()
         .map(|s| {
@@ -87,4 +87,32 @@ fn candidates(matches: &[&Session]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Resolve a user-supplied session id for commands that take exactly one
+/// target (#1340): `session list` prints only the first 8 chars of each id,
+/// so `session get`/`session notify` must accept what the tool itself shows.
+///
+/// Full UUIDs parse as a fast path (existing behavior preserved verbatim,
+/// including ids not present in the DB, which the caller reports as
+/// not-found). Anything else is matched as a case-insensitive prefix with
+/// the same rules as [`resolve_targets`]: 0 matches is an error, 1 resolves,
+/// several list the candidates.
+pub(crate) fn resolve_session_id(sessions: &[Session], id: &str) -> Result<Uuid, String> {
+    if let Ok(uuid) = Uuid::parse_str(id) {
+        return Ok(uuid);
+    }
+    let prefix = id.to_lowercase();
+    let matches: Vec<&Session> = sessions
+        .iter()
+        .filter(|s| s.id.to_string().to_lowercase().starts_with(&prefix))
+        .collect();
+    match matches.len() {
+        0 => Err(format!("no session id starts with '{prefix}'")),
+        1 => Ok(matches[0].id),
+        _ => Err(format!(
+            "'{prefix}' is ambiguous — candidates:\n{}",
+            candidates(&matches)
+        )),
+    }
 }
