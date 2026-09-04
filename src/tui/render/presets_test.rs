@@ -1,0 +1,207 @@
+//! Regression tests for built-in theme presets (#1364).
+//!
+//! Every hex here is pinned to the UPSTREAM spec, not to our code —
+//! if a preset value drifts from the canonical source, these tests
+//! fail. Sources are named per preset; the audit trail lives in
+//! ~/.opencrabs/projects/opencrabs/research (verification receipts).
+
+use super::palette;
+use super::presets::{self, ALUCARD, CATPPUCCIN_LATTE, CATPPUCCIN_MOCHA, DRACULA, MONOKAI, SOLARIZED_DARK, SOLARIZED_LIGHT};
+use super::theme::{self, Role};
+use ratatui::style::Color;
+
+const fn rgb(hex: u32) -> Color {
+    Color::Rgb(((hex >> 16) & 0xFF) as u8, ((hex >> 8) & 0xFF) as u8, (hex & 0xFF) as u8)
+}
+
+/// crab-dark must be byte-identical to the post-S1 palette: every role
+/// resolves to its palette const. This is the #1363 no-regression
+/// guarantee, enforced.
+#[test]
+fn crab_dark_is_byte_identical_to_palette() {
+    let t = &theme::CRAB_DARK;
+    let c = &t.colors;
+    assert_eq!(c.accent, palette::ORANGE);
+    assert_eq!(c.accent_teal, palette::TEAL);
+    assert_eq!(c.accent_soft, palette::WHITE);
+    assert_eq!(c.text_primary, palette::TEXT_PRIMARY);
+    assert_eq!(c.text_secondary, palette::TEXT_SECONDARY);
+    assert_eq!(c.text_muted, palette::TEXT_MUTED);
+    assert_eq!(c.text_dim, palette::TEXT_DIM);
+    assert_eq!(c.gray, palette::GRAY);
+    assert_eq!(c.gray_mid, palette::GRAY_MID);
+    assert_eq!(c.gray_detail, palette::GRAY_DETAIL);
+    assert_eq!(c.gray_dim, palette::GRAY_DIM);
+    assert_eq!(c.gray_dark, palette::GRAY_DARK);
+    assert_eq!(c.gray_base, palette::GRAY_BASE);
+    assert_eq!(c.gray_light, palette::GRAY_LIGHT);
+    assert_eq!(c.gray_soft, palette::GRAY_SOFT);
+    assert_eq!(c.gray_muted, palette::GRAY_MUTED);
+    assert_eq!(c.success, palette::SUCCESS);
+    assert_eq!(c.analytics_green, palette::ANALYTICS_GREEN);
+    assert_eq!(c.green_check, palette::GREEN_CHECK);
+    assert_eq!(c.error, palette::ERROR);
+    assert_eq!(c.error_soft, palette::ERROR_SOFT);
+    assert_eq!(c.error_faded, palette::ERROR_FADED);
+    assert_eq!(c.warning, palette::WARNING);
+    assert_eq!(c.warning_muted, palette::WARNING_MUTED);
+    assert_eq!(c.amber_muted, palette::AMBER_MUTED);
+    assert_eq!(c.teal_vivid, palette::TEAL_VIVID);
+    assert_eq!(c.teal_bright, palette::TEAL_BRIGHT);
+    assert_eq!(c.teal_muted, palette::TEAL_MUTED);
+    assert_eq!(c.teal_calm, palette::TEAL_CALM);
+    assert_eq!(c.blue_slate, palette::BLUE_SLATE);
+    assert_eq!(c.blue_steel, palette::BLUE_STEEL);
+    assert_eq!(c.blue_link, palette::BLUE_LINK);
+    assert_eq!(c.blue_sky, palette::BLUE_SKY);
+    assert_eq!(c.blue_soft, palette::BLUE_SOFT);
+    assert_eq!(c.blue_vivid, palette::BLUE_VIVID);
+    assert_eq!(c.blue_code, palette::BLUE_CODE);
+    assert_eq!(c.selection_bg, palette::SELECTION_BG);
+    assert_eq!(c.surface_panel, palette::SURFACE_PANEL);
+    assert_eq!(c.surface_qr, palette::SURFACE_QR);
+    assert_eq!(c.surface_code, palette::SURFACE_CODE);
+    assert_eq!(c.surface_code_alt, palette::SURFACE_CODE_ALT);
+    assert_eq!(c.ink, palette::INK);
+    assert_eq!(c.purple_soft, palette::PURPLE_SOFT);
+}
+
+/// https://draculatheme.com/spec — Dracula Classic.
+#[test]
+fn dracula_matches_upstream_spec() {
+    let c = &DRACULA.colors;
+    assert_eq!(c.surface_panel, rgb(0x282A36), "bg");
+    assert_eq!(c.text_primary, rgb(0xF8F8F2), "fg");
+    assert_eq!(c.accent, rgb(0xFFB86C), "orange");
+    assert_eq!(c.error, rgb(0xFF5555), "red");
+    assert_eq!(c.success, rgb(0x50FA7B), "green");
+    assert_eq!(c.warning, rgb(0xF1FA8C), "yellow");
+    assert_eq!(c.purple_soft, rgb(0xBD93F9), "purple");
+    assert_eq!(c.accent_teal, rgb(0x8BE9FD), "cyan");
+    assert_eq!(c.text_secondary, rgb(0x6272A4), "comment");
+    assert_eq!(c.selection_bg, rgb(0x44475A), "current line");
+}
+
+/// https://draculatheme.com/spec — Alucard, the official light
+/// companion. Canonical bg is #FFFBEB (NOT third-party #FCF6E3).
+#[test]
+fn alucard_matches_upstream_spec() {
+    let c = &ALUCARD.colors;
+    assert_eq!(c.surface_panel, rgb(0xFFFBEB), "canonical bg, not the ported #FCF6E3");
+    assert_eq!(c.text_primary, rgb(0x1F1F1F), "fg");
+    assert_eq!(c.accent, rgb(0xA34D14), "orange");
+    assert_eq!(c.error, rgb(0xCB3A2A), "red");
+    assert_eq!(c.success, rgb(0x14710A), "green");
+    assert_eq!(c.purple_soft, rgb(0x644AC9), "purple");
+    assert_eq!(c.surface_qr, rgb(0xEFEDDC), "floating");
+    assert_eq!(c.selection_bg, rgb(0xDEDCCF), "bg-light");
+    assert_eq!(c.gray_mid, rgb(0xCECCC0), "bg-dark");
+}
+
+/// tomasr/molokai — classic variant (#272822 bg, NOT Monokai Pro, NOT
+/// the darker #1B1D1E default variant).
+#[test]
+fn monokai_matches_upstream_spec() {
+    let c = &MONOKAI.colors;
+    assert_eq!(c.surface_panel, rgb(0x272822), "classic bg");
+    assert_eq!(c.accent, rgb(0xFD971F), "orange");
+    assert_eq!(c.error, rgb(0xF92672), "pink");
+    assert_eq!(c.success, rgb(0xA6E22E), "green");
+    assert_eq!(c.accent_teal, rgb(0x66D9EF), "cyan");
+    assert_eq!(c.warning, rgb(0xE6DB74), "yellow");
+    assert_eq!(c.purple_soft, rgb(0xAE81FF), "purple");
+    assert_eq!(c.text_secondary, rgb(0x75715E), "comment");
+}
+
+/// https://ethanschoonover.com/solarized — one spec, two modes; light
+/// = bg base3 / fg base00, dark = bg base03 / fg base0.
+#[test]
+fn solarized_light_matches_upstream_spec() {
+    let c = &SOLARIZED_LIGHT.colors;
+    assert_eq!(c.surface_panel, rgb(0xFDF6E3), "base3 bg");
+    assert_eq!(c.text_primary, rgb(0x657B83), "base00 fg");
+    assert_eq!(c.accent, rgb(0xCB4B16), "orange");
+    assert_eq!(c.error, rgb(0xDC322F), "red");
+    assert_eq!(c.success, rgb(0x859900), "green");
+    assert_eq!(c.warning, rgb(0xB58900), "yellow");
+    assert_eq!(c.blue_steel, rgb(0x268BD2), "blue");
+    assert_eq!(c.purple_soft, rgb(0x6C71C4), "violet");
+}
+
+#[test]
+fn solarized_dark_matches_upstream_spec() {
+    let c = &SOLARIZED_DARK.colors;
+    assert_eq!(c.surface_panel, rgb(0x002B36), "base03 bg");
+    assert_eq!(c.text_primary, rgb(0x839496), "base0 fg");
+    assert_eq!(c.accent, rgb(0xCB4B16), "orange");
+    assert_eq!(c.ink, rgb(0x002B36), "ink on-light");
+}
+
+/// https://github.com/catppuccin/palette — mocha.
+#[test]
+fn catppuccin_mocha_matches_upstream_spec() {
+    let c = &CATPPUCCIN_MOCHA.colors;
+    assert_eq!(c.surface_panel, rgb(0x1E1E2E), "base");
+    assert_eq!(c.surface_qr, rgb(0x181825), "mantle");
+    assert_eq!(c.text_primary, rgb(0xCDD6F4), "text");
+    assert_eq!(c.text_muted, rgb(0xA6ADC8), "subtext0");
+    assert_eq!(c.accent, rgb(0xFAB387), "orange");
+    assert_eq!(c.error, rgb(0xF38BA8), "red");
+    assert_eq!(c.success, rgb(0xA6E3A1), "green");
+    assert_eq!(c.warning, rgb(0xF9E2AF), "yellow");
+    assert_eq!(c.blue_steel, rgb(0x89B4FA), "blue");
+    assert_eq!(c.purple_soft, rgb(0xCBA6F7), "mauve");
+    assert_eq!(c.accent_teal, rgb(0x94E2D5), "teal");
+}
+
+/// https://github.com/catppuccin/palette — latte.
+#[test]
+fn catppuccin_latte_matches_upstream_spec() {
+    let c = &CATPPUCCIN_LATTE.colors;
+    assert_eq!(c.surface_panel, rgb(0xEFF1F5), "base");
+    assert_eq!(c.text_primary, rgb(0x4C4F69), "text");
+    assert_eq!(c.accent, rgb(0xFE640B), "orange");
+    assert_eq!(c.error, rgb(0xD20F39), "red");
+    assert_eq!(c.success, rgb(0x40A02B), "green");
+    assert_eq!(c.warning, rgb(0xDF8E1D), "yellow");
+    assert_eq!(c.blue_steel, rgb(0x1E66F5), "blue");
+    assert_eq!(c.purple_soft, rgb(0x8839EF), "mauve");
+    assert_eq!(c.accent_teal, rgb(0x179299), "teal");
+}
+
+/// Roster contract: 8 entries, crab-dark first (default), names unique.
+#[test]
+fn roster_is_complete_and_ordered() {
+    let roster = presets::built_ins();
+    assert_eq!(roster.len(), 8, "roster size");
+    assert_eq!(roster[0].name, "crab-dark", "default first");
+    let mut names: Vec<&str> = roster.iter().map(|t| t.name).collect();
+    let before = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), before, "names unique");
+}
+
+/// `/theme set` lookup: case-insensitive, exact-name miss returns None.
+#[test]
+fn by_name_is_case_insensitive() {
+    assert!(presets::by_name("Dracula").is_some());
+    assert!(presets::by_name("CATPPUCCIN-MOCHA").is_some());
+    assert!(presets::by_name("nope").is_none());
+    assert_eq!(presets::by_name("alucard").unwrap().name, "alucard");
+}
+
+/// Runtime switching: set() redirects role(), reset() restores palette
+/// defaults. Runs last-ish; resets at the end so other tests that read
+/// CRAB_DARK directly are unaffected either way (they read the static,
+/// not the active slot).
+#[test]
+fn set_and_reset_switch_active_theme() {
+    assert_eq!(theme::role(Role::Accent), palette::ORANGE);
+    theme::set(&DRACULA);
+    assert_eq!(theme::role(Role::Accent), rgb(0xFFB86C));
+    theme::set(&SOLARIZED_LIGHT);
+    assert_eq!(theme::role(Role::SurfacePanel), rgb(0xFDF6E3));
+    theme::reset();
+    assert_eq!(theme::role(Role::Accent), palette::ORANGE);
+}
