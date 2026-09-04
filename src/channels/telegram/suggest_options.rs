@@ -338,6 +338,106 @@ pub(crate) fn empty_keyboard() -> teloxide::types::InlineKeyboardMarkup {
     )
 }
 
+/// #79 chokepoint: EVERY rich body that may carry `<tg-button-row>`
+/// controls passes through here on send and edit (the `rich/api.rs`
+/// funnel), so hand-authored button rows from any lane get the same
+/// measured fit rule the suggestion cards enforce at their own emitter —
+/// the n8n-card cut class. If every label fits [`BUTTON_LABEL_MAX_UNITS`]
+/// and every row's total fits [`SHARED_ROW_TOTAL_UNITS`], the body ships
+/// byte-identical. Otherwise the whole set folds to the NumberedProse
+/// shape (proven cut-free twice in #79): buttons keep their attributes —
+/// callback data and URL routing are untouched — but render their 1-based
+/// index, and the original labels move into an `<ol>` after the last row.
+/// Idempotent: a folded body's digit labels never re-trigger the fold.
+/// Width is the raw character count of the (already escaped) label text;
+/// entities overcount display width, which errs safe.
+pub(crate) fn enforce_button_fit(html: &str) -> String {
+    const ROW_OPEN: &str = "<tg-button-row>";
+    const ROW_CLOSE: &str = "</tg-button-row>";
+    const BTN_OPEN: &str = "<tg-button";
+    const BTN_CLOSE: &str = "</tg-button>";
+
+    let width = |s: &str| s.chars().count();
+
+    // Pass 1 — collect row spans, per-row open tags, and all labels.
+    let mut rows: Vec<(usize, usize)> = Vec::new();
+    let mut open_tags: Vec<Vec<&str>> = Vec::new();
+    let mut labels: Vec<&str> = Vec::new();
+    let mut fits = true;
+    let mut scan_from = 0usize;
+    while let Some(rel) = html[scan_from..].find(ROW_OPEN) {
+        let row_start = scan_from + rel;
+        let Some(crel) = html[row_start..].find(ROW_CLOSE) else {
+            break; // unterminated row: leave the remainder untouched
+        };
+        let row_end = row_start + crel + ROW_CLOSE.len();
+        let block = &html[row_start + ROW_OPEN.len()..row_end - ROW_CLOSE.len()];
+        let mut row_total = 0usize;
+        let mut tags_in_row: Vec<&str> = Vec::new();
+        let mut bscan = 0usize;
+        while let Some(brel) = block[bscan..].find(BTN_OPEN) {
+            let bstart = bscan + brel;
+            // Skip a prefix hit like `<tg-button-row>` itself.
+            let after = &block[bstart + BTN_OPEN.len()..];
+            if !after.starts_with(' ') && !after.starts_with('>') {
+                bscan = bstart + BTN_OPEN.len();
+                continue;
+            }
+            let Some(orel) = after.find('>') else {
+                break;
+            };
+            let open_tag = &block[bstart..bstart + BTN_OPEN.len() + orel];
+            let label_start = bstart + BTN_OPEN.len() + orel + 1;
+            let Some(lrel) = block[label_start..].find(BTN_CLOSE) else {
+                break;
+            };
+            let label = &block[label_start..label_start + lrel];
+            row_total += width(label);
+            fits &= width(label) <= BUTTON_LABEL_MAX_UNITS;
+            tags_in_row.push(open_tag);
+            labels.push(label);
+            bscan = label_start + lrel + BTN_CLOSE.len();
+        }
+        fits &= row_total <= SHARED_ROW_TOTAL_UNITS;
+        rows.push((row_start, row_end));
+        open_tags.push(tags_in_row);
+        scan_from = row_end;
+    }
+    if rows.is_empty() || fits {
+        return html.to_string();
+    }
+
+    // Pass 2 — fold: index digits on the buttons, labels into an `<ol>`.
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut pos = 0usize;
+    let mut index = 0usize;
+    let last_row = rows.len() - 1;
+    for (i, &(row_start, row_end)) in rows.iter().enumerate() {
+        out.push_str(&html[pos..row_start]);
+        out.push_str(ROW_OPEN);
+        for tag in &open_tags[i] {
+            index += 1;
+            out.push_str(tag);
+            out.push('>');
+            out.push_str(&index.to_string());
+            out.push_str(BTN_CLOSE);
+        }
+        out.push_str(ROW_CLOSE);
+        pos = row_end;
+        if i == last_row {
+            out.push_str("\n<ol>");
+            for label in &labels {
+                out.push_str("<li>");
+                out.push_str(label);
+                out.push_str("</li>");
+            }
+            out.push_str("</ol>");
+        }
+    }
+    out.push_str(&html[pos..]);
+    out
+}
+
 /// The suggestion controls as native rich-button rows (Bot API 10.3
 /// `<tg-button-row>`), laid out per the measured ladder. Primary style
 /// throughout — picked over app-default after Alexey compared both live.
