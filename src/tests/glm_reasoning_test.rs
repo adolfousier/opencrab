@@ -1,9 +1,10 @@
 //! z.ai GLM request knobs: `tool_stream` (#1347) and the Preserved Thinking
-//! object (#1348). Which requests get them, and what the wire body carries.
+//! object (#1348) and the effort ladder (#1349). Which requests get them,
+//! and what the wire body carries.
 
 use crate::brain::provider::custom_openai_compatible::OpenAIProvider;
 use crate::brain::provider::glm_reasoning::{
-    GlmThinking, glm_version, serves_zai, thinking_for, tool_stream_for,
+    GlmThinking, effort_for, glm_version, serves_zai, thinking_for, tool_stream_for,
 };
 use crate::brain::provider::{LLMRequest, Message};
 
@@ -121,4 +122,58 @@ fn the_wire_body_carries_the_thinking_object_for_glm_5_on_zai() {
     );
     let off = body_with(provider(ZAI_API).with_enable_thinking(false), "glm-5", true);
     assert_eq!(off["thinking"], serde_json::json!({ "type": "disabled" }));
+}
+
+// ------------------------------------------------------------- #1349
+
+#[test]
+fn a_wire_rung_passes_through_unnoted() {
+    for rung in ["low", "high", "max", " High "] {
+        let e = effort_for(ZAI_API, "glm-5.3", Some(rung)).expect(rung);
+        assert_eq!(e.effort, rung.trim().to_ascii_lowercase(), "{rung}");
+        assert_eq!(e.note, None, "{rung}");
+    }
+}
+
+#[test]
+fn foreign_rungs_map_to_the_nearest_one_and_say_so() {
+    for (given, want) in [
+        ("xhigh", "max"),
+        ("medium", "high"),
+        ("minimal", "low"),
+        ("none", "low"),
+        ("off", "low"),
+        ("bananas", "max"),
+    ] {
+        let e = effort_for(ZAI_API, "glm-5.3-flash", Some(given)).expect(given);
+        assert_eq!(e.effort, want, "{given}");
+        let note = e.note.expect(given);
+        assert!(note.contains(given) && note.contains(want), "{note}");
+    }
+}
+
+#[test]
+fn the_ladder_applies_only_to_glm_5_3_plus_on_zai() {
+    // 5.2 still accepts xhigh; other hosts read their own knobs.
+    assert_eq!(effort_for(ZAI_API, "glm-5.2", Some("xhigh")), None);
+    assert_eq!(effort_for(OPENROUTER, "z-ai/glm-5.3", Some("xhigh")), None);
+    assert_eq!(effort_for(ZAI_API, "glm-5.3", None), None);
+    assert_eq!(effort_for(ZAI_API, "glm-5.3", Some("  ")), None);
+}
+
+#[test]
+fn the_wire_body_carries_the_mapped_effort() {
+    let b = body_with(
+        provider(ZAI_API).with_reasoning("xhigh".into()),
+        "glm-5.3",
+        true,
+    );
+    assert_eq!(b["reasoning_effort"], serde_json::json!("max"));
+    // Untouched below 5.3: the configured value still rides verbatim.
+    let older = body_with(
+        provider(ZAI_API).with_reasoning("xhigh".into()),
+        "glm-5.2",
+        true,
+    );
+    assert_eq!(older["reasoning_effort"], serde_json::json!("xhigh"));
 }

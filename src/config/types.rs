@@ -2519,9 +2519,10 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
 
-    /// Kimi reasoning control (e.g. `max` for K3, `on`/`off` for K2.x).
-    /// Applied to each request only when the active model accepts it
-    /// (see `kimi_reasoning`); an inapplicable value is a no-op.
+    /// Reasoning control, resolved per family: Kimi (`max` on K3, `on`/`off`
+    /// on K2.x), qwen rungs, DeepSeek / GLM-5.3+ `low | high | max` (a rung
+    /// from another family is mapped and logged, see `glm_reasoning`).
+    /// Applied only when the active model accepts it; otherwise a no-op.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
 

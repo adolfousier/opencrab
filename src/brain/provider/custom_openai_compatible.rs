@@ -2996,6 +2996,18 @@ impl OpenAIProvider {
             }
             thinking = Some(glm.to_json());
         }
+        // GLM-5.3+ reads a three-rung ladder and turns anything else into
+        // `max` without saying so (#1349). Map, and say so.
+        if let Some(mapped) = super::glm_reasoning::effort_for(
+            &self.base_url,
+            &request.model,
+            reasoning_effort.as_deref(),
+        ) {
+            if let Some(note) = mapped.note.as_deref() {
+                tracing::warn!("{note}");
+            }
+            reasoning_effort = Some(mapped.effort.to_string());
+        }
 
         // Carry reasoning across turns instead of re-deriving it each turn
         // (#1033). Sent on every DashScope request, ungated by family.

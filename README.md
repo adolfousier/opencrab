@@ -1105,6 +1105,19 @@ z.ai GLM (Zhipu AI) offers two endpoint types selectable during onboarding or vi
 
 Both use the same API key and model names. The endpoint type can be toggled in the onboarding wizard or `/models` dialog.
 
+**Thinking and effort (GLM-5.x):**
+
+```toml
+[providers.zhipu]
+enabled = true
+default_model = "glm-5.3"
+reasoning_effort = "high"   # GLM-5.3+: "low", "high" or "max" only
+```
+
+GLM-5.3 and later think on every request and cannot be turned off; `enable_thinking = false` is logged as ignored on those models (it still works on GLM-5.0 to 5.2). OpenCrabs sends z.ai's Preserved Thinking (`clear_thinking: false`) for every GLM-5.x request, so a tool loop builds on the previous step's reasoning instead of re-deriving it, and streams tool-call arguments (`tool_stream`) so a large file write is not minutes of silence.
+
+`reasoning_effort` on GLM-5.3+ takes `low`, `high` or `max`. The endpoint turns any other value into `max` without saying so, which is the deepest and slowest setting; OpenCrabs maps a value from another family (`xhigh` to `max`, `medium` to `high`, `minimal`/`none` to `low`) and logs the mapping. Use `high` for agentic sessions; `max` suits a single hard question, not a thirty-step tool loop. Leaving it unset means the server default, which is `max`.
+
 **Features:** Streaming, tools, OpenAI-compatible API, live model list from `/models` endpoint
 
 ### Moonshot Kimi

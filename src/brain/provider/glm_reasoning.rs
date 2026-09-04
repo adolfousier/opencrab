@@ -17,6 +17,11 @@
 //!   does not re-derive the whole chain on every tool step, and reasoning
 //!   tokens become cacheable. It defaults to `true` on the standard endpoint,
 //!   so an agentic loop there rethought from scratch on every call.
+//! - `reasoning_effort` on a `low | high | max` ladder (#1349). GLM-5.3
+//!   dropped the `xhigh` / `medium` / `minimal` / `none` rungs 5.2 accepted;
+//!   an unknown value returns 200 and silently falls back to `max`, the
+//!   deepest setting. A user who copied `xhigh` from a qwen config got the
+//!   slowest possible thinking on every step with no warning.
 //!
 //! Gated on the HOST via [`super::identity::Vendor`], never on the model id:
 //! `glm-*` models are re-served by OpenRouter and Model Studio, and those
@@ -109,5 +114,70 @@ pub(crate) fn thinking_for(
     Some(GlmThinking {
         enabled: true,
         off_ignored: wants_off,
+    })
+}
+
+/// The effort ladder GLM-5.3+ accepts on the wire.
+const WIRE_EFFORTS: [&str; 3] = ["low", "high", "max"];
+
+/// Where an unrecognised value lands. This is what the endpoint does with it
+/// anyway; the difference is that we say so.
+const DEFAULT_EFFORT: &str = "max";
+
+/// The effort a GLM-5.3+ request should carry, and why it differs from what
+/// was configured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GlmEffort {
+    pub effort: &'static str,
+    /// `None` when the configured value was already a wire rung.
+    pub note: Option<String>,
+}
+
+/// Map a configured `reasoning_effort` onto the GLM-5.3+ ladder. `None` when
+/// the request is not a GLM-5.3+ model on z.ai, or nothing was configured:
+/// both leave the field as the caller resolved it.
+///
+/// Rungs from other families map to the nearest one here rather than riding
+/// to the wire, where they would become `max` without a word. An explicit
+/// off, by any spelling, becomes `low`, since 5.3+ cannot disable thinking.
+pub(crate) fn effort_for(
+    base_url: &str,
+    model: &str,
+    configured: Option<&str>,
+) -> Option<GlmEffort> {
+    if !serves_zai(base_url) || !thinking_always_on(glm_version(model)?) {
+        return None;
+    }
+    let raw = configured?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let lowered = raw.to_ascii_lowercase();
+    if let Some(rung) = WIRE_EFFORTS.iter().find(|r| **r == lowered) {
+        return Some(GlmEffort {
+            effort: rung,
+            note: None,
+        });
+    }
+    let (effort, why) = match lowered.as_str() {
+        "xhigh" | "highest" => ("max", "the deepest rung GLM-5.3 has is `max`"),
+        "medium" => (
+            "high",
+            "GLM-5.3 has no `medium`; `high` is the nearest rung",
+        ),
+        "minimal" | "none" | "off" | "disabled" | "false" => (
+            "low",
+            "GLM-5.3 and later cannot turn thinking off; `low` is the shallowest rung",
+        ),
+        _ => (
+            DEFAULT_EFFORT,
+            "not a GLM-5.3 rung (`low`, `high`, `max`); the endpoint falls back to `max`",
+        ),
+    };
+    Some(GlmEffort {
+        effort,
+        note: Some(format!(
+            "reasoning_effort = \"{raw}\" sent as \"{effort}\" for {model}: {why}"
+        )),
     })
 }
