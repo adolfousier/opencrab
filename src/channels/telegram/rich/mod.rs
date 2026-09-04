@@ -44,4 +44,4 @@ pub(crate) use detect::{
 pub(crate) use render_html::{
     markdown_to_html, markdown_to_html_mermaid, markdown_to_html_mermaid_p, markdown_to_html_p,
 };
-pub(crate) use table::reflow_collapsed_tables;
+pub(crate) use table::{ensure_blank_line_before_tables, reflow_collapsed_tables};
