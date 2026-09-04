@@ -8,6 +8,7 @@
 
 use super::mermaid;
 use super::render_html::markdown_to_html_mermaid;
+use crate::channels::telegram::suggest_options::enforce_button_fit;
 use teloxide::types::ThreadId;
 
 /// Send `html` as a native rich message and return the new message id
@@ -59,7 +60,7 @@ pub(crate) async fn edit_rich_markdown(
     let mut body = serde_json::json!({
         "chat_id": chat_id,
         "message_id": message_id,
-        "rich_message": { "markdown": markdown },
+        "rich_message": { "markdown": enforce_button_fit(markdown) },
     });
     if let Some(kb) = reply_markup {
         body["reply_markup"] = kb.clone();
@@ -84,7 +85,7 @@ pub(crate) async fn edit_rich_html(
     let mut body = serde_json::json!({
         "chat_id": chat_id,
         "message_id": message_id,
-        "rich_message": { "html": html },
+        "rich_message": { "html": enforce_button_fit(html) },
     });
     if let Some(kb) = reply_markup {
         body["reply_markup"] = kb.clone();
@@ -342,7 +343,7 @@ pub(crate) fn build_body_target(
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
         "chat_id": chat_id,
-        "rich_message": { "markdown": markdown },
+        "rich_message": { "markdown": enforce_button_fit(markdown) },
     });
     if let Some(t) = thread_id {
         // ThreadId wraps a MessageId(i32).
@@ -364,7 +365,7 @@ pub(crate) fn build_body_html(
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
         "chat_id": chat_id,
-        "rich_message": { "html": html },
+        "rich_message": { "html": enforce_button_fit(html) },
     });
     if let Some(t) = thread_id {
         body["message_thread_id"] = serde_json::json!(t.0.0);
@@ -603,7 +604,7 @@ pub(crate) fn build_body_markdown_media_target(
         .collect();
     let mut body = serde_json::json!({
         "chat_id": chat_id,
-        "rich_message": { "markdown": markdown, "media": media_arr },
+        "rich_message": { "markdown": enforce_button_fit(markdown), "media": media_arr },
     });
     if let Some(t) = thread_id {
         body["message_thread_id"] = serde_json::json!(t.0.0);
