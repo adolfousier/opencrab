@@ -210,11 +210,21 @@ pub(crate) fn mark_picked_button(html: &str, picked_idx: usize) -> String {
 }
 
 /// Button-width calibration, measured 2026-08-25 on Alexey's client
-/// (`sendRichMessage` probes, messages 29975 + 29991): a single full-width
-/// button fits <=50 chars on one line and wraps by 54. (The original
-/// "shared rows wrap at 11+8=19" claim was DISPROVEN by the 2026-08-31
-/// probes — see [`SHARED_ROW_MAX_CHARS`] and fork issue #49.)
-pub(crate) const MAX_BUTTON_CHARS: usize = 50;
+/// Fold threshold: a label wider than this never rides a button — the
+/// whole set folds to [`SuggestLayout::NumberedProse`]. Recalibrated
+/// 2026-09-04 (fork issue #79 owner smokes): the old 50-char gate shipped
+/// clipped Cyrillic — measured cuts at 40-44 chars rich-plane, 32
+/// wide-glyph native-plane, and a byte-identical label flipped clean/cut
+/// across reads, so no char-count cap is provably safe at any precision.
+/// The constant is conservative by design: 20 sits below every cut
+/// datapoint observed on any plane. Units are worst-case (wide-glyph)
+/// display width; plain `chars().count()` overcounts slim-glyph labels,
+/// which errs safe.
+pub(crate) const BUTTON_LABEL_MAX_UNITS: usize = 20;
+/// Total width one row of buttons may carry before the set folds (issue
+/// #79: 3x12=36 shared-row cut, 4x12=43 cut; only a 24 slim-tail pair
+/// held — same conservative-by-design rule as [`BUTTON_LABEL_MAX_UNITS`]).
+pub(crate) const SHARED_ROW_TOTAL_UNITS: usize = 20;
 /// Longest label allowed to share one row with its siblings. Recalibrated
 /// 2026-08-31 (live probes, fork issue #49): the real constraint is
 /// ROW-TOTAL width (~32 chars shared equally across the row, before the
@@ -228,7 +238,7 @@ pub(crate) const SHARED_ROW_MAX_CHARS: usize = 12;
 pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
 
 /// Which shape the suggestion controls take for a given option list.
-/// Tiers are measured, not guessed — see [`MAX_BUTTON_CHARS`].
+/// Tiers are measured, not guessed — see [`BUTTON_LABEL_MAX_UNITS`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SuggestLayout {
     /// Every label short AND few options: all buttons share ONE row.
@@ -243,11 +253,13 @@ pub(crate) enum SuggestLayout {
 
 pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     let width = |o: &String| o.chars().count();
+    let total: usize = options.iter().map(&width).sum();
     if options.len() <= MAX_NUMBERS_PER_ROW
         && options.iter().all(|o| width(o) <= SHARED_ROW_MAX_CHARS)
+        && total <= SHARED_ROW_TOTAL_UNITS
     {
         SuggestLayout::SharedRow
-    } else if options.iter().all(|o| width(o) <= MAX_BUTTON_CHARS) {
+    } else if options.iter().all(|o| width(o) <= BUTTON_LABEL_MAX_UNITS) {
         SuggestLayout::Column
     } else {
         SuggestLayout::NumberedProse
@@ -402,7 +414,8 @@ pub(crate) async fn render_suggestions(
         .register_pending_followups(session_id, options.clone())
         .await;
 
-    // Layout tiers are measured, not guessed (see MAX_BUTTON_CHARS): short
+    // Layout tiers are measured, not guessed (see BUTTON_LABEL_MAX_UNITS):
+    // short
     // labels share one row, medium labels get a full-width row each, and
     // anything longer folds into the body as a numbered list with compact
     // number buttons (<=4 per row). The absolute index is encoded in the
