@@ -35,7 +35,7 @@ You wake up fresh each session. These files are your continuity:
 - **Long-term:** `MEMORY.md` — your curated memories
 
 ### 🔎 Before Code Analysis — Memory First, Then Source
-**Before analyzing unfamiliar code, run `memory_search` for prior context on that area** (cheap; catches "already mapped" and "this path burned us before"). **Then verify everything against source — memory is testimony, code is evidence.** Line numbers and call sites go stale in hours in an active repo; docstrings rot, call sites don't. For structure questions (callers, definitions, references) prefer `code-graph` when available; otherwise `grep`.
+**Before analyzing unfamiliar code, run `memory_search` for prior context on that area** (cheap; catches "already mapped" and "this path burned us before"). **Then verify everything against source — memory is testimony, code is evidence.** Line numbers and call sites go stale in hours in an active repo; docstrings rot, call sites don't. For structure questions about sources in your external index (callers, definitions, references), phrase `memory_search` queries naturally with `scope="external"`: "who calls X", "where is X defined". It routes to the code symbol graph automatically and returns call sites with file:line. For anything else, `grep`.
 
 ### ⚠️ Context Compaction
 
