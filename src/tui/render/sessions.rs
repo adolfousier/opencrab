@@ -4,6 +4,7 @@
 
 use super::super::app::App;
 use super::utils::{format_token_count_raw, format_token_count_with_label};
+use crate::tui::render::palette;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -16,16 +17,7 @@ use ratatui::{
 /// and blue. Each project is mapped to one entry deterministically so the same
 /// project always shows the same colour and different projects stay
 /// distinguishable in the session list.
-const PROJECT_BADGE_COLORS: &[Color] = &[
-    Color::Rgb(215, 100, 20),  // crab orange
-    Color::Rgb(235, 160, 70),  // amber
-    Color::Rgb(80, 200, 200),  // cyan
-    Color::Rgb(90, 200, 160),  // teal
-    Color::Rgb(90, 160, 220),  // blue
-    Color::Rgb(150, 190, 240), // light blue
-    Color::Rgb(220, 220, 220), // soft white
-    Color::Rgb(180, 210, 230), // pale blue-white
-];
+const PROJECT_BADGE_COLORS: &[Color] = palette::PROJECT_BADGE_COLORS;
 
 /// Pick a stable badge colour for `project_id` from [`PROJECT_BADGE_COLORS`].
 fn project_badge_color(project_id: uuid::Uuid) -> Color {
@@ -57,14 +49,14 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "  [↑↓] ",
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(palette::GRAY)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Navigate  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[Enter] ",
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(palette::GRAY)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Select  ", Style::default().fg(Color::Reset)),
@@ -78,7 +70,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "[R] ",
             Style::default()
-                .fg(Color::Rgb(215, 100, 20))
+                .fg(palette::ORANGE)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Rename  ", Style::default().fg(Color::Reset)),
@@ -97,21 +89,21 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "[P] ",
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(palette::GRAY)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Projects  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[|] ",
             Style::default()
-                .fg(Color::Rgb(80, 200, 120))
+                .fg(palette::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Split H  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[_] ",
             Style::default()
-                .fg(Color::Rgb(80, 200, 120))
+                .fg(palette::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Split V  ", Style::default().fg(Color::Reset)),
@@ -138,7 +130,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(Span::styled(
             "  Select a session for the new pane (or N for new)",
             Style::default()
-                .fg(Color::Rgb(80, 200, 120))
+                .fg(palette::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         )));
     }
@@ -159,7 +151,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(
                 "[Enter] assign  [Esc] done",
-                Style::default().fg(Color::Rgb(120, 120, 120)),
+                Style::default().fg(palette::GRAY),
             ),
         ]));
     }
@@ -231,7 +223,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         if is_renaming {
             // Show rename input
             lines.push(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(Color::Rgb(215, 100, 20))),
+                Span::styled(prefix, Style::default().fg(palette::ORANGE)),
                 Span::styled(
                     format!("{}█", app.session_rename_buffer),
                     Style::default()
@@ -256,7 +248,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD)
             } else if is_selected {
                 Style::default()
-                    .fg(Color::Rgb(215, 100, 20))
+                    .fg(palette::ORANGE)
                     .add_modifier(Modifier::BOLD)
             } else if is_current {
                 Style::default().fg(Color::Gray)
@@ -277,7 +269,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 let model_label = session.model.as_deref().unwrap_or("default");
                 spans.push(Span::styled(
                     format!(" [{}/{}]", prov, model_label),
-                    Style::default().fg(Color::Rgb(120, 120, 120)),
+                    Style::default().fg(palette::GRAY),
                 ));
             }
 
@@ -306,7 +298,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 };
                 spans.push(Span::styled(
                     format!(" {}", short),
-                    Style::default().fg(Color::Rgb(100, 140, 180)),
+                    Style::default().fg(palette::BLUE_STEEL),
                 ));
                 // Git branch badge (cyan)
                 if let Some(branch) =
@@ -323,7 +315,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
             if session.token_count > 0 {
                 spans.push(Span::styled(
                     format!(" {}", history_label),
-                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                    Style::default().fg(palette::GRAY_MID),
                 ));
             }
 
@@ -333,13 +325,13 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 let frame = app.animation_frame % spinner_chars.len();
                 spans.push(Span::styled(
                     format!(" {}", spinner_chars[frame]),
-                    Style::default().fg(Color::Rgb(215, 100, 20)),
+                    Style::default().fg(palette::ORANGE),
                 ));
             } else if app.sessions_with_pending_approval.contains(&session.id) {
                 spans.push(Span::styled(
                     " !",
                     Style::default()
-                        .fg(Color::Rgb(215, 100, 20))
+                        .fg(palette::ORANGE)
                         .add_modifier(Modifier::BOLD),
                 ));
             } else if app.sessions_with_unread.contains(&session.id) {
@@ -353,7 +345,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                     if ctx_pct > 80.0 {
                         Color::Red
                     } else if ctx_pct > 50.0 {
-                        Color::Rgb(215, 100, 20)
+                        palette::ORANGE
                     } else {
                         Color::Cyan
                     }
@@ -368,7 +360,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 spans.push(Span::styled(
                     current_suffix,
                     Style::default()
-                        .fg(Color::Rgb(120, 120, 120))
+                        .fg(palette::GRAY)
                         .add_modifier(Modifier::BOLD),
                 ));
             }
@@ -383,7 +375,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 }) {
                     spans.push(Span::styled(
                         format!(" [pane {}]", pos + 1),
-                        Style::default().fg(Color::Rgb(80, 200, 120)),
+                        Style::default().fg(palette::SUCCESS),
                     ));
                 }
             }
