@@ -444,6 +444,7 @@ pub mod stream_cancel_test;
 pub mod channel_route_expectation_test;
 pub mod cli_context_window_test;
 pub mod click_to_expand_test;
+pub mod glm_reasoning_test;
 pub mod kimi_reasoning_test;
 pub mod lazy_tools_test;
 pub mod legacy_doc_support_test;

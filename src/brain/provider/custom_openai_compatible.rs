@@ -2997,6 +2997,11 @@ impl OpenAIProvider {
             || request.model.to_lowercase().contains("mimo");
         let reasoning_split = if is_minimax { Some(true) } else { None };
 
+        // z.ai buffers tool-call arguments unless asked to stream them, and a
+        // buffered 40 KB write is minutes of SSE silence that the idle timer
+        // reads as a dead connection (#1347).
+        let tool_stream = super::glm_reasoning::tool_stream_for(&self.base_url, request.stream);
+
         OpenAIRequest {
             model: request.model,
             messages,
@@ -3013,6 +3018,7 @@ impl OpenAIProvider {
             reasoning_split,
             preserve_thinking,
             enable_thinking,
+            tool_stream,
         }
     }
 
@@ -4999,6 +5005,10 @@ pub(crate) struct OpenAIRequest {
     /// (#1034); see `qwen_reasoning`.
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_thinking: Option<bool>,
+    /// z.ai: stream tool-call arguments as deltas instead of one batch at the
+    /// end of generation (#1347); see `glm_reasoning`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_stream: Option<bool>,
 }
 
 impl OpenAIRequest {
