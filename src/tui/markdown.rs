@@ -11,13 +11,14 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::highlight::highlight_code;
+use crate::tui::render::palette;
 
 const TABLE_BORDER: Color = Color::DarkGray;
-const TABLE_HEADER: Color = Color::Rgb(120, 120, 120);
+const TABLE_HEADER: Color = palette::GRAY;
 /// Dim gray used for list bullets, ordered numbers, and the blockquote gutter.
-const LIST_MARKER: Color = Color::Rgb(120, 120, 120);
+const LIST_MARKER: Color = palette::GRAY;
 /// Link text color (underlined). Distinct from inline-code amber.
-const LINK_COLOR: Color = Color::Rgb(90, 160, 230);
+const LINK_COLOR: Color = palette::BLUE_LINK;
 /// Inline code (`` `like this` ``).
 ///
 /// The footer's slate blue, and NOT bold. Inline code appears many times in a
@@ -37,7 +38,7 @@ const LINK_COLOR: Color = Color::Rgb(90, 160, 230);
 /// Deliberately local to markdown rendering and not `palette::ORANGE`: the
 /// brand colour still belongs to titles, spinners and selections, which appear
 /// once each and are supposed to draw the eye.
-const INLINE_CODE: Color = Color::Rgb(125, 150, 195);
+const INLINE_CODE: Color = palette::BLUE_CODE;
 
 /// Fold an emphasis style stack (bold/italic/strikethrough/link) into a single
 /// `Style`. Inner tags `patch` over outer ones so nesting composes (bold inside
@@ -103,7 +104,7 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                             Span::styled(
                                 code_language.clone(),
                                 Style::default()
-                                    .fg(Color::Rgb(120, 120, 120))
+                                    .fg(palette::GRAY)
                                     .add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(" ─", Style::default().fg(Color::DarkGray)),
@@ -190,14 +191,14 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                     let mut styled_line = vec![Span::styled(
                         prefix.to_string(),
                         Style::default()
-                            .fg(Color::Rgb(120, 120, 120))
+                            .fg(palette::GRAY)
                             .add_modifier(Modifier::BOLD),
                     )];
 
                     for span in &mut current_line {
                         *span = span.clone().style(
                             Style::default()
-                                .fg(Color::Rgb(120, 120, 120))
+                                .fg(palette::GRAY)
                                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                         );
                     }
@@ -339,7 +340,7 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
             // item's bullet. Render a styled box so checked/unchecked is visible.
             Event::TaskListMarker(checked) => {
                 let (glyph, color) = if checked {
-                    ("[x] ", Color::Rgb(120, 200, 120))
+                    ("[x] ", palette::GREEN_CHECK)
                 } else {
                     ("[ ] ", LIST_MARKER)
                 };
