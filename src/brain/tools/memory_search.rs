@@ -36,7 +36,12 @@ impl Tool for MemorySearchTool {
          \
          Once a hit tells you WHICH file holds a rule, use `load_brain_file` with a \
          `query` to read the whole section — this returns snippets, which are enough \
-         to locate a rule but not always to judge it."
+         to locate a rule but not always to judge it. \
+         \
+         Structural code queries (\"who calls X\", \"impact of X\") return complete, \
+         sorted listings that support n/offset pagination and report their own \
+         truncation; ranked FTS/vector results do NOT paginate (they stay \
+         n-truncated by rank)."
     }
 
     fn input_schema(&self) -> Value {
@@ -51,6 +56,11 @@ impl Tool for MemorySearchTool {
                     "type": "integer",
                     "description": "Number of results to return (default: 5)",
                     "default": 5
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Skip this many sorted results first. Structural listings only (who calls X / callees / definitions / impact — pagination window after ORDER BY). Ranked FTS/vector results ignore it.",
+                    "default": 0
                 },
                 "scope": {
                     "type": "string",
@@ -83,6 +93,10 @@ impl Tool for MemorySearchTool {
         }
 
         let n = input.get("n").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+        // Structural-only pagination (#89): applied after ORDER BY on the
+        // graph-listing paths; ranked paths ignore it (enforced inside
+        // search_external).
+        let offset = input.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         // Default stays "memory" so existing callers are unaffected (#1020).
         let scope = input
             .get("scope")
@@ -120,7 +134,7 @@ impl Tool for MemorySearchTool {
                             .to_string(),
                     ));
                 }
-                crate::memory::search_external(store, &query, n).await
+                crate::memory::search_external(store, &query, n, offset).await
             }
             "all" => match crate::memory::search_brain(store, &query, n).await {
                 Ok(mut brain) => match crate::memory::search_memory(store, &query, n).await {
@@ -130,7 +144,7 @@ impl Tool for MemorySearchTool {
                         if external_blocked {
                             Ok(brain)
                         } else {
-                            match crate::memory::search_external(store, &query, n).await {
+                            match crate::memory::search_external(store, &query, n, offset).await {
                                 // External hits land last: brain > memory > external (Q10).
                                 Ok(ext) => {
                                     brain.extend(ext);
@@ -167,13 +181,20 @@ impl Tool for MemorySearchTool {
                 // (#89) — the formatter stays corpus-generic.
                 let tag_results = scope == "all";
                 for (i, r) in results.iter().enumerate() {
-                    output.push_str(&format!(
-                        "{}. {}**{}**\n   {}\n\n",
-                        i + 1,
-                        corpus_tag(r.corpus, tag_results),
-                        r.path,
-                        r.snippet
-                    ));
+                    let tag = corpus_tag(r.corpus, tag_results);
+                    // Truncation markers ride empty-path results (#89): print
+                    // them bare, without bolding a nonexistent path.
+                    if r.path.is_empty() {
+                        output.push_str(&format!("{}. {}{}\n\n", i + 1, tag, r.snippet));
+                    } else {
+                        output.push_str(&format!(
+                            "{}. {}**{}**\n   {}\n\n",
+                            i + 1,
+                            tag,
+                            r.path,
+                            r.snippet
+                        ));
+                    }
                 }
                 Ok(ToolResult::success(output))
             }
