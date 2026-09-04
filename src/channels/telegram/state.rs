@@ -359,8 +359,6 @@ impl Drop for ActiveTurnGuard {
 #[derive(Clone)]
 pub(crate) struct LiveFlowHandle {
     pub(crate) streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
-    pub(crate) chat: teloxide::types::ChatId,
-    pub(crate) thread_id: Option<teloxide::types::ThreadId>,
 }
 
 /// RAII counterpart of [`ActiveTurnGuard`] for the #61 live-flow registry:

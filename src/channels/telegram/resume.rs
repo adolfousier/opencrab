@@ -465,6 +465,17 @@ pub(crate) async fn resume_session_inner(
         is_cli: agent.provider_for_session(session_id).cli_handles_tools(),
     }));
 
+    // #61: publish this turn's flow roll while it is live — same as the
+    // user-turn site in handler.rs. Push-initiated turns open flow blocks
+    // too, so their notifies must fold into them as well. Named binding —
+    // the guard must live to the end of the turn, not the statement.
+    let _live_flow = telegram_state.register_live_flow(
+        session_id,
+        super::state::LiveFlowHandle {
+            streaming: std::sync::Arc::clone(&streaming),
+        },
+    );
+
     let edit_cancel = CancellationToken::new();
 
     // Edit loop — same as handle_message

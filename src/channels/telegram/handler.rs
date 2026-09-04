@@ -2454,8 +2454,6 @@ pub(crate) async fn handle_message(
         session_id,
         super::state::LiveFlowHandle {
             streaming: std::sync::Arc::clone(&streaming),
-            chat: msg.chat.id,
-            thread_id,
         },
     );
 
