@@ -709,6 +709,7 @@ pub mod tool_name_heal_test;
 pub mod tui_drop_path_test;
 pub mod tui_dropped_path_test;
 pub mod tui_error_test;
+pub mod tui_palette_test;
 pub mod tui_remote_upload_test;
 pub mod tui_render_clear_test;
 pub mod usage_activity_columns_test;
