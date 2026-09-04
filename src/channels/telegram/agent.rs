@@ -484,11 +484,18 @@ impl TelegramAgent {
                                         // working: take_pending_followup consumes
                                         // the whole set, so the other buttons are
                                         // already dead after one tap.
-                                        let picked =
-                                            crate::channels::telegram::handler::md_to_html(
-                                                &crate::channels::telegram::suggest_options::
-                                                    picked_block(&text, chooser.as_deref()),
-                                            );
+                                        // #96: the pick record is built per plane —
+                                        // md-plane hosts append it as plain markdown,
+                                        // html hosts as html (see pick_rewrite).
+                                        let pick_line = crate::channels::telegram::
+                                            suggest_options::picked_block(
+                                            &text,
+                                            chooser.as_deref(),
+                                        );
+                                        let picked = crate::channels::telegram::handler::md_to_html(
+                                            &pick_line,
+                                        );
+                                        let picked_md = pick_line;
                                         let mut echo_deferred = false;
                                         let recorded = match prompt_msg_id {
                                             Some(mid) => {
@@ -524,7 +531,8 @@ impl TelegramAgent {
                                                         host_info.as_ref().map(|(full, rich, md)| {
                                                             (full.as_str(), *rich, md.as_deref())
                                                         }),
-                                                        picked,
+                                                        &picked,
+                                                        &picked_md,
                                                         picked_idx,
                                                     );
                                                 let outcome: Result<(), String> = match rewrite.clone() {
@@ -658,7 +666,7 @@ impl TelegramAgent {
                                                     // visible in logs, not just failure.
                                                     tracing::info!(
                                                         "Telegram followup tap: pick recorded \
-                                                         on msg {mid}, keyboard stripped"
+                                                         on msg {mid}, keyboard stripped from markup"
                                                     );
                                                     true
                                                 }
