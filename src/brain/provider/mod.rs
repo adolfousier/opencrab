@@ -41,6 +41,7 @@ pub(crate) mod nonstream_compat;
 pub mod opencode_cli;
 pub mod qwen;
 pub mod qwen_reasoning;
+pub mod zhipu_endpoint;
 
 pub use anthropic::AnthropicProvider;
 pub use claude_cli::ClaudeCliProvider;

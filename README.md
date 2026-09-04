@@ -1100,10 +1100,18 @@ endpoint_type = "api"  # "api" (General API) or "coding" (Coding API)
 ```
 
 z.ai GLM (Zhipu AI) offers two endpoint types selectable during onboarding or via `/models`:
-- **General API** (`api`) — standard chat completions at `open.bigmodel.cn/api/paas/v4`
-- **Coding API** (`coding`) — code-optimized endpoint at `codeapi.bigmodel.cn/api/paas/v4`
+- **General API** (`api`) — standard chat completions at `api.z.ai/api/paas/v4`
+- **Coding API** (`coding`) — Coding Plan channel at `api.z.ai/api/coding/paas/v4`
 
 Both use the same API key and model names. The endpoint type can be toggled in the onboarding wizard or `/models` dialog.
+
+The default host is `api.z.ai`, which closes an idle streaming connection after about 30 seconds; the mainland host `open.bigmodel.cn` serves the same API without that cut. To use it, or any other z.ai-compatible host, set `base_url` and it wins over `endpoint_type`:
+
+```toml
+[providers.zhipu]
+enabled = true
+base_url = "https://open.bigmodel.cn/api/paas/v4"   # optional; the /models list follows it too
+```
 
 **Thinking and effort (GLM-5.x):**
 

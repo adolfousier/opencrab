@@ -1495,21 +1495,21 @@ fn try_create_zhipu(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         return Ok(None);
     };
 
-    // Determine base URL based on endpoint_type
-    // API endpoint: https://api.z.ai/api/paas/v4
-    // Coding endpoint: https://api.z.ai/api/coding/paas/v4
-    let base_url = match zhipu_config.endpoint_type.as_deref() {
-        Some("coding") => "https://api.z.ai/api/coding/paas/v4/chat/completions",
-        _ => "https://api.z.ai/api/paas/v4/chat/completions",
-    };
+    // A configured base_url wins (open.bigmodel.cn has no idle cut on long
+    // streams, api.z.ai does); otherwise the endpoint_type default (#1350).
+    let base_url = super::zhipu_endpoint::chat_url(
+        zhipu_config.base_url.as_deref(),
+        zhipu_config.endpoint_type.as_deref(),
+    );
 
     tracing::info!(
-        "Using z.ai GLM at: {} (endpoint_type: {:?})",
+        "Using z.ai GLM at: {} (endpoint_type: {:?}, base_url configured: {})",
         base_url,
-        zhipu_config.endpoint_type
+        zhipu_config.endpoint_type,
+        zhipu_config.base_url.is_some()
     );
     let provider = configure_openai_compatible(
-        OpenAIProvider::with_base_url(api_key.clone(), base_url.to_string()).with_name("zhipu"),
+        OpenAIProvider::with_base_url(api_key.clone(), base_url).with_name("zhipu"),
         zhipu_config,
     );
     Ok(Some(Arc::new(provider)))
