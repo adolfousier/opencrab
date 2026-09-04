@@ -266,6 +266,7 @@ fn host(mid: i32, rich: bool, glued: bool) -> MergedHost {
         html: "<p>answer</p><tg-button-row><tg-button>Go</tg-button></tg-button-row>".into(),
         rich,
         glued,
+        markdown: None,
     }
 }
 
