@@ -334,20 +334,40 @@ impl TelegramAgent {
                                                         // Rich host: rewrite the body without
                                                         // the button rows; no reply-markup
                                                         // ever existed on this bubble.
-                                                        let body =
-                                                            super::suggest_options::strip_button_rows(&h.html);
-                                                        super::rich::api::edit_rich_html(
-                                                            bot.api_url().as_str(),
-                                                            bot.token(),
-                                                            msg.chat.id.0,
-                                                            msg.id.0,
-                                                            &body,
-                                                            None,
-                                                            "stale-strip",
-                                                            "#59 stale rich strip",
-                                                        )
-                                                        .await
-                                                        .map_err(|e| e.to_string())
+                                                        // Markdown-plane hosts (#79 piece 4)
+                                                        // ride the markdown strip source so
+                                                        // tables survive the strip (#679).
+                                                        if let Some(md) = &h.markdown {
+                                                            let body =
+                                                                super::suggest_options::strip_button_rows(md);
+                                                            super::rich::api::edit_rich_markdown(
+                                                                bot.api_url().as_str(),
+                                                                bot.token(),
+                                                                msg.chat.id.0,
+                                                                msg.id.0,
+                                                                &body,
+                                                                None,
+                                                                "stale-strip",
+                                                                "#59 stale rich strip",
+                                                            )
+                                                            .await
+                                                            .map_err(|e| e.to_string())
+                                                        } else {
+                                                            let body = super::suggest_options::
+                                                                strip_button_rows(&h.html);
+                                                            super::rich::api::edit_rich_html(
+                                                                bot.api_url().as_str(),
+                                                                bot.token(),
+                                                                msg.chat.id.0,
+                                                                msg.id.0,
+                                                                &body,
+                                                                None,
+                                                                "stale-strip",
+                                                                "#59 stale rich strip",
+                                                            )
+                                                            .await
+                                                            .map_err(|e| e.to_string())
+                                                        }
                                                     }
                                                     _ => {
                                                         // Classic/unknown: markup strip.
@@ -482,8 +502,13 @@ impl TelegramAgent {
                                                 // hosts ride teloxide's edit_message_text.
                                                 let host_info =
                                                     merged_host.as_ref().and_then(|h| {
-                                                        (h.message_id == mid)
-                                                            .then(|| (h.html.clone(), h.rich))
+                                                        (h.message_id == mid).then(|| {
+                                                            (
+                                                                h.html.clone(),
+                                                                h.rich,
+                                                                h.markdown.clone(),
+                                                            )
+                                                        })
                                                     });
                                                 let empty_kb = teloxide::types::
                                                     InlineKeyboardMarkup::new(
@@ -496,13 +521,28 @@ impl TelegramAgent {
                                                 // answer HTML alone and lose the record).
                                                 let rewrite =
                                                     super::suggest_options::pick_rewrite(
-                                                        host_info
-                                                            .as_ref()
-                                                            .map(|(full, rich)| (full.as_str(), *rich)),
+                                                        host_info.as_ref().map(|(full, rich, md)| {
+                                                            (full.as_str(), *rich, md.as_deref())
+                                                        }),
                                                         picked,
                                                         picked_idx,
                                                     );
                                                 let outcome: Result<(), String> = match rewrite.clone() {
+                                                    super::suggest_options::PickRewrite::RichMarkdownHost(
+                                                        body,
+                                                    ) => super::rich::api::edit_rich_markdown(
+                                                        bot_clone.api_url().as_str(),
+                                                        bot_clone.token(),
+                                                        chat_id.0,
+                                                        mid.0,
+                                                        &body,
+                                                        Some(&serde_json::json!(empty_kb)),
+                                                        "turn",
+                                                        "-",
+                                                    )
+                                                    .await
+                                                    .map(|_| ())
+                                                    .map_err(|e| e.to_string()),
                                                     super::suggest_options::PickRewrite::RichHost(
                                                         body,
                                                     ) => super::rich::api::edit_rich_html(
@@ -2126,6 +2166,20 @@ async fn refire_pick_edit(
     use teloxide::payloads::EditMessageTextSetters;
     use teloxide::prelude::Requester;
     match rewrite {
+        super::suggest_options::PickRewrite::RichMarkdownHost(body) => {
+            super::rich::api::edit_rich_markdown(
+                bot.api_url().as_str(),
+                bot.token(),
+                chat_id.0,
+                mid.0,
+                &body,
+                Some(&serde_json::json!(kb)),
+                "turn",
+                "-",
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
         super::suggest_options::PickRewrite::RichHost(body) => super::rich::api::edit_rich_html(
             bot.api_url().as_str(),
             bot.token(),

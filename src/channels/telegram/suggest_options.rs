@@ -81,6 +81,10 @@ pub(crate) enum PickRewrite {
     /// Rich merged host: body rides `edit_rich_html`, empty markup strips
     /// the dead buttons.
     RichHost(String),
+    /// Markdown-plane merged host (#79 piece 4): body rides
+    /// `edit_rich_markdown` — the server render keeps tables intact
+    /// (#679); empty markup strips the dead buttons.
+    RichMarkdownHost(String),
     /// Classic merged host: body rides `edit_message_text` + empty markup
     /// to strip the dead buttons.
     ClassicHost(String),
@@ -94,28 +98,30 @@ pub(crate) enum PickRewrite {
 /// message IS it; merged host → answer HTML + pick record, standalone →
 /// pick record alone.
 pub(crate) fn pick_rewrite(
-    host: Option<(&str, bool)>,
+    host: Option<(&str, bool, Option<&str>)>,
     picked: String,
     picked_idx: usize,
 ) -> PickRewrite {
     match host {
-        Some((full, rich)) => {
-            let body = if rich {
+        Some((full, rich, markdown)) => {
+            if rich {
                 // #67 tap-redraw: the rows must not survive as live
                 // controls — they are rewritten to the picked state
                 // (success+✓+disabled / disabled) instead of stripped, so
-                // the bubble keeps showing what was chosen.
-                format!("{}\n\n{picked}", mark_picked_button(full, picked_idx))
+                // the bubble keeps showing what was chosen. `mark_picked_button`
+                // is a byte-level `<tg-button` scan, plane-agnostic — the
+                // same rewrite serves the html and markdown planes.
+                let body = format!("{}\n\n{picked}", mark_picked_button(full, picked_idx));
+                if markdown.is_some() {
+                    PickRewrite::RichMarkdownHost(body)
+                } else {
+                    PickRewrite::RichHost(body)
+                }
             } else {
                 // Classic hosts keep their buttons as reply markup (not in
                 // the body) — the empty-markup arm strips those; nothing to
                 // rewrite here.
-                format!("{full}\n\n{picked}")
-            };
-            if rich {
-                PickRewrite::RichHost(body)
-            } else {
-                PickRewrite::ClassicHost(body)
+                PickRewrite::ClassicHost(format!("{full}\n\n{picked}"))
             }
         }
         None => PickRewrite::Standalone(picked),
@@ -291,24 +297,16 @@ pub(crate) fn folded_list_html(options: &[String]) -> String {
         .join("\n")
 }
 
-/// Rich-surface variant of [`folded_list_html`]: the rich (sendRichMessage)
-/// HTML input collapses raw newlines, so each numbered line rides its own
-/// `<p>` block or the options list renders as one long line (#1226).
-/// Classic ParseMode::Html preserves raw newlines and keeps using
-/// [`folded_list_html`].
-pub(crate) fn folded_list_html_p(options: &[String]) -> String {
+/// NumberedProse fold for the markdown plane (#79 piece 4): a plain
+/// numbered list — the server's markdown render keeps the numbering and
+/// the line breaks, no `<p>` wrapping needed on this plane.
+pub(crate) fn folded_list_markdown(options: &[String]) -> String {
     options
         .iter()
         .enumerate()
-        .map(|(i, opt)| {
-            format!(
-                "<p>{}. {}</p>",
-                i + 1,
-                super::markdown::format_inline(&super::markdown::escape_html(opt))
-            )
-        })
+        .map(|(i, opt)| format!("{}. {}", i + 1, opt))
         .collect::<Vec<_>>()
-        .join("")
+        .join("\n")
 }
 
 /// host-aware stale-shell strip: the #597 clear killed the stash, but the
@@ -560,30 +558,49 @@ pub(crate) async fn render_suggestions(
     // content instead of re-deriving it.
     let merge_payload: Option<MergePayload> = merge_host.map(|host| {
         let mid = host.message_id;
-        // Base body + surface: classic bubbles keep their exact delivered
-        // HTML; rich bubbles re-render from the captured markdown. Table-
-        // bearing answers never reach this arm as Markdown — capture skips
-        // them because rich HTML input flattens tables (#679).
-        let (mut new_html, rich) = match host.body {
-            super::state::BubbleBody::Html(html) => (html, false),
-            super::state::BubbleBody::Markdown(md) => (super::rich::markdown_to_html_p(&md), true),
-        };
-        if layout == SuggestLayout::NumberedProse {
-            if rich {
-                // Rich HTML collapses raw newlines (#1226): the numbered list
-                // rides <p>-wrapped lines so it keeps its shape; classic hosts
-                // preserve the raw newline join via folded_list_html.
-                new_html.push_str(&folded_list_html_p(&options));
-            } else {
-                new_html.push('\n');
-                new_html.push_str(folded_list_html(&options).trim_start());
+        // Base body + plane: classic bubbles keep their exact delivered
+        // HTML; markdown-plane hosts (#79 piece 4) keep the raw markdown —
+        // including tables, which the markdown plane renders intact
+        // server-side (C1 probe) where rich HTML input flattens them
+        // (#679). The html conversion of the merged payload is kept only
+        // as the host record's strip source.
+        let (mut new_html, rich, new_markdown) = match host.body {
+            super::state::BubbleBody::Html(html) => {
+                let mut body = html;
+                if layout == SuggestLayout::NumberedProse {
+                    // Classic hosts preserve the raw newline join via
+                    // folded_list_html.
+                    body.push('\n');
+                    body.push_str(folded_list_html(&options).trim_start());
+                }
+                (body, false, None)
             }
-        }
-        if rich {
+            super::state::BubbleBody::Markdown(md) => {
+                let mut new_md = md;
+                if layout == SuggestLayout::NumberedProse {
+                    // Markdown plane: plain numbered list — the server's
+                    // markdown render keeps numbering and line breaks.
+                    new_md.push('\n');
+                    new_md.push_str(&folded_list_markdown(&options));
+                }
+                new_md.push('\n');
+                new_md.push_str(&suggestion_rows_rich_html(&options, &token));
+                // #31: the sign-off paragraph rides AFTER the button rows —
+                // one message carries answer + controls + trailer, in that
+                // order. Raw markdown: no conversion on this plane.
+                if let Some(t) = &trailer {
+                    new_md.push('\n');
+                    new_md.push_str(t);
+                }
+                let strip_source = super::rich::markdown_to_html_p(&new_md);
+                (strip_source, true, Some(new_md))
+            }
+        };
+        if rich && new_markdown.is_none() {
+            // Legacy html-plane rich host: the rows ride the html dialect
+            // as before (#1226 newline handling applies).
             new_html.push('\n');
             new_html.push_str(&suggestion_rows_rich_html(&options, &token));
-            // #31: the sign-off paragraph rides AFTER the button rows — one
-            // message carries answer + controls + trailer, in that order.
             if let Some(t) = &trailer {
                 new_html.push('\n');
                 new_html.push_str(&super::rich::markdown_to_html_p(t));
@@ -593,7 +610,7 @@ pub(crate) async fn render_suggestions(
             message_id: mid,
             new_html,
             rich,
-            new_markdown: None,
+            new_markdown,
         }
     });
 
@@ -794,7 +811,22 @@ async fn place_once(
 
     if let Some(mp) = merge {
         let mid = mp.message_id;
-        let outcome: Result<(), PlaceErr> = if mp.rich {
+        let outcome: Result<(), PlaceErr> = if let Some(md) = &mp.new_markdown {
+            // Markdown-plane host (#79 piece 4): raw markdown + embedded
+            // button rows — the server render keeps tables intact (#679).
+            super::rich::api::edit_rich_markdown(
+                bot.api_url().as_str(),
+                bot.token(),
+                chat_id.0,
+                mid.0,
+                md,
+                None,
+                "turn",
+                "-",
+            )
+            .await
+            .map_err(|e| classify_rich_err(&e.to_string()))
+        } else if mp.rich {
             super::rich::api::edit_rich_html(
                 bot.api_url().as_str(),
                 bot.token(),
@@ -822,7 +854,13 @@ async fn place_once(
                 tracing::info!(
                     "Telegram suggest_options: keyboard merged onto msg {mid} \
                      ({} host, token {token}, {option_count} options)",
-                    if mp.rich { "rich" } else { "classic" }
+                    if mp.new_markdown.is_some() {
+                        "rich-md"
+                    } else if mp.rich {
+                        "rich"
+                    } else {
+                        "classic"
+                    }
                 );
                 state
                     .attach_followup_host(

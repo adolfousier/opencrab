@@ -18,8 +18,8 @@ use teloxide::types::MessageId;
 
 use crate::channels::telegram::state::{MergedHost, TelegramState};
 use crate::channels::telegram::suggest_options::{
-    PickRewrite, echo_fallback, mark_picked_button, pick_rewrite, picked_block,
-    suggestion_rows_rich_html,
+    PickRewrite, echo_fallback, folded_list_markdown, mark_picked_button, pick_rewrite,
+    picked_block, suggestion_rows_rich_html,
 };
 
 const CHOICE: &str = "Update the SKILL.md with the new callback routing";
@@ -118,7 +118,7 @@ fn classic_host_body_keeps_answer_and_pick() {
     // classic merged host edited the answer HTML alone and the pick
     // record vanished. The body must carry BOTH, answer first.
     let rewrite = pick_rewrite(
-        Some(("<b>the answer</b>", false)),
+        Some(("<b>the answer</b>", false, None)),
         picked_block(CHOICE, None),
         0,
     );
@@ -136,7 +136,7 @@ fn classic_host_body_keeps_answer_and_pick() {
 #[test]
 fn rich_host_body_keeps_answer_and_pick() {
     let rewrite = pick_rewrite(
-        Some(("<b>the answer</b>", true)),
+        Some(("<b>the answer</b>", true, None)),
         picked_block(CHOICE, None),
         0,
     );
@@ -164,13 +164,14 @@ fn the_rich_flag_decides_the_transport_not_the_body() {
     // Same host html, same pick — only the rich flag flips, so the two
     // bodies must match byte for byte; only the variant differs.
     let picked = picked_block(CHOICE, None);
-    let classic = pick_rewrite(Some(("host", false)), picked.clone(), 0);
-    let rich = pick_rewrite(Some(("host", true)), picked, 0);
+    let classic = pick_rewrite(Some(("host", false, None)), picked.clone(), 0);
+    let rich = pick_rewrite(Some(("host", true, None)), picked, 0);
     fn body_of(r: &PickRewrite) -> &str {
         match r {
-            PickRewrite::RichHost(b) | PickRewrite::ClassicHost(b) | PickRewrite::Standalone(b) => {
-                b.as_str()
-            }
+            PickRewrite::RichHost(b)
+            | PickRewrite::RichMarkdownHost(b)
+            | PickRewrite::ClassicHost(b)
+            | PickRewrite::Standalone(b) => b.as_str(),
         }
     }
     assert_eq!(body_of(&classic), body_of(&rich));
@@ -332,7 +333,7 @@ fn tap_redraw_rich_host_body_has_marked_rows_and_record() {
     // End-to-end through pick_rewrite: rows rewritten to the picked state,
     // record appended, #39 order preserved (answer/rows first, record last).
     let host = format!("<b>the answer</b>\n{}", shared_row_html());
-    let rewrite = pick_rewrite(Some((&host, true)), picked_block(CHOICE, None), 1);
+    let rewrite = pick_rewrite(Some((&host, true, None)), picked_block(CHOICE, None), 1);
     let PickRewrite::RichHost(body) = rewrite else {
         panic!("rich host stays rich")
     };
@@ -347,4 +348,49 @@ fn tap_redraw_rich_host_body_has_marked_rows_and_record() {
         body.rfind(CHOICE).unwrap() > body.rfind("</tg-button-row>").unwrap(),
         "record rides after the rows (#39)"
     );
+}
+
+#[test]
+fn markdown_host_routes_to_the_markdown_plane() {
+    // #79 piece 4: a markdown-plane host (markdown: Some) must produce the
+    // RichMarkdownHost variant even though its body bytes rewrite exactly
+    // like an html-plane host — the plane decides the transport, not the
+    // content.
+    let host = "<b>answer</b>\n| a | b |\n|---|---|\n| 1 | 2 |".to_string();
+    let rewrite = pick_rewrite(
+        Some((host.as_str(), true, Some(host.as_str()))),
+        picked_block(CHOICE, None),
+        0,
+    );
+    let PickRewrite::RichMarkdownHost(body) = rewrite else {
+        panic!("markdown host must ride the markdown plane: {rewrite:?}")
+    };
+    assert!(body.starts_with("<b>answer</b>"), "answer first: {body}");
+    assert!(
+        body.contains("| a | b |"),
+        "markdown table survives: {body}"
+    );
+    assert!(body.contains(CHOICE), "pick record survives: {body}");
+}
+
+#[test]
+fn markdown_and_html_hosts_rewrite_identically() {
+    // Same body bytes, different plane: the rewritten bodies must match
+    // byte for byte — only the variant (transport) differs.
+    let host = "<b>the answer</b>";
+    let picked = picked_block(CHOICE, None);
+    let html_plane = pick_rewrite(Some((host, true, None)), picked.clone(), 0);
+    let md_plane = pick_rewrite(Some((host, true, Some(host))), picked, 0);
+    match (html_plane, md_plane) {
+        (PickRewrite::RichHost(a), PickRewrite::RichMarkdownHost(b)) => {
+            assert_eq!(a, b, "rewrite is plane-agnostic")
+        }
+        other => panic!("unexpected variants: {other:?}"),
+    }
+}
+
+#[test]
+fn folded_list_markdown_numbers_each_option() {
+    let list = folded_list_markdown(&["первый".to_string(), "второй|с таблицей".to_string()]);
+    assert_eq!(list, "1. первый\n2. второй|с таблицей");
 }

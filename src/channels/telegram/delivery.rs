@@ -529,14 +529,16 @@ pub(crate) async fn deliver_final_response(
                             rich_md.len(),
                             intermediate_ids.len()
                         );
-                        // Merge candidate (#tg-suggest-merge): table-free rich
-                        // bubbles can carry the suggestion controls too.
-                        if !super::rich::contains_table(&pre_dedup_text) {
-                            final_bubble = Some(super::state::MergeBubble {
-                                message_id: teloxide::types::MessageId(rich_msg_id),
-                                body: super::state::BubbleBody::Markdown(pre_dedup_text.clone()),
-                            });
-                        }
+                        // Merge candidate (#tg-suggest-merge): every rich
+                        // bubble can carry the suggestion controls now —
+                        // table-bearing answers ride the markdown plane,
+                        // whose server-side render keeps tables intact
+                        // (#79 piece 4; the html plane flattened them,
+                        // #679, which is why they used to be excluded).
+                        final_bubble = Some(super::state::MergeBubble {
+                            message_id: teloxide::types::MessageId(rich_msg_id),
+                            body: super::state::BubbleBody::Markdown(pre_dedup_text.clone()),
+                        });
                         // Store bot reply in channel_messages even though
                         // text_only is empty (dedup stripped it). The rich
                         // fallback already sent pre_dedup_text, so the next
@@ -797,16 +799,16 @@ pub(crate) async fn deliver_final_response(
                                 );
                                 sent_reply_id = Some(id);
                                 // Merge candidate (#tg-suggest-merge): the
-                                // controls can ride this bubble too — but only
-                                // when it carries no table: merging re-sends as
-                                // rich HTML input, which flattens tables (#679);
-                                // those answers keep the standalone fallback.
-                                if !super::rich::contains_table(&rich_md) {
-                                    final_bubble = Some(super::state::MergeBubble {
-                                        message_id: teloxide::types::MessageId(id),
-                                        body: super::state::BubbleBody::Markdown(rich_md.clone()),
-                                    });
-                                }
+                                // controls can ride this bubble — table-bearing
+                                // answers included: the merge edit goes back out
+                                // on the markdown plane, whose server-side
+                                // render keeps tables intact (#79 piece 4; the
+                                // old html-plane merge flattened them, #679,
+                                // which is why tables used to be excluded).
+                                final_bubble = Some(super::state::MergeBubble {
+                                    message_id: teloxide::types::MessageId(id),
+                                    body: super::state::BubbleBody::Markdown(rich_md.clone()),
+                                });
                                 true
                             }
                             Err(e) => {
