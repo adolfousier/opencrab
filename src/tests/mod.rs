@@ -749,6 +749,7 @@ pub mod quiet_delivery_test;
 pub mod repetition_error_message_test;
 pub mod restart_recovery_test;
 pub mod slack_handler_test;
+pub mod subagent_notify_test;
 mod telegram_acl_test;
 mod telegram_attachment_tmp_name_test;
 mod telegram_atx_heading_agreement_test;
