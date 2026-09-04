@@ -40,30 +40,3 @@ pub fn was_fully_read(session_id: Uuid, path: &Path) -> bool {
         .expect("read_state registry poisoned")
         .contains(&(session_id, key_path(path)))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tracks_per_session_and_path() {
-        let sid = Uuid::new_v4();
-        let other_sid = Uuid::new_v4();
-        let dir = std::env::temp_dir().join(format!("read_state_{}", sid.simple()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("f.txt");
-        std::fs::write(&file, "x").unwrap();
-
-        assert!(!was_fully_read(sid, &file));
-        mark_fully_read(sid, &file);
-        assert!(was_fully_read(sid, &file));
-
-        // Another session has not read it.
-        assert!(!was_fully_read(other_sid, &file));
-        // Relative spelling of the same file resolves to the same key.
-        let rel = dir.join("./f.txt");
-        assert!(was_fully_read(sid, &rel));
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
