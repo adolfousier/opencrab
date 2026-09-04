@@ -193,7 +193,9 @@ If you find an existing inline `#[cfg(test)] mod tests` while working on a file,
 
 ### Commit Discipline — Atomic Commits
 
-**One logical change per commit.** A commit should land a single bug fix, a single feature, or a single refactor — not a mixed bag.
+**Always do atomic commits:** repository-wide atomic commits (grouping all files changed for a single logical change) combined with short-lived feature branches or stacked pull requests.
+
+Repository-wide means the unit is the logical change, not the file. Every file a change touches lands in the same commit, so the tree builds and the tests pass at every commit and a revert or bisect can land on a single sha. Three unrelated edits in one file are three commits; one change spread across ten files is one commit. Each commit branches off `main` on a short-lived branch and lands as its own PR, or as one PR in a stack when later commits depend on earlier ones.
 
 - **Don't bundle** `cargo fmt` drift with feature work. Run fmt in its own commit (`chore: cargo fmt`).
 - **Don't bundle** rename / move / restructure with logic changes. The reviewer cannot tell what's mechanical and what's behavioural.
