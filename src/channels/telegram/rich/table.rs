@@ -91,12 +91,12 @@ pub(crate) fn ensure_blank_line_before_tables(text: &str) -> String {
             i += 1;
             continue;
         }
-        if !in_fence && let Some((_, consumed)) = try_parse(&lines, i) {
+        if !in_fence && let Some((_, end)) = try_parse(&lines, i) {
             let prev_is_text = out.last().is_some_and(|prev| !prev.trim().is_empty());
             if prev_is_text {
                 out.push(String::new());
             }
-            for _ in 0..consumed {
+            while i < end {
                 out.push(lines[i].clone());
                 i += 1;
             }
