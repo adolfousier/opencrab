@@ -488,6 +488,7 @@ pub(crate) async fn render_suggestions(
             new_html,
             rich,
             glue: false,
+            new_markdown: None,
         }
     });
 
@@ -630,6 +631,10 @@ struct MergePayload {
     /// #55 glue tier: attach via `edit_message_reply_markup` only — the
     /// host body is not merge-safe (table) and must never be re-sent.
     glue: bool,
+    /// Markdown-plane payload (#79 piece 4): when set, the merge edit and
+    /// every later redraw ride `edit_rich_markdown`; `new_html` then only
+    /// feeds the host record's strip source.
+    new_markdown: Option<String>,
 }
 
 /// Deferred placement attempts after a Retry-After, on top of the inline
@@ -708,6 +713,7 @@ async fn place_once(
                             html: mp.new_html.clone(),
                             rich: mp.rich,
                             glued: mp.glue,
+                            markdown: mp.new_markdown.clone(),
                         },
                     )
                     .await;

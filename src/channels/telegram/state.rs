@@ -24,8 +24,9 @@ const STALE_HOST_CAP: usize = 32;
 #[derive(Clone)]
 pub(crate) struct MergedHost {
     pub message_id: MessageId,
-    /// HTML last rendered in that bubble (final response text, plus the
-    /// folded option list when present).
+    /// Body last rendered in that bubble (final response text, plus the
+    /// folded option list when present). HTML for html-plane hosts; the
+    /// merged markdown payload for markdown-plane hosts.
     pub html: String,
     /// Host lives on the native rich API: tap-record edits must ride
     /// `super::rich::api::edit_rich_html`, not teloxide's edit_message_text.
@@ -35,6 +36,11 @@ pub(crate) struct MergedHost {
     /// unknown/unsafe to rewrite, so a tap strips the keyboard markup-only
     /// and echoes the pick record as its own note instead of editing text.
     pub glued: bool,
+    /// Markdown-plane host (#79 piece 4): the merged markdown payload.
+    /// When set, pick redraws and strips ride `edit_rich_markdown` —
+    /// the server-side render keeps tables intact (#679). `None` = the
+    /// html plane.
+    pub markdown: Option<String>,
 }
 
 /// Merge candidate captured by deliver_final_response (#tg-suggest-merge):
@@ -1137,6 +1143,10 @@ impl TelegramState {
                         // Port note (#55): persisted rows predate the glue
                         // tier; restore as non-glued (pre-glue tap path).
                         glued: false,
+                        // Port note (#79 p4): the markdown column is NULL
+                        // for rows persisted before this change, so hydrate
+                        // reads the plane straight from the row.
+                        markdown: h.markdown,
                     });
                     let token = row.token;
                     let entry = PendingFollowupEntry {
@@ -1174,6 +1184,7 @@ impl TelegramState {
                     message_id: i64::from(h.message_id.0),
                     html: h.html.clone(),
                     rich: h.rich,
+                    markdown: h.markdown.clone(),
                 }),
         };
         let guard = self.followup_store.lock().await;
