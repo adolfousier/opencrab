@@ -3,6 +3,7 @@
 //! Displays projects with sessions, create/delete/assign actions.
 
 use super::super::app::App;
+use crate::tui::render::palette;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -29,28 +30,28 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "  [↑↓] ",
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(palette::GRAY)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Navigate  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[Enter] ",
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(palette::GRAY)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("View  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[N] ",
             Style::default()
-                .fg(Color::Rgb(80, 200, 120))
+                .fg(palette::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("New  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[A] ",
             Style::default()
-                .fg(Color::Rgb(80, 160, 220))
+                .fg(palette::BLUE_SKY)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Assign  ", Style::default().fg(Color::Reset)),
@@ -73,7 +74,7 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(Span::styled(
             format!("  New project name: {}▌", app.project_name_input),
             Style::default()
-                .fg(Color::Rgb(80, 200, 120))
+                .fg(palette::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
@@ -109,7 +110,7 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
         let count = app.projects.len();
         lines.push(Line::from(Span::styled(
             format!("  {} project{}", count, if count == 1 { "" } else { "s" }),
-            Style::default().fg(Color::Rgb(100, 140, 180)),
+            Style::default().fg(palette::BLUE_STEEL),
         )));
         lines.push(Line::from(""));
 
@@ -120,7 +121,7 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
 
             let name_style = if is_selected {
                 Style::default()
-                    .fg(Color::Rgb(80, 200, 120))
+                    .fg(palette::SUCCESS)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Reset)
@@ -156,10 +157,10 @@ fn render_project_list(f: &mut Frame, app: &App, area: Rect) {
                 .title(Span::styled(
                     " Projects ",
                     Style::default()
-                        .fg(Color::Rgb(80, 200, 120))
+                        .fg(palette::SUCCESS)
                         .add_modifier(Modifier::BOLD),
                 ))
-                .border_style(Style::default().fg(Color::Rgb(120, 120, 120))),
+                .border_style(Style::default().fg(palette::GRAY)),
         )
         .wrap(Wrap { trim: false });
 
@@ -175,21 +176,21 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "  [↑↓] ",
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(palette::GRAY)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Navigate  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[Enter] ",
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(palette::GRAY)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Open  ", Style::default().fg(Color::Reset)),
         Span::styled(
             "[U] ",
             Style::default()
-                .fg(Color::Rgb(215, 100, 20))
+                .fg(palette::ORANGE)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Unassign  ", Style::default().fg(Color::Reset)),
@@ -207,7 +208,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(Span::styled(
             format!("  📁 {}", project.name),
             Style::default()
-                .fg(Color::Rgb(80, 200, 120))
+                .fg(palette::SUCCESS)
                 .add_modifier(Modifier::BOLD),
         )));
         if let Some(ref desc) = project.description {
@@ -233,7 +234,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
         let count = app.project_sessions.len();
         lines.push(Line::from(Span::styled(
             format!("  {} session{}", count, if count == 1 { "" } else { "s" }),
-            Style::default().fg(Color::Rgb(100, 140, 180)),
+            Style::default().fg(palette::BLUE_STEEL),
         )));
         lines.push(Line::from(""));
 
@@ -244,7 +245,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
 
             let title_style = if is_selected {
                 Style::default()
-                    .fg(Color::Rgb(80, 200, 120))
+                    .fg(palette::SUCCESS)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Reset)
@@ -273,7 +274,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
             if session.token_count > 0 {
                 spans.push(Span::styled(
                     format!("  {} tok", format_token_count(session.token_count)),
-                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                    Style::default().fg(palette::GRAY_MID),
                 ));
             }
 
@@ -294,10 +295,10 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
                 .title(Span::styled(
                     title,
                     Style::default()
-                        .fg(Color::Rgb(80, 200, 120))
+                        .fg(palette::SUCCESS)
                         .add_modifier(Modifier::BOLD),
                 ))
-                .border_style(Style::default().fg(Color::Rgb(120, 120, 120))),
+                .border_style(Style::default().fg(palette::GRAY)),
         )
         .wrap(Wrap { trim: false });
 
