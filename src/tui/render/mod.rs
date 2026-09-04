@@ -27,6 +27,9 @@ pub(crate) mod skills_dialog;
 // removed with the codemod commit.
 #[allow(dead_code)]
 pub(crate) mod theme;
+// TEMP(#1364): allow(dead_code) until the /theme command and boot apply land.
+#[allow(dead_code)]
+pub(crate) mod presets;
 mod title;
 mod tools;
 pub(crate) mod utils;

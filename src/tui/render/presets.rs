@@ -1,0 +1,428 @@
+//! Built-in theme presets for the S2 theme runtime (#1364).
+//!
+//! Hex values are pinned to UPSTREAM specs, not third-party ports:
+//! - dracula / alucard: https://draculatheme.com/spec (alucard is the
+//!   official light companion, bg #FFFBEB; surface ladder is the spec's
+//!   floating/bg-light/bg-dark)
+//! - monokai classic: tomasr/molokai (classic variant, #272822 bg)
+//! - solarized light/dark: https://ethanschoonover.com/solarized
+//!   (one 16-color spec, two modes; light = bg base3 / fg base00)
+//! - catppuccin mocha/latte: https://github.com/catppuccin/palette
+//!
+//! Roles the upstream spec does not distinguish are mapped onto the
+//! spec's ladder (commented "derived"). The regression tests pin every
+//! spec-listed value so silent drift fails CI.
+
+use ratatui::style::Color;
+
+use super::theme::{Theme, ThemeColors};
+
+const fn rgb(hex: u32) -> Color {
+    Color::Rgb(
+        ((hex >> 16) & 0xFF) as u8,
+        ((hex >> 8) & 0xFF) as u8,
+        (hex & 0xFF) as u8,
+    )
+}
+
+// ── Dracula (dark) ──────────────────────────────────────────────────────────
+// Spec: bg #282A36 · fg #F8F8F2 · comment #6272A4 · current line #44475A ·
+// red #FF5555 · green #50FA7B · orange #FFB86C · yellow #F1FA8C ·
+// purple #BD93F9 · cyan #8BE9FD
+pub static DRACULA: Theme = Theme {
+    name: "dracula",
+    colors: ThemeColors {
+        accent: rgb(0xFFB86C),      // spec orange
+        accent_teal: rgb(0x8BE9FD), // spec cyan
+        accent_soft: rgb(0xF8F8F2), // spec fg
+        text_primary: rgb(0xF8F8F2),
+        text_secondary: rgb(0x6272A4), // spec comment (derived)
+        text_muted: rgb(0x6272A4),
+        text_dim: rgb(0x6272A4),
+        gray: rgb(0x6272A4),     // ladder: comment (derived)
+        gray_mid: rgb(0x44475A), // current line
+        gray_detail: rgb(0x44475A),
+        gray_dim: rgb(0x44475A),
+        gray_dark: rgb(0x44475A),
+        gray_base: rgb(0x282A36), // spec bg
+        gray_light: rgb(0xF8F8F2),
+        gray_soft: rgb(0x6272A4),
+        gray_muted: rgb(0x6272A4),
+        success: rgb(0x50FA7B),
+        analytics_green: rgb(0x50FA7B),
+        green_check: rgb(0x50FA7B),
+        error: rgb(0xFF5555),
+        error_soft: rgb(0xFF5555),
+        error_faded: rgb(0xFF5555),
+        warning: rgb(0xF1FA8C), // spec yellow
+        warning_muted: rgb(0xF1FA8C),
+        amber_muted: rgb(0xFFB86C),
+        teal_vivid: rgb(0x8BE9FD),
+        teal_bright: rgb(0x8BE9FD),
+        teal_muted: rgb(0x8BE9FD),
+        teal_calm: rgb(0x8BE9FD),
+        blue_slate: rgb(0x6272A4),
+        blue_steel: rgb(0xBD93F9), // spec purple (derived)
+        blue_link: rgb(0x8BE9FD),
+        blue_sky: rgb(0x8BE9FD),
+        blue_soft: rgb(0x8BE9FD),
+        blue_vivid: rgb(0xBD93F9),
+        blue_code: rgb(0xBD93F9),
+        selection_bg: rgb(0x44475A), // current line = selection
+        surface_panel: rgb(0x282A36),
+        surface_qr: rgb(0x282A36),
+        surface_code: rgb(0x44475A),
+        surface_code_alt: rgb(0x44475A),
+        ink: rgb(0x282A36),
+        purple_soft: rgb(0xBD93F9),
+    },
+};
+
+// ── Alucard (light) ─────────────────────────────────────────────────────────
+// Official Dracula light companion. Spec: bg #FFFBEB · fg #1F1F1F ·
+// comment #6C664B · red #CB3A2A · green #14710A · orange #A34D14 ·
+// purple #644AC9 · surface ladder: floating #EFEDDC · bg-light #DEDCCF ·
+// bg-dark #CECCC0
+pub static ALUCARD: Theme = Theme {
+    name: "alucard",
+    colors: ThemeColors {
+        accent: rgb(0xA34D14),      // spec orange
+        accent_teal: rgb(0x644AC9), // spec purple (derived: no cyan in spec)
+        accent_soft: rgb(0x1F1F1F),
+        text_primary: rgb(0x1F1F1F),
+        text_secondary: rgb(0x6C664B), // spec comment
+        text_muted: rgb(0x6C664B),
+        text_dim: rgb(0x6C664B),
+        gray: rgb(0x6C664B),
+        gray_mid: rgb(0xCECCC0), // spec bg-dark
+        gray_detail: rgb(0xCECCC0),
+        gray_dim: rgb(0xCECCC0),
+        gray_dark: rgb(0xCECCC0),
+        gray_base: rgb(0xCECCC0),
+        gray_light: rgb(0x1F1F1F),
+        gray_soft: rgb(0x6C664B),
+        gray_muted: rgb(0x6C664B),
+        success: rgb(0x14710A),
+        analytics_green: rgb(0x14710A),
+        green_check: rgb(0x14710A),
+        error: rgb(0xCB3A2A),
+        error_soft: rgb(0xCB3A2A),
+        error_faded: rgb(0xCB3A2A),
+        warning: rgb(0xA34D14), // derived: spec orange as amber
+        warning_muted: rgb(0xA34D14),
+        amber_muted: rgb(0xA34D14),
+        teal_vivid: rgb(0x644AC9),
+        teal_bright: rgb(0x644AC9),
+        teal_muted: rgb(0x644AC9),
+        teal_calm: rgb(0x644AC9),
+        blue_slate: rgb(0x6C664B),
+        blue_steel: rgb(0x644AC9),
+        blue_link: rgb(0x644AC9),
+        blue_sky: rgb(0x644AC9),
+        blue_soft: rgb(0x644AC9),
+        blue_vivid: rgb(0x644AC9),
+        blue_code: rgb(0x644AC9),
+        selection_bg: rgb(0xDEDCCF),  // spec bg-light
+        surface_panel: rgb(0xFFFBEB), // spec bg
+        surface_qr: rgb(0xEFEDDC),    // spec floating
+        surface_code: rgb(0xDEDCCF),
+        surface_code_alt: rgb(0xCECCC0),
+        ink: rgb(0x1F1F1F),
+        purple_soft: rgb(0x644AC9),
+    },
+};
+
+// ── Monokai classic (dark) ──────────────────────────────────────────────────
+// tomasr/molokai canonical: bg #272822 · fg #F8F8F2 · pink #F92672 ·
+// green #A6E22E · orange #FD971F · cyan #66D9EF · yellow #E6DB74 ·
+// purple #AE81FF · comment #75715E · selection #49483E
+pub static MONOKAI: Theme = Theme {
+    name: "monokai",
+    colors: ThemeColors {
+        accent: rgb(0xFD971F),      // orange
+        accent_teal: rgb(0x66D9EF), // cyan
+        accent_soft: rgb(0xF8F8F2),
+        text_primary: rgb(0xF8F8F2),
+        text_secondary: rgb(0x75715E),
+        text_muted: rgb(0x75715E),
+        text_dim: rgb(0x75715E),
+        gray: rgb(0x75715E),
+        gray_mid: rgb(0x49483E),
+        gray_detail: rgb(0x49483E),
+        gray_dim: rgb(0x49483E),
+        gray_dark: rgb(0x49483E),
+        gray_base: rgb(0x272822),
+        gray_light: rgb(0xF8F8F2),
+        gray_soft: rgb(0x75715E),
+        gray_muted: rgb(0x75715E),
+        success: rgb(0xA6E22E),
+        analytics_green: rgb(0xA6E22E),
+        green_check: rgb(0xA6E22E),
+        error: rgb(0xF92672), // pink
+        error_soft: rgb(0xF92672),
+        error_faded: rgb(0xF92672),
+        warning: rgb(0xE6DB74), // yellow
+        warning_muted: rgb(0xE6DB74),
+        amber_muted: rgb(0xFD971F),
+        teal_vivid: rgb(0x66D9EF),
+        teal_bright: rgb(0x66D9EF),
+        teal_muted: rgb(0x66D9EF),
+        teal_calm: rgb(0x66D9EF),
+        blue_slate: rgb(0x75715E),
+        blue_steel: rgb(0x66D9EF),
+        blue_link: rgb(0x66D9EF),
+        blue_sky: rgb(0x66D9EF),
+        blue_soft: rgb(0x66D9EF),
+        blue_vivid: rgb(0xAE81FF), // purple
+        blue_code: rgb(0xAE81FF),
+        selection_bg: rgb(0x49483E),
+        surface_panel: rgb(0x272822),
+        surface_qr: rgb(0x272822),
+        surface_code: rgb(0x3E3D32),
+        surface_code_alt: rgb(0x3E3D32),
+        ink: rgb(0x272822),
+        purple_soft: rgb(0xAE81FF),
+    },
+};
+
+// ── Catppuccin Mocha (dark) ─────────────────────────────────────────────────
+// https://github.com/catppuccin/palette — semantic roles map 1:1:
+// base #1E1E2E · mantle #181825 · text #CDD6F4 · subtext0 #A6ADC8 ·
+// subtext1 #BAC2DE · overlay0 #6C7086 · overlay1 #7F849C · surface0
+// #313244 · surface1 #45475A · surface2 #585B70 · red #F38BA8 · green
+// #A6E3A1 · yellow #F9E2AF · orange #FAB387 · mauve #CBA6F7 · blue
+// #89B4FA · teal #94E2D5 · red-dim #EBA0AC
+pub static CATPPUCCIN_MOCHA: Theme = Theme {
+    name: "catppuccin-mocha",
+    colors: ThemeColors {
+        accent: rgb(0xFAB387),      // orange
+        accent_teal: rgb(0x94E2D5), // teal
+        accent_soft: rgb(0xCDD6F4), // text
+        text_primary: rgb(0xCDD6F4),
+        text_secondary: rgb(0xBAC2DE), // subtext1
+        text_muted: rgb(0xA6ADC8),     // subtext0
+        text_dim: rgb(0x6C7086),       // overlay0
+        gray: rgb(0xA6ADC8),
+        gray_mid: rgb(0x585B70), // surface2
+        gray_detail: rgb(0x585B70),
+        gray_dim: rgb(0x45475A),  // surface1
+        gray_dark: rgb(0x313244), // surface0
+        gray_base: rgb(0x181825), // mantle
+        gray_light: rgb(0xCDD6F4),
+        gray_soft: rgb(0x7F849C), // overlay1
+        gray_muted: rgb(0x6C7086),
+        success: rgb(0xA6E3A1),
+        analytics_green: rgb(0xA6E3A1),
+        green_check: rgb(0xA6E3A1),
+        error: rgb(0xF38BA8),
+        error_soft: rgb(0xF38BA8),
+        error_faded: rgb(0xEBA0AC), // red-dim
+        warning: rgb(0xF9E2AF),
+        warning_muted: rgb(0xF9E2AF),
+        amber_muted: rgb(0xFAB387),
+        teal_vivid: rgb(0x94E2D5),
+        teal_bright: rgb(0x94E2D5),
+        teal_muted: rgb(0x94E2D5),
+        teal_calm: rgb(0x94E2D5),
+        blue_slate: rgb(0x6C7086),
+        blue_steel: rgb(0x89B4FA),
+        blue_link: rgb(0x89B4FA),
+        blue_sky: rgb(0x89B4FA),
+        blue_soft: rgb(0x89B4FA),
+        blue_vivid: rgb(0xCBA6F7), // mauve
+        blue_code: rgb(0xCBA6F7),
+        selection_bg: rgb(0x45475A),  // surface1
+        surface_panel: rgb(0x1E1E2E), // base
+        surface_qr: rgb(0x181825),    // mantle
+        surface_code: rgb(0x313244),  // surface0
+        surface_code_alt: rgb(0x45475A),
+        ink: rgb(0x1E1E2E),
+        purple_soft: rgb(0xCBA6F7),
+    },
+};
+
+// ── Catppuccin Latte (light) ────────────────────────────────────────────────
+// Same spec, light mode: base #EFF1F5 · mantle #E6E9EF · text #4C4F69 ·
+// subtext0 #6C6F85 · subtext1 #5C5F77 · overlay0 #9CA0B0 · overlay1
+// #8C8FA1 · surface0 #CCD0DA · surface1 #BCC0CC · surface2 #ACADE3 ·
+// red #D20F39 · green #40A02B · yellow #DF8E1D · orange #FE640B · mauve
+// #8839EF · blue #1E66F5 · teal #179299 · red 30% #E64553
+pub static CATPPUCCIN_LATTE: Theme = Theme {
+    name: "catppuccin-latte",
+    colors: ThemeColors {
+        accent: rgb(0xFE640B),      // orange
+        accent_teal: rgb(0x179299), // teal
+        accent_soft: rgb(0x4C4F69),
+        text_primary: rgb(0x4C4F69),
+        text_secondary: rgb(0x5C5F77), // subtext1
+        text_muted: rgb(0x6C6F85),     // subtext0
+        text_dim: rgb(0x9CA0B0),       // overlay0
+        gray: rgb(0x6C6F85),
+        gray_mid: rgb(0xACADE3), // surface2
+        gray_detail: rgb(0xACADE3),
+        gray_dim: rgb(0xBCC0CC),  // surface1
+        gray_dark: rgb(0xCCD0DA), // surface0
+        gray_base: rgb(0xE6E9EF), // mantle
+        gray_light: rgb(0x4C4F69),
+        gray_soft: rgb(0x8C8FA1), // overlay1
+        gray_muted: rgb(0x9CA0B0),
+        success: rgb(0x40A02B),
+        analytics_green: rgb(0x40A02B),
+        green_check: rgb(0x40A02B),
+        error: rgb(0xD20F39),
+        error_soft: rgb(0xD20F39),
+        error_faded: rgb(0xE64553), // red 30% lightened
+        warning: rgb(0xDF8E1D),
+        warning_muted: rgb(0xDF8E1D),
+        amber_muted: rgb(0xFE640B),
+        teal_vivid: rgb(0x179299),
+        teal_bright: rgb(0x179299),
+        teal_muted: rgb(0x179299),
+        teal_calm: rgb(0x179299),
+        blue_slate: rgb(0x9CA0B0),
+        blue_steel: rgb(0x1E66F5),
+        blue_link: rgb(0x1E66F5),
+        blue_sky: rgb(0x1E66F5),
+        blue_soft: rgb(0x1E66F5),
+        blue_vivid: rgb(0x8839EF), // mauve
+        blue_code: rgb(0x8839EF),
+        selection_bg: rgb(0xBCC0CC),  // surface1
+        surface_panel: rgb(0xEFF1F5), // base
+        surface_qr: rgb(0xE6E9EF),    // mantle
+        surface_code: rgb(0xCCD0DA),  // surface0
+        surface_code_alt: rgb(0xBCC0CC),
+        ink: rgb(0x4C4F69),
+        purple_soft: rgb(0x8839EF),
+    },
+};
+
+/// Built-in roster in `/theme list` order. `crab-dark` (from `theme.rs`)
+/// is first because it is the default and byte-identical to pre-S2
+/// colors by construction. The array is `static` so the returned slice
+/// is `'static` — a literal `&[...]` would be a temporary.
+pub fn built_ins() -> &'static [&'static Theme] {
+    static BUILT_INS: [&Theme; 8] = [
+        &super::theme::CRAB_DARK,
+        &DRACULA,
+        &ALUCARD,
+        &MONOKAI,
+        &SOLARIZED_LIGHT,
+        &SOLARIZED_DARK,
+        &CATPPUCCIN_MOCHA,
+        &CATPPUCCIN_LATTE,
+    ];
+    &BUILT_INS
+}
+
+/// Case-insensitive preset lookup by name (what `/theme set` feeds).
+pub fn by_name(name: &str) -> Option<&'static Theme> {
+    let lowered = name.to_ascii_lowercase();
+    built_ins()
+        .iter()
+        .copied()
+        .find(|t| t.name.to_ascii_lowercase() == lowered)
+}
+
+// ── Solarized Light / Dark ──────────────────────────────────────────────────
+// One 16-color spec, two modes: light = bg base3 #FDF6E3 / fg base00
+// #657B83; dark = bg base03 #002B36 / fg base0 #839496. Shared accents:
+// yellow #B58900 · orange #CB4B16 · red #DC322F · green #859900 ·
+// cyan #2AA198 · blue #268BD2 · violet #6C71C4. base2 #EEE8D5 ·
+// base01 #586E75 · base02 #073642.
+pub static SOLARIZED_LIGHT: Theme = Theme {
+    name: "solarized-light",
+    colors: ThemeColors {
+        accent: rgb(0xCB4B16),      // orange
+        accent_teal: rgb(0x2AA198), // cyan
+        accent_soft: rgb(0x657B83),
+        text_primary: rgb(0x657B83),   // base00
+        text_secondary: rgb(0x93A1A1), // base1
+        text_muted: rgb(0x93A1A1),
+        text_dim: rgb(0x93A1A1),
+        gray: rgb(0x93A1A1),
+        gray_mid: rgb(0xEEE8D5), // base2
+        gray_detail: rgb(0xEEE8D5),
+        gray_dim: rgb(0xEEE8D5),
+        gray_dark: rgb(0xEEE8D5),
+        gray_base: rgb(0xEEE8D5),
+        gray_light: rgb(0x073642), // base02: darkest text on light bg
+        gray_soft: rgb(0x586E75),  // base01
+        gray_muted: rgb(0x586E75),
+        success: rgb(0x859900),
+        analytics_green: rgb(0x859900),
+        green_check: rgb(0x859900),
+        error: rgb(0xDC322F),
+        error_soft: rgb(0xDC322F),
+        error_faded: rgb(0xDC322F),
+        warning: rgb(0xB58900), // yellow
+        warning_muted: rgb(0xB58900),
+        amber_muted: rgb(0xB58900),
+        teal_vivid: rgb(0x2AA198),
+        teal_bright: rgb(0x2AA198),
+        teal_muted: rgb(0x2AA198),
+        teal_calm: rgb(0x2AA198),
+        blue_slate: rgb(0x93A1A1),
+        blue_steel: rgb(0x268BD2),
+        blue_link: rgb(0x268BD2),
+        blue_sky: rgb(0x2AA198),
+        blue_soft: rgb(0x268BD2),
+        blue_vivid: rgb(0x6C71C4), // violet
+        blue_code: rgb(0x6C71C4),
+        selection_bg: rgb(0xEEE8D5),  // base2
+        surface_panel: rgb(0xFDF6E3), // base3
+        surface_qr: rgb(0xEEE8D5),
+        surface_code: rgb(0xEEE8D5),
+        surface_code_alt: rgb(0xEEE8D5),
+        ink: rgb(0x073642),
+        purple_soft: rgb(0x6C71C4),
+    },
+};
+
+pub static SOLARIZED_DARK: Theme = Theme {
+    name: "solarized-dark",
+    colors: ThemeColors {
+        accent: rgb(0xCB4B16),
+        accent_teal: rgb(0x2AA198),
+        accent_soft: rgb(0x839496),
+        text_primary: rgb(0x839496),   // base0
+        text_secondary: rgb(0x657B83), // base00
+        text_muted: rgb(0x586E75),     // base01
+        text_dim: rgb(0x586E75),
+        gray: rgb(0x586E75),
+        gray_mid: rgb(0x073642), // base02
+        gray_detail: rgb(0x073642),
+        gray_dim: rgb(0x073642),
+        gray_dark: rgb(0x073642),
+        gray_base: rgb(0x002B36),  // base03
+        gray_light: rgb(0xEEE8D5), // base2: brightest text on dark bg
+        gray_soft: rgb(0x839496),
+        gray_muted: rgb(0x657B83),
+        success: rgb(0x859900),
+        analytics_green: rgb(0x859900),
+        green_check: rgb(0x859900),
+        error: rgb(0xDC322F),
+        error_soft: rgb(0xDC322F),
+        error_faded: rgb(0xDC322F),
+        warning: rgb(0xB58900),
+        warning_muted: rgb(0xB58900),
+        amber_muted: rgb(0xB58900),
+        teal_vivid: rgb(0x2AA198),
+        teal_bright: rgb(0x2AA198),
+        teal_muted: rgb(0x2AA198),
+        teal_calm: rgb(0x2AA198),
+        blue_slate: rgb(0x586E75),
+        blue_steel: rgb(0x268BD2),
+        blue_link: rgb(0x2AA198),
+        blue_sky: rgb(0x2AA198),
+        blue_soft: rgb(0x268BD2),
+        blue_vivid: rgb(0x6C71C4),
+        blue_code: rgb(0x6C71C4),
+        selection_bg: rgb(0x073642),  // base02
+        surface_panel: rgb(0x002B36), // base03
+        surface_qr: rgb(0x002B36),
+        surface_code: rgb(0x073642),
+        surface_code_alt: rgb(0x073642),
+        ink: rgb(0x002B36),
+        purple_soft: rgb(0x6C71C4),
+    },
+};
