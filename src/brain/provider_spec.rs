@@ -38,6 +38,18 @@ impl ProviderKey {
         provider: "execute_provider",
         model: "execute_model",
     };
+    /// One entry of `[providers.fallback] providers`. A fallback provider
+    /// runs on its own `default_model`; there is no per-entry model key.
+    pub const FALLBACK_PROVIDERS: Self = Self {
+        provider: "[providers.fallback] providers",
+        model: "that provider's own default_model",
+    };
+    /// One entry of `[providers.fallback] vision`; the model is the
+    /// provider's `vision_model`.
+    pub const FALLBACK_VISION: Self = Self {
+        provider: "[providers.fallback] vision",
+        model: "that provider's own vision_model",
+    };
 }
 
 /// The provider and optional model a key resolves to, after normalisation.
