@@ -4498,7 +4498,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (7,626 tests, of which 7,554 sit in 746 modules under
+# Run tests (7,639 tests, of which 7,567 sit in 748 modules under
 # src/tests/; 30 slower ones are #[ignore]d to keep the default run fast:
 # profile tests that touch ~/.opencrabs, browser end-to-end tests, and
 # opencode provider tests. Opt in with

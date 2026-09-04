@@ -717,6 +717,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Truncation Join | 15 | `src/tests/truncation_join_test.rs` |
 | Tests — Tts Fallback Chain | 6 | `src/tests/tts_fallback_chain_test.rs` |
 | Tests — TUI App State | 2 | `src/tests/tui_app_state_test.rs` |
+| Tests — Tui Cancel Indicator | 4 | `src/tests/tui_cancel_indicator_test.rs` |
 | Tests — TUI Components Logo | 2 | `src/tests/tui_components_logo_test.rs` |
 | Tests — TUI Drop Path | 4 | `src/tests/tui_drop_path_test.rs` |
 | Tests — TUI Dropped Path | 10 | `src/tests/tui_dropped_path_test.rs` |
