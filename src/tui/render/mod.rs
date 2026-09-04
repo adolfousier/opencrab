@@ -27,8 +27,7 @@ pub(crate) mod skills_dialog;
 // removed with the codemod commit.
 #[allow(dead_code)]
 pub(crate) mod theme;
-// TEMP(#1364): allow(dead_code) until the /theme command and boot apply land.
-#[allow(dead_code)]
+// Boot-apply in tui::runner references presets::by_name at startup.
 pub(crate) mod presets;
 #[cfg(test)]
 mod presets_test;

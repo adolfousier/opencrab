@@ -24,6 +24,7 @@ pub const CONFIG_SECTIONS: &[&str] = &[
     "provider_registry",
     "database",
     "providers",
+    "tui",
 ];
 
 /// Children whose parent section is not guessable from the name alone.

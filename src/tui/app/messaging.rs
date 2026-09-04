@@ -819,6 +819,102 @@ impl App {
                 ));
                 true
             }
+            "/theme" => {
+                use crate::tui::render::presets;
+                use crate::tui::render::theme;
+                let rest = input.split_once(' ').map(|x| x.1.trim()).unwrap_or("");
+                let mut parts = rest.splitn(2, ' ');
+                let sub = parts.next().unwrap_or("");
+                let arg = parts.next().map(str::trim).unwrap_or("");
+                match sub {
+                    "" | "list" | "ls" => {
+                        let active_name = theme::active().name;
+                        let mut lines: Vec<String> = Vec::new();
+                        lines.push("Built-in themes:".to_string());
+                        for t in presets::built_ins() {
+                            let marker = if t.name == active_name { " *" } else { "" };
+                            lines.push(format!("  • {}{}", t.name, marker));
+                        }
+                        // User presets (S3) — listed if the directory exists
+                        let user_dir = crate::config::opencrabs_home().join("themes");
+                        if user_dir.is_dir()
+                            && let Ok(entries) = std::fs::read_dir(&user_dir)
+                        {
+                            let mut names: Vec<String> = entries
+                                .filter_map(|e| e.ok())
+                                .filter(|e| e.path().extension().is_some_and(|ext| ext == "toml"))
+                                .filter_map(|e| {
+                                    e.path()
+                                        .file_stem()
+                                        .map(|s| s.to_string_lossy().into_owned())
+                                })
+                                .collect();
+                            names.sort();
+                            if !names.is_empty() {
+                                lines.push("User presets (~/.opencrabs/themes/):".to_string());
+                                for n in names {
+                                    let marker = if n == active_name { " *" } else { "" };
+                                    lines.push(format!("  • {}{}", n, marker));
+                                }
+                            }
+                        }
+                        lines.push(format!("\nActive: {}", active_name));
+                        lines.push("Use: /theme set <name> · /theme reset".to_string());
+                        self.push_system_message(lines.join("\n"));
+                    }
+                    "set" => {
+                        if arg.is_empty() {
+                            self.push_system_message("Usage: /theme set <name>".to_string());
+                        } else if let Some(t) = presets::by_name(arg) {
+                            theme::set(t);
+                            // Persist to config.toml; ConfigWatcher reload
+                            // re-applies on next boot / config change.
+                            if let Err(e) = crate::config::Config::write_key_string(
+                                "tui",
+                                "theme",
+                                &format!("\"{}\"", t.name),
+                            ) {
+                                self.push_system_message(format!(
+                                    "Applied '{}' (live). Persist failed: {e}",
+                                    t.name
+                                ));
+                            } else {
+                                self.push_system_message(format!(
+                                    "Theme switched to '{}' — applied live and persisted.",
+                                    t.name
+                                ));
+                            }
+                        } else {
+                            self.push_system_message(format!(
+                                "Unknown theme '{}'. Run /theme list for available names.",
+                                arg
+                            ));
+                        }
+                    }
+                    "reset" => {
+                        theme::reset();
+                        // Remove the key so boot falls through to CRAB_DARK.
+                        if let Err(e) =
+                            crate::config::Config::write_key_string("tui", "theme", "\"\"")
+                        {
+                            self.push_system_message(format!(
+                                "Reset to default. Persist failed: {e}"
+                            ));
+                        } else {
+                            self.push_system_message(
+                                "Theme reset to crab-dark (default).".to_string(),
+                            );
+                        }
+                    }
+                    other => {
+                        self.push_system_message(format!(
+                            "Unknown /theme subcommand '{}'. Try: list | set <name> | reset",
+                            other
+                        ));
+                    }
+                }
+                true
+            }
             "/plan" => {
                 if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
                     let query = input

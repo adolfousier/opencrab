@@ -6,12 +6,19 @@
 //! ~/.opencrabs/projects/opencrabs/research (verification receipts).
 
 use super::palette;
-use super::presets::{self, ALUCARD, CATPPUCCIN_LATTE, CATPPUCCIN_MOCHA, DRACULA, MONOKAI, SOLARIZED_DARK, SOLARIZED_LIGHT};
+use super::presets::{
+    self, ALUCARD, CATPPUCCIN_LATTE, CATPPUCCIN_MOCHA, DRACULA, MONOKAI, SOLARIZED_DARK,
+    SOLARIZED_LIGHT,
+};
 use super::theme::{self, Role};
 use ratatui::style::Color;
 
 const fn rgb(hex: u32) -> Color {
-    Color::Rgb(((hex >> 16) & 0xFF) as u8, ((hex >> 8) & 0xFF) as u8, (hex & 0xFF) as u8)
+    Color::Rgb(
+        ((hex >> 16) & 0xFF) as u8,
+        ((hex >> 8) & 0xFF) as u8,
+        (hex & 0xFF) as u8,
+    )
 }
 
 /// crab-dark must be byte-identical to the post-S1 palette: every role
@@ -87,7 +94,11 @@ fn dracula_matches_upstream_spec() {
 #[test]
 fn alucard_matches_upstream_spec() {
     let c = &ALUCARD.colors;
-    assert_eq!(c.surface_panel, rgb(0xFFFBEB), "canonical bg, not the ported #FCF6E3");
+    assert_eq!(
+        c.surface_panel,
+        rgb(0xFFFBEB),
+        "canonical bg, not the ported #FCF6E3"
+    );
     assert_eq!(c.text_primary, rgb(0x1F1F1F), "fg");
     assert_eq!(c.accent, rgb(0xA34D14), "orange");
     assert_eq!(c.error, rgb(0xCB3A2A), "red");

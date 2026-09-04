@@ -94,6 +94,27 @@ pub struct Config {
     /// Self-repair configuration for `/doctor --fix` and the startup sweep
     #[serde(default)]
     pub doctor: DoctorConfig,
+
+    /// TUI (terminal UI) configuration: theme, display preferences.
+    /// Optional — defaults preserve current (crab-dark) rendering.
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+/// TUI (terminal UI) configuration.
+///
+/// ```toml
+/// [tui]
+/// theme = "dracula"   # any built-in or user preset; omit for crab-dark default
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TuiConfig {
+    /// Active theme name. Case-insensitive lookup against built-in presets
+    /// (crab-dark, dracula, alucard, monokai, solarized-light, solarized-dark,
+    /// catppuccin-mocha, catppuccin-latte) and user presets under
+    /// `~/.opencrabs/themes/*.toml`. `None` / empty = crab-dark default.
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 /// Custom deserializer for `[brain.caps]` that accepts both:
@@ -2637,6 +2658,7 @@ impl Default for Config {
                 file: None,
             },
             debug: DebugConfig::default(),
+            tui: TuiConfig::default(),
             providers: ProviderConfigs::default(),
             channels: ChannelsConfig::default(),
             agent: AgentConfig::default(),

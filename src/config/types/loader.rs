@@ -892,6 +892,7 @@ impl Config {
             memory: overlay.memory,
             brain: overlay.brain,
             browser: overlay.browser,
+            tui: overlay.tui,
         }
     }
 
