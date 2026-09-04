@@ -23,6 +23,9 @@ pub struct ProfilesDialogState {
     pub input_buffer: String,
     /// Secondary input buffer (e.g. description for create, destination for migrate).
     pub input_buffer_2: String,
+    /// Inline validation error for the current action (rendered inside the
+    /// dialog — the full-screen takeover hides chat-log system messages, #1381).
+    pub error: Option<String>,
 }
 
 /// Action state for the profiles dialog.
@@ -52,6 +55,7 @@ impl ProfilesDialogState {
         self.action = ProfileAction::None;
         self.input_buffer.clear();
         self.input_buffer_2.clear();
+        self.error = None;
     }
 }
 

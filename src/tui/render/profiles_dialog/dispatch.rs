@@ -192,14 +192,25 @@ fn draw_help_bar(frame: &mut Frame, area: Rect) {
 fn draw_create_flow(frame: &mut Frame, app: &App, area: Rect) {
     let state = &app.profiles_dialog;
     let is_name_step = state.action == ProfileAction::CreateName;
+    let has_error = state.error.is_some();
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let constraints: Vec<Constraint> = if has_error {
+        vec![
+            Constraint::Length(5), // instructions
+            Constraint::Length(3), // input field
+            Constraint::Length(2), // inline error (#1381)
+            Constraint::Min(1),    // padding
+        ]
+    } else {
+        vec![
             Constraint::Length(5), // instructions
             Constraint::Length(3), // input field
             Constraint::Min(1),    // padding
-        ])
+        ]
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(area);
 
     let title_line = Line::from(Span::styled(
@@ -243,6 +254,16 @@ fn draw_create_flow(frame: &mut Frame, app: &App, area: Rect) {
     ]);
     let para = Paragraph::new(line).block(block);
     frame.render_widget(para, chunks[1]);
+
+    // Inline validation error — the full-screen dialog hides chat-log messages (#1381)
+    if let Some(err) = &state.error {
+        let err_line = Line::from(vec![
+            Span::styled(" ✗ ", Style::default().fg(theme::role(Role::Error))),
+            Span::styled(err.clone(), Style::default().fg(theme::role(Role::Error))),
+        ]);
+        let err_para = Paragraph::new(err_line);
+        frame.render_widget(err_para, chunks[2]);
+    }
 }
 
 /// Draw the delete confirmation screen.

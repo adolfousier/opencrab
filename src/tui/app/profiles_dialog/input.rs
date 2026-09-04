@@ -85,7 +85,7 @@ pub fn decide(
     // Action-specific input modes
     match &state.action {
         ProfileAction::CreateName => {
-            return handle_text_input(state, key, ProfileAction::CreateDesc);
+            return handle_create_name(state, profiles, key);
         }
         ProfileAction::CreateDesc => {
             return handle_create_desc(state, key);
@@ -164,6 +164,48 @@ pub fn decide(
         }
 
         _ => KeyOutcome::NotConsumed,
+    }
+}
+
+/// Handle the create-name step with validation on Enter (#1381).
+/// Invalid names stay on this step with an inline error instead of advancing
+/// to the description step where the failure was previously invisible.
+fn handle_create_name(
+    state: &mut ProfilesDialogState,
+    profiles: &[crate::config::profile::ProfileEntry],
+    key: KeyEvent,
+) -> KeyOutcome {
+    match key.code {
+        KeyCode::Enter => {
+            let name = state.input_buffer.trim();
+            if name.is_empty() {
+                return KeyOutcome::Consumed;
+            }
+            // Validate charset + reserved names before advancing (#1381)
+            if let Err(e) = crate::config::profile::validate_profile_name(name) {
+                state.error = Some(e.to_string());
+                return KeyOutcome::Consumed;
+            }
+            // Reject duplicates before advancing (#1381)
+            if profiles.iter().any(|p| p.name == name) {
+                state.error = Some(format!("profile '{}' already exists", name));
+                return KeyOutcome::Consumed;
+            }
+            state.error = None;
+            state.action = ProfileAction::CreateDesc;
+            KeyOutcome::Consumed
+        }
+        KeyCode::Backspace => {
+            state.input_buffer.pop();
+            state.error = None;
+            KeyOutcome::Consumed
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.input_buffer.push(c);
+            state.error = None;
+            KeyOutcome::Consumed
+        }
+        _ => KeyOutcome::Consumed,
     }
 }
 

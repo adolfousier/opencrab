@@ -1227,11 +1227,18 @@ pub fn validate_profile_name(name: &str) -> Result<()> {
     if name.is_empty() || name.len() > 64 {
         bail!("profile name must be 1-64 characters");
     }
-    if !name
+    if let Some((pos, c)) = name
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        .enumerate()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '-' || *c == '_'))
     {
-        bail!("profile name can only contain alphanumeric, hyphens, and underscores");
+        bail!(
+            "profile name can only contain alphanumeric, hyphens, and underscores \
+             (rejected {:?} U+{:04X} at position {})",
+            c,
+            c as u32,
+            pos
+        );
     }
     Ok(())
 }

@@ -1600,3 +1600,47 @@ async fn current_profile_name_follows_the_task_local_scope() {
         "must always return a usable profile name, got empty"
     );
 }
+
+// ── #1381: rejection error names the char, codepoint, and position ─────────
+
+#[test]
+fn invalid_name_error_names_char_codepoint_and_position() {
+    // U+00A0 (no-break space) at position 4 — the classic clipboard stowaway
+    let err = validate_profile_name("some\u{00A0}bot").unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("alphanumeric"), "charset hint present");
+    assert!(msg.contains("U+00A0"), "codepoint named, got: {}", msg);
+    assert!(msg.contains("position 4"), "position named, got: {}", msg);
+    assert!(
+        msg.contains("\u{00A0}") || msg.contains("\\u{a0}") || msg.contains("'\u{00A0}'"),
+        "char shown, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn invalid_name_error_names_zero_width_space() {
+    // U+200B (zero-width space) at position 2
+    let err = validate_profile_name("ab\u{200B}cd").unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("U+200B"), "codepoint named, got: {}", msg);
+    assert!(msg.contains("position 2"), "position named, got: {}", msg);
+}
+
+#[test]
+fn invalid_name_error_names_first_offending_char_only() {
+    // Two bad chars (space at 1, dot at 3); error names the first offender only
+    let err = validate_profile_name("a b.c").unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("position 1"),
+        "first offending position, got: {}",
+        msg
+    );
+    assert!(msg.contains("U+0020"), "space codepoint, got: {}", msg);
+    assert!(
+        !msg.contains("U+002E"),
+        "second offender (dot) not named, got: {}",
+        msg
+    );
+}
