@@ -562,7 +562,11 @@ pub(crate) async fn deliver_final_response(
                                 "text".to_string(),
                                 Some(rich_msg_id.to_string()),
                             )
-                            .with_thread(thread_id_str, None);
+                            .with_thread(thread_id_str, None)
+                            // #91: mark the plane — this row is the legal
+                            // cross-turn glue target (stored markdown IS the
+                            // shipped body; a re-edit re-renders it 1:1).
+                            .with_ship_plane(Some("rich-md".to_string()));
                             if let Err(e) = channel_msg_repo.insert(&cm).await {
                                 tracing::warn!(
                                     "Telegram: rich fallback: failed to record bot reply: {}",

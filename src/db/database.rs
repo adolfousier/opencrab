@@ -164,6 +164,12 @@ pub(crate) fn build_migrations() -> Migrations<'static> {
             // suggest controls — table-bearing answers keep their tables.
             "../migrations/20260904000000_add_pending_followups_host_markdown.sql"
         )),
+        M::up(include_str!(
+            // FORK (#91): ship-plane marker for bot replies — the cross-turn
+            // glue rung targets only rich-markdown bubbles, whose stored
+            // content is the exact shipped body a re-edit can re-send.
+            "../migrations/20260904120000_add_channel_messages_ship_plane.sql"
+        )),
     ])
 }
 
@@ -371,7 +377,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    pub const MIGRATION_COUNT: usize = 39;
+    pub const MIGRATION_COUNT: usize = 40;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {

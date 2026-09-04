@@ -40,8 +40,9 @@ impl ChannelMessageRepository {
                     "INSERT OR IGNORE INTO channel_messages
                         (id, channel, channel_chat_id, channel_chat_name,
                          sender_id, sender_name, content, message_type,
-                         platform_message_id, created_at, thread_id, topic_name)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                         platform_message_id, created_at, thread_id, topic_name,
+                         ship_plane)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         m.id.to_string(),
                         m.channel,
@@ -55,6 +56,7 @@ impl ChannelMessageRepository {
                         m.created_at.timestamp(),
                         m.thread_id,
                         m.topic_name,
+                        m.ship_plane,
                     ],
                 )
             })

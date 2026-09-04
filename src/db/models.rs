@@ -403,6 +403,11 @@ pub struct ChannelMessage {
     pub created_at: DateTime<Utc>,
     pub thread_id: Option<String>,
     pub topic_name: Option<String>,
+    /// Plane the bot shipped this message on (#91): Some("rich-md") marks a
+    /// rich-markdown bubble — the only glue target whose stored content is
+    /// the exact shipped body a re-edit can re-send. NULL = classic or a
+    /// row written before the marker existed.
+    pub ship_plane: Option<String>,
 }
 
 impl ChannelMessage {
@@ -420,6 +425,7 @@ impl ChannelMessage {
             created_at: timestamp_col(row, "created_at")?,
             thread_id: row.get("thread_id").unwrap_or(None),
             topic_name: row.get("topic_name").unwrap_or(None),
+            ship_plane: row.get("ship_plane").unwrap_or(None),
         })
     }
 
@@ -447,6 +453,7 @@ impl ChannelMessage {
             created_at: Utc::now(),
             thread_id: None,
             topic_name: None,
+            ship_plane: None,
         }
     }
 
@@ -454,6 +461,14 @@ impl ChannelMessage {
     pub fn with_thread(mut self, thread_id: Option<String>, topic_name: Option<String>) -> Self {
         self.thread_id = thread_id;
         self.topic_name = topic_name;
+        self
+    }
+
+    /// Mark the plane this bot message shipped on (#91). Only rich-markdown
+    /// sends carry a marker today — it is what makes the row a legal
+    /// cross-turn glue target.
+    pub fn with_ship_plane(mut self, ship_plane: Option<String>) -> Self {
+        self.ship_plane = ship_plane;
         self
     }
 }
