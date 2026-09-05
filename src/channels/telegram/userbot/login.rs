@@ -45,14 +45,24 @@ pub(crate) async fn connect(
     let creds = resolve_creds(cfg)?;
     let path = session_file(cfg);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating session directory {}", parent.display()))?;
     }
     let session = Arc::new(FileSession::load(&path)?);
-    // The session file IS the logged-in account — same belt keys.toml wears.
+    // The session file IS the logged-in account, same belt keys.toml wears.
+    // A failed chmod is not fatal (the file may not exist yet, or the
+    // filesystem may not carry modes) but it must never be silent: an
+    // account session left world-readable is exactly the thing to log.
     #[cfg(unix)]
-    {
+    if path.is_file() {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        if let Err(error) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        {
+            tracing::warn!(
+                path = %path.display(),
+                "Telegram userbot session file could not be set to 0600: {error}"
+            );
+        }
     }
     let SenderPool {
         runner,
@@ -158,18 +168,27 @@ pub(crate) async fn finish(
         })
         .await
         .context("caching self peer")?;
-    if let Ok(tl::enums::updates::State::State(s)) =
-        client.invoke(&tl::functions::updates::GetState {}).await
-    {
-        let _ = session
-            .set_update_state(UpdateState::All(UpdatesState {
-                pts: s.pts,
-                qts: s.qts,
-                date: s.date,
-                seq: s.seq,
-                channels: Vec::new(),
-            }))
-            .await;
+    // Seeding the update state is best effort: without it the watch loop
+    // starts from Telegram's current state on first connect, which loses
+    // nothing for receive-only capture. It still has to say when it fails.
+    match client.invoke(&tl::functions::updates::GetState {}).await {
+        Ok(tl::enums::updates::State::State(s)) => {
+            if let Err(error) = session
+                .set_update_state(UpdateState::All(UpdatesState {
+                    pts: s.pts,
+                    qts: s.qts,
+                    date: s.date,
+                    seq: s.seq,
+                    channels: Vec::new(),
+                }))
+                .await
+            {
+                tracing::warn!("Telegram userbot could not seed update state: {error}");
+            }
+        }
+        Err(error) => {
+            tracing::warn!("Telegram userbot updates.getState failed after login: {error}");
+        }
     }
     Ok(u.first_name.clone().unwrap_or_default())
 }
