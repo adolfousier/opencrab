@@ -72,6 +72,34 @@ impl PendingRequestRepository {
         Ok(())
     }
 
+    /// Prove the table can take a row, so boot can say when it cannot.
+    ///
+    /// Recovery only works if every turn can record itself, and the INSERT
+    /// failing is a per-turn WARN nobody reads while the boot summary keeps
+    /// printing a healthy zero (#1401: three days, ~340 turns, unrecorded).
+    /// A sentinel row is inserted and deleted in one transaction; nothing is
+    /// left behind on either outcome.
+    pub async fn probe(&self) -> Result<()> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(|conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "INSERT INTO pending_requests (id, session_id, user_message, channel, channel_chat_id, origin, status) \
+                     VALUES ('boot-probe', 'boot-probe', '', 'probe', NULL, 'user', 'PROCESSING')",
+                    [],
+                )?;
+                tx.execute("DELETE FROM pending_requests WHERE id = 'boot-probe'", [])?;
+                tx.commit()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("pending_requests cannot record a turn")?;
+        Ok(())
+    }
+
     /// Latest in-flight request for a session, if any. Used by the rebuild
     /// tool to learn WHICH channel/chat asked for the rebuild (the row for
     /// the current turn is alive while the tool runs), so completion and

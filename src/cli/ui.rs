@@ -1192,6 +1192,16 @@ async fn cmd_chat_inner(
     {
         use crate::brain::agent::service::boot_report;
         let pending_repo = crate::db::PendingRequestRepository::new(db.pool().clone());
+        // Say it here, once, loudly: a table that cannot take a row means
+        // nothing in this run survives the next restart, and the scan below
+        // finding zero rows is then not health, it is blindness (#1401).
+        if let Err(e) = pending_repo.probe().await {
+            tracing::warn!(
+                "restart recovery DISABLED for this run: {e:#}. Interrupted turns will not be \
+                 resumed after the next restart."
+            );
+            boot_report::record_tracking_disabled(format!("{e:#}"));
+        }
         match pending_repo.get_interrupted().await {
             Ok(requests) if !requests.is_empty() => {
                 tracing::info!(
