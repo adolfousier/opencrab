@@ -86,7 +86,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Brain Hints | 8 | `src/tests/brain_hints_test.rs` |
 | Tests — Brain Live Rebuild | 5 | `src/tests/brain_live_rebuild_test.rs` |
 | Tests — Brain Project Overlay | 3 | `src/tests/brain_project_overlay_test.rs` |
-| Tests — Brain Prompt Builder | 34 | `src/tests/brain_prompt_builder_test.rs` |
+| Tests — Brain Prompt Builder | 35 | `src/tests/brain_prompt_builder_test.rs` |
 | Tests — Brain Provider Anthropic | 7 | `src/tests/brain_provider_anthropic_test.rs` |
 | Tests — Brain Provider Codex Oauth | 6 | `src/tests/brain_provider_codex_oauth_test.rs` |
 | Tests — Brain Provider Copilot | 8 | `src/tests/brain_provider_copilot_test.rs` |
