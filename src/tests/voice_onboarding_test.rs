@@ -850,30 +850,36 @@ fn tts_local_voice_select_backtab_goes_to_tts_mode() {
 
 #[test]
 fn tts_local_voice_select_tab_advances_step() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
+    // Enter on Continue saves the voice step, so this runs in a temp home
+    // (#1399: it used to rewrite the live config with Off defaults).
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
 
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Tab));
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Tab));
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]
 fn tts_local_voice_enter_when_downloaded_advances() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
-    wizard.tts_voice_downloaded = true;
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
+        wizard.tts_voice_downloaded = true;
 
-    let action = crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(action, WizardAction::None);
-    // Enter on downloaded voice goes to Continue
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
-    // Enter on Continue advances to next step
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        let action = crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(action, WizardAction::None);
+        // Enter on downloaded voice goes to Continue
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
+        // Enter on Continue advances to next step (a save, hence the temp home)
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]

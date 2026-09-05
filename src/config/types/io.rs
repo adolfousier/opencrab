@@ -774,6 +774,11 @@ pub fn atomic_write(path: &std::path::Path, contents: &str) -> std::io::Result<(
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
+    // Every config.toml / keys.toml writer funnels through here, so this is
+    // the one place a test build can be stopped from rewriting the user's
+    // live config (#1399). No-op outside test builds.
+    crate::config::live_home_guard::refuse_live_home_write(path)?;
+
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
     })?;

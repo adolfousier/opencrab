@@ -2698,7 +2698,7 @@ impl Default for Config {
     }
 }
 
-mod io;
+pub(crate) mod io;
 pub use io::*;
 // Private keys helpers used by the loader submodule (sibling of `io`).
 pub(crate) use io::{load_keys_from_file, merge_channel_keys};

@@ -8,6 +8,7 @@ mod current;
 pub(crate) mod flock;
 pub mod guard;
 pub mod health;
+pub(crate) mod live_home_guard;
 pub mod owner;
 pub mod profile;
 pub mod provider_registry;

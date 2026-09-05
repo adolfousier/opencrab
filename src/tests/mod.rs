@@ -183,6 +183,7 @@ pub mod config_alias_merge_test;
 pub mod config_dotted_caps_test;
 pub mod config_guard_test;
 pub mod config_last_good_recovery_test;
+pub mod config_live_home_guard_test;
 pub mod config_load_status_isolation_test;
 pub mod config_memory_external_test;
 pub mod config_owner_seed_migration_test;
