@@ -838,6 +838,7 @@ pub(crate) async fn resume_session_inner(
             options,
             merge_host,
             trailer,
+            Some(channel_msg_repo.clone()), // #91 glue rung, same as handle_message
         )
         .await;
     }
