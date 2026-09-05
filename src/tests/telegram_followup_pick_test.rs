@@ -243,6 +243,8 @@ fn tap_redraw_rich_host_body_has_marked_rows_and_record() {
     assert!(
         body.rfind(CHOICE).unwrap() > body.rfind("</tg-button-row>").unwrap(),
         "record rides after the rows (#39)"
+    );
+}
 
 // ---- #59: stale-shell taps must know the host shape after a #597 clear ----
 //
