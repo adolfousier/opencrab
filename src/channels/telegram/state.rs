@@ -1010,6 +1010,9 @@ impl TelegramState {
                         message_id: MessageId(h.message_id as i32),
                         html: h.html,
                         rich: h.rich,
+                        // Port note (#55): persisted rows predate the glue
+                        // tier; restore as non-glued (pre-glue tap path).
+                        glued: false,
                     });
                     let token = row.token;
                     let entry = PendingFollowupEntry {
