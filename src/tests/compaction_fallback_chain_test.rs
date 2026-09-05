@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::brain::agent::service::AgentService;
+use crate::brain::provider::chain_order::widest_first;
 use crate::brain::provider::error::{should_try_next_provider, with_chain_summary};
 use crate::brain::provider::fallback::substitute_model;
 use crate::brain::provider::{
@@ -52,6 +53,9 @@ struct CountingMock {
     models: Vec<String>,
     /// What `default_model()` answers; the model a substitute runs (#1374).
     default: String,
+    /// What `context_window()` answers; decides the walk order on an
+    /// overflow (#1379). `None` models a provider that publishes no window.
+    window: Option<u32>,
     calls: Arc<AtomicUsize>,
     /// Model string of the last request this mock received.
     last_model: Arc<std::sync::Mutex<Option<String>>>,
@@ -64,6 +68,7 @@ impl CountingMock {
             behaviour,
             models: Vec::new(),
             default: "mock-default".to_string(),
+            window: Some(200_000),
             calls: Arc::new(AtomicUsize::new(0)),
             last_model: Arc::new(std::sync::Mutex::new(None)),
         }
@@ -80,6 +85,11 @@ impl CountingMock {
     /// publishes no default.
     fn with_default(mut self, default: &str) -> Self {
         self.default = default.to_string();
+        self
+    }
+
+    fn with_window(mut self, window: Option<u32>) -> Self {
+        self.window = window;
         self
     }
 
@@ -143,7 +153,7 @@ impl Provider for CountingMock {
     }
 
     fn context_window(&self, _model: &str) -> Option<u32> {
-        Some(200_000)
+        self.window
     }
 
     fn calculate_cost(&self, _model: &str, _input_tokens: u32, _output_tokens: u32) -> f64 {
@@ -329,6 +339,99 @@ async fn context_overflow_on_primary_reaches_the_first_fallback() {
         "refused once, never re-asked"
     );
     assert_eq!(wide_calls.load(Ordering::SeqCst), 1);
+}
+
+/// On an overflow the widest window is asked first, whatever the configured
+/// order says (#1379): the narrow entry configured first would only refuse.
+#[tokio::test]
+async fn an_overflow_walks_the_widest_window_first() {
+    let primary: Arc<dyn Provider> = Arc::new(
+        CountingMock::new("cfc-overflow-primary", Behaviour::TooLong).with_window(Some(200_000)),
+    );
+    let narrow = CountingMock::new("cfc-narrow", Behaviour::Ok).with_window(Some(128_000));
+    let wide = CountingMock::new("cfc-wide", Behaviour::Ok).with_window(Some(1_000_000));
+    let narrow_calls = narrow.call_counter();
+    let wide_calls = wide.call_counter();
+    // Configured narrow first.
+    let chain: Vec<Arc<dyn Provider>> = vec![Arc::new(narrow), Arc::new(wide)];
+
+    let response = AgentService::complete_compaction_request(
+        &primary,
+        &chain,
+        request("mock-default"),
+        &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
+    )
+    .await
+    .expect("the wide fallback summarises");
+
+    assert_eq!(response.id, "cfc-wide-response");
+    assert_eq!(wide_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        narrow_calls.load(Ordering::SeqCst),
+        0,
+        "the narrower entry is not spent before the one that can answer"
+    );
+}
+
+/// Any other failure keeps the configured order: the reorder is for size
+/// only, so this does not widen into a general re-ranking of the chain.
+#[tokio::test]
+async fn a_quota_failure_keeps_the_configured_order() {
+    let primary: Arc<dyn Provider> = Arc::new(CountingMock::new(
+        "cfc-quota-primary",
+        Behaviour::QuotaExhausted,
+    ));
+    let narrow = CountingMock::new("cfc-narrow-first", Behaviour::Ok).with_window(Some(128_000));
+    let wide = CountingMock::new("cfc-wide-second", Behaviour::Ok).with_window(Some(1_000_000));
+    let narrow_calls = narrow.call_counter();
+    let wide_calls = wide.call_counter();
+    let chain: Vec<Arc<dyn Provider>> = vec![Arc::new(narrow), Arc::new(wide)];
+
+    let response = AgentService::complete_compaction_request(
+        &primary,
+        &chain,
+        request("mock-default"),
+        &CancellationToken::new(),
+        ATTEMPT_DEADLINE,
+    )
+    .await
+    .expect("the first configured fallback answers");
+
+    assert_eq!(response.id, "cfc-narrow-first-response");
+    assert_eq!(narrow_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(wide_calls.load(Ordering::SeqCst), 0);
+}
+
+/// The ordering rule on its own: widest first, stable for ties, unknown last.
+#[test]
+fn widest_first_is_stable_and_puts_unknown_windows_last() {
+    let mk = |name: &str, w: Option<u32>| -> Arc<dyn Provider> {
+        Arc::new(CountingMock::new(name, Behaviour::Ok).with_window(w))
+    };
+    let chain = vec![
+        mk("unknown-a", None),
+        mk("small", Some(128_000)),
+        mk("big-first", Some(1_000_000)),
+        mk("mid", Some(200_000)),
+        mk("big-second", Some(1_000_000)),
+        mk("unknown-b", None),
+    ];
+    let names: Vec<String> = widest_first(&chain)
+        .iter()
+        .map(|p| p.name().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "big-first",
+            "big-second",
+            "mid",
+            "small",
+            "unknown-a",
+            "unknown-b"
+        ]
+    );
 }
 
 /// The policy itself, and the property the chat path relies on: an

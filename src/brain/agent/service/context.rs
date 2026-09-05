@@ -495,10 +495,23 @@ impl AgentService {
             provider_error::short_error_reason(&first_err),
         );
 
+        // Size is the one failure where the order matters: a narrower window
+        // than the one that just refused is a refusal spent before the
+        // answer, so an overflow walks widest first (#1379). Everything else
+        // keeps the configured order.
+        let ordered: Vec<Arc<dyn Provider>> = if matches!(
+            first_err,
+            crate::brain::provider::ProviderError::ContextLengthExceeded(_)
+        ) {
+            crate::brain::provider::chain_order::widest_first(fallbacks)
+        } else {
+            fallbacks.to_vec()
+        };
+
         let mut tried: Vec<String> = Vec::new();
         let mut last_err = first_err;
 
-        for fallback in fallbacks {
+        for fallback in &ordered {
             let name = fallback.name().to_string();
             if name == primary_name {
                 continue;
