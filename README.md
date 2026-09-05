@@ -4948,6 +4948,24 @@ Cloud API issues, billing questions, and account problems should be directed to 
 
 ---
 
+## 📌 Versioning and stability
+
+**The command-line interface is the stable surface. The Rust library is not.**
+
+The crate is published on crates.io so the binary can be installed with `cargo install opencrabs`. Its `pub` modules are internals, exposed because the binary and the integration tests need them across module boundaries, not because they are an API to build against.
+
+What the version number covers:
+
+| Covered by semver | Not covered |
+|---|---|
+| CLI commands and their flags | every Rust item in the crate |
+| the `config.toml` format | module paths, type and function signatures |
+| the on-disk layout of `~/.opencrabs/` | anything reachable as `opencrabs::…` |
+
+Any Rust item may be renamed, moved, or removed in any release, including a patch. If you need a stable Rust API, open an issue describing what you are building: carving a supported surface out of these internals is a decision worth making deliberately, and it has not been made.
+
+---
+
 ## 🤝 Contributing
 
 Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
