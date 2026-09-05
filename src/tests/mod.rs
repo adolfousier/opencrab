@@ -208,6 +208,7 @@ pub mod corrupted_tool_call_test;
 pub mod cowork_connect_test;
 pub mod cron_dedup_repair_test;
 pub mod cron_dedup_scan_schedule_test;
+pub mod cron_deliver_to_thread_test;
 pub mod cron_profile_isolation_test;
 pub mod cron_schedule_util_test;
 pub mod cron_scheduler_lock_test;

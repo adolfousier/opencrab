@@ -78,7 +78,7 @@ impl Tool for CronManageTool {
                 },
                 "deliver_to": {
                     "type": "string",
-                    "description": "Where to deliver results. Format: 'telegram:chat_id', 'discord:channel_id', 'slack:channel_id', or an HTTP(S) URL for webhook delivery. On update, pass an empty string to clear delivery."
+                    "description": "Where to deliver results. Format: 'telegram:chat_id', 'telegram:chat_id:thread_id' (opt-in delivery into that forum topic; the chat must be a forum and the topic must exist — invalid thread targets are rejected loudly at fire time, never re-routed to the default topic), 'discord:channel_id', 'slack:channel_id', or an HTTP(S) URL for webhook delivery. On update, pass an empty string to clear delivery."
                 },
                 "deliver_api_key": {
                     "type": "string",
