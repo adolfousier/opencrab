@@ -10,7 +10,7 @@
 //!
 //! Fixtures are synthetic and carry no user identifiers.
 
-use crate::brain::agent::service::nudge::{loop_guard_breadcrumb, variation_directive};
+use crate::brain::agent::service::nudge::variation_directive;
 
 #[test]
 fn it_forbids_reissuing_the_same_call() {
@@ -48,22 +48,4 @@ fn it_offers_completion_as_an_exit() {
     // or the model invents a pointless call to comply.
     let d = variation_directive();
     assert!(d.contains("report completion"), "{d}");
-}
-
-#[test]
-fn the_break_breadcrumb_names_the_call_count_and_window() {
-    // The user must see WHICH call tripped the guard and how hard, or the
-    // breadcrumb reads as a generic apology and teaches nothing.
-    let b = loop_guard_breadcrumb("bash", 4, 8);
-    assert!(b.contains("'bash' recurred 4x in the last 8 steps"), "{b}");
-}
-
-#[test]
-fn the_break_breadcrumb_says_nothing_is_queued_and_how_to_resume() {
-    // The 2026-08-29 incident: the break was silent for half an hour
-    // because nothing said the turn had ended and no work was pending.
-    // Both facts must be visible — nothing queued, and the word to resume.
-    let b = loop_guard_breadcrumb("oc-deploy", 4, 8);
-    assert!(b.contains("Nothing is queued"), "{b}");
-    assert!(b.contains("say the word to resume"), "{b}");
 }

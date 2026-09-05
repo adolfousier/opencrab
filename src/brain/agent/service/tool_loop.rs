@@ -600,13 +600,15 @@ impl AgentService {
                 "announcement_loop",
                 &self.provider_model_for_session(session_id),
             ) {
-                // Chain exhausted: every provider was asked and none emitted
-                // the call. Now the error is the honest answer.
-                break attempt;
+                // Chain exhausted: every provider was asked and each hit the
+                // loop. Now the error is the honest answer, and it says so,
+                // naming the dropped call and that nothing is queued (#1397).
+                break attempt.map_err(|e| super::loop_break::chain_exhausted(e, rotations + 1));
             }
             rotations += 1;
             tracing::warn!(
-                "Loop-detector kill — handing the turn to the next provider                  (rotation {rotations}) instead of dropping it"
+                "Loop-detector kill: handing the turn to the next provider (rotation \
+                 {rotations}) instead of dropping it"
             );
         };
 
@@ -5871,14 +5873,24 @@ impl AgentService {
             if is_modification_tool && recent_tool_calls.len() >= MOD_CONSECUTIVE_BREAK {
                 let last_n = &recent_tool_calls[recent_tool_calls.len() - MOD_CONSECUTIVE_BREAK..];
                 if last_n.iter().all(|call| call == &current_call_signature) {
+                    // Hand the turn to the next provider instead of ending
+                    // it (#1397): the pending call is named so the log and
+                    // the user can see what did not run.
+                    let pending = super::loop_break::describe_pending_calls(&tool_uses);
                     tracing::warn!(
                         "⚠️ Modification tool loop: '{}' repeated {} times with identical \
-                         arguments — breaking loop.",
+                         arguments, dropping the pending call and rotating the chain: {}",
                         current_call_signature,
                         MOD_CONSECUTIVE_BREAK,
+                        pending,
                     );
-                    final_response = Some(response);
-                    break;
+                    return Err(super::loop_break::loop_break_error(
+                        "modification-tool loop",
+                        current_call_signature.split(':').next().unwrap_or("tool"),
+                        MOD_CONSECUTIVE_BREAK,
+                        MOD_CONSECUTIVE_BREAK,
+                        &pending,
+                    ));
                 }
             }
 
@@ -5932,26 +5944,27 @@ impl AgentService {
                         near_match_nudged,
                     ) {
                         RepeatLoopAction::Break => {
+                            // Not the end of the turn (#1397): the raw pending
+                            // call goes in the log and the error, and the
+                            // rotation wrapper replays the turn on the next
+                            // provider. Only an exhausted chain reaches the user.
+                            let pending = super::loop_break::describe_pending_calls(&tool_uses);
                             tracing::warn!(
                                 "⚠️ Near-identical tool-call loop persisted after nudge: '{}' \
-                                 recurred {}x in last {} iterations, breaking loop.",
+                                 recurred {}x in last {} iterations, dropping the pending call \
+                                 and rotating the chain: {}",
                                 normalized_call,
                                 near_in_window,
                                 NEAR_WINDOW,
+                                pending,
                             );
-                            // Loud break (#32): append a user-visible breadcrumb so the turn
-                            // does not end silent — the user sees the guard tripped, nothing
-                            // is queued, and how to resume.
-                            let call_label = normalized_call.split(':').next().unwrap_or("tool");
-                            response.content.push(ContentBlock::Text {
-                                text: crate::brain::agent::service::nudge::loop_guard_breadcrumb(
-                                    call_label,
-                                    near_in_window,
-                                    NEAR_WINDOW,
-                                ),
-                            });
-                            final_response = Some(response);
-                            break;
+                            return Err(super::loop_break::loop_break_error(
+                                "near-identical tool-call loop",
+                                normalized_call.split(':').next().unwrap_or("tool"),
+                                near_in_window,
+                                NEAR_WINDOW,
+                                &pending,
+                            ));
                         }
                         RepeatLoopAction::Nudge => {
                             tracing::warn!(
@@ -6027,25 +6040,25 @@ impl AgentService {
                     identical_call_loop_nudged,
                 ) {
                     RepeatLoopAction::Break => {
+                        // Same shape as the near-match break (#1397): name the
+                        // pending call, rotate the chain, end the turn only
+                        // when no provider is left.
+                        let pending = super::loop_break::describe_pending_calls(&tool_uses);
                         tracing::warn!(
                             "⚠️ Identical-call loop persisted after nudge: '{}' x{} in last {} \
-                             iterations — breaking loop.",
+                             iterations, dropping the pending call and rotating the chain: {}",
                             current_call_signature,
                             repeat_in_window,
                             REPEAT_WINDOW,
+                            pending,
                         );
-                        // Loud break (#32): append a user-visible breadcrumb so the turn
-                        // does not end silent — the user sees the guard tripped, nothing
-                        // is queued, and how to resume.
-                        response.content.push(ContentBlock::Text {
-                            text: crate::brain::agent::service::nudge::loop_guard_breadcrumb(
-                                &tool_label,
-                                repeat_in_window,
-                                REPEAT_WINDOW,
-                            ),
-                        });
-                        final_response = Some(response);
-                        break;
+                        return Err(super::loop_break::loop_break_error(
+                            "identical-call loop",
+                            &tool_label,
+                            repeat_in_window,
+                            REPEAT_WINDOW,
+                            &pending,
+                        ));
                     }
                     RepeatLoopAction::Nudge => {
                         tracing::warn!(
