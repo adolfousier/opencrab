@@ -340,7 +340,9 @@ impl TelegramAgent {
                                                         if let Some(md) = &h.markdown {
                                                             let body =
                                                                 super::suggest_options::strip_button_rows(md);
-                                                            super::rich::api::edit_rich_markdown(
+                                                            // Fence-safe (#98): the strip redraw
+                                                            // must not re-soup a delivered diagram.
+                                                            super::suggest_options::edit_rich_md_fencesafe(
                                                                 bot.api_url().as_str(),
                                                                 bot.token(),
                                                                 msg.chat.id.0,
@@ -351,7 +353,6 @@ impl TelegramAgent {
                                                                 "#59 stale rich strip",
                                                             )
                                                             .await
-                                                            .map_err(|e| e.to_string())
                                                         } else {
                                                             let body = super::suggest_options::
                                                                 strip_button_rows(&h.html);
@@ -538,7 +539,7 @@ impl TelegramAgent {
                                                 let outcome: Result<(), String> = match rewrite.clone() {
                                                     super::suggest_options::PickRewrite::RichMarkdownHost(
                                                         body,
-                                                    ) => super::rich::api::edit_rich_markdown(
+                                                    ) => super::suggest_options::edit_rich_md_fencesafe(
                                                         bot_clone.api_url().as_str(),
                                                         bot_clone.token(),
                                                         chat_id.0,
@@ -548,9 +549,7 @@ impl TelegramAgent {
                                                         "turn",
                                                         "-",
                                                     )
-                                                    .await
-                                                    .map(|_| ())
-                                                    .map_err(|e| e.to_string()),
+                                                    .await,
                                                     super::suggest_options::PickRewrite::RichHost(
                                                         body,
                                                     ) => super::rich::api::edit_rich_html(
@@ -2175,7 +2174,8 @@ async fn refire_pick_edit(
     use teloxide::prelude::Requester;
     match rewrite {
         super::suggest_options::PickRewrite::RichMarkdownHost(body) => {
-            super::rich::api::edit_rich_markdown(
+            // Fence-safe (#98): the redraw must not re-soup a delivered diagram.
+            super::suggest_options::edit_rich_md_fencesafe(
                 bot.api_url().as_str(),
                 bot.token(),
                 chat_id.0,
@@ -2186,7 +2186,6 @@ async fn refire_pick_edit(
                 "-",
             )
             .await
-            .map_err(|e| e.to_string())
         }
         super::suggest_options::PickRewrite::RichHost(body) => super::rich::api::edit_rich_html(
             bot.api_url().as_str(),
