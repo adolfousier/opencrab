@@ -9,7 +9,7 @@
 //! `Config`, whose values in tests depend on the embedded example config.
 
 use crate::channels::telegram::rich::api::{
-    build_body_markdown_media_target, multipart_scalar_fields,
+    build_body_markdown_media_edit, build_body_markdown_media_target, multipart_scalar_fields,
 };
 use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
@@ -433,6 +433,45 @@ fn build_body_markdown_media_target_bytes_entry_uses_attach_reference() {
         .expect("media array");
     assert_eq!(arr[0]["id"], "diag1");
     assert_eq!(arr[0]["media"]["type"], "photo");
+    assert_eq!(arr[0]["media"]["media"], "attach://diag1");
+}
+
+// ---------------------------------------------------------------------------
+// build_body_markdown_media_edit (#98 — same media convention on the edit path)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_body_markdown_media_edit_carries_message_id_and_media() {
+    let media = vec![MediaEntry {
+        id: "diag0".into(),
+        url: Some("https://mermaid.ink/img/abc".into()),
+        bytes: None,
+    }];
+    let body = build_body_markdown_media_edit(-100, 40827, "text", &media);
+    assert_eq!(body["chat_id"], -100);
+    assert_eq!(body["message_id"], 40827);
+    assert_eq!(body["rich_message"]["markdown"], "text");
+    let arr = body["rich_message"]["media"]
+        .as_array()
+        .expect("media array");
+    assert_eq!(arr[0]["id"], "diag0");
+    assert_eq!(arr[0]["media"]["type"], "photo");
+    assert_eq!(arr[0]["media"]["media"], "https://mermaid.ink/img/abc");
+    // No keyboard passed — the key must be absent, not null.
+    assert!(body.get("reply_markup").is_none());
+}
+
+#[test]
+fn build_body_markdown_media_edit_bytes_entry_uses_attach_reference() {
+    let media = vec![MediaEntry {
+        id: "diag1".into(),
+        url: None,
+        bytes: Some(vec![0x89, b'P']),
+    }];
+    let body = build_body_markdown_media_edit(-100, 5, "text", &media);
+    let arr = body["rich_message"]["media"]
+        .as_array()
+        .expect("media array");
     assert_eq!(arr[0]["media"]["media"], "attach://diag1");
 }
 
