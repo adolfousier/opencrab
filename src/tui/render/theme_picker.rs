@@ -16,11 +16,11 @@
 //! every global mutation in one place (`state.rs`'s key handler).
 
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::Frame;
 
 use super::presets;
 use super::theme::{self, Theme};
@@ -74,12 +74,6 @@ impl ThemePickerState {
             origin,
             scroll_offset: 0,
         }
-    }
-
-    fn selected_is_rejected(&self) -> bool {
-        self.items
-            .get(self.selected)
-            .is_some_and(|i| i.theme.is_none())
     }
 
     /// Move toward `step`, skipping rejected rows, clamping at the ends.
@@ -271,6 +265,18 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
     f.render_widget(hints, rows[1]);
 }
 
+/// Fixed-size popup centered in `area`, clamped to fit.
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let x = area.width.saturating_sub(width) / 2;
+    let y = area.height.saturating_sub(height) / 2;
+    Rect {
+        x: area.x + x,
+        y: area.y + y,
+        width: width.min(area.width),
+        height: height.min(area.height),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,17 +430,5 @@ mod tests {
         assert_eq!(s.selected, 3);
         assert!(s.selected >= s.scroll_offset);
         assert!(s.selected < s.scroll_offset + 2);
-    }
-}
-
-/// Fixed-size popup centered in `area`, clamped to fit.
-fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-    let x = area.width.saturating_sub(width) / 2;
-    let y = area.height.saturating_sub(height) / 2;
-    Rect {
-        x: area.x + x,
-        y: area.y + y,
-        width: width.min(area.width),
-        height: height.min(area.height),
     }
 }
