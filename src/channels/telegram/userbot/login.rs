@@ -262,11 +262,7 @@ pub(crate) async fn qr_login(
 /// Phone-code login (fallback when the camera isn't available). The code is
 /// typed here in the terminal — codes pasted into any Telegram chat are
 /// invalidated by Telegram's anti-phishing tripwire.
-pub(crate) async fn code_login(
-    client: Client,
-    _session: Arc<FileSession>,
-    creds: &UserbotCreds,
-) -> Result<String> {
+pub(crate) async fn code_login(client: Client, creds: &UserbotCreds) -> Result<String> {
     let token = client
         .request_login_code(&creds.phone, &creds.api_hash)
         .await
@@ -304,7 +300,7 @@ pub(crate) async fn cmd_userbot_login(config: &Config, use_code: bool) -> Result
         return Ok(());
     }
     let name = if use_code {
-        code_login(client.clone(), session.clone(), &creds).await?
+        code_login(client.clone(), &creds).await?
     } else {
         qr_login(client.clone(), session.clone(), &creds).await?
     };
