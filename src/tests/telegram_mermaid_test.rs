@@ -375,6 +375,18 @@ fn render_cache_never_stores_transient_failures() {
     assert_eq!(cache_get(source), None);
 }
 
+// #100: the raw-markdown fence finder keeps the fence body's trailing
+// newline; the parser's Block::Code.text drops it. Both must share one
+// cache key, or a fence moving between delivery surfaces re-pays the render.
+#[test]
+fn render_cache_key_ignores_trailing_newline() {
+    let base = "graph TD\n    NewlineKeyProbe --> C";
+    let with_newline = format!("{base}\n");
+    let outcome = MermaidResult::ParseError("Parse error on line 1".into());
+    cache_put(with_newline.as_str(), &outcome);
+    assert_eq!(cache_get(base), Some(outcome));
+}
+
 // ---------------------------------------------------------------------------
 // markdown_failure_block
 // ---------------------------------------------------------------------------

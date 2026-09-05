@@ -277,7 +277,12 @@ static RENDER_CACHE: LazyLock<Mutex<HashMap<String, (Instant, MermaidResult)>>> 
 
 /// A fresh cached render outcome for `source`, if any (#37). Expired
 /// entries are swept on every lookup so an idle cache cannot bloat.
+/// #100: the key is normalized — trailing newlines stripped — because the
+/// raw-markdown fence finder keeps the fence body's trailing newline while
+/// the parser's `Block::Code.text` drops it; without this the same diagram
+/// got two keys one byte apart and each delivery surface re-paid the render.
 pub(crate) fn cache_get(source: &str) -> Option<MermaidResult> {
+    let source = source.trim_end_matches('\n');
     let mut cache = RENDER_CACHE.lock().ok()?;
     let now = Instant::now();
     cache.retain(|_, (at, _)| now.duration_since(*at) < Duration::from_secs(RENDER_CACHE_TTL_SECS));
@@ -289,6 +294,7 @@ pub(crate) fn cache_get(source: &str) -> Option<MermaidResult> {
 /// stored; transient failures are skipped so a retryable outage is never
 /// pinned as a stuck failure block. Evicts the oldest entry at the cap.
 pub(crate) fn cache_put(source: &str, outcome: &MermaidResult) {
+    let source = source.trim_end_matches('\n'); // #100: shared normalized key
     if !matches!(
         outcome,
         MermaidResult::ImageBytes(_) | MermaidResult::ParseError(_)
