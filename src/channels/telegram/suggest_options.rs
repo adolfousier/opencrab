@@ -13,7 +13,6 @@ use std::time::Duration;
 use teloxide::payloads::{
     EditMessageReplyMarkupSetters, EditMessageTextSetters, SendMessageSetters,
 };
-use teloxide::prelude::Requester;
 use teloxide::types::{
     ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, ThreadId,
 };
