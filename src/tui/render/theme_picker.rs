@@ -127,8 +127,15 @@ impl ThemePickerState {
         } else {
             return PickerAction::None;
         };
+        let prev = self.selected;
         self.move_selection(step);
         self.scroll_into_view(visible_rows.max(1));
+        if self.selected == prev {
+            // Clamped at a list end: no movement, no preview churn — the
+            // clamp contract the tests below assert
+            // (movement_clamps_at_list_ends).
+            return PickerAction::None;
+        }
         match self.items.get(self.selected).and_then(|i| i.theme) {
             Some(t) => PickerAction::Preview(t),
             None => PickerAction::None,
