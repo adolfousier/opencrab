@@ -278,31 +278,27 @@ impl SessionService {
     /// Write `provider/model` to every non-archived session (#468 scope-all,
     /// shared semantics with the CLI --all path): rows already on the pair
     /// are skipped, archived rows are never touched. Returns how many rows
-    /// changed. Live sessions apply the pair on their next message via the
+    /// changed. Implemented as one bulk UPDATE (#1367) so `updated_at` is
+    /// never stamped — recency ordering and title-suffix lookups survive.
+    /// Live sessions apply the pair on their next message via the
     /// existing sync path.
     pub async fn set_provider_model_all_sessions(
         &self,
         provider: &str,
         model: &str,
     ) -> Result<usize> {
-        use crate::db::repository::SessionListOptions;
-        let sessions = self
-            .list_sessions(SessionListOptions {
-                include_archived: false,
-                ..Default::default()
-            })
-            .await?;
-        let mut updated = 0usize;
-        for mut session in sessions {
-            if session.provider_name.as_deref() == Some(provider)
-                && session.model.as_deref() == Some(model)
-            {
-                continue;
-            }
-            session.provider_name = Some(provider.to_string());
-            session.model = Some(model.to_string());
-            self.update_session(&session).await?;
-            updated += 1;
+        let repo = SessionRepository::new(self.context.pool());
+        let updated = repo
+            .set_provider_model_for_all(provider.to_string(), model.to_string())
+            .await
+            .context("Failed to bulk-set provider/model on sessions")?;
+        if updated > 0 {
+            tracing::info!(
+                updated,
+                provider,
+                model,
+                "scope-all (#468): wrote pair, updated_at preserved (#1367)"
+            );
         }
         Ok(updated)
     }

@@ -185,6 +185,34 @@ impl SessionRepository {
         Ok(())
     }
 
+    /// Bulk-write a `(provider, model)` pair to every non-archived session
+    /// in one statement (#1367). Rows already on the pair are excluded by
+    /// the NULL-safe `IS NOT` predicate, and `updated_at` is never touched,
+    /// so recency ordering in `/sessions` and title-suffix/most-recent
+    /// lookups stays intact. Returns the number of rows changed.
+    pub async fn set_provider_model_for_all(
+        &self,
+        provider: String,
+        model: String,
+    ) -> Result<usize> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE sessions
+                     SET provider_name = ?1, model = ?2
+                     WHERE archived_at IS NULL
+                       AND (provider_name IS NOT ?1 OR model IS NOT ?2)",
+                    params![provider, model],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to bulk-set provider/model")
+    }
+
     /// Delete a session's messages but keep the session row for usage tracking.
     /// The session is archived (soft-deleted) so it no longer appears in the
     /// session list, while usage_ledger joins still resolve its metadata.
