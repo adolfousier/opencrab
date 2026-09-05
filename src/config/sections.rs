@@ -223,7 +223,7 @@ fn suggest(unknown: &str) -> Option<String> {
     let unknown = unknown.to_lowercase();
     CONFIG_SECTIONS
         .iter()
-        .map(|s| (edit_distance(&unknown, s), s.as_str()))
+        .map(|s| (edit_distance(&unknown, s), *s))
         .filter(|(d, _)| *d <= 2)
         .min_by_key(|(d, _)| *d)
         .map(|(_, s)| s.to_string())
