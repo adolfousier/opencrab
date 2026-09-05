@@ -4587,6 +4587,8 @@ cargo clippy -- -D warnings
 | `profiling` | Enable pprof flamegraph profiling (Unix only) |
 | `eval` | Offline + live evaluation harness (compiled automatically under `cfg(test)`; never in a release binary) |
 
+> **What `local-stt` brings with it.** Running voice fully on-device is deliberate, so this stays enabled by default. It pulls `rwhisper`, whose dependency tree is still on `reqwest` 0.11 / `hyper` 0.14 and carries a low-severity `h2` denial-of-service advisory (RUSTSEC-2026-0258) plus five unmaintained or unsound crates. The exposure is bounded: that HTTP client is used only to download Whisper models from Hugging Face over TLS, and the advisory needs a hostile server flooding empty HTTP/2 frames, so it is not reachable from anything a session does. Build with `--no-default-features` and your own feature list to leave it out. Tracked in [#1402](https://github.com/adolfousier/opencrabs/issues/1402), and it clears when rwhisper ships against a `reqwest` on `hyper` 1.x.
+
 ### Evaluation Harness
 
 OpenCrabs ships an **offline-first evaluation harness** (`src/eval/`) that measures how well it does two things that usually break silently: **context engineering** (does the right context survive compaction?) and **memory** (does recall surface the right things?). The whole module is gated behind `cfg(test)` / the `eval` feature, so it never ships in a release binary.

@@ -241,6 +241,12 @@ rwhisper = { version = "0.4", optional = true, features = ["metal", "accelerate"
 winresource = "0.1"
 
 [features]
+# `local-stt` stays in the default set on purpose: running voice fully
+# on-device is a headline capability, not an add-on. It carries the
+# rwhisper tree, which is still on reqwest 0.11 and brings a low-severity
+# h2 advisory (RUSTSEC-2026-0258); the exposure is bounded because that
+# client is used only to download models from Hugging Face. Documented in
+# the README and tracked in #1402.
 default = ["telegram", "whatsapp", "discord", "slack", "trello", "local-stt", "local-tts", "browser", "rtk", "code-graph", "pdfium"]
 # Profiling feature enables pprof on Unix only (no-op on Windows)
 profiling = []

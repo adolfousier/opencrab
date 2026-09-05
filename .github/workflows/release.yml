@@ -224,7 +224,12 @@ jobs:
           CFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-march=armv8-a+crypto' || '' }}
           CXXFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-march=armv8-a+crypto' || '' }}
           AWS_LC_SYS_CMAKE_BUILDER: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-        run: cargo build --locked --release --target ${{ matrix.target }} --all-features
+        # Default features, NOT --all-features. `--all-features` turns on
+        # `eval` and `profiling`, which are development-only: the README
+        # states the eval harness never ships in a release binary, and with
+        # --all-features it always did. The default set is what a
+        # `cargo install` user gets, so releases now match it (#1402).
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Download and bundle RTK 0.40.0
         shell: bash
