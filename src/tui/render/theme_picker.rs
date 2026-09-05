@@ -76,13 +76,6 @@ impl ThemePickerState {
         }
     }
 
-    /// True when the highlighted row is a rejected (non-selectable) theme.
-    /// Reserved for the pending status-line work; kept visible to clippy.
-    #[allow(dead_code)]
-    fn selected_is_rejected(&self) -> bool {
-        self.items.get(self.selected).is_some_and(|i| i.theme.is_none())
-    }
-
     /// Move toward `step`, skipping rejected rows, clamping at the ends.
     fn move_selection(&mut self, step: isize) {
         if self.items.is_empty() {
@@ -136,6 +129,10 @@ impl ThemePickerState {
         };
         let prev = self.selected;
         self.move_selection(step);
+        if self.selected == prev {
+            // Clamped at a list end: nothing moved, so no new preview.
+            return PickerAction::None;
+        }
         self.scroll_into_view(visible_rows.max(1));
         if self.selected == prev {
             // Movement clamped at the list edge (or no valid row in that
@@ -200,7 +197,9 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
     // 46 cols fits `▶ ● solarized-light (user)` comfortably; 3 border rows
     // + 2 hint rows chrome; list rows capped by the roster size.
     let width = 48u16;
-    let height = (state.items.len() as u16 + 6).min(area.height.saturating_sub(4)).max(9);
+    let height = (state.items.len() as u16 + 6)
+        .min(area.height.saturating_sub(4))
+        .max(9);
     let popup = centered_rect(area, width, height);
 
     f.render_widget(Clear, popup);
@@ -227,7 +226,11 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
             let cursor = if idx == state.selected { "▶ " } else { "  " };
             let line = match (&item.theme, &item.reason) {
                 (Some(t), _) => {
-                    let applied = if t.name == state.origin.name { "● " } else { "  " };
+                    let applied = if t.name == state.origin.name {
+                        "● "
+                    } else {
+                        "  "
+                    };
                     let tag = if item.is_user { " (user)" } else { "" };
                     let style = if idx == state.selected {
                         Style::default().fg(theme::role(theme::Role::Accent))
@@ -236,7 +239,10 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
                     } else {
                         Style::default().fg(theme::role(theme::Role::TextPrimary))
                     };
-                    Line::from(Span::styled(format!("{cursor}{applied}{}{tag}", t.name), style))
+                    Line::from(Span::styled(
+                        format!("{cursor}{applied}{}{tag}", t.name),
+                        style,
+                    ))
                 }
                 (None, Some(reason)) => Line::from(Span::styled(
                     format!("  ✗ {reason}"),
@@ -257,8 +263,7 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
     }
     list_state.select(Some(state.selected));
 
-    let list = List::new(items)
-        .style(Style::default().fg(theme::role(theme::Role::TextPrimary)));
+    let list = List::new(items).style(Style::default().fg(theme::role(theme::Role::TextPrimary)));
     // ratatui reads the scroll window back out of the state after rendering,
     // so hand it our per-frame offset through the real offset slot.
     *list_state.offset_mut() = offset;
@@ -342,7 +347,10 @@ mod tests {
     fn navigation_skips_rejected_rows_both_ways() {
         let mut s = fixture();
         s.selected = 1; // dracula; row 2 is rejected
-        expect_preview(s.handle_key(&key(KeyCode::Down), 10), &presets::SOLARIZED_DARK);
+        expect_preview(
+            s.handle_key(&key(KeyCode::Down), 10),
+            &presets::SOLARIZED_DARK,
+        );
         assert_eq!(s.selected, 3);
         expect_preview(s.handle_key(&key(KeyCode::Up), 10), &presets::DRACULA);
         assert_eq!(s.selected, 1);

@@ -19,6 +19,7 @@ use teloxide::types::{
 use uuid::Uuid;
 
 use super::TelegramState;
+use super::edit_retry::{EditErr, classify, classify_str};
 
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
@@ -529,13 +530,13 @@ pub(crate) async fn render_suggestions(
                 send_trailer_bubble(bot, chat_id, thread_id, t).await;
             }
         }
-        Err(PlaceErr::Fatal(e)) => {
+        Err(EditErr::Fatal(e)) => {
             tracing::warn!("Telegram suggest_options: send failed: {e}");
             // The buttons never landed — drop the stash so a stale entry can't
             // swallow an unrelated future tap.
             state.drop_pending_followup(&token).await;
         }
-        Err(PlaceErr::RetryAfter(wait)) => {
+        Err(EditErr::RetryAfter(wait)) => {
             // #30: a 429 here used to drop the stash at once — but BOTH arms
             // die inside the same flood window (the standalone send followed
             // the merge edit by 22ms into the same 41s ban), and the buttons
@@ -589,7 +590,7 @@ pub(crate) async fn render_suggestions(
                             }
                             return;
                         }
-                        Err(PlaceErr::Fatal(e)) => {
+                        Err(EditErr::Fatal(e)) => {
                             tracing::warn!(
                                 "Telegram suggest_options: deferred placement {attempt} \
                                  failed permanently: {e}"
@@ -597,7 +598,7 @@ pub(crate) async fn render_suggestions(
                             state.drop_pending_followup(&token).await;
                             return;
                         }
-                        Err(PlaceErr::RetryAfter(w)) => {
+                        Err(EditErr::RetryAfter(w)) => {
                             tracing::warn!(
                                 "Telegram suggest_options: deferred placement {attempt} hit \
                                  Retry-After {}s again (token {token})",
@@ -631,46 +632,11 @@ struct MergePayload {
     glue: bool,
 }
 
-/// Placement error class (#30): decides whether the stash survives the
-/// failure.
-enum PlaceErr {
-    /// Telegram answered 429 with a Retry-After — the placement may succeed
-    /// once the window passes, so the stash MUST survive the wait.
-    RetryAfter(Duration),
-    /// Anything else: retrying cannot fix it; the stash drops as before.
-    Fatal(String),
-}
-
 /// Deferred placement attempts after a Retry-After, on top of the inline
 /// first pass (#30). Two deferrals cap the chase at roughly two flood
 /// windows while comfortably covering the 31–42s windows observed in the
 /// #30 ledger.
 const MAX_DEFERRED_PLACEMENT_ATTEMPTS: u32 = 2;
-
-/// Wait used when only the rich arm's stringified "(429)" survives — see
-/// [`classify_rich_err`].
-const RICH_429_FALLBACK_WAIT_SECS: u64 = 30;
-
-fn classify_request_err(e: teloxide::RequestError) -> PlaceErr {
-    match e {
-        teloxide::RequestError::RetryAfter(secs) => PlaceErr::RetryAfter(secs.duration()),
-        other => PlaceErr::Fatal(other.to_string()),
-    }
-}
-
-/// The rich arm buries Telegram's exact retry_after inside its own internal
-/// retry loop (`post_rich`) and surfaces only an anyhow string, so
-/// classification keys off the status marker. The wait is a middle-of-the-
-/// road default: the rich path already slept out the true value
-/// RICH_MAX_RETRIES times before bailing, and the observed flood windows
-/// run 31–42s (#30 ledger).
-fn classify_rich_err(e: &str) -> PlaceErr {
-    if e.contains("(429)") {
-        PlaceErr::RetryAfter(Duration::from_secs(RICH_429_FALLBACK_WAIT_SECS))
-    } else {
-        PlaceErr::Fatal(e.to_string())
-    }
-}
 
 /// One placement pass (#30): merge onto the answer bubble when a payload
 /// exists, standalone otherwise. RetryAfter-class errors bubble up so the
@@ -686,7 +652,7 @@ async fn place_once(
     keyboard: &InlineKeyboardMarkup,
     merge: Option<&MergePayload>,
     standalone_body: &str,
-) -> Result<(), PlaceErr> {
+) -> Result<(), EditErr> {
     use teloxide::prelude::Requester;
 
     if let Some(mp) = merge {
@@ -710,14 +676,14 @@ async fn place_once(
                 "-",
             )
             .await
-            .map_err(|e| classify_rich_err(&e.to_string()))
+            .map_err(|e| classify_str(&e.to_string()))
         } else {
             bot.edit_message_text(chat_id, mid, &mp.new_html)
                 .parse_mode(ParseMode::Html)
                 .reply_markup(keyboard.clone())
                 .await
                 .map(|_| ())
-                .map_err(classify_request_err)
+                .map_err(|e| classify(&e))
         };
         match outcome {
             Ok(()) => {
@@ -747,8 +713,8 @@ async fn place_once(
                     .await;
                 return Ok(());
             }
-            Err(PlaceErr::RetryAfter(wait)) => return Err(PlaceErr::RetryAfter(wait)),
-            Err(PlaceErr::Fatal(e)) => {
+            Err(EditErr::RetryAfter(wait)) => return Err(EditErr::RetryAfter(wait)),
+            Err(EditErr::Fatal(e)) => {
                 tracing::warn!(
                     "Telegram suggest_options: merge onto msg {mid} failed ({e}) — standalone fallback"
                 );
@@ -772,7 +738,7 @@ async fn place_once(
             );
             Ok(())
         }
-        Err(e) => Err(classify_request_err(e)),
+        Err(e) => Err(classify(&e)),
     }
 }
 
