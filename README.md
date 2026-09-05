@@ -102,7 +102,7 @@ The docs and the landing at [opencrabs.com](https://opencrabs.com) are available
 - [TOOLS.md](src/docs/reference/templates/TOOLS.md) — tool usage and skills
 - [MEMORY.md](src/docs/reference/templates/MEMORY.md) — long-term memory
 - [CODE.md](src/docs/reference/templates/CODE.md) — coding standards
-- [SECURITY.md](src/docs/reference/templates/SECURITY.md) — security policies
+- [SECURITY.md](src/docs/reference/templates/SECURITY.md) — security policies the agent follows (not the repo's vulnerability-disclosure policy, which is [/SECURITY.md](SECURITY.md))
 - [BOOT.md](src/docs/reference/templates/BOOT.md) — startup and service config
 - [USER.md](src/docs/reference/templates/USER.md) — user profile template
 - [HEARTBEAT.md](src/docs/reference/templates/HEARTBEAT.md) — heartbeat configuration
@@ -4944,6 +4944,12 @@ OpenCrabs is under active development. While functional, it may contain bugs or 
 ### Support
 
 Cloud API issues, billing questions, and account problems should be directed to the respective providers. OpenCrabs provides the tool; you manage your API relationships.
+
+---
+
+## 🔐 Reporting a vulnerability
+
+Security issues go through [GitHub's private vulnerability reporting](https://github.com/adolfousier/opencrabs/security/advisories/new), not a public issue. See [SECURITY.md](SECURITY.md) for what is in scope, what to include, and which dependency advisories are already known and tracked.
 
 ---
 
