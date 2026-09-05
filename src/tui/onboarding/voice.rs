@@ -944,10 +944,6 @@ fn render_radio(lines: &mut Vec<Line<'static>>, focused: bool, selected: bool, l
     ]));
 }
 
-fn mask_if_not_empty(s: &str) -> String {
-    super::key_field::masked(s)
-}
-
 /// Secret input field with stored-key awareness.
 ///
 /// Mirrors the Groq key field's grammar: a stored key (sentinel-seeded
