@@ -123,9 +123,9 @@ zeroize = { version = "1.8", features = ["derive"] }
 # Telegram
 teloxide = { version = "0.17", features = ["macros"], optional = true }
 
-# Telegram userbot (MTProto user session) — grammers, by Telethon's author.
-# Same crate family the spike validated: QR login, 2FA SRP, DC migration,
-# persistent SQLite session (map: ~/.opencrabs/research/telegram-userbot-map.md).
+# Telegram userbot (MTProto user session): grammers, by Telethon's author.
+# Experimental, opt-in via the telegram-userbot feature. QR login, 2FA SRP,
+# DC migration, JSON file session (grammers' SQLite session is not used).
 grammers-client = { version = "0.10", optional = true }
 grammers-session = { version = "0.10", default-features = false, features = ["serde"], optional = true }
 grammers-mtsender = { version = "0.10", optional = true }

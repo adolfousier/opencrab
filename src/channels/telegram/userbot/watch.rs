@@ -20,7 +20,7 @@ pub(crate) async fn spawn(
     let allowed = config.allowed_chats.clone();
     let (client, session, updates, runner) = connect(&config).await?;
     if !client.is_authorized().await? {
-        anyhow::bail!("userbot is not authorized — run `opencrabs channel userbot-login`");
+        anyhow::bail!("userbot is not authorized; run `opencrabs channel userbot-login`");
     }
     let me = client.get_me().await?;
     tracing::info!(

@@ -7,7 +7,7 @@
 //! [`Session`] impl over the same `SessionData`, persisted as serde_json
 //! (tmp + rename, 0600) whenever dirty.
 //!
-//! The file IS the logged-in account — treat it like keys.toml.
+//! The file IS the logged-in account. Treat it like keys.toml.
 
 use std::fmt;
 use std::path::{Path, PathBuf};

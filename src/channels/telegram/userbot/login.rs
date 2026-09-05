@@ -1,7 +1,7 @@
 //! Userbot login flows: QR (default) and phone-code, both with cloud-password
 //! (2FA SRP) completion. Ported from the spike that completed a real login on
 //! 2026-08-19; the grammers 0.10 wiring is verified against vendored source
-//! (docs lag two majors — trust this file and the compiler, not the docs).
+//! (docs lag two majors; trust this file and the compiler, not the docs).
 //!
 //! Grammers 0.10 construction (differs from every published example):
 //!   FileSession::load(path) -> SenderPool::new(session, api_id) ->
@@ -95,7 +95,7 @@ fn render_qr_terminal(token: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Cloud-password (SRP) completion — raw-TL replication of grammers' private
+/// Cloud-password (SRP) completion: raw-TL replication of grammers' private
 /// `check_password`: account.GetPassword -> calculate_2fa -> auth.CheckPassword.
 /// `pass` is collected by the caller, never echoed into logs.
 pub(crate) async fn password_step(
@@ -109,7 +109,7 @@ pub(crate) async fn password_step(
     let algo = pw
         .current_algo
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no current_algo — is a cloud password actually set?"))?;
+        .ok_or_else(|| anyhow::anyhow!("no current_algo; is a cloud password actually set?"))?;
     let tl::types::PasswordKdfAlgoSha256Sha256Pbkdf2Hmacsha512iter100000Sha256ModPow {
         salt1,
         salt2,
@@ -118,7 +118,7 @@ pub(crate) async fn password_step(
     } = match algo {
         tl::enums::PasswordKdfAlgo::Sha256Sha256Pbkdf2Hmacsha512iter100000Sha256ModPow(a) => a,
         tl::enums::PasswordKdfAlgo::Unknown => {
-            anyhow::bail!("unknown KDF algorithm — client outdated?")
+            anyhow::bail!("unknown KDF algorithm; client outdated?")
         }
     };
     let (m1, g_a) = grammers_crypto::two_factor_auth::calculate_2fa(
@@ -144,7 +144,7 @@ pub(crate) async fn password_step(
         .map_err(|e| anyhow::anyhow!("2FA check failed (wrong password?): {e}"))
 }
 
-/// Post-authorization persistence — replicates grammers' private complete_login.
+/// Post-authorization persistence: replicates grammers' private complete_login.
 pub(crate) async fn finish(
     client: &Client,
     session: &Arc<FileSession>,
@@ -243,7 +243,7 @@ pub(crate) async fn qr_poll_once(client: &Client, creds: &UserbotCreds) -> Resul
 
 /// QR login (terminal flavor): render the token in the terminal, poll until
 /// scanned; on SESSION_PASSWORD_NEEDED finish via SRP. No codes, nothing in
-/// any chat — immune to the anti-phishing tripwire that invalidates pasted
+/// any chat, so it is immune to the anti-phishing tripwire that invalidates pasted
 /// codes.
 pub(crate) async fn qr_login(
     client: Client,
@@ -279,7 +279,7 @@ pub(crate) async fn qr_login(
 }
 
 /// Phone-code login (fallback when the camera isn't available). The code is
-/// typed here in the terminal — codes pasted into any Telegram chat are
+/// typed here in the terminal, since codes pasted into any Telegram chat are
 /// invalidated by Telegram's anti-phishing tripwire.
 pub(crate) async fn code_login(client: Client, creds: &UserbotCreds) -> Result<String> {
     let token = client
@@ -330,7 +330,7 @@ pub(crate) async fn cmd_userbot_login(config: &Config, use_code: bool) -> Result
     drop(runner);
     println!("✅ authorized as {name}");
     println!(
-        "The session file grants full account access — treat it like keys.toml.\n\
+        "The session file grants full account access. Treat it like keys.toml.\n\
          Restart opencrabs (or toggle channels.telegram.userbot.enabled) to start the watch loop."
     );
     Ok(())

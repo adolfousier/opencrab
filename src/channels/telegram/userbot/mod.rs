@@ -1,4 +1,4 @@
-//! Telegram userbot — local MTProto authentication and passive capture.
+//! Telegram userbot: local MTProto authentication and passive capture.
 //!
 //! The receive loop persists allowlisted text for `channel_search`. It never
 //! invokes the agent and exposes no outbound-as-user path.
@@ -41,7 +41,7 @@ pub(crate) struct UserbotCreds {
 
 pub(crate) fn resolve_creds(cfg: &TelegramUserbotConfig) -> anyhow::Result<UserbotCreds> {
     let api_id = cfg.api_id.ok_or_else(|| {
-        anyhow::anyhow!("channels.telegram.userbot.api_id missing — get it from my.telegram.org")
+        anyhow::anyhow!("channels.telegram.userbot.api_id missing; get it from my.telegram.org")
     })?;
     let api_id = i32::try_from(api_id)
         .ok()
