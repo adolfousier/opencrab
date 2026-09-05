@@ -5,6 +5,7 @@
 
 pub(crate) mod capture;
 pub(crate) mod login;
+pub(crate) mod runner;
 pub(crate) mod session;
 pub(crate) mod watch;
 

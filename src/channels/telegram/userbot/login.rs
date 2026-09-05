@@ -25,19 +25,22 @@ use grammers_session::Session as _;
 use grammers_session::types::{PeerAuth, PeerInfo, UpdateState, UpdatesState};
 use tokio::sync::mpsc;
 
+use super::runner::AbortOnDrop;
 use super::session::FileSession;
 use super::{UserbotCreds, resolve_creds, session_file};
 use crate::config::types::{Config, TelegramUserbotConfig};
 
 /// Connect a client on the configured session, driving I/O on a background task.
-/// Returns the client, a session handle (for post-auth persistence), and the
-/// update receiver to hand to the watch loop.
+/// Returns the client, a session handle (for post-auth persistence), the
+/// update receiver to hand to the watch loop, and the guard that owns the
+/// connection driver: drop it and the sockets close.
 pub(crate) async fn connect(
     cfg: &TelegramUserbotConfig,
 ) -> Result<(
     Client,
     Arc<FileSession>,
     mpsc::UnboundedReceiver<grammers_session::updates::UpdatesLike>,
+    AbortOnDrop,
 )> {
     let creds = resolve_creds(cfg)?;
     let path = session_file(cfg);
@@ -57,8 +60,8 @@ pub(crate) async fn connect(
         updates,
     } = SenderPool::new(session.clone(), creds.api_id);
     let client = Client::new(handle);
-    tokio::spawn(runner.run());
-    Ok((client, session, updates))
+    let runner = AbortOnDrop::new(tokio::spawn(runner.run()));
+    Ok((client, session, updates, runner))
 }
 
 async fn prompt_password(line: &'static str) -> Result<String> {
@@ -287,13 +290,17 @@ pub(crate) async fn cmd_userbot_login(config: &Config, use_code: bool) -> Result
     let path = session_file(cfg);
     println!("userbot session file: {}", path.display());
 
-    let (client, session, _updates) = connect(cfg).await?;
+    let (client, session, updates, runner) = connect(cfg).await?;
+    // The CLI never consumes updates; the receiver only has to outlive the
+    // pool so the runner does not see a closed channel mid-login.
     if client.is_authorized().await? {
         let me = client.get_me().await?;
         println!(
             "✅ already authorized as {}",
             me.first_name().unwrap_or("?")
         );
+        drop(updates);
+        drop(runner);
         return Ok(());
     }
     let name = if use_code {
@@ -304,6 +311,8 @@ pub(crate) async fn cmd_userbot_login(config: &Config, use_code: bool) -> Result
     // finish() only mutated in-memory state; the CLI exits here, so persist
     // the freshly-earned session NOW or it is lost.
     session.save()?;
+    drop(updates);
+    drop(runner);
     println!("✅ authorized as {name}");
     println!(
         "The session file grants full account access — treat it like keys.toml.\n\

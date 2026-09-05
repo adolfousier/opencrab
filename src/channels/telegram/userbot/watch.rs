@@ -18,7 +18,7 @@ pub(crate) async fn spawn(
     messages: ChannelMessageRepository,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     let allowed = config.allowed_chats.clone();
-    let (client, session, updates) = connect(&config).await?;
+    let (client, session, updates, runner) = connect(&config).await?;
     if !client.is_authorized().await? {
         anyhow::bail!("userbot is not authorized — run `opencrabs channel userbot-login`");
     }
@@ -30,6 +30,10 @@ pub(crate) async fn spawn(
     );
 
     Ok(tokio::spawn(async move {
+        // `runner` moves into this task on purpose: when the manager aborts
+        // the loop, or it breaks on a stream error, the guard drops and the
+        // MTProto connection goes down with it instead of lingering beside
+        // the next pool that reconcile opens on the same session file.
         let mut stream = match client
             .stream_updates(updates, UpdatesConfiguration::default())
             .await
@@ -37,6 +41,7 @@ pub(crate) async fn spawn(
             Ok(stream) => stream,
             Err(error) => {
                 tracing::error!("Telegram userbot stream setup failed: {error}");
+                drop(runner);
                 return;
             }
         };
@@ -80,5 +85,6 @@ pub(crate) async fn spawn(
                 }
             }
         }
+        drop(runner);
     }))
 }
