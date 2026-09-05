@@ -127,7 +127,12 @@ impl ThemePickerState {
         } else {
             return PickerAction::None;
         };
+        let prev = self.selected;
         self.move_selection(step);
+        if self.selected == prev {
+            // Clamped at a list end: nothing moved, so no new preview.
+            return PickerAction::None;
+        }
         self.scroll_into_view(visible_rows.max(1));
         match self.items.get(self.selected).and_then(|i| i.theme) {
             Some(t) => PickerAction::Preview(t),
