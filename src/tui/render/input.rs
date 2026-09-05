@@ -534,10 +534,36 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
             .alignment(Alignment::Right)
         });
 
+    // Transient notice ("Copied to clipboard", "Press Esc again…", an error
+    // toast) on the BOTTOM border, left, sharing the row with the ctx budget
+    // (#1369). It used to be pushed into the chat buffer, which grew the
+    // scroll content by three rows on show and shrank it on expiry, so the
+    // history jumped on every copy. A border title changes no layout.
+    let notice_title =
+        super::notice::pick_notice(app.error_message.as_deref(), app.notification.as_deref())
+            .and_then(|(kind, text)| {
+                let slot = (area.width as usize).saturating_sub(context_title.width() + 2);
+                super::notice::notice_label(text, slot).map(|label| {
+                    let color = match kind {
+                        super::notice::NoticeKind::Error => theme::role(Role::Error),
+                        super::notice::NoticeKind::Info => theme::role(Role::AccentTeal),
+                    };
+                    Line::from(Span::styled(
+                        label,
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ))
+                    .alignment(Alignment::Left)
+                })
+            });
+
     let mut block = Block::default()
         .borders(Borders::TOP | Borders::BOTTOM)
         .title_bottom(context_title)
         .border_style(border_style);
+
+    if let Some(title) = notice_title {
+        block = block.title_bottom(title);
+    }
 
     // Attachments rightmost, background task to their left (#836).
     if !app.attachments.is_empty() {

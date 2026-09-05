@@ -737,6 +737,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — TUI Highlight | 8 | `src/tests/tui_highlight_test.rs` |
 | Tests — TUI Markdown | 9 | `src/tests/tui_markdown_test.rs` |
 | Tests — TUI Plan | 38 | `src/tests/tui_plan_tests_test.rs` |
+| Tests — TUI Notice | 17 | `src/tests/tui_notice_test.rs` |
 | Tests — TUI Process Commands | 3 | `src/tests/tui_process_commands_test.rs` |
 | Tests — TUI Remote Upload | 12 | `src/tests/tui_remote_upload_test.rs` |
 | Tests — TUI Render Clear | 4 | `src/tests/tui_render_clear_test.rs` |

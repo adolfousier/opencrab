@@ -13,6 +13,7 @@ mod frame;
 mod help;
 mod input;
 pub(crate) mod mission_control;
+pub(crate) mod notice;
 pub(crate) mod palette;
 mod panes;
 mod plan_overlay;

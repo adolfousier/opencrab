@@ -114,6 +114,7 @@ use crate::brain::{BrainLoader, CommandLoader, SelfUpdater, UserCommand};
 use crate::db::models::{Message, Session};
 use crate::services::{FileService, MessageService, ServiceContext, SessionService};
 use crate::tui::pane::PaneManager;
+use crate::tui::render::notice::{ERROR_TTL, NOTIFICATION_TTL, notice_expired};
 use crate::utils::prompt_analyzer::PromptAnalyzer;
 use anyhow::Result;
 use ratatui::text::Line;
@@ -2141,12 +2142,19 @@ impl App {
                     wizard.tick_health_check();
                 }
 
-                // Auto-dismiss error/warning messages after 2.5 seconds
-                if let Some(shown_at) = self.error_message_shown_at
-                    && shown_at.elapsed() >= std::time::Duration::from_millis(2500)
-                {
+                // Auto-dismiss the transient notices on the input border
+                // (#1369). Expiry lives here, on the tick, so the renderer
+                // stays a pure read of `App`. Untimestamped errors (runner
+                // failures) are left alone: `notice_expired` is false for
+                // them, as the old `if let Some(shown_at)` guard was.
+                let now = std::time::Instant::now();
+                if notice_expired(self.error_message_shown_at, now, ERROR_TTL) {
                     self.error_message = None;
                     self.error_message_shown_at = None;
+                }
+                if notice_expired(self.notification_shown_at, now, NOTIFICATION_TTL) {
+                    self.notification = None;
+                    self.notification_shown_at = None;
                 }
             }
             TuiEvent::ToolApprovalRequested(request) => {
