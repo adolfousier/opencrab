@@ -499,7 +499,7 @@ impl TelegramAgent {
                                                 // Initialized here (outside the if/else) so it's
                                                 // accessible in the error handling below.
                                                 let mut tap_retry = None;
-                                                
+
                                                 // (the classic merged host used to edit the
                                                 // answer HTML alone and lose the record).
                                                 let outcome: Result<(), String> =
