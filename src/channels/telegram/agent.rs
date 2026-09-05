@@ -493,6 +493,13 @@ impl TelegramAgent {
                                                 // #39: the pick record is baked into the body
                                                 // BEFORE any transport arm runs — one format
                                                 // site, so no arm can drop the choice again
+                                                // #68: capture the rewrite payload so a
+                                                // Retry-After deferral can re-fire a
+                                                // byte-identical edit outside the 429 window.
+                                                // Initialized here (outside the if/else) so it's
+                                                // accessible in the error handling below.
+                                                let mut tap_retry = None;
+                                                
                                                 // (the classic merged host used to edit the
                                                 // answer HTML alone and lose the record).
                                                 let outcome: Result<(), String> =
@@ -543,6 +550,14 @@ impl TelegramAgent {
                                                                 picked,
                                                                 picked_idx,
                                                             );
+                                                        // #68: capture the rewrite payload so a
+                                                        // Retry-After deferral can re-fire a
+                                                        // byte-identical edit outside the 429 window.
+                                                        tap_retry = Some(match &rewrite {
+                                                            super::suggest_options::PickRewrite::RichHost(body) => TapRetry::Rich(chat_id, mid, body.clone(), empty_kb.clone()),
+                                                            super::suggest_options::PickRewrite::ClassicHost(body) => TapRetry::Classic(chat_id, mid, body.clone(), empty_kb.clone()),
+                                                            super::suggest_options::PickRewrite::Standalone(body) => TapRetry::Standalone(chat_id, mid, body.clone()),
+                                                        });
                                                         match rewrite {
                                                     super::suggest_options::PickRewrite::RichHost(
                                                         body,

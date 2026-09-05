@@ -633,6 +633,39 @@ struct MergePayload {
 }
 
 /// Deferred placement attempts after a Retry-After, on top of the inline
+enum PlaceErr {
+    /// Telegram answered 429 with a Retry-After — the placement may succeed
+    /// once the window passes, so the stash MUST survive the wait.
+    RetryAfter(Duration),
+    /// Anything else: retrying cannot fix it; the stash drops as before.
+    Fatal(String),
+}
+
+/// Wait used when only the rich arm's stringified "(429)" survives — see
+/// [`classify_rich_err`].
+const RICH_429_FALLBACK_WAIT_SECS: u64 = 30;
+
+fn classify_request_err(e: teloxide::RequestError) -> PlaceErr {
+    match e {
+        teloxide::RequestError::RetryAfter(secs) => PlaceErr::RetryAfter(secs.duration()),
+        other => PlaceErr::Fatal(other.to_string()),
+    }
+}
+
+/// The rich arm buries Telegram's exact retry_after inside its own internal
+/// retry loop (`post_rich`) and surfaces only an anyhow string, so
+/// classification keys off the status marker. The wait is a middle-of-the-
+/// road default: the rich path already slept out the true value
+/// RICH_MAX_RETRIES times before bailing, and the observed flood windows
+/// run 31–42s (#30 ledger).
+fn classify_rich_err(e: &str) -> PlaceErr {
+    if e.contains("(429)") {
+        PlaceErr::RetryAfter(Duration::from_secs(RICH_429_FALLBACK_WAIT_SECS))
+    } else {
+        PlaceErr::Fatal(e.to_string())
+    }
+}
+
 /// first pass (#30). Two deferrals cap the chase at roughly two flood
 /// windows while comfortably covering the 31–42s windows observed in the
 /// #30 ledger.
