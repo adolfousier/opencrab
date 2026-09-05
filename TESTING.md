@@ -704,6 +704,11 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Tool Group | 65 | `src/tests/telegram_tool_group_test.rs` |
 | Tests — Telegram Topic Listing | 6 | `src/tests/telegram_topic_listing_test.rs` |
 | Tests — Telegram Topic Routing | 3 | `src/tests/telegram_topic_routing_test.rs` |
+| Tests — Telegram Userbot Boundary | 2 | `src/tests/telegram_userbot_boundary_test.rs` |
+| Tests — Telegram Userbot Config | 6 | `src/tests/telegram_userbot_config_test.rs` |
+| Tests — Telegram Userbot Reconcile | 4 | `src/tests/telegram_userbot_reconcile_test.rs` |
+| Tests — Telegram Userbot Runner | 2 | `src/tests/telegram_userbot_runner_test.rs` |
+| Tests — Telegram Userbot Session | 4 | `src/tests/telegram_userbot_session_test.rs` |
 | Tests — Template Governance | 20 | `src/tests/template_governance_test.rs` |
 | Tests — Text Complete | 21 | `src/tests/text_complete_test.rs` |
 | Tests — Thinking Loop Fallback | 5 | `src/tests/thinking_loop_fallback_test.rs` |
