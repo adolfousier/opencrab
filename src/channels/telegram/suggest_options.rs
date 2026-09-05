@@ -105,7 +105,8 @@ pub(crate) enum PickRewrite {
 /// pick record alone.
 pub(crate) fn pick_rewrite(
     host: Option<(&str, bool, Option<&str>)>,
-    picked: String,
+    picked_html: &str,
+    picked_md: &str,
     picked_idx: usize,
 ) -> PickRewrite {
     match host {
@@ -117,20 +118,34 @@ pub(crate) fn pick_rewrite(
                 // the bubble keeps showing what was chosen. `mark_picked_button`
                 // is a byte-level `<tg-button` scan, plane-agnostic — the
                 // same rewrite serves the html and markdown planes.
-                let body = format!("{}\n\n{picked}", mark_picked_button(full, picked_idx));
-                if markdown.is_some() {
-                    PickRewrite::RichMarkdownHost(body)
+                //
+                // #96: each plane must redraw in ITS OWN plane. The md-plane
+                // host's `markdown` column carries the `<tg-button>` rows as
+                // raw widget markup (the only html the rich-markdown renderer
+                // accepts); rewriting the `full` HTML strip-source instead
+                // posts `<p>`/`<b>` tags into the markdown field — Telegram
+                // renders them literally (tag soup). Markdown hosts get
+                // `mark_picked_button(markdown)` + the pick line as plain
+                // markdown; html hosts keep the html rewrite.
+                if let Some(md) = markdown {
+                    PickRewrite::RichMarkdownHost(format!(
+                        "{}\n\n{picked_md}",
+                        mark_picked_button(md, picked_idx)
+                    ))
                 } else {
-                    PickRewrite::RichHost(body)
+                    PickRewrite::RichHost(format!(
+                        "{}\n\n{picked_html}",
+                        mark_picked_button(full, picked_idx)
+                    ))
                 }
             } else {
                 // Classic hosts keep their buttons as reply markup (not in
                 // the body) — the empty-markup arm strips those; nothing to
                 // rewrite here.
-                PickRewrite::ClassicHost(format!("{full}\n\n{picked}"))
+                PickRewrite::ClassicHost(format!("{full}\n\n{picked_html}"))
             }
         }
-        None => PickRewrite::Standalone(picked),
+        None => PickRewrite::Standalone(picked_html.to_string()),
     }
 }
 
@@ -908,6 +923,100 @@ fn classify_rich_err(e: &str) -> PlaceErr {
     }
 }
 
+/// Fence-safe markdown-plane edit (#98): every redraw that re-sends a
+/// rich-md host body must preserve a delivered mermaid diagram. When the
+/// body carries a mermaid fence, resolve it to markdown+media — the send
+/// path's own mechanism (#1044) — and edit via the media-capable rich edit,
+/// so the image re-renders instead of degrading to raw fence text.
+///
+/// - No fence → byte-identical plain `edit_rich_markdown` (no resolve call).
+/// - Fence but empty media (every fence degraded to a failure block) →
+///   plain edit of the resolved body; the failure block is the legible form.
+/// - Media edit rejected with 429 → propagate WITHOUT fallback: retries must
+///   re-send the same body (#30 byte-identity), a fallback body would flip
+///   the plane mid-retry.
+/// - Media edit rejected otherwise → warn + plain edit of the ORIGINAL body,
+///   so the keyboard always lands (diagram degrades to pre-#98 fence text,
+///   never worse than today).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn edit_rich_md_fencesafe(
+    api_url: &str,
+    token: &str,
+    chat_id: i64,
+    message_id: i32,
+    markdown: &str,
+    reply_markup: Option<&serde_json::Value>,
+    origin: &str,
+    origin_detail: &str,
+) -> Result<(), String> {
+    if !super::rich::mermaid::has_mermaid_fence(markdown) {
+        return super::rich::api::edit_rich_markdown(
+            api_url,
+            token,
+            chat_id,
+            message_id,
+            markdown,
+            reply_markup,
+            origin,
+            origin_detail,
+        )
+        .await
+        .map_err(|e| e.to_string());
+    }
+    let (resolved, media) = super::rich::mermaid::resolve_markdown_media(markdown).await;
+    if media.is_empty() {
+        return super::rich::api::edit_rich_markdown(
+            api_url,
+            token,
+            chat_id,
+            message_id,
+            &resolved,
+            reply_markup,
+            origin,
+            origin_detail,
+        )
+        .await
+        .map_err(|e| e.to_string());
+    }
+    match super::rich::api::edit_rich_markdown_media(
+        api_url,
+        token,
+        chat_id,
+        message_id,
+        &resolved,
+        &media,
+        reply_markup,
+        origin,
+        origin_detail,
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let s = e.to_string();
+            if s.contains("(429)") {
+                return Err(s);
+            }
+            tracing::warn!(
+                "Telegram rich edit: media edit rejected ({s}) — plain markdown fallback \
+                 (keyboard lands; fence degrades to text)"
+            );
+            super::rich::api::edit_rich_markdown(
+                api_url,
+                token,
+                chat_id,
+                message_id,
+                markdown,
+                reply_markup,
+                origin,
+                origin_detail,
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
+    }
+}
+
 /// One placement pass (#30): merge onto the answer bubble when a payload
 /// exists, standalone otherwise. RetryAfter-class errors bubble up so the
 /// caller can defer with the stash intact; anything else is Fatal.
@@ -930,7 +1039,9 @@ async fn place_once(
         let outcome: Result<(), PlaceErr> = if let Some(md) = &mp.new_markdown {
             // Markdown-plane host (#79 piece 4): raw markdown + embedded
             // button rows — the server render keeps tables intact (#679).
-            super::rich::api::edit_rich_markdown(
+            // Fence-safe (#98): a delivered mermaid diagram re-renders
+            // instead of degrading to raw fence text.
+            edit_rich_md_fencesafe(
                 bot.api_url().as_str(),
                 bot.token(),
                 chat_id.0,
@@ -941,7 +1052,7 @@ async fn place_once(
                 "-",
             )
             .await
-            .map_err(|e| classify_rich_err(&e.to_string()))
+            .map_err(|e| classify_rich_err(&e))
         } else if mp.rich {
             super::rich::api::edit_rich_html(
                 bot.api_url().as_str(),

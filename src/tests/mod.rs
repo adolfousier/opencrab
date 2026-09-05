@@ -844,3 +844,4 @@ pub mod whatsapp_store_test;
 pub mod word_delete_keybinding_test;
 pub mod write_partial_view_guard_test;
 pub mod zhipu_endpoint_test;
+pub mod boot_classifier_test;

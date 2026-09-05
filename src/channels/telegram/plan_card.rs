@@ -350,10 +350,18 @@ pub(crate) async fn refresh_plan_card(
     let _guard = card_lock.lock().await;
     let (title, checklist) = load_plan_sections(session_id).await;
     let prose = load_plan_prose(session_id).await;
+    // Goal scoping (owner rule 2026-09-03, #84): a completed goal belongs to
+    // the plan it was set under and renders only in the finalize chrome's ✅
+    // card. The live card drops `completed` rows — the row survives in
+    // goal_state after the turn-end judge marks it done, and without this
+    // filter every NEWLY primed plan's card re-rendered the old goal text
+    // (live instance: session 2fae1230, 2026-09-03). The flow path keeps its
+    // own turn-local retained_goal guard for same-turn sighting.
     let goal = if checklist.is_some() {
         load_goal_section(agent, session_id)
             .await
-            .map(|(text, completed)| GoalSection { text, completed })
+            .filter(|&(_, completed)| !completed)
+            .map(|(text, _)| GoalSection { text, completed: false })
     } else {
         None
     };

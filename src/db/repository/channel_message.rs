@@ -398,6 +398,52 @@ impl ChannelMessageRepository {
             .context("Failed to fetch latest topic name")
     }
 
+    /// Sender id of the NEWEST message in one topic (#33 boot classifier).
+    /// `thread_id = None` addresses the General/DM arm (rows stored with a
+    /// NULL thread). The classifier reads this to tell an interrupted turn
+    /// (last word = a user) from a completed one (last word = the bot's own
+    /// outgoing row, `bot:opencrabs` via `send::record_outgoing`).
+    /// `rowid` breaks created_at ties — same-second rows must resolve
+    /// deterministically to the last-inserted one.
+    pub async fn last_topic_sender(
+        &self,
+        channel: &str,
+        chat_id: &str,
+        thread_id: Option<&str>,
+    ) -> Result<Option<String>> {
+        let ch = channel.to_string();
+        let cid = chat_id.to_string();
+        let tid = thread_id.map(|s| s.to_string());
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                if let Some(t) = &tid {
+                    conn.query_row(
+                        "SELECT sender_id FROM channel_messages \
+                         WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id = ?3 \
+                         ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                        params![ch, cid, t],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                } else {
+                    conn.query_row(
+                        "SELECT sender_id FROM channel_messages \
+                         WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id IS NULL \
+                         ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                        params![ch, cid],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                }
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to fetch last topic sender")
+    }
+
     /// Recent user-sent request texts across ALL chats, newest first (#504).
     /// Excludes the bot's own messages (sender_id = 'bot:opencrabs') and
     /// non-text kinds. Feeds the RSI command-pattern detector, which groups
