@@ -134,8 +134,14 @@ impl ThemePickerState {
         } else {
             return PickerAction::None;
         };
+        let prev = self.selected;
         self.move_selection(step);
         self.scroll_into_view(visible_rows.max(1));
+        if self.selected == prev {
+            // Movement clamped at the list edge (or no valid row in that
+            // direction): selection unchanged, no preview re-emit.
+            return PickerAction::None;
+        }
         match self.items.get(self.selected).and_then(|i| i.theme) {
             Some(t) => PickerAction::Preview(t),
             None => PickerAction::None,
