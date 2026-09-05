@@ -268,8 +268,8 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 | **PDF Support** | Attach PDF files by path — native Anthropic PDF support; for other providers, text is extracted locally via `pdf-extract`. **Scanned / image-only PDFs** (no embedded text) are rendered to page images so vision models can read them — this needs **poppler** (`pdftoppm`) on the system: macOS `brew install poppler`, Debian/Ubuntu `apt install poppler-utils`, Fedora `dnf install poppler-utils`. The one-line installer sets this up automatically; without it, the PDF is still saved and its path handed to the agent (text extraction and the `pdf_to_images` tool can be retried once poppler is present) |
 | **Document Parsing** | Built-in `parse_document` tool extracts text from PDF, DOC, DOCX, XLSX, XLSM, XLSB, XLS, ODS, CSV, HTML, TXT, MD, JSON, XML. All native Rust, zero external services: PDF text via `pdf-extract`, legacy Word 97-2003 `.doc` via `rwml`, DOCX/XML via a `quick-xml` streaming walk, spreadsheets (all five Excel/ODS variants) via `calamine`, CSV via `csv`. Scanned/image-only PDFs fall back to page-image rendering for vision models (see **PDF Support** above). Spreadsheet files are parsed into readable table format with sheet headers. Reading legacy binary `.ppt` is out of scope by design |
 | **Document Generation** | Built-in `generate_document` tool creates XLSX (live Excel formulas), DOCX, and PDF natively in Rust with zero host dependencies, plus PPTX via python-pptx when present. Full styling per format: brand colors, page headers/footers with logos and page numbers, zebra tables, frozen headers, autofilters, number formats, PowerPoint brand templates. Image blocks embed PNG/JPEG inline with optional captions in PDF and DOCX. Generated files are delivered as downloadable attachments on Telegram/WhatsApp/Discord. See [Document Generation](#-document-generation) |
-| **Voice (STT)** | Voice notes transcribed via **Groq Whisper API** (`whisper-large-v3-turbo`), any **OpenAI-compatible STT endpoint** (set `stt_base_url` + `stt_model` — works with self-hosted Whisper, Deepgram-compatible proxies, etc.), **Voicebox STT** (self-hosted open-source voice stack — point `voicebox_stt_base_url` at your instance; 2s liveness probe runs before each request so a dead voicebox fails fast), or **Local** whisper.cpp via `whisper-rs` (runs on-device, Tiny 75 MB / Base 142 MB / Small 466 MB / Medium 1.5 GB, zero API cost). All dispatched through a single entry point so every channel gets the same provider priority chain — and an optional `[providers.stt].fallback_chain` lets the user codify "if my local voicebox is down, try Groq, then OpenAI" so transient outages auto-route to the next provider with zero user action. Choose mode in `/onboard:voice`. Included by default |
-| **Voice (TTS)** | Agent replies to voice notes with audio via **OpenAI TTS API** (`gpt-4o-mini-tts`), any **OpenAI-compatible TTS endpoint** (set `tts_base_url` + `tts_model` + `tts_voice` — works with self-hosted Coqui/Bark, ElevenLabs-compatible proxies, etc.), **Voicebox TTS** (async `/generate` → poll `/generate/{id}/status` → fetch audio; set `voicebox_tts_base_url` + `voicebox_tts_profile_id`), or **Local** Piper TTS (runs on-device via Python venv, Ryan / Amy / Lessac / Kristin / Joe / Cori, zero API cost). All outputs normalised to OGG/Opus via `ensure_opus` before delivery — consistent format across every channel regardless of backend. `[providers.tts].fallback_chain` provides the same auto-failover behaviour as the STT side. Falls back to text if disabled |
+| **Voice (STT)** | Voice notes transcribed via **Groq Whisper API** (`whisper-large-v3-turbo`), any **OpenAI-compatible STT endpoint** (set `base_url` + `model` under `[providers.stt.openai_compatible]` — works with self-hosted Whisper, Deepgram-compatible proxies, etc.), **Voicebox STT** (self-hosted open-source voice stack — point the `base_url` of `[providers.stt.voicebox]` at your instance; 2s liveness probe runs before each request so a dead voicebox fails fast), or **Local** whisper.cpp via `whisper-rs` (runs on-device, Tiny 75 MB / Base 142 MB / Small 466 MB / Medium 1.5 GB, zero API cost). All dispatched through a single entry point so every channel gets the same provider priority chain — and an optional `[providers.stt].fallback_chain` lets the user codify "if my local voicebox is down, try Groq, then OpenAI" so transient outages auto-route to the next provider with zero user action. Choose mode in `/onboard:voice`. Included by default |
+| **Voice (TTS)** | Agent replies to voice notes with audio via **OpenAI TTS API** (`gpt-4o-mini-tts`), any **OpenAI-compatible TTS endpoint** (set `base_url` + `model` + `voice` under `[providers.tts.openai_compatible]` — works with self-hosted Coqui/Bark, ElevenLabs-compatible proxies, etc.), **Voicebox TTS** (async `/generate` → poll `/generate/{id}/status` → fetch audio; set the `base_url` + `profile_id` of `[providers.tts.voicebox]`), or **Local** Piper TTS (runs on-device via Python venv, Ryan / Amy / Lessac / Kristin / Joe / Cori, zero API cost). All outputs normalised to OGG/Opus via `ensure_opus` before delivery — consistent format across every channel regardless of backend. `[providers.tts].fallback_chain` provides the same auto-failover behaviour as the STT side. Falls back to text if disabled |
 | **Attachment Indicator** | Attached images show as `[IMG1:filename.png]` in the input title bar |
 | **Image Generation** | Agent generates images via Google Gemini (`gemini-3.1-flash-image-preview` "Nano Banana") using the `generate_image` tool — enabled via `/onboard:image`. Returned as native images/attachments in all channels |
 
@@ -1918,34 +1918,61 @@ In `/onboard:voice`, select **Local** mode, pick a model size, and press Enter t
 | Small | ~466 MB | High accuracy |
 | Medium | ~1.5 GB | Best accuracy |
 
-Config (`config.toml`):
+Config (engine blocks in `config.toml`, API keys in `keys.toml`):
 ```toml
-[voice]
-# Core toggles
-stt_enabled = true
-tts_enabled = true
+# Voice lives in per-engine blocks under [providers.stt] / [providers.tts].
+# There is NO writable [voice] section: the [voice] view printed by
+# `opencrabs config` is derived from these blocks and read-only.
 
-# --- Local mode (whisper.cpp + Piper) ---
-stt_mode = "local"              # "api" (default) or "local"
-local_stt_model = "local-base"  # local-tiny, local-base, local-small, local-medium
-tts_mode = "local"              # "api" (default) or "local"
-local_tts_voice = "ryan"        # ryan, amy, lessac, kristin, joe, cori
+# --- STT: Groq Whisper API ---
+[providers.stt.groq]
+enabled = true
+api_key = "your-groq-key"       # keys.toml
+model   = "whisper-large-v3-turbo"
 
-# --- OpenAI-compatible API mode (any Whisper/Coqui-compatible endpoint) ---
-# STT
-stt_base_url = "https://your-stt-host/v1/audio/transcriptions"
-stt_model    = "whisper-large-v3"
-# TTS
-tts_base_url = "https://your-tts-host/v1/audio/speech"
-tts_model    = "tts-1"
-tts_voice    = "alloy"
+# --- STT: OpenAI-compatible endpoint (self-hosted Whisper, Deepgram proxy, ...) ---
+[providers.stt.openai_compatible]
+enabled  = false
+base_url = "https://your-stt-host/v1/audio/transcriptions"
+model    = "whisper-large-v3"
+api_key  = "your-stt-key"       # keys.toml
 
-# --- Voicebox (self-hosted open-source voice stack) ---
-voicebox_stt_enabled   = false
-voicebox_stt_base_url  = "http://localhost:8000"
-voicebox_tts_enabled   = false
-voicebox_tts_base_url  = "http://localhost:8000"
-voicebox_tts_profile_id = "your-voice-profile-uuid"
+# --- STT: Voicebox (self-hosted open-source voice stack) ---
+[providers.stt.voicebox]
+enabled  = false
+base_url = "http://localhost:8000"
+
+# --- STT: Local whisper.cpp (on-device, no API key) ---
+[providers.stt.local]
+enabled = false
+model   = "local-base"          # local-tiny, local-base, local-small, local-medium
+
+# --- TTS: OpenAI TTS API ---
+[providers.tts.openai]
+enabled = false
+api_key = "your-openai-key"     # keys.toml
+model   = "gpt-4o-mini-tts"
+voice   = "echo"                # alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer
+
+# --- TTS: OpenAI-compatible endpoint (Coqui / Bark / ElevenLabs-compatible proxy) ---
+[providers.tts.openai_compatible]
+enabled  = false
+base_url = "http://localhost:11434"
+model    = "tts-1"
+voice    = "alloy"
+api_key  = "your-tts-key"       # keys.toml
+
+# --- TTS: Voicebox (self-hosted open-source voice stack) ---
+[providers.tts.voicebox]
+enabled    = false
+base_url   = "http://localhost:8000"
+profile_id = "your-voice-profile-uuid"
+engine     = "kokoro"           # kokoro, qwen, qwen_custom_voice
+
+# --- TTS: Local Piper (on-device, no API key) ---
+[providers.tts.local]
+enabled = false
+voice   = "ryan"                # ryan, amy, lessac, kristin, joe, cori
 ```
 
 **Provider priority** (first match wins, enforced in `voice::transcribe` and `voice::synthesize`):
@@ -2055,15 +2082,15 @@ api_key = "your-brave-key"
 api_key = "your-groq-key"
 
 # STT OpenAI-compatible endpoint (any Whisper-compatible server: self-hosted, Deepgram proxy, etc.)
-# Also set stt_base_url = "https://…/v1/audio/transcriptions" and stt_model in [voice] of config.toml
+# Also set base_url and model in this block (in config.toml)
 [providers.stt.openai_compatible]
 api_key = "your-stt-key"
 
 # STT Voicebox (self-hosted open-source voice stack) — no API key required
-# Set voicebox_stt_enabled = true and voicebox_stt_base_url in [voice] of config.toml
+# Set enabled = true and base_url in [providers.stt.voicebox] (in config.toml)
 
 # STT Local mode: no API key needed — runs whisper.cpp on device
-# Set stt_mode = "local" and local_stt_model in config.toml
+# Set enabled = true and model in [providers.stt.local] (in config.toml)
 
 # STT fallback chain — when the active provider fails (5xx, liveness probe
 # error, unreachable), the dispatcher walks this list in order and tries
@@ -2080,15 +2107,15 @@ fallback_chain = ["groq", "openai_compatible", "local"]
 api_key = "your-openai-key"
 
 # TTS OpenAI-compatible endpoint (self-hosted Coqui / Bark / ElevenLabs-compatible proxy)
-# Also set tts_base_url = "https://…/v1/audio/speech" + tts_model + tts_voice in [voice]
+# Also set base_url + model + voice in this block (in config.toml)
 [providers.tts.openai_compatible]
 api_key = "your-tts-key"
 
 # TTS Voicebox (self-hosted) — no API key required
-# Set voicebox_tts_enabled = true, voicebox_tts_base_url, voicebox_tts_profile_id in [voice]
+# Set enabled = true, base_url and profile_id in [providers.tts.voicebox] (in config.toml)
 
 # TTS Local mode: no API key needed — runs Piper TTS on device
-# Set tts_mode = "local" and local_tts_voice in config.toml
+# Set enabled = true and voice in [providers.tts.local] (in config.toml)
 
 # TTS fallback chain — mirror of STT. Labels: "voicebox",
 # "openai_compatible" (alias: "openai-compatible"), "openai",
