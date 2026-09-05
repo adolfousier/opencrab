@@ -193,6 +193,29 @@ pub fn spawn(
                         // config, instead of a once-per-process snapshot.
                         crate::config::save_last_good_config();
                     }
+                    // A voice engine that was on and is now off gets named
+                    // here with the file's mtime (#1399): the owner watched
+                    // voice disable itself for an evening and no line in the
+                    // log said which flag flipped or when the file changed.
+                    let switched_off = crate::config::voice_flag_flips::voice_flags_switched_off(
+                        &Config::current(),
+                        &new_config,
+                    );
+                    if !switched_off.is_empty() {
+                        let path = base.join("config.toml");
+                        let modified = std::fs::metadata(&path)
+                            .and_then(|m| m.modified())
+                            .map(|t| format!("{:?}", t))
+                            .unwrap_or_else(|e| format!("unknown ({e})"));
+                        tracing::warn!(
+                            "ConfigWatcher: voice switched OFF by this reload of {} (mtime {}): {}. \
+                             No per-key writer logged it, so the change came from a wholesale \
+                             rewrite or another process.",
+                            path.display(),
+                            modified,
+                            switched_off.join(", ")
+                        );
+                    }
                     // Refresh the in-memory mirror so Config::current() readers
                     // see the new values without touching disk.
                     Config::set_current(new_config.clone());

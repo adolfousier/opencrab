@@ -840,6 +840,7 @@ pub mod turn_duration_test;
 pub mod turn_ranges_test;
 pub mod voice_chain_test;
 pub mod voice_config_derivation_test;
+pub mod voice_flag_flips_test;
 #[cfg(feature = "local-tts")]
 pub mod voice_local_tts_test;
 #[cfg(feature = "local-stt")]

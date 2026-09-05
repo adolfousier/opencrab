@@ -118,6 +118,14 @@ pub(crate) fn migrate_file(path: &std::path::Path) -> std::io::Result<Vec<&'stat
     }
 
     if !renamed.is_empty() {
+        // Wholesale rewrite: say so, with the keys, like the per-key writer
+        // does (#1399). A config change nobody can find in the log is a
+        // config change nobody can audit.
+        tracing::info!(
+            "alias_merge: rewrote {} to rename legacy sections: {}",
+            path.display(),
+            renamed.join(", ")
+        );
         std::fs::write(path, doc.to_string())?;
     }
     Ok(renamed)

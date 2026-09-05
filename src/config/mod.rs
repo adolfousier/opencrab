@@ -20,6 +20,7 @@ pub mod startup_checks;
 pub mod stored_key;
 pub(crate) mod types;
 pub mod update;
+pub mod voice_flag_flips;
 
 pub use provider_registry::{ProviderRegistry, ProviderRegistryConfig};
 pub use registry_client::{Model, Provider, RegistryClient};

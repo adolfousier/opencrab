@@ -765,7 +765,10 @@ impl Config {
 
         Self::backup_config(path, 7);
         if crate::config::types::io::atomic_write(path, &edit_doc.to_string()).is_ok() {
-            tracing::info!("Config migrated (structural changes written)");
+            tracing::info!(
+                "Config migrated: rewrote {} (structural changes written)",
+                path.display()
+            );
         }
 
         // Migration 3: inject subagent defaults after structural migration
