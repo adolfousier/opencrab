@@ -193,6 +193,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Config Alias Merge | 14 | `src/tests/config_alias_merge_test.rs` |
 | Tests — Config Dotted Caps | 6 | `src/tests/config_dotted_caps_test.rs` |
 | Tests — Config Guard | 5 | `src/tests/config_guard_test.rs` |
+| Tests — Config Live Home Guard | 5 | `src/tests/config_live_home_guard_test.rs` |
 | Tests — Config Last Good Recovery | 3 | `src/tests/config_last_good_recovery_test.rs` |
 | Tests — Config Load Status Isolation | 4 | `src/tests/config_load_status_isolation_test.rs` |
 | Tests — Config Memory External | 7 | `src/tests/config_memory_external_test.rs` |
@@ -204,6 +205,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Config Section Resolve | 7 | `src/tests/config_section_resolve_test.rs` |
 | Tests — Config Types Loader | 25 | `src/tests/config_types_loader_test.rs` |
 | Tests — Config Update | 4 | `src/tests/config_update_test.rs` |
+| Tests — Config Voice Migration | 5 | `src/tests/config_voice_migration_test.rs` |
 | Tests — Config Watcher | 5 | `src/tests/config_watcher_test.rs` |
 | Tests — Config Write Path | 5 | `src/tests/config_write_path_test.rs` |
 | Tests — Content Vectors Heal | 3 | `src/tests/content_vectors_heal_test.rs` |
@@ -612,7 +614,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Streaming Active Secs | 2 | `src/tests/streaming_active_secs_test.rs` |
 | Tests — Streaming Tok Per Sec Guard | 10 | `src/tests/streaming_tok_per_sec_guard_test.rs` |
 | Tests — Streaming Tps Accumulator | 12 | `src/tests/streaming_tps_accumulator_test.rs` |
-| Tests — Stt Fallback Chain | 6 | `src/tests/stt_fallback_chain_test.rs` |
+| Tests — Stt Fallback Chain | 10 | `src/tests/stt_fallback_chain_test.rs` |
 | Tests — Subagent Compaction Preamble | 7 | `src/tests/subagent_compaction_preamble_test.rs` |
 | Tests — Subagent Natural Completion | 3 | `src/tests/subagent_natural_completion_test.rs` |
 | Tests — Subagent Notify | 15 | `src/tests/subagent_notify_test.rs` |
@@ -732,7 +734,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Transport Ready | 7 | `src/tests/transport_ready_test.rs` |
 | Tests — Truncation Join | 15 | `src/tests/truncation_join_test.rs` |
 | Tests — Truncation | 13 | `src/tests/truncation_test.rs` |
-| Tests — Tts Fallback Chain | 6 | `src/tests/tts_fallback_chain_test.rs` |
+| Tests — Tts Fallback Chain | 11 | `src/tests/tts_fallback_chain_test.rs` |
 | Tests — TUI App State | 2 | `src/tests/tui_app_state_test.rs` |
 | Tests — Tui Cancel Indicator | 4 | `src/tests/tui_cancel_indicator_test.rs` |
 | Tests — TUI Components Logo | 2 | `src/tests/tui_components_logo_test.rs` |
@@ -772,9 +774,12 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Utils String | 26 | `src/tests/utils_string_test.rs` |
 | Tests — Variation Directive | 4 | `src/tests/variation_directive_test.rs` |
 | Tests — Vba Modules | 10 | `src/tests/vba_modules_test.rs` |
+| Tests — Voice Chain | 7 | `src/tests/voice_chain_test.rs` |
+| Tests — Voice Config Derivation | 7 | `src/tests/voice_config_derivation_test.rs` |
+| Tests — Voice Flag Flips | 4 | `src/tests/voice_flag_flips_test.rs` |
 | Tests — Voice Local Tts | 9 | `src/tests/voice_local_tts_test.rs` |
 | Tests — Voice Local Whisper | 25 | `src/tests/voice_local_whisper_test.rs` |
-| Tests — Voice Onboarding | 65 | `src/tests/voice_onboarding_test.rs` |
+| Tests — Voice Onboarding | 67 | `src/tests/voice_onboarding_test.rs` |
 | Tests — Voice Openai Compatible | 12 | `src/tests/voice_openai_compatible_test.rs` |
 | Tests — Voice Service | 14 | `src/tests/voice_service_test.rs` |
 | Tests — Voice Stt Dispatch | 21 | `src/tests/voice_stt_dispatch_test.rs` |
