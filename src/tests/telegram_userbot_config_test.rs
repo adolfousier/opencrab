@@ -102,6 +102,21 @@ fn empty_keys_secrets_do_not_clobber_config_values() {
 }
 
 #[test]
+fn placeholder_api_id_zero_in_keys_does_not_shadow_config_value() {
+    // keys.toml.example ships `api_id = 0`; left in place it used to win
+    // over a real config.toml api_id and then fail credential validation.
+    let mut base = base_channels();
+    base.telegram.userbot = TelegramUserbotConfig {
+        enabled: true,
+        api_id: Some(25_625_345),
+        ..Default::default()
+    };
+    let keys = channels_from_toml("[telegram.userbot]\napi_id = 0\n");
+    let merged = crate::config::merge_channel_keys(base, keys);
+    assert_eq!(merged.telegram.userbot.api_id, Some(25_625_345));
+}
+
+#[test]
 fn sentinel_api_hash_resolves_to_real_key() {
     // A key typed after the #1075 seed marker must surface as the typed key,
     // not the marker; the bare marker means "keep what's on disk" (None here).

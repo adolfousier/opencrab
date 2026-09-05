@@ -704,8 +704,12 @@ pub(crate) fn merge_channel_keys(mut base: ChannelsConfig, keys: ChannelsConfig)
         base.telegram.userbot.api_hash =
             crate::config::stored_key::real_key(ub).map(str::to_string);
     }
-    if keys.telegram.userbot.api_id.is_some() {
-        base.telegram.userbot.api_id = keys.telegram.userbot.api_id;
+    // keys.toml.example ships `api_id = 0` as a placeholder; a zero is not
+    // a credential and must not shadow a real api_id set in config.toml.
+    if let Some(api_id) = keys.telegram.userbot.api_id
+        && api_id != 0
+    {
+        base.telegram.userbot.api_id = Some(api_id);
     }
     if keys
         .telegram
