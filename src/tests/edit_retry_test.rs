@@ -59,7 +59,7 @@ async fn classify_reads_typed_teloxide_retry_after() {
         .expect(1)
         .create_async()
         .await;
-    let bot = Bot::with_client("TESTTOKEN", reqwest::Client::builder().build().unwrap())
+    let bot = Bot::with_client("TESTTOKEN", reqwest_teloxide::Client::builder().build().unwrap())
         .set_api_url(server.url().parse().unwrap());
 
     let err = bot
@@ -105,7 +105,7 @@ async fn best_effort_note_defers_one_retry_past_the_429_window() {
         .expect(1)
         .create_async()
         .await;
-    let bot = Bot::with_client("TESTTOKEN", reqwest::Client::builder().build().unwrap())
+    let bot = Bot::with_client("TESTTOKEN", reqwest_teloxide::Client::builder().build().unwrap())
         .set_api_url(server.url().parse().unwrap());
 
     best_effort_note(

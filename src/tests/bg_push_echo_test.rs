@@ -6,7 +6,7 @@
 
 use crate::brain::agent::BgTaskMeta;
 use crate::channels::telegram::resume::{
-    BubbleWire, NotifySender, background_task_title, build_bg_echo_bubble, build_bg_receipt_card,
+    NotifySender, background_task_title, build_bg_echo_bubble, build_bg_receipt_card,
     build_notify_receipt_card, split_bg_echo_parts, split_notify_header, strip_system_framing,
 };
 use uuid::Uuid;
@@ -109,10 +109,7 @@ fn absent_framing_passes_through_untouched() {
 
 #[test]
 fn bubble_wraps_in_blockquote_with_bold_header() {
-    let (wire, html) = build_bg_echo_bubble("some output", "📨 Ops / Push to session");
-    let BubbleWire::Markdown(markdown) = &wire else {
-        panic!("plain echo bubble rides the markdown outbox wire");
-    };
+    let (markdown, html) = build_bg_echo_bubble("some output", "📨 Ops / Push to session");
     assert!(markdown.contains("📨 Ops / Push to session"));
     assert!(markdown.contains("some output"));
     assert!(html.starts_with("<blockquote expandable>"));
@@ -130,10 +127,7 @@ fn background_task_title_is_preserved() {
 #[test]
 fn rich_markdown_keeps_fences() {
     let ctx = "# Heading\n```rust\nfn main() {}\n```";
-    let (wire, _) = build_bg_echo_bubble(ctx, "📨 Team");
-    let BubbleWire::Markdown(markdown) = wire else {
-        panic!("plain echo bubble rides the markdown outbox wire");
-    };
+    let (markdown, _) = build_bg_echo_bubble(ctx, "📨 Team");
     assert!(markdown.contains("```rust"));
     assert!(markdown.contains("# Heading"));
 }
@@ -141,10 +135,7 @@ fn rich_markdown_keeps_fences() {
 #[test]
 fn long_output_is_truncated_before_conversion_and_stays_wellformed() {
     let big = format!("{{}}\n{}", "y".repeat(10_000));
-    let (wire, html) = build_bg_echo_bubble(&big, "⚙️ background task result");
-    let BubbleWire::Markdown(markdown) = &wire else {
-        panic!("plain echo bubble rides the markdown outbox wire");
-    };
+    let (markdown, html) = build_bg_echo_bubble(&big, "⚙️ background task result");
     assert!(markdown.contains("(truncated)"));
     assert!(html.contains("(truncated)"));
     // Truncating raw text first means the wrapper tags can never be cut:
@@ -187,10 +178,7 @@ fn html_fallback_escapes_dynamic_title() {
 
 #[test]
 fn bubble_md_and_classic_stay_separate() {
-    let (wire, classic) = build_bg_echo_bubble("body", "T");
-    let BubbleWire::Markdown(md) = wire else {
-        panic!("plain echo bubble rides the markdown outbox wire");
-    };
+    let (md, classic) = build_bg_echo_bubble("body", "T");
     assert!(
         classic.contains("blockquote expandable"),
         "fallback stays classic-dialect"
@@ -214,29 +202,24 @@ fn meta(success: bool, label: &str, secs: f32, tail: &str) -> BgTaskMeta {
 
 #[test]
 fn bg_receipt_card_matches_the_locked_p3f_shape() {
-    let (wire, classic) = build_bg_receipt_card(&meta(
+    let (md, classic) = build_bg_receipt_card(&meta(
         true,
         "gh run watch 33117665576",
         1646.0,
         "line one\nline two",
     ));
-    let BubbleWire::Html(rich) = &wire else {
-        panic!("chrome card rides the HTML rich wire (#85)");
-    };
     assert!(
-        rich.starts_with(
-            "<details><summary><sub>✅ <code>gh run watch 33117665576</code> 🕒 27m 26s</sub></summary>"
+        md.starts_with(
+            "<details>\n<summary><sub>✅ `gh run watch 33117665576` 🕒 27m 26s</sub></summary>"
         ),
-        "summary = icon + monospace roster label + clock + duration, whole line subbed: {rich}"
+        "summary = icon + monospace roster label + clock + duration, whole line subbed: {md}"
     );
     assert!(
-        rich.contains("<pre>line one\nline two</pre>"),
-        "body is ONE pre block with the tail verbatim: {rich}"
+        md.contains("```\nline one\nline two\n```"),
+        "body is ONE fenced block with the tail verbatim"
     );
-    assert!(rich.ends_with("</details>"));
-    assert!(!rich.contains("exit"), "no exit code / wording in the bubble");
-    // Collapsed by default — never emit <details open> (#85 locked rule).
-    assert!(!rich.contains("<details open"), "collapsible ships collapsed");
+    assert!(md.ends_with("</details>"));
+    assert!(!md.contains("exit"), "no exit code / wording in the bubble");
     // Degraded path stays a classic blockquote carrying the same content.
     assert!(classic.starts_with("<blockquote expandable>"));
     assert!(classic.contains("gh run watch 33117665576"));
@@ -245,213 +228,97 @@ fn bg_receipt_card_matches_the_locked_p3f_shape() {
 
 #[test]
 fn bg_receipt_card_failure_uses_the_cross_icon() {
-    let (wire, _) = build_bg_receipt_card(&meta(false, "cargo test", 3.0, "boom"));
-    let BubbleWire::Html(rich) = wire else {
-        panic!("chrome card rides the HTML rich wire (#85)");
-    };
-    assert!(
-        rich.starts_with(
-            "<details><summary><sub>❌ <code>cargo test</code> 🕒 3s</sub></summary>"
-        )
-    );
+    let (md, _) = build_bg_receipt_card(&meta(false, "cargo test", 3.0, "boom"));
+    assert!(md.starts_with("<details>\n<summary><sub>❌ `cargo test` 🕒 3s</sub></summary>"));
 }
 
 #[test]
 fn bg_receipt_card_strips_backticks_from_the_label() {
-    let (wire, _) = build_bg_receipt_card(&meta(true, "cat `file`.md", 1.0, "ok"));
-    let BubbleWire::Html(rich) = wire else {
-        panic!("chrome card rides the HTML rich wire (#85)");
-    };
+    let (md, _) = build_bg_receipt_card(&meta(true, "cat `file`.md", 1.0, "ok"));
     assert!(
-        rich.contains("<code>cat file.md</code>"),
-        "label backticks stripped so the code span stays intact: {rich}"
+        md.contains("`cat file.md`"),
+        "label backticks stripped so the code span stays intact: {md}"
     );
 }
 
 #[test]
 fn bg_receipt_card_fence_outgrows_backtick_runs_in_the_tail() {
-    // On the HTML rich leg containment comes from the <pre> tag, so the
-    // tail ships verbatim with no fence at all; the compose-time fence
-    // arms-race (receipt_fence) is only a real guarantee where the renderer
-    // length-matches fences — the classic leg's converter does not (#94).
     let tail = "look:\n```\nnested fence\n```\ndone";
-    let (wire, classic) = build_bg_receipt_card(&meta(true, "cat README.md", 2.0, tail));
-    let BubbleWire::Html(rich) = wire else {
-        panic!("chrome card rides the HTML rich wire (#85)");
-    };
+    let (md, _) = build_bg_receipt_card(&meta(true, "cat README.md", 2.0, tail));
     assert!(
-        rich.contains("<pre>look:\n```\nnested fence\n```\ndone</pre>"),
-        "pre containment ships the tail verbatim, fence-free: {rich}"
-    );
-    assert!(
-        classic.contains("<pre><code>look:</code></pre>\n\nnested fence\n\n<pre><code>done</code></pre>"),
-        "classic leg: the compose-time arms-race fence does not survive markdown_to_html \
-         (parser has no fence length-matching, #94) — inner runs shatter the block; \
-         the rich leg's tag-based <pre> above is the real containment: {classic}"
+        md.contains("````\nlook:"),
+        "fence grows past the tail's longest backtick run"
     );
 }
 
 #[test]
-fn bg_receipt_card_rich_leg_escapes_the_tail() {
-    // #85: the tail is raw process output — a '<' in it must not open a
-    // tag inside the <details> fold.
-    let (wire, _) = build_bg_receipt_card(&meta(true, "render", 1.0, "<b>&raw</b>"));
-    let BubbleWire::Html(rich) = wire else {
-        panic!("chrome card rides the HTML rich wire (#85)");
-    };
-    assert!(
-        rich.contains("<pre>&lt;b&gt;&amp;raw&lt;/b&gt;</pre>"),
-        "pre content is escaped: {rich}"
-    );
-    assert!(
-        !rich.contains("<b>&raw"),
-        "tail cannot open a tag inside the fold"
-    );
-}
-
-#[test]
-fn bg_receipt_card_empty_tail_is_a_flat_one_liner() {
-    // A whitespace-only tail leaves nothing inside the <details> wrapper —
-    // the rich API rejects the card with RICH_MESSAGE_EMPTY and the outbox
-    // fallback escapes the literal wrapper tags into the chat. The guard
-    // must drop the card to the flat markdown wire with no wrapper on
-    // either leg.
-    for tail in ["", "   ", "\n\t"] {
-        let (wire, classic) = build_bg_receipt_card(&meta(true, "gh run watch 1", 61.0, tail));
-        let BubbleWire::Markdown(md) = &wire else {
-            panic!("empty-tail card must ride the flat markdown wire (#38 guard)");
-        };
-        assert!(!md.contains("<details>"), "no wrapper to reject: {md}");
-        assert!(
-            !classic.contains("<details>"),
-            "no wrapper to leak: {classic}"
-        );
-        assert!(
-            md.starts_with("✅ `gh run watch 1` 🕒 "),
-            "flat markdown card: {md}"
-        );
-        assert!(!md.contains('\n'), "one line only: {md}");
-        assert!(
-            classic.starts_with("<b>✅ gh run watch 1 🕒 "),
-            "flat classic card: {classic}"
-        );
-    }
-}
-
-#[test]
-fn bg_receipt_card_empty_tail_escapes_the_label_on_the_classic_leg() {
-    let (wire, classic) = build_bg_receipt_card(&meta(false, "grep <b>", 1.0, ""));
-    let BubbleWire::Markdown(md) = wire else {
-        panic!("empty-tail card must ride the flat markdown wire (#38 guard)");
-    };
-    assert!(
-        classic.contains("&lt;b&gt;"),
-        "classic leg escapes the label: {classic}"
-    );
-    assert!(
-        !classic.contains("<b>grep"),
-        "label cannot open a tag: {classic}"
-    );
-    assert!(
-        md.starts_with("❌ `grep <b>` 🕒 "),
-        "markdown leg keeps the label verbatim: {md}"
-    );
-}
-
-#[tokio::test]
-async fn notify_receipt_card_matches_the_locked_n4_shape() {
+fn notify_receipt_card_matches_the_locked_n4_shape() {
     let body = "RECEIPT CONTRACT DELIVERED — swap verified, all three clauses journal-anchored.\n\n\
                 | Clause | Anchor |\n|---|---|\n| Build | run 1 |";
-    let (wire, classic) = build_notify_receipt_card("Compiler", body).await;
-    let BubbleWire::Html(rich) = &wire else {
-        panic!("notify card rides the HTML rich wire (#85)");
-    };
+    let (md, classic) = build_notify_receipt_card("Compiler", body);
     assert!(
-        rich.starts_with(
-            "<details><summary><sub>📨 From <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
+        md.starts_with(
+            "<details>\n<summary><sub>📨 From <b>Compiler</b>: RECEIPT CONTRACT DELIVERED — swap \
              verified, a…</sub></summary>"
         ),
-        "summary = 📨 + From + bold sender + colon + 45-char first-line preview, whole line subbed: {rich}"
+        "summary = 📨 + From + bold sender + colon + 45-char first-line preview, whole line subbed: {md}"
     );
     assert!(
-        rich.contains("<pre>"),
-        "markdown body renders through the HTML dialect (table as grid/pre): {rich}"
+        md.contains("|---|---|"),
+        "markdown body keeps pipe tables native for the rich parser"
     );
-    assert!(!rich.contains("```"), "notify body is never fenced");
-    assert!(rich.ends_with("</details>"));
-    // Collapsed by default — never emit <details open> (#85 locked rule).
-    assert!(!rich.contains("<details open"), "collapsible ships collapsed");
+    assert!(!md.contains("```"), "notify body is never fenced");
+    assert!(md.ends_with("</details>"));
     assert!(classic.starts_with("<blockquote expandable>"));
     assert!(classic.contains("Compiler"));
 }
 
-#[tokio::test]
-async fn notify_receipt_card_sanitizes_angle_brackets_in_sender() {
-    let (wire, _) = build_notify_receipt_card("Ops <script>", "body line").await;
-    let BubbleWire::Html(rich) = wire else {
-        panic!("notify card rides the HTML rich wire (#85)");
-    };
+#[test]
+fn notify_receipt_card_sanitizes_angle_brackets_in_sender() {
+    let (md, _) = build_notify_receipt_card("Ops <script>", "body line");
     assert!(
-        rich.contains("<b>Ops ‹script›</b>: body line"),
-        "angle brackets neutralized so the sender can't open a tag: {rich}"
+        md.contains("<b>Ops ‹script›</b>: body line"),
+        "angle brackets neutralized so the sender can't open a tag: {md}"
     );
-    assert!(!rich.contains("<script>"));
+    assert!(!md.contains("<script>"));
 }
 
-#[tokio::test]
-async fn notify_receipt_card_empty_body_is_a_flat_one_liner() {
-    // Same defect class as the bg card: a whitespace-only body leaves an
-    // empty card inside the <details> wrapper (RICH_MESSAGE_EMPTY). The
-    // guard must drop the card to the flat markdown wire with no wrapper
-    // on either leg.
-    for body in ["", "  \n\t "] {
-        let (wire, classic) = build_notify_receipt_card("Compiler", body).await;
-        let BubbleWire::Markdown(md) = &wire else {
-            panic!("empty-body card must ride the flat markdown wire (#38 guard)");
-        };
-        assert!(!md.contains("<details>"), "no wrapper to reject: {md}");
-        assert!(
-            !classic.contains("<details>"),
-            "no wrapper to leak: {classic}"
-        );
-        assert_eq!(md, "📨 From **Compiler**", "flat markdown card");
-        assert_eq!(classic, "📨 From <b>Compiler</b>", "flat classic card");
-    }
-}
-
-#[tokio::test]
-async fn notify_preview_truncates_the_first_line_only() {
+#[test]
+fn notify_preview_truncates_the_first_line_only() {
     let body = format!("{}\nsecond line stays in the body", "x".repeat(80));
-    let (wire, _) = build_notify_receipt_card("Worker", &body).await;
-    let BubbleWire::Html(rich) = wire else {
-        panic!("notify card rides the HTML rich wire (#85)");
-    };
+    let (md, _) = build_notify_receipt_card("Worker", &body);
     let preview = format!("{}…", "x".repeat(45));
     assert!(
-        rich.contains(&format!(": {preview}</sub>")),
-        "preview = first line truncated to 45 chars + ellipsis: {rich}"
+        md.contains(&format!(": {preview}</sub>")),
+        "preview = first line truncated to 45 chars + ellipsis: {md}"
     );
     assert!(
-        rich.contains("second line stays in the body"),
+        md.contains("second line stays in the body"),
         "the full body survives inside the fold"
     );
 }
 
-/// #85: the notify card rides the HTML rich wire — its body renders through
-/// markdown_to_html_mermaid_p, so pipe tables ship as rendered grid markup
-/// inside the collapsible (Telegram's HTML dialect has no <table> tag; the
-/// markdown-ladder parse test this replaced rode the retired outbox route).
-#[tokio::test]
-async fn notify_receipt_card_keeps_tables_native_inside_the_fold() {
+/// Parser-level end-to-end for the #15 receipt-card envelope — the wire
+/// shape the #1259 outbox architecture actually sends. The #1234
+/// markdown-ladder variant and its parse test are gone with the ladder;
+/// the contract they proved survives here, retargeted at the production
+/// envelope: the card must parse into ONE Details block whose body keeps
+/// a NATIVE table for the server-side rich route.
+#[test]
+fn notify_receipt_card_parses_to_details_with_native_table_inside() {
+    use crate::channels::telegram::rich::ast::Block;
+    use crate::channels::telegram::rich::parse::parse_markdown;
+
     let body = "| a | b |\n|---|---|\n| 1 | 2 |";
-    let (wire, _) = build_notify_receipt_card("Compiler", body).await;
-    let BubbleWire::Html(rich) = wire else {
-        panic!("notify card rides the HTML rich wire (#85)");
-    };
-    assert!(rich.contains("<details><summary>"), "wrapper intact: {rich}");
-    assert!(
-        rich.contains("<pre>a | b</pre>") || rich.contains("a | b"),
-        "body keeps the rendered table grid: {rich}"
-    );
-    assert!(rich.contains("</details>"), "wrapper closes");
+    let (md, _) = build_notify_receipt_card("Compiler", body);
+    let blocks = parse_markdown(&md);
+    match blocks.as_slice() {
+        [Block::Details { blocks, .. }] => {
+            assert!(
+                blocks.iter().any(|b| matches!(b, Block::Table { .. })),
+                "card body keeps a native table block, got {blocks:?}"
+            );
+        }
+        other => panic!("card must parse as one Details block, got {other:?}"),
+    }
 }
