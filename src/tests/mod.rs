@@ -223,6 +223,7 @@ pub mod custom_provider_section_resolver_test;
 pub mod db_database_test;
 pub mod db_migration_33_heal_test;
 pub mod db_models_test;
+pub mod db_pending_origin_heal_test;
 pub mod db_repository_channel_message_test;
 pub mod db_repository_file_test;
 pub mod db_repository_message_test;
