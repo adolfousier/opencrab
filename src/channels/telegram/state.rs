@@ -1749,6 +1749,7 @@ mod tests {
             tool_msgs: Vec::new(),
             display_queue: Vec::new(),
             open_group_msg_id: Some(teloxide::types::MessageId(1)),
+            rich_transport_failures: 0,
             flow_entries: Vec::new(),
             flow_status: None,
             flow_rich: false,
