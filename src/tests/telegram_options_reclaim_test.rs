@@ -21,7 +21,8 @@
 //! an unfolded content leftover is promoted to the trailer).
 
 use crate::channels::telegram::flow::{
-    FlowEntry, pop_trailing_folded_texts, settle_options_reclaim,
+    FlowEntry, MAX_TRAILER_CHARS, pop_trailing_folded_texts, settle_options_reclaim,
+    trailer_promotes_to_answer,
 };
 
 #[test]
@@ -237,9 +238,67 @@ fn settle_no_host_uses_content() {
 }
 
 #[test]
+fn trailer_promotes_to_answer_matrix() {
+    // Pure threshold matrix (#58): a fence promotes at any size; no fence
+    // promotes only past MAX_TRAILER_CHARS; the cap itself does NOT
+    // promote (strictly greater — a run AT the cap is still a trailer).
+    assert!(trailer_promotes_to_answer(true, 10));
+    assert!(!trailer_promotes_to_answer(false, MAX_TRAILER_CHARS));
+    assert!(trailer_promotes_to_answer(false, MAX_TRAILER_CHARS + 1));
+}
+
+#[test]
 fn settle_no_host_no_trailer_is_stock() {
     // Plain shape: content only, no runs — the stock reclaim result.
     let (text, trailer) = settle_options_reclaim("the whole answer".into(), None, None);
     assert_eq!(text, "the whole answer");
     assert_eq!(trailer, None);
+}
+
+#[test]
+fn settle_oversized_trailer_promoted_to_answer() {
+    // The #58 incident shape, cap leg (config-independent — no fence): the
+    // post-halt run carries the whole substantive answer while the pre-Tool
+    // host is just the ack. Position said "trailer"; size says "answer".
+    // The big text takes the answer slot, the ack demotes to the trailer.
+    let big_answer = "word ".repeat(121);
+    assert!(big_answer.chars().count() > MAX_TRAILER_CHARS);
+    let (text, trailer) = settle_options_reclaim(
+        "unused content".into(),
+        Some("Got it — one moment.".into()),
+        Some(big_answer.clone()),
+    );
+    assert_eq!(text, big_answer, "oversized trailer promoted to the answer");
+    assert_eq!(
+        trailer.as_deref(),
+        Some("Got it — one moment."),
+        "displaced host demotes to trailer"
+    );
+}
+
+#[test]
+fn settle_small_trailer_stays_trailer() {
+    // #58 regression guard: a normal-sized fence-less sign-off must NOT be
+    // promoted — the rule fires on fences or oversize, nothing else.
+    let (text, trailer) = settle_options_reclaim(
+        "content".into(),
+        Some("the substantive answer".into()),
+        Some("all set — sign-off".into()),
+    );
+    assert_eq!(text, "the substantive answer");
+    assert_eq!(trailer.as_deref(), Some("all set — sign-off"));
+}
+
+#[test]
+fn settle_oversized_trailer_empty_host_drops_demote() {
+    // CLI-provider shape (content empty, nothing folded): promoting the
+    // oversized trailer leaves NOTHING to demote — the trailer slot dies
+    // rather than shipping an empty ack bubble after the buttons.
+    let big_answer = "word ".repeat(121);
+    let (text, trailer) = settle_options_reclaim(String::new(), None, Some(big_answer.clone()));
+    assert_eq!(text, big_answer);
+    assert_eq!(
+        trailer, None,
+        "empty host demotes to None, not an empty trailer"
+    );
 }
