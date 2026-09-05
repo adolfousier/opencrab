@@ -10,7 +10,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use teloxide::payloads::{EditMessageTextSetters, SendMessageSetters};
+use teloxide::payloads::{
+    EditMessageReplyMarkupSetters, EditMessageTextSetters, SendMessageSetters,
+};
 use teloxide::types::{
     ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, ThreadId,
 };
@@ -20,21 +22,6 @@ use super::TelegramState;
 
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
-
-/// Body for the standalone fallback bubble (#1226 item 4). Prose mode keeps
-/// just the folded list (it has no buttons, nothing can expire); button
-/// modes carry the bare lamp plus an expiry marker — this fallback fires
-/// when the merge lost a rate-limit race, so the bubble is subject to the
-/// stale-shell lifecycle and operators kept reading dead fallbacks as
-/// fresh, answerable questions (msgs 30997 / 31010: one was tapped 32
-/// minutes after its choices were consumed).
-pub(crate) fn standalone_fallback_body(layout: &SuggestLayout, options: &[String]) -> String {
-    if *layout == SuggestLayout::NumberedProse {
-        folded_list_html(options).trim_start().to_string()
-    } else {
-        String::from("\u{1f4a1} <i>(choices may have expired)</i>")
-    }
-}
 
 /// What the suggestion block becomes once one of its options is tapped.
 ///
@@ -86,6 +73,10 @@ pub(crate) enum PickRewrite {
     ClassicHost(String),
     /// Standalone suggestion block: body rides plain `edit_message_text`.
     Standalone(String),
+    // NOTE (#55): glued hosts (table-bearing rich answers, keyboard attached
+    // via edit_message_reply_markup) never reach pick_rewrite — the tap
+    // handler routes them by the `glued` flag BEFORE calling this function,
+    // because a tap on a glued host must NEVER rewrite the body.
 }
 
 /// The single construction site for a post-tap body (#39).
@@ -213,6 +204,35 @@ pub(crate) fn folded_list_html_p(options: &[String]) -> String {
 }
 
 /// The suggestion controls as native rich-button rows (Bot API 10.3
+/// #59: cut every `<tg-button-row>…</tg-button-row>` span out of a rich
+/// bubble body — the inverse of [`suggestion_rows_rich_html`]. Used by the
+/// host-aware stale-shell strip: the #597 clear killed the stash, but the
+/// buttons keep rendering inside the body until the body is rewritten clean.
+pub(crate) fn strip_button_rows(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<tg-button-row>") {
+        match rest[start..].find("</tg-button-row>") {
+            Some(rel) => {
+                let end = start + rel + "</tg-button-row>".len();
+                out.push_str(&rest[..start]);
+                rest = &rest[end..];
+            }
+            None => break, // unterminated span: leave the remainder untouched
+        }
+    }
+    out.push_str(rest);
+    out.trim_end().to_string()
+}
+
+/// #59 (DRY): the empty reply-markup used to strip dead keyboards — one
+/// construction site instead of one per strip arm.
+pub(crate) fn empty_keyboard() -> teloxide::types::InlineKeyboardMarkup {
+    teloxide::types::InlineKeyboardMarkup::new(
+        Vec::<Vec<teloxide::types::InlineKeyboardButton>>::new(),
+    )
+}
+
 /// `<tg-button-row>`), laid out per the measured ladder. Primary style
 /// throughout — picked over app-default after Alexey compared both live.
 /// Callback payloads stay `followup:<session>:<idx>`, so taps route through
@@ -423,11 +443,21 @@ pub(crate) async fn render_suggestions(
     // content instead of re-deriving it.
     let merge_payload: Option<MergePayload> = merge_host.map(|host| {
         let mid = host.message_id;
+        // #55 glue tier: table-bearing rich answers capture body=None — a
+        // body-rewriting merge would flatten the table (#679), so the
+        // keyboard rides `edit_message_reply_markup` instead and the body
+        // is never touched.
+        let Some(body) = host.body else {
+            return MergePayload {
+                message_id: mid,
+                new_html: String::new(),
+                rich: false,
+                glue: true,
+            };
+        };
         // Base body + surface: classic bubbles keep their exact delivered
-        // HTML; rich bubbles re-render from the captured markdown. Table-
-        // bearing answers never reach this arm as Markdown — capture skips
-        // them because rich HTML input flattens tables (#679).
-        let (mut new_html, rich) = match host.body {
+        // HTML; rich bubbles re-render from the captured markdown.
+        let (mut new_html, rich) = match body {
             super::state::BubbleBody::Html(html) => (html, false),
             super::state::BubbleBody::Markdown(md) => (super::rich::markdown_to_html_p(&md), true),
         };
@@ -456,14 +486,20 @@ pub(crate) async fn render_suggestions(
             message_id: mid,
             new_html,
             rich,
+            glue: false,
         }
     });
 
-    // Standalone fallback (no merge candidate, or the edit lost a race / grew
-    // too old): the header sentence is still gone per #tg-suggest-merge —
-    // prose mode shows just the numbered list, button modes need SOME text
-    // for the Bot API to accept the message, so they degrade to the bare 💡.
-    let standalone_body = standalone_fallback_body(&layout, &options);
+    // Standalone fallback (no merge candidate, no glue target, or the edit
+    // lost a race / grew too old): the header sentence is still gone per
+    // #tg-suggest-merge — prose mode shows just the numbered list, button
+    // modes need SOME text for the Bot API to accept the message. #55: the
+    // bare lamp is retired — "Pick one:" says the same with words.
+    let standalone_body = if layout == SuggestLayout::NumberedProse {
+        folded_list_html(&options).trim_start().to_string()
+    } else {
+        String::from("Pick one:")
+    };
 
     let option_count = options.len();
     match place_once(
@@ -590,6 +626,9 @@ struct MergePayload {
     message_id: MessageId,
     new_html: String,
     rich: bool,
+    /// #55 glue tier: attach via `edit_message_reply_markup` only — the
+    /// host body is not merge-safe (table) and must never be re-sent.
+    glue: bool,
 }
 
 /// Placement error class (#30): decides whether the stash survives the
@@ -652,7 +691,14 @@ async fn place_once(
 
     if let Some(mp) = merge {
         let mid = mp.message_id;
-        let outcome: Result<(), PlaceErr> = if mp.rich {
+        let outcome: Result<(), PlaceErr> = if mp.glue {
+            // #55 glue tier: attach the keyboard without touching the body.
+            bot.edit_message_reply_markup(chat_id, mid)
+                .reply_markup(keyboard.clone())
+                .await
+                .map(|_| ())
+                .map_err(classify_request_err)
+        } else if mp.rich {
             super::rich::api::edit_rich_html(
                 bot.api_url().as_str(),
                 bot.token(),
@@ -680,7 +726,13 @@ async fn place_once(
                 tracing::info!(
                     "Telegram suggest_options: keyboard merged onto msg {mid} \
                      ({} host, token {token}, {option_count} options)",
-                    if mp.rich { "rich" } else { "classic" }
+                    if mp.glue {
+                        "glue"
+                    } else if mp.rich {
+                        "rich"
+                    } else {
+                        "classic"
+                    }
                 );
                 state
                     .attach_followup_host(
@@ -689,6 +741,7 @@ async fn place_once(
                             message_id: mid,
                             html: mp.new_html.clone(),
                             rich: mp.rich,
+                            glued: mp.glue,
                         },
                     )
                     .await;

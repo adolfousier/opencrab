@@ -5,7 +5,7 @@
 //! module root is declarations and re-exports only.
 
 use super::cowork;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use teloxide::prelude::Bot;
 use teloxide::types::MessageId;
 use tokio::sync::{Mutex, oneshot};
@@ -18,6 +18,9 @@ use uuid::Uuid;
 /// instead of posting a separate "Suggested next" message, the tap handler
 /// needs the bubble's exact HTML to record the pick WITHOUT erasing the
 /// answer text (`edit_message_text` replaces the whole body).
+/// #59: bound on rescued dead-host records (FIFO eviction).
+const STALE_HOST_CAP: usize = 32;
+
 #[derive(Clone)]
 pub(crate) struct MergedHost {
     pub message_id: MessageId,
@@ -27,6 +30,11 @@ pub(crate) struct MergedHost {
     /// Host lives on the native rich API: tap-record edits must ride
     /// `super::rich::api::edit_rich_html`, not teloxide's edit_message_text.
     pub rich: bool,
+    /// #55: the keyboard was GLUED onto this bubble (glue tier — the body
+    /// was not merge-safe, e.g. a table-bearing rich answer). The body is
+    /// unknown/unsafe to rewrite, so a tap strips the keyboard markup-only
+    /// and echoes the pick record as its own note instead of editing text.
+    pub glued: bool,
 }
 
 /// Merge candidate captured by deliver_final_response (#tg-suggest-merge):
@@ -34,7 +42,11 @@ pub(crate) struct MergedHost {
 #[derive(Clone)]
 pub(crate) struct MergeBubble {
     pub message_id: MessageId,
-    pub body: BubbleBody,
+    /// `Some` = merge-safe body (classic HTML or table-free rich markdown).
+    /// `None` = rich answer carries a table (#55): merging would flatten it,
+    /// but the id is still a valid GLUE target — `edit_message_reply_markup`
+    /// attaches the keyboard without ever touching the body.
+    pub body: Option<BubbleBody>,
 }
 
 /// How a captured [`MergeBubble`] was sent — decides which edit call merges
@@ -171,6 +183,12 @@ pub struct TelegramState {
     /// tap handler resolves `idx -> suggestion string`; cleared on tap or when
     /// the user sends anything.
     pending_followups: Mutex<HashMap<String, PendingFollowupEntry>>,
+    /// #59: merged-host records of stash entries cleared by #597 (user sent
+    /// their own message). The stash entry dies, but RICH-merged buttons
+    /// survive visually inside the bubble body — a stale-shell tap needs to
+    /// know WHAT SHAPE of dead keyboard to strip and from where. Keyed
+    /// token-first in a FIFO deque, bounded at STALE_HOST_CAP (oldest evicted).
+    stale_hosts: Mutex<VecDeque<(String, MergedHost)>>,
     /// Solo-owner auto-registration cache (#1155): chat_id → decision already
     /// reached. `true` = eligible solo group, full owner catalog registered;
     /// `false` = evaluated and ineligible. Cleared on membership events so the
@@ -340,6 +358,7 @@ impl TelegramState {
             chat_forums: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
             pending_followups: Mutex::new(HashMap::new()),
+            stale_hosts: Mutex::new(VecDeque::new()),
             solo_evaluated: Mutex::new(HashMap::new()),
             menu_skills_sig: Mutex::new(None),
             cancel_tokens: Mutex::new(HashMap::new()),
@@ -824,6 +843,38 @@ impl TelegramState {
             .and_then(|e| e.host.clone())
     }
 
+    /// #59: peek the dead-host record of a #597-cleared stash entry WITHOUT
+    /// consuming it — the stale-shell tap needs the host SHAPE (rich body
+    /// buttons vs glued/classic reply-markup) to pick the right strip; the
+    /// record is forgotten only after the strip succeeds (`forget_stale_host`).
+    pub(crate) async fn peek_stale_host(&self, token: &str) -> Option<MergedHost> {
+        self.stale_hosts
+            .lock()
+            .await
+            .iter()
+            .find(|(t, _)| t == token)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// #59: current size of the stale-host map (bounded diagnostics).
+    /// Test-support only — the production path logs via peek/forget, never the count.
+    #[cfg(test)]
+    pub(crate) async fn stale_host_count(&self) -> usize {
+        self.stale_hosts.lock().await.len()
+    }
+
+    /// #59: forget a stale-host record once its dead keyboard is confirmed
+    /// stripped — repeated taps on the same zombie stay log-attributable and
+    /// cannot loop on a record whose buttons are already gone.
+    pub(crate) async fn forget_stale_host(&self, token: &str) {
+        let mut stale = self.stale_hosts.lock().await;
+        let before = stale.len();
+        stale.retain(|(t, _)| t != token);
+        if stale.len() < before {
+            tracing::info!("Telegram followups: forgot stripped stale-host record {token} (#59)");
+        }
+    }
+
     /// Forget an unused registration (buttons never landed).
     pub(crate) async fn drop_pending_followup(&self, token: &str) {
         let existed = self.pending_followups.lock().await.remove(token).is_some();
@@ -872,12 +923,40 @@ impl TelegramState {
     /// Drop this session's pending follow-up suggestions (the user sent their
     /// own message, so the buttons are stale).
     pub async fn clear_pending_followups(&self, session_id: Uuid) {
-        let removed = {
+        // #59: before wiping, rescue the merged-host records into `stale_hosts`
+        // — the #597 clear kills the stash, but rich-merged buttons keep
+        // rendering inside the bubble body. Without the rescued shape the
+        // stale-shell tap can only try a blind markup strip, which on a rich
+        // host is a guaranteed "message is not modified" no-op (the zombie).
+        let rescued: Vec<(String, MergedHost)> = {
             let mut map = self.pending_followups.lock().await;
-            let before = map.len();
-            map.retain(|_, e| e.session_id != session_id);
-            before - map.len()
+            let mut rescued = Vec::new();
+            map.retain(|token, e| {
+                if e.session_id == session_id {
+                    if let Some(h) = e.host.take() {
+                        rescued.push((token.clone(), h));
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+            rescued
         };
+        let removed = rescued.len();
+        if !rescued.is_empty() {
+            let mut stale = self.stale_hosts.lock().await;
+            for pair in rescued {
+                stale.push_back(pair);
+            }
+            while stale.len() > STALE_HOST_CAP {
+                if let Some((t, _)) = stale.pop_front() {
+                    tracing::debug!(
+                        "Telegram followups: evicted oldest stale-host record {t} (cap {STALE_HOST_CAP})"
+                    );
+                }
+            }
+        }
         let guard = self.followup_store.lock().await;
         if let Some(store) = guard.as_ref()
             && let Err(e) = store.delete_session(&session_id.to_string()).await
@@ -1055,6 +1134,9 @@ impl TelegramState {
                         message_id: MessageId(h.message_id as i32),
                         html: h.html,
                         rich: h.rich,
+                        // Port note (#55): persisted rows predate the glue
+                        // tier; restore as non-glued (pre-glue tap path).
+                        glued: false,
                     });
                     let token = row.token;
                     let entry = PendingFollowupEntry {

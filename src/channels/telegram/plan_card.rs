@@ -807,10 +807,7 @@ async fn finalize_plan_card_locked(
                 match bot
                     .edit_message_text(chat, mid, html.clone())
                     .parse_mode(teloxide::types::ParseMode::Html)
-                    .reply_markup(teloxide::types::InlineKeyboardMarkup::new(Vec::<
-                        Vec<teloxide::types::InlineKeyboardButton>,
-                    >::new(
-                    )))
+                    .reply_markup(super::suggest_options::empty_keyboard())
                     .await
                 {
                     Ok(_) => edited = true,
