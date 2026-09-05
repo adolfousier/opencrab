@@ -594,7 +594,9 @@ impl Config {
         }
 
         // ── Migration 2: [voice] → providers.stt.* / providers.tts.* ──
+        let mut voice_migrated = false;
         if let Some(voice) = doc.get("voice").and_then(|v| v.as_table()).cloned() {
+            voice_migrated = true;
             let root = doc.as_table_mut().unwrap();
 
             // Ensure providers.stt and providers.tts tables exist
@@ -621,22 +623,25 @@ impl Config {
                 .and_then(|v| v.as_str())
                 .unwrap_or("api")
                 .to_string();
+            // A legacy [voice] that says enabled MEANS enabled (#1399). The
+            // old `entry("enabled").or_insert(true)` was a no-op whenever the
+            // provider table already carried `enabled = false`, so the
+            // migration could never re-enable what the user had on.
             if stt_enabled {
                 let stt = providers.get_mut("stt").unwrap().as_table_mut().unwrap();
-                if stt_mode == "local" {
-                    if !stt.contains_key("local") {
-                        stt.insert(
-                            "local".to_string(),
-                            toml::Value::Table(toml::map::Map::new()),
-                        );
-                    }
-                    let local = stt.get_mut("local").unwrap().as_table_mut().unwrap();
-                    local.entry("enabled").or_insert(toml::Value::Boolean(true));
-                    if let Some(model) = voice.get("local_stt_model") {
-                        local.entry("model").or_insert(model.clone());
-                    }
-                } else if let Some(groq) = stt.get_mut("groq").and_then(|g| g.as_table_mut()) {
-                    groq.entry("enabled").or_insert(toml::Value::Boolean(true));
+                let engine = if stt_mode == "local" { "local" } else { "groq" };
+                if !stt.contains_key(engine) {
+                    stt.insert(
+                        engine.to_string(),
+                        toml::Value::Table(toml::map::Map::new()),
+                    );
+                }
+                let table = stt.get_mut(engine).unwrap().as_table_mut().unwrap();
+                table.insert("enabled".to_string(), toml::Value::Boolean(true));
+                if engine == "local"
+                    && let Some(model) = voice.get("local_stt_model")
+                {
+                    table.entry("model").or_insert(model.clone());
                 }
             }
 
@@ -652,27 +657,29 @@ impl Config {
                 .to_string();
             if tts_enabled {
                 let tts = providers.get_mut("tts").unwrap().as_table_mut().unwrap();
-                if tts_mode == "local" {
-                    if !tts.contains_key("local") {
-                        tts.insert(
-                            "local".to_string(),
-                            toml::Value::Table(toml::map::Map::new()),
-                        );
-                    }
-                    let local = tts.get_mut("local").unwrap().as_table_mut().unwrap();
-                    local.entry("enabled").or_insert(toml::Value::Boolean(true));
+                let engine = if tts_mode == "local" {
+                    "local"
+                } else {
+                    "openai"
+                };
+                if !tts.contains_key(engine) {
+                    tts.insert(
+                        engine.to_string(),
+                        toml::Value::Table(toml::map::Map::new()),
+                    );
+                }
+                let table = tts.get_mut(engine).unwrap().as_table_mut().unwrap();
+                table.insert("enabled".to_string(), toml::Value::Boolean(true));
+                if engine == "local" {
                     if let Some(voice_name) = voice.get("local_tts_voice") {
-                        local.entry("voice").or_insert(voice_name.clone());
+                        table.entry("voice").or_insert(voice_name.clone());
                     }
-                } else if let Some(openai) = tts.get_mut("openai").and_then(|o| o.as_table_mut()) {
-                    openai
-                        .entry("enabled")
-                        .or_insert(toml::Value::Boolean(true));
+                } else {
                     if let Some(v) = voice.get("tts_voice") {
-                        openai.entry("voice").or_insert(v.clone());
+                        table.entry("voice").or_insert(v.clone());
                     }
                     if let Some(m) = voice.get("tts_model") {
-                        openai.entry("model").or_insert(m.clone());
+                        table.entry("model").or_insert(m.clone());
                     }
                 }
             }
@@ -743,8 +750,13 @@ impl Config {
         {
             trello.insert("board_ids", val);
         }
-        // Migration 2: remove [voice] section
+        // Migration 2: remove [voice] section and carry the provider
+        // enablement it produced into this document (#1399); the removal
+        // alone left every migrated flag on the value document only.
         edit_doc.as_table_mut().remove("voice");
+        if voice_migrated {
+            super::voice_port::port_voice_providers(&doc, &mut edit_doc);
+        }
 
         // Migration 4: seed bot_owner per channel where missing.
         for (channel, list_key) in Self::OWNER_SEED_CHANNELS {
