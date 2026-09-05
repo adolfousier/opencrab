@@ -85,6 +85,9 @@ const MIGRATION_SQL: &[&str] = &[
     include_str!("../migrations/20260902000001_add_pending_followups.sql"),
     include_str!("../migrations/20260904000000_add_pending_followups_host_markdown.sql"),
     include_str!("../migrations/20260904120000_add_channel_messages_ship_plane.sql"),
+    // FORK (#73): durable parked-tombstone store — death reports survive
+    // restart storms instead of dying in the in-memory PARKED queue.
+    include_str!("../migrations/20260905000000_add_pending_tombstones.sql"),
 ];
 
 pub(crate) fn build_migrations() -> Migrations<'static> {

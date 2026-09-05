@@ -162,6 +162,10 @@ pub fn claim_session(session_id: Uuid, route: &MessageEnqueueCallback) -> usize 
             target: "background_task",
             "Delivered {count} parked restart report(s) to session {session_id}"
         );
+        // Delivery happened: any durable copies of these reports are now
+        // redundant. Fire-and-forget — a failed clear costs a duplicate
+        // after the next restart, never a lost report (#73).
+        clear_persisted_tombstones(session_id);
     }
     count
 }
@@ -185,6 +189,8 @@ pub fn flush_parked(local: &MessageEnqueueCallback) -> usize {
     let count = remaining.len();
     for (session_id, msg) in remaining {
         local(session_id, msg);
+        // Delivered locally: the durable copies are redundant now (#73).
+        clear_persisted_tombstones(session_id);
     }
     if count > 0 {
         tracing::info!(
@@ -360,11 +366,20 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
     // Sub-agents first: they die with the process but their status files do
     // not, so every file still mid-flight is an agent that no longer exists.
     let orphans = crate::brain::tools::subagent::reconcile::reconcile_orphaned_agents();
-    let mut reported = 0usize;
+    let mut reported = redeliver_persisted_tombstones().await;
     for orphan in orphans {
         match Uuid::parse_str(&orphan.parent_session_id) {
             Ok(session_id) => {
-                deliver_or_park(session_id, subagent_interrupted_message(&orphan));
+                let msg = subagent_interrupted_message(&orphan);
+                // Clone: the parked branch still needs the message content
+                // for the durable copy below.
+                if deliver_or_park(session_id, msg.clone()) {
+                    // Delivered to a live route; nothing durable to keep.
+                } else {
+                    // Parked in memory only — persist it so the restart that
+                    // killed the agent cannot also kill its report (#73).
+                    persist_tombstone(session_id, &msg).await;
+                }
                 reported += 1;
             }
             Err(e) => {
@@ -401,6 +416,117 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
         ),
     }
     reported
+}
+
+/// The tombstone repository, when a pool exists.
+///
+/// Resolved per call through the global pool, same as the background-task
+/// repo: recovery runs before sessions exist, so nothing threads a pool
+/// here. `None` before the DB is initialized (early startup, tests), which
+/// simply means durable parking is skipped and the report rides the
+/// in-memory queue alone.
+fn tombstone_repo() -> Option<crate::db::PendingTombstoneRepository> {
+    crate::db::global_pool().map(|p| crate::db::PendingTombstoneRepository::new(p.clone()))
+}
+
+/// Persist an undelivered tombstone report so no restart can lose it (#73).
+///
+/// Best-effort by design: a failure here is logged loudly but never blocks
+/// startup, because a report that only lives in memory still beats a report
+/// that panics the boot. The row is cleared the moment the report actually
+/// reaches a surface (see [`clear_persisted_tombstones`]).
+async fn persist_tombstone(session_id: Uuid, msg: &QueuedUserMessage) {
+    let Some(repo) = tombstone_repo() else {
+        return;
+    };
+    if let Err(e) = repo
+        .record(
+            Uuid::new_v4(),
+            session_id,
+            &msg.context_text,
+            &msg.display_text,
+        )
+        .await
+    {
+        tracing::error!(
+            target: "background_task",
+            "Could not persist sub-agent tombstone for session {session_id}: it rides the \
+             in-memory queue alone and the next restart will lose it: {e:#}"
+        );
+    }
+}
+
+/// Re-offer every persisted tombstone from a previous process (#73).
+///
+/// Runs before the freshly reconciled reports are delivered, so older
+/// deaths are announced first. A row whose report lands on a live route is
+/// cleared; one that parks again keeps its row — memory is still not
+/// durable, the DB row is, so the report keeps surviving restarts until it
+/// is genuinely delivered.
+async fn redeliver_persisted_tombstones() -> usize {
+    let Some(repo) = tombstone_repo() else {
+        return 0;
+    };
+    let rows = match repo.all().await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not read persisted sub-agent tombstones: {e:#}"
+            );
+            return 0;
+        }
+    };
+    let mut count = 0usize;
+    for row in rows {
+        let msg = QueuedUserMessage {
+            context_text: row.context_text.clone(),
+            display_text: row.display_text.clone(),
+            origin: PushOrigin::Recovery,
+            bg_meta: None,
+        };
+        if deliver_or_park(row.session_id, msg)
+            && let Err(e) = repo.clear(row.id).await
+        {
+            // Worst case the report is delivered twice, never zero times.
+            tracing::error!(
+                target: "background_task",
+                "Delivered persisted tombstone {} but could not clear its row; it may be \
+                 re-delivered after the next restart: {e:#}",
+                row.id
+            );
+        }
+        count += 1;
+    }
+    if count > 0 {
+        tracing::info!(
+            target: "background_task",
+            "Re-offered {count} persisted sub-agent tombstone(s) from a previous run"
+        );
+    }
+    count
+}
+
+/// Drop every persisted tombstone for a session whose reports just reached a
+/// surface — the durable copies are redundant the moment delivery happens.
+///
+/// Best-effort and fire-and-forget: a failed clear costs a duplicate report
+/// after the next restart, never a lost one. No-op outside a tokio runtime.
+fn clear_persisted_tombstones(session_id: Uuid) {
+    if tokio::runtime::Handle::try_current().is_err() {
+        return;
+    }
+    if let Some(repo) = tombstone_repo() {
+        tokio::spawn(async move {
+            if let Err(e) = repo.clear_for_session(session_id).await {
+                tracing::warn!(
+                    target: "background_task",
+                    "Could not clear persisted tombstones for session {session_id} after \
+                     delivery: they may be re-delivered after the next restart: {e:#}"
+                );
+            }
+        });
+    }
 }
 
 /// What the parent agent is told about a sub-agent a restart killed.

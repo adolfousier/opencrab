@@ -41,3 +41,5 @@ pub use session_binding::SessionBindingRepository;
 pub use tool_execution::ToolExecutionRepository;
 pub use traits::Repository;
 pub use usage_ledger::UsageLedgerRepository;
+pub mod pending_tombstone;
+pub use pending_tombstone::{PendingTombstoneRepository, PendingTombstoneRow};
