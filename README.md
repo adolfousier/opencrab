@@ -3137,7 +3137,6 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `suggest_options` | Surface up to 8 short options for the user to pick as their next input. Channel-agnostic: native buttons where the channel has them, numbered text where it does not |
 | `goal_manage` | Set and manage an autonomous goal for the session, so the agent can drive itself toward it across turns |
 | `tasks_list` | List in-flight background work: spawned sub-agents with id and label, and running background tasks |
-| `task_manager` | **Deprecated — use `plan`.** Create, update, list and track multi-step tasks with priorities |
 | `profile_list` | List profiles and their A2A gateway endpoints |
 | `mission_control_report` | Generate a shareable mission-control report for this instance: analytics, sessions, usage |
 
