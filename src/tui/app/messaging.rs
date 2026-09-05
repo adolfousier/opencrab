@@ -807,16 +807,22 @@ impl App {
             }
             "/compact" => {
                 let pct = self.context_usage_percent();
-                self.push_system_message(format!(
-                    "Compacting context... (currently at {:.0}%)",
-                    pct
-                ));
-                // Trigger compaction by sending a special message to the agent
+                // Send first, then report (#1375): a note printed before the
+                // trigger leaves claims a compaction that may never start,
+                // and a dropped send must never be silent.
                 let sender = self.event_sender();
-                let _ = sender.send(TuiEvent::CommandSubmitted(
+                match sender.send(TuiEvent::CommandSubmitted(
                     "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                         .to_string(),
-                ));
+                )) {
+                    Ok(()) => {
+                        self.push_system_message(crate::tui::compact_notice::requested(pct));
+                    }
+                    Err(e) => {
+                        tracing::error!("/compact: compaction trigger not dispatched: {e}");
+                        self.error_message = Some(crate::tui::compact_notice::dispatch_failed(&e));
+                    }
+                }
                 true
             }
             "/theme" => {
