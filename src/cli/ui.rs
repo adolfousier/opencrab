@@ -1597,18 +1597,70 @@ async fn cmd_chat_inner(
         });
     }
 
-    // Wake (#1227): recently-active bound sessions that were NOT mid-turn at
-    // boot have no journal row, so they look dead until someone pokes one.
-    // #1224 re-registers their routes (draining parked reports) at connect,
-    // but quietly. Log the stranded set so it is auditable; purely
-    // informational — it runs no turn, re-executes nothing, sends no message
-    // (the former "I'm back" bubble was removed per #34).
+    // Boot-classifier recovery (#33, owner-approved design 2026-08-29):
+    // recently-active bound sessions that were NOT mid-turn at boot have no
+    // journal row, so they used to look dead until someone poked one. The
+    // classifier consults each topic's last persisted message: user-last =
+    // interrupted turn → run the real `resume_session` continuation (a real
+    // turn, not a bubble — the #34 removal law is untouched); bot-last =
+    // completed before the kill → log only; nothing persisted → log only.
     #[cfg(feature = "telegram")]
-    crate::channels::telegram::resume::wake_recently_active(
-        db.pool().clone(),
-        &resumed_session_ids,
-    )
-    .await;
+    {
+        let recovery = crate::channels::telegram::resume::classify_recently_active(
+            db.pool().clone(),
+            &resumed_session_ids,
+        )
+        .await;
+        let rescue_count = recovery.interrupted.len();
+        for (sid, chat_id, thread_raw) in recovery.interrupted {
+            let agent = app.agent_service().clone();
+            let tg = telegram_state.clone();
+            let thread_id =
+                thread_raw.map(|t| teloxide::types::ThreadId(teloxide::types::MessageId(t as i32)));
+            let prompt = "[System: A restart just occurred while you were \
+                processing a request. Read the conversation context and continue \
+                where you left off naturally. Do not mention the restart or \
+                any interruption — just pick up seamlessly.]"
+                .to_string();
+            tokio::spawn(async move {
+                // The bot may not be authenticated yet at boot — wait for it
+                // exactly like the pending-requests resume path above.
+                let Some(bot) = crate::channels::bg_resume::wait_ready(
+                    || tg.bot(),
+                    "boot classifier: telegram bot",
+                )
+                .await
+                else {
+                    tracing::warn!(
+                        "Boot classifier (#33): bot never became ready — session {sid} stays comatose"
+                    );
+                    return;
+                };
+                // Boot replay of an EXISTING user turn: resume-of-resume must
+                // stay untracked (#729/#12) — same contract as the pending-
+                // requests loop above.
+                if let Err(e) = crate::channels::telegram::handler::resume_session(
+                    bot,
+                    teloxide::types::ChatId(chat_id),
+                    thread_id,
+                    sid,
+                    prompt,
+                    agent,
+                    tg,
+                    false,
+                )
+                .await
+                {
+                    tracing::error!("Boot classifier resume failed for session {sid}: {e}");
+                }
+            });
+        }
+        if rescue_count > 0 {
+            tracing::info!(
+                "Boot classifier (#33): spawned {rescue_count} interrupted-turn continuation(s)"
+            );
+        }
+    }
 
     // Channel manager — handles dynamic spawn/stop of channel agents on config reload
     let channel_manager = Arc::new(crate::channels::ChannelManager::new(

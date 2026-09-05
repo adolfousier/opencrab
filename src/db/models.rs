@@ -388,6 +388,12 @@ impl ToolExecution {
 
 // ─── ChannelMessage ──────────────────────────────────────────────────────────
 
+/// Sender id the bot's OWN outgoing rows carry (via `send::record_outgoing`
+/// and the channel delivery paths). The #33 boot classifier keys on this:
+/// last topic message from anything else = interrupted turn; from this id =
+/// the bot already replied, log only.
+pub const BOT_SENDER_ID: &str = "bot:opencrabs";
+
 /// Channel message model — passive capture of messages from channel platforms
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelMessage {
