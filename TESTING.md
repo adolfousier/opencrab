@@ -323,7 +323,8 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Logging Log Files | 5 | `src/tests/logging_log_files_test.rs` |
 | Tests — Logging Logger | 5 | `src/tests/logging_logger_test.rs` |
 | Tests — Long Command | 5 | `src/tests/long_command_test.rs` |
-| Tests — Loop Guard | 26 | `src/tests/loop_guard_test.rs` |
+| Tests — Loop Break | 10 | `src/tests/loop_break_test.rs` |
+| Tests — Loop Guard | 32 | `src/tests/loop_guard_test.rs` |
 | Tests — Markdown Render | 10 | `src/tests/markdown_render_test.rs` |
 | Tests — Memory Backfill Sweep | 6 | `src/tests/memory_backfill_sweep_test.rs` |
 | Tests — Memory Chunk Vector | 13 | `src/tests/memory_chunk_vector_test.rs` |
@@ -769,7 +770,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Utils Retry | 8 | `src/tests/utils_retry_test.rs` |
 | Tests — Utils Sanitize | 49 | `src/tests/utils_sanitize_test.rs` |
 | Tests — Utils String | 26 | `src/tests/utils_string_test.rs` |
-| Tests — Variation Directive | 6 | `src/tests/variation_directive_test.rs` |
+| Tests — Variation Directive | 4 | `src/tests/variation_directive_test.rs` |
 | Tests — Vba Modules | 10 | `src/tests/vba_modules_test.rs` |
 | Tests — Voice Local Tts | 9 | `src/tests/voice_local_tts_test.rs` |
 | Tests — Voice Local Whisper | 25 | `src/tests/voice_local_whisper_test.rs` |
