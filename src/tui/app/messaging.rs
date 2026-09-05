@@ -836,9 +836,8 @@ impl App {
                     "" => {
                         // Bare /theme opens the interactive picker (#1371);
                         // `list` keeps the text surface for habits/scripts.
-                        self.theme_picker = Some(
-                            crate::tui::render::theme_picker::ThemePickerState::open(),
-                        );
+                        self.theme_picker =
+                            Some(crate::tui::render::theme_picker::ThemePickerState::open());
                     }
                     "list" | "ls" => {
                         let active_name = theme::active().name;

@@ -363,7 +363,7 @@ impl TelegramAgent {
                                         None
                                     }
                                 };
-                                if let Some((entry, text)) = taken {
+                                if let Some((entry, text, picked_idx)) = taken {
                                     let sid = entry.session_id;
                                     let merged_host = entry.host.clone();
                                     let (chat_id, thread_id, prompt_msg_id) = query
@@ -460,6 +460,7 @@ impl TelegramAgent {
                                                             .as_ref()
                                                             .map(|(full, rich)| (full.as_str(), *rich)),
                                                         picked,
+                                                        picked_idx,
                                                     );
                                                 let outcome: Result<(), String> = match rewrite {
                                                     super::suggest_options::PickRewrite::RichHost(

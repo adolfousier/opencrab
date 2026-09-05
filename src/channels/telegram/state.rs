@@ -842,10 +842,17 @@ impl TelegramState {
         &self,
         token: &str,
         idx: usize,
-    ) -> Option<(PendingFollowupEntry, String)> {
+    ) -> Option<(PendingFollowupEntry, String, usize)> {
         let entry = self.pending_followups.lock().await.remove(token)?;
         self.forget_followup(token).await;
-        entry.options.get(idx).cloned().map(|text| (entry, text))
+        // #67: idx rides along — the tap-redraw rewrite runs in a spawned
+        // task lexically outside the arm that binds idx, so the tapped
+        // index must come back through the take's return tuple.
+        entry
+            .options
+            .get(idx)
+            .cloned()
+            .map(|text| (entry, text, idx))
     }
 
     /// Re-arm a keyboard whose tap could not start a turn (#1226 G): the
