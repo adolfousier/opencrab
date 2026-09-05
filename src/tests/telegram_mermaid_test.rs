@@ -9,7 +9,7 @@
 //! `Config`, whose values in tests depend on the embedded example config.
 
 use crate::channels::telegram::rich::api::{
-    build_body_markdown_media_edit, build_body_markdown_media_target,
+    build_body_markdown_media_edit, build_body_markdown_media_target, multipart_scalar_fields,
 };
 use crate::channels::telegram::rich::ast::{Block, Inline, MermaidResult};
 use crate::channels::telegram::rich::markdown_to_html_mermaid;
@@ -485,6 +485,31 @@ fn build_body_markdown_media_edit_bytes_entry_uses_attach_reference() {
         .as_array()
         .expect("media array");
     assert_eq!(arr[0]["media"]["media"], "attach://diag1");
+}
+
+// ---------------------------------------------------------------------------
+// multipart_scalar_fields (#102 — edit multipart must carry message_id;
+// send bodies carry none, so sends stay byte-identical)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multipart_scalar_fields_carries_message_id_for_edits_only() {
+    let edit_body = serde_json::json!({
+        "chat_id": -100,
+        "message_id": 40827,
+        "rich_message": { "markdown": "text", "media": [] },
+    });
+    let edit_parts = multipart_scalar_fields(&edit_body);
+    assert!(edit_parts.contains(&("message_id".to_string(), "40827".to_string())));
+    assert!(edit_parts.contains(&("chat_id".to_string(), "-100".to_string())));
+    assert!(edit_parts.iter().any(|(name, _)| name == "rich_message"));
+
+    let send_body = serde_json::json!({
+        "chat_id": -100,
+        "rich_message": { "markdown": "text", "media": [] },
+    });
+    let send_parts = multipart_scalar_fields(&send_body);
+    assert!(!send_parts.iter().any(|(name, _)| name == "message_id"));
 }
 
 // ---------------------------------------------------------------------------
