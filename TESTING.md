@@ -323,7 +323,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Logging Log Files | 5 | `src/tests/logging_log_files_test.rs` |
 | Tests — Logging Logger | 5 | `src/tests/logging_logger_test.rs` |
 | Tests — Long Command | 5 | `src/tests/long_command_test.rs` |
-| Tests — Loop Guard | 24 | `src/tests/loop_guard_test.rs` |
+| Tests — Loop Guard | 26 | `src/tests/loop_guard_test.rs` |
 | Tests — Markdown Render | 10 | `src/tests/markdown_render_test.rs` |
 | Tests — Memory Backfill Sweep | 6 | `src/tests/memory_backfill_sweep_test.rs` |
 | Tests — Memory Chunk Vector | 13 | `src/tests/memory_chunk_vector_test.rs` |
@@ -656,7 +656,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Mermaid | 55 | `src/tests/telegram_mermaid_test.rs` |
 | Tests — Telegram Model Callback Data | 3 | `src/tests/telegram_model_callback_data_test.rs` |
 | Tests — Telegram Newest Msg Id | 7 | `src/tests/telegram_newest_msg_id_test.rs` |
-| Tests — Telegram Options Reclaim | 15 | `src/tests/telegram_options_reclaim_test.rs` |
+| Tests — Telegram Options Reclaim | 19 | `src/tests/telegram_options_reclaim_test.rs` |
 | Tests — Telegram Outbound Dedup | 3 | `src/tests/telegram_outbound_dedup_test.rs` |
 | Tests — Telegram Outbox Record | 4 | `src/tests/telegram_outbox_record_test.rs` |
 | Tests — Telegram Photo Batching | 8 | `src/tests/telegram_photo_batching_test.rs` |
