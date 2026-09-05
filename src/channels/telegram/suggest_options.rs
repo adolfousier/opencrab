@@ -451,6 +451,46 @@ pub(crate) fn enforce_button_fit(html: &str) -> String {
     out
 }
 
+/// #108: button rows and the trailer must start a FRESH markdown block —
+/// a single leading newline lets the server parser fuse the preceding
+/// paragraph into the controls block, rendering it indented. Guarantees a
+/// blank-line separator regardless of whether the body already ends in
+/// a newline.
+fn push_blank_line(md: &mut String) {
+    if !md.ends_with('\n') {
+        md.push('\n');
+    }
+    md.push('\n');
+}
+
+/// Shared markdown-plane tail construction (#79 piece 4 + #31 + #108):
+/// folded list (prose mode) + blank-line-separated in-body button rows +
+/// trailer. One helper so the merge arm and the cross-turn glue arm stay
+/// byte-identical in construction — and so the block-boundary property is
+/// unit-testable (rows and trailer must start a FRESH markdown block; a
+/// single newline fuses the preceding paragraph into the controls block and
+/// the server renders it indented).
+pub(crate) fn append_rows_and_trailer_md(
+    md: &mut String,
+    options: &[String],
+    token: &str,
+    prose: bool,
+    trailer: Option<&str>,
+) {
+    if prose {
+        // Markdown plane: plain numbered list — the server's
+        // markdown render keeps numbering and line breaks.
+        md.push('\n');
+        md.push_str(&folded_list_markdown(options));
+    }
+    push_blank_line(md);
+    md.push_str(&suggestion_rows_rich_html(options, token));
+    if let Some(t) = trailer {
+        push_blank_line(md);
+        md.push_str(t);
+    }
+}
+
 /// The suggestion controls as native rich-button rows (Bot API 10.3
 /// `<tg-button-row>`), laid out per the measured ladder. Primary style
 /// throughout — picked over app-default after Alexey compared both live.
@@ -592,21 +632,13 @@ pub(crate) async fn render_suggestions(
             }
             super::state::BubbleBody::Markdown(md) => {
                 let mut new_md = md;
-                if layout == SuggestLayout::NumberedProse {
-                    // Markdown plane: plain numbered list — the server's
-                    // markdown render keeps numbering and line breaks.
-                    new_md.push('\n');
-                    new_md.push_str(&folded_list_markdown(&options));
-                }
-                new_md.push('\n');
-                new_md.push_str(&suggestion_rows_rich_html(&options, &token));
-                // #31: the sign-off paragraph rides AFTER the button rows —
-                // one message carries answer + controls + trailer, in that
-                // order. Raw markdown: no conversion on this plane.
-                if let Some(t) = &trailer {
-                    new_md.push('\n');
-                    new_md.push_str(t);
-                }
+                append_rows_and_trailer_md(
+                    &mut new_md,
+                    &options,
+                    &token,
+                    layout == SuggestLayout::NumberedProse,
+                    trailer.as_deref(),
+                );
                 let strip_source = super::rich::markdown_to_html_p(&new_md);
                 (strip_source, true, Some(new_md))
             }
