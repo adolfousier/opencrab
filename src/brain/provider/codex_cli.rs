@@ -320,6 +320,7 @@ impl Provider for CodexCliProvider {
             usage,
             // CLI subprocess output is parsed in one shot, not streamed.
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 

@@ -105,6 +105,7 @@ fn make_response(text: &str, stop: StopReason) -> LLMResponse {
         stop_reason: Some(stop),
         usage: TokenUsage::default(),
         streaming_active_secs: None,
+        tool_text_leak: false,
     }
 }
 

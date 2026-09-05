@@ -1133,6 +1133,14 @@ impl AgentService {
             None
         };
 
+        // Streaming leak flag (fork #66, ex-upstream adolfousier/opencrabs#1260):
+        // text was already emitted to display as deltas, so there is no
+        // retro-strip here — the flag lets the tool loop attempt one
+        // corrective retry and otherwise fail clean instead of accepting
+        // the residue as a final answer.
+        let tool_text_leak =
+            crate::brain::provider::json_repair::content_has_unrecovered_tool_text(&content_blocks);
+
         Ok((
             LLMResponse {
                 id,
@@ -1155,6 +1163,7 @@ impl AgentService {
                     ..Default::default()
                 },
                 streaming_active_secs,
+                tool_text_leak,
             },
             reasoning,
         ))

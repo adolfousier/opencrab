@@ -1492,6 +1492,12 @@ impl AgentService {
         // ladder.
         #[cfg_attr(not(feature = "telegram"), allow(unused))]
         let mut mermaid_regen_retries: u32 = 0;
+        // Tool-text leak (leshchenko1979/opencrabs#66, ex-upstream
+        // adolfousier/opencrabs#1260): the provider stripped unrecoverable
+        // tool-call JSON and set tool_text_leak. One corrective retry with a
+        // structured-calls nudge; a second leak fails the turn clean instead
+        // of delivering raw internals as the final answer.
+        let mut tool_text_leak_retry_used: bool = false;
         // One-shot nudge for the browser screenshot-spam pattern detected
         // by the semantic-loop check below the per-iteration tool dispatch.
         // Reset per turn; fires at most once.
@@ -5500,6 +5506,53 @@ impl AgentService {
                     }
                 }
 
+                // ── Tool-text leak: corrective retry, then fail clean ───
+                // (fork #66, ex-upstream adolfousier/opencrabs#1260) The
+                // provider flagged unrecoverable tool-call JSON as text.
+                // With tools available, give the model ONE structured-calls
+                // nudge; if it leaks again, fail the turn clean — never
+                // deliver raw internals as the final answer. Compaction-style
+                // requests without tools never reach this loop, and the
+                // parse layer already stripped the JSON from content.
+                if response.tool_text_leak && self.tool_registry.count() > 0 {
+                    if !tool_text_leak_retry_used {
+                        tool_text_leak_retry_used = true;
+                        tracing::warn!(
+                            "Tool-call JSON leaked as text — one corrective retry with \
+                             structured-calls nudge (iteration {})",
+                            iteration,
+                        );
+                        self.record_provider_feedback(
+                            session_id,
+                            "tool_text_leak_retry",
+                            "provider-integrity",
+                            Some("model returned tool requests as text; corrective retry"),
+                        );
+                        context.add_message(Message::user(
+                            "[System: Your previous response contained tool-call JSON as plain \
+                             text instead of executable calls. You have access to tools — invoke \
+                             them ONLY through the structured function-call API, never as text \
+                             or JSON in your reply. Re-issue your response using real tool_use \
+                             calls; if no tool is needed, answer in plain prose without any \
+                             JSON.]"
+                                .to_string(),
+                        ));
+                        continue;
+                    }
+                    let msg = "Model returned tool requests as text and recovery failed \
+                               after one retry — try a model with native function calling \
+                               (e.g. Claude, GPT-4, Gemini)."
+                        .to_string();
+                    tracing::warn!("Tool-text leak retry exhausted — failing clean: {}", msg);
+                    self.record_provider_feedback(
+                        session_id,
+                        "tool_text_leak_fail",
+                        "provider-integrity",
+                        Some("leak persisted after corrective retry; failing clean"),
+                    );
+                    return Err(AgentError::Provider(crate::brain::provider::ProviderError::StreamError(msg)));
+                }
+
                 // ── Mid-sentence truncation retry ────────────────────────
                 // Local reasoning models sometimes hit an internal EOS mid-
                 // sentence. The response stream closes cleanly (finish_reason
@@ -7232,6 +7285,7 @@ impl AgentService {
                     // per-iteration LLMResponses; this top-level
                     // synthesis is for content/usage handoff only.
                     streaming_active_secs: None,
+                    tool_text_leak: false,
                 }
             }
             None => {

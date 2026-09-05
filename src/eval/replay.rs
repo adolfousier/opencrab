@@ -105,6 +105,7 @@ impl ReplayProvider {
                 stop_reason: Some(StopReason::EndTurn),
                 usage: TokenUsage::default(),
                 streaming_active_secs: None,
+                tool_text_leak: false,
             };
         };
         *cursor += 1;
@@ -144,6 +145,7 @@ impl ReplayProvider {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         }
     }
 }

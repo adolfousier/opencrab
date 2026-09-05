@@ -3168,26 +3168,40 @@ impl OpenAIProvider {
             }
         }
 
-        // Detect models that dump tool JSON as text instead of structured calls
-        let has_tool_text = content_blocks.iter().any(|b| {
-            if let ContentBlock::Text { text } = b {
-                (text.contains("\"function\"") && text.contains("\"arguments\""))
-                    || (text.contains("tool_call") && text.contains("\"name\""))
-                    || (text.contains("```json") && text.contains("\"command\""))
-            } else {
-                false
-            }
-        });
+        // Detect models that dump tool JSON as text instead of structured
+        // calls. Tightened detector (fork #66, ex-upstream
+        // adolfousier/opencrabs#1260): only a parseable call-shaped JSON
+        // object outside code fences counts — prose about tools no longer
+        // false-positives. On detection the raw JSON is STRIPPED from the
+        // content and `tool_text_leak` is set on the response for the tool
+        // loop's corrective retry. No ⚠️ warning block is appended: parser
+        // artifacts must never ride as content (they used to be persisted
+        // verbatim into compaction summaries / memory files).
         let has_structured_tools = content_blocks
             .iter()
             .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
-        if has_tool_text && !has_structured_tools {
-            tracing::warn!(
-                "Model returned tool call JSON as text — likely does not support function calling"
-            );
-            content_blocks.push(ContentBlock::Text {
-                text: "\n\n⚠️ **This model does not support function calling.** Tool requests were returned as text instead of executable calls. Consider switching to a model that supports tool use (e.g. Claude, GPT-4, Gemini).".to_string(),
-            });
+        let mut tool_text_leak = false;
+        if !has_structured_tools {
+            for block in content_blocks.iter_mut() {
+                if let ContentBlock::Text { text } = block {
+                    let (cleaned, stripped) = super::json_repair::strip_call_shaped_json(text);
+                    if stripped {
+                        tracing::warn!(
+                            "Model returned tool call JSON as text — unrecoverable, \
+                             stripped from content (likely weak function-calling support)"
+                        );
+                        *text = cleaned;
+                        tool_text_leak = true;
+                    }
+                }
+            }
+            if tool_text_leak {
+                // Drop text blocks emptied by the strip.
+                content_blocks.retain(|b| match b {
+                    ContentBlock::Text { text } => !text.trim().is_empty(),
+                    _ => true,
+                });
+            }
         }
 
         // Map finish_reason to StopReason
@@ -3214,6 +3228,7 @@ impl OpenAIProvider {
             },
             // Non-streaming parse path — streaming responses go through helpers.rs.
             streaming_active_secs: None,
+            tool_text_leak,
         }
     }
 

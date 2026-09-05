@@ -47,6 +47,7 @@ impl Provider for MockDeferredUsageProvider {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 
@@ -163,6 +164,7 @@ impl Provider for MockInlineUsageProvider {
                 ..Default::default()
             },
             streaming_active_secs: None,
+            tool_text_leak: false,
         })
     }
 
@@ -342,6 +344,7 @@ async fn test_deferred_usage_with_tool_calls() {
                         ..Default::default()
                     },
                     streaming_active_secs: None,
+                    tool_text_leak: false,
                 })
             } else {
                 Ok(LLMResponse {
@@ -357,6 +360,7 @@ async fn test_deferred_usage_with_tool_calls() {
                         ..Default::default()
                     },
                     streaming_active_secs: None,
+                    tool_text_leak: false,
                 })
             }
         }
