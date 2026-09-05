@@ -134,7 +134,7 @@ cargo clippy --lib --bins --tests --all-features -- -D warnings
 cargo test --all-features --verbose
 ```
 
-**All three commands must pass.** PRs that fail CI will not be reviewed.
+**All three commands must pass.** PRs with failing CI will not be merged. We'll comment on the PR explaining what's failing and how to fix it. Push the fix, wait for CI to go green, and the PR will be reviewed.
 
 `cargo clippy` is the lint pass we trust — `cargo check` only type-checks and misses the lint rules CI enforces. Iterate with clippy locally so you don't burn a CI run discovering a `-D warnings` failure.
 
