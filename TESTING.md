@@ -74,7 +74,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Bash Toml Blocklist | 11 | `src/tests/bash_toml_blocklist_test.rs` |
 | Tests — Bg Push Echo | 26 | `src/tests/bg_push_echo_test.rs` |
 | Tests — Bg Resume | 3 | `src/tests/bg_resume_test.rs` |
-| Tests — Boot Report | 3 | `src/tests/boot_report_test.rs` |
+| Tests — Boot Report | 5 | `src/tests/boot_report_test.rs` |
 | Tests — Brain Agent Context | 12 | `src/tests/brain_agent_context_test.rs` |
 | Tests — Brain Agent Service Phantom Lang | 11 | `src/tests/brain_agent_service_phantom_lang_test.rs` |
 | Tests — Brain Agent Service Phantom | 22 | `src/tests/brain_agent_service_phantom_test.rs` |
@@ -234,8 +234,9 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Custom Provider Section Resolver | 2 | `src/tests/custom_provider_section_resolver_test.rs` |
 | Tests — Custom Provider | 31 | `src/tests/custom_provider_test.rs` |
 | Tests — Daemon Health | 10 | `src/tests/daemon_health_test.rs` |
-| Tests — DB Database | 6 | `src/tests/db_database_test.rs` |
+| Tests — DB Database | 7 | `src/tests/db_database_test.rs` |
 | Tests — DB Migration 33 Heal | 4 | `src/tests/db_migration_33_heal_test.rs` |
+| Tests — DB Pending Origin Heal | 5 | `src/tests/db_pending_origin_heal_test.rs` |
 | Tests — DB Models | 5 | `src/tests/db_models_test.rs` |
 | Tests — DB Repository Channel Message | 1 | `src/tests/db_repository_channel_message_test.rs` |
 | Tests — DB Repository File | 2 | `src/tests/db_repository_file_test.rs` |
@@ -531,6 +532,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Repetition | 5 | `src/tests/repetition_test.rs` |
 | Tests — Respond To Group Persist | 3 | `src/tests/respond_to_group_persist_test.rs` |
 | Tests — Restart Recovery | 6 | `src/tests/restart_recovery_test.rs` |
+| Tests — Restart Replay Context | 1 | `src/tests/restart_replay_context_test.rs` |
 | Tests — Retry Notice Drain | 4 | `src/tests/retry_notice_drain_test.rs` |
 | Tests — RSI Brain Dedup | 31 | `src/tests/rsi_brain_dedup_test.rs` |
 | Tests — RSI Command Patterns | 5 | `src/tests/rsi_command_patterns_test.rs` |
