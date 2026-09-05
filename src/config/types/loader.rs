@@ -63,21 +63,23 @@ impl Config {
             .and_then(|s| s.local.as_ref())
             .map(|l| l.model.clone())
             .unwrap_or_else(default_local_stt_model);
-        let stt_base_url = stt
+        // A disabled engine contributes NOTHING to the runtime view (#1399).
+        // The dispatcher picks providers by the presence of these fields, so
+        // a disabled openai_compatible block that still carries its
+        // base_url used to be dispatched first and fail on every voice note
+        // while the enabled provider waited behind it.
+        let stt_compat = stt
             .and_then(|s| s.openai_compatible.as_ref())
-            .and_then(|c| c.base_url.clone())
-            .or_else(|| groq_enabled.then(|| "https://api.groq.com/openai/v1".to_string()));
-        let stt_model = stt
-            .and_then(|s| s.openai_compatible.as_ref())
+            .filter(|c| c.enabled);
+        let stt_base_url = stt_compat.and_then(|c| c.base_url.clone());
+        let stt_model = stt_compat
             .and_then(|c| c.model.clone())
             .or_else(|| Some("whisper-large-v3-turbo".to_string()));
-        let stt_api_key = stt
-            .and_then(|s| s.openai_compatible.as_ref())
-            .and_then(|c| c.api_key.clone())
-            .or_else(|| {
-                stt.and_then(|s| s.groq.as_ref())
-                    .and_then(|g| g.api_key.clone())
-            });
+        let stt_api_key = stt_compat.and_then(|c| c.api_key.clone()).or_else(|| {
+            stt.and_then(|s| s.groq.as_ref())
+                .filter(|g| g.enabled)
+                .and_then(|g| g.api_key.clone())
+        });
 
         // TTS: detect all modes
         let openai_tts_enabled = tts
@@ -118,17 +120,20 @@ impl Config {
                     .and_then(|c| c.model.clone())
             })
             .unwrap_or_else(default_tts_model);
-        let tts_base_url = tts
+        // Same rule as STT (#1399): only an ENABLED openai_compatible block
+        // feeds tts_base_url / tts_api_key, and only an enabled openai block
+        // lends its key. The OpenAI kind never reads tts_base_url, so no
+        // synthetic api.openai.com URL is planted here any more; it only
+        // made the dispatcher label real OpenAI calls as openai_compatible.
+        let tts_compat = tts
             .and_then(|t| t.openai_compatible.as_ref())
-            .and_then(|c| c.base_url.clone())
-            .or_else(|| openai_tts_enabled.then(|| "https://api.openai.com".to_string()));
-        let tts_api_key = tts
-            .and_then(|t| t.openai_compatible.as_ref())
-            .and_then(|c| c.api_key.clone())
-            .or_else(|| {
-                tts.and_then(|t| t.openai.as_ref())
-                    .and_then(|o| o.api_key.clone())
-            });
+            .filter(|c| c.enabled);
+        let tts_base_url = tts_compat.and_then(|c| c.base_url.clone());
+        let tts_api_key = tts_compat.and_then(|c| c.api_key.clone()).or_else(|| {
+            tts.and_then(|t| t.openai.as_ref())
+                .filter(|o| o.enabled)
+                .and_then(|o| o.api_key.clone())
+        });
         let local_tts_voice = tts
             .and_then(|t| t.local.as_ref())
             .map(|l| l.voice.clone())
@@ -152,8 +157,11 @@ impl Config {
             .map(|v| v.engine.clone())
             .unwrap_or_default();
 
-        let stt_provider = stt.and_then(|s| s.groq.clone());
-        let tts_provider = tts.and_then(|t| t.openai.clone());
+        // The provider blocks the Groq and OpenAI kinds read their key from
+        // are present only while enabled (#1399), so a switched-off engine
+        // with a stored key is not a candidate.
+        let stt_provider = stt.and_then(|s| s.groq.clone()).filter(|g| g.enabled);
+        let tts_provider = tts.and_then(|t| t.openai.clone()).filter(|o| o.enabled);
 
         // STT fallback chain: empty by default (dispatcher uses its built-
         // in priority). User configures via [providers.stt].fallback_chain

@@ -118,3 +118,60 @@ fn label_aliases_resolve_correctly() {
         Some("local".into()),
     );
 }
+
+// ─── #1399: the chain names the primary, disabled engines are not candidates ──
+
+use crate::channels::voice::service::resolve_primary_stt;
+use crate::config::SttMode;
+
+fn groq_first_config() -> VoiceConfig {
+    VoiceConfig {
+        stt_enabled: true,
+        stt_mode: SttMode::Api,
+        stt_provider: Some(ProviderConfig {
+            enabled: true,
+            api_key: Some("groq-key".to_string()),
+            ..Default::default()
+        }),
+        stt_fallback_chain: vec!["groq".into(), "local".into()],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn user_chain_head_is_the_primary() {
+    assert_eq!(
+        resolve_primary_stt(&groq_first_config()),
+        SttProviderKind::Groq
+    );
+}
+
+#[test]
+fn chain_head_without_config_is_skipped_for_the_primary() {
+    let cfg = VoiceConfig {
+        stt_fallback_chain: vec!["voicebox".into(), "groq".into()],
+        ..groq_first_config()
+    };
+    assert_eq!(resolve_primary_stt(&cfg), SttProviderKind::Groq);
+}
+
+#[test]
+fn disabled_local_is_not_a_fallback_even_when_listed() {
+    let cfg = groq_first_config();
+    let chain = resolve_fallback_chain(&cfg, SttProviderKind::Groq);
+    assert!(
+        chain.is_empty(),
+        "disabled local must be skipped, got {chain:?}"
+    );
+}
+
+#[cfg(feature = "local-stt")]
+#[test]
+fn enabled_local_is_a_fallback() {
+    let cfg = VoiceConfig {
+        stt_mode: SttMode::Local,
+        ..groq_first_config()
+    };
+    let chain = resolve_fallback_chain(&cfg, SttProviderKind::Groq);
+    assert_eq!(chain, vec![SttProviderKind::Local]);
+}
