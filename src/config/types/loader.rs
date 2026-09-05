@@ -1079,6 +1079,31 @@ impl Config {
             );
         }
 
+        // Key-level schema guard (#83/#87, re-landed on the #1385
+        // architecture): deserialize the candidate through `Config` with
+        // serde_ignored and refuse iff the struct would ignore a key at the
+        // target path. The compiled struct is the registry — a key the
+        // struct knows writes without ceremony; anything the struct would
+        // discard on load is an orphan by construction and is refused (the
+        // #1199 rule). The section guard above (#1385 pinned list) runs
+        // first; this adds the key dimension upstream never had, without
+        // touching its list-based architecture. The parse guard above runs
+        // first of all, so a type error keeps surfacing with the #714
+        // message.
+        let doc_path_owned = parts.join(".");
+        let doc_path = if doc_path_owned.is_empty() {
+            section
+        } else {
+            doc_path_owned.as_str()
+        };
+        if let Err(e) = crate::config::sections::write_guard(doc_path, key, &serialized) {
+            tracing::error!(
+                target: "config_guard",
+                "Denied config.toml write [{section}].{key}: {e}"
+            );
+            anyhow::bail!("config write denied: {e}");
+        }
+
         // Back up before overwriting
         Self::backup_config(&path, 7);
 

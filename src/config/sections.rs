@@ -11,6 +11,8 @@
 //! The registry lives here rather than in the config tool because both sides
 //! need it and `config` cannot depend on `brain::tools`.
 
+
+use crate::config::Config;
 /// Top-level tables that actually exist in `config.toml`.
 ///
 /// A write path must START at one of these. Anything else is an orphan by
@@ -133,4 +135,119 @@ pub fn validate_write_path(section: &str) -> Result<(), String> {
          load, so the value would silently never apply.",
         CONFIG_SECTIONS.join(", ")
     ))
+}
+
+/// Can a WRITE address `section`/`key` in the candidate document? (#83/#87)
+///
+/// Re-landed on the #1385 architecture: the section LIST is upstream's pinned
+/// `CONFIG_SECTIONS` (drift-guarded), while the key dimension stays
+/// struct-derived. `section` is the dotted path as actually written into the
+/// document (the table path `write_item` navigated), `candidate` the
+/// serialized document AFTER the key was inserted — so the check reflects the
+/// locked live file, with no TOCTOU window. The candidate is deserialized
+/// through `Config` with `serde_ignored`; the write is valid iff the struct
+/// does not ignore a key at the target path. Map-valued sections
+/// (`providers.custom.*`, `channels.telegram.groups.*`) never report ignored
+/// keys — map contents are user-chosen, not schema.
+///
+/// Returns `Ok(())` or a message naming the unknown path, the likely intent,
+/// and the fact that the file was not changed.
+pub fn write_guard(section: &str, key: &str, candidate: &str) -> Result<(), String> {
+    reject_bad_shape(section)?;
+    let section = section.trim().trim_matches('.');
+    let target = format!("{section}.{key}");
+    let ignored = ignored_key_paths(candidate)?;
+    let blocked = ignored
+        .iter()
+        .any(|p| p == &target || target.starts_with(&format!("{p}.")));
+    if !blocked {
+        return Ok(());
+    }
+
+    let head = section.split('.').next().unwrap_or(section);
+    let suggestion = SECTION_PARENTS
+        .iter()
+        .find(|(child, _)| *child == head)
+        .map(|(_, parent)| format!(" — did you mean '{parent}.{section}'?"))
+        .or_else(|| suggest(head).map(|s| format!(" — did you mean '{s}'?")))
+        .unwrap_or_default();
+    Err(format!(
+        "unknown config path '{target}': the Config struct has no such section or key{suggestion}. \
+         Writing it would create a table/key serde ignores on load, so the value would silently \
+         never apply (#1199). The file was NOT changed. Known sections: {}.",
+        CONFIG_SECTIONS.join(", ")
+    ))
+}
+
+/// Refuse section strings that would name junk tables in the document:
+/// empty, padded, or double-dotted paths would create tables/key names the
+/// struct ignores on load.
+fn reject_bad_shape(section: &str) -> Result<(), String> {
+    let trimmed = section.trim();
+    if trimmed.is_empty() {
+        return Err("config section is empty".to_string());
+    }
+    if trimmed != section {
+        return Err(format!(
+            "config section '{section}' has leading/trailing whitespace — it would name a table \
+             the Config struct ignores on load. Use '{trimmed}'."
+        ));
+    }
+    if section.split('.').any(|p| p.is_empty()) {
+        return Err(format!(
+            "config section '{section}' has an empty segment — it would name a table the Config \
+             struct ignores on load. Use one dot between segments."
+        ));
+    }
+    Ok(())
+}
+
+/// Deserialize `content` through `Config`, collecting the dotted path of
+/// every key the struct ignores (the `serde_ignored` pass — the compiled
+/// struct IS the registry, so "ignored" means "the app discards this on
+/// load"). `Err` when `content` does not deserialize at all.
+pub fn ignored_key_paths(content: &str) -> Result<Vec<String>, String> {
+    let de = toml::Deserializer::new(content);
+    let mut ignored: Vec<String> = Vec::new();
+    let res: Result<Config, _> = serde_ignored::deserialize(de, |path| {
+        ignored.push(path.to_string());
+    });
+    res.map_err(|e| e.to_string())?;
+    Ok(ignored)
+}
+
+/// Nearest known section to `unknown` by edit distance, when close enough to
+/// be a plausible typo (distance ≤ 2). `None` otherwise, so the caller falls
+/// back to listing all known sections.
+fn suggest(unknown: &str) -> Option<String> {
+    let unknown = unknown.to_lowercase();
+    CONFIG_SECTIONS
+        .iter()
+        .map(|s| (edit_distance(&unknown, s), s.as_str()))
+        .filter(|(d, _)| *d <= 2)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, s)| s.to_string())
+}
+
+/// Classic Levenshtein distance — small, dependency-free, only used for
+/// typo suggestions.
+fn edit_distance(a: &str, b: &str) -> usize {
+    if a == b {
+        return 0;
+    }
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            cur.push(
+                (prev[j + 1] + 1)
+                    .min(cur[j] + 1)
+                    .min(prev[j] + usize::from(ca != cb)),
+            );
+        }
+        prev = cur;
+    }
+    prev[b.len()]
 }
