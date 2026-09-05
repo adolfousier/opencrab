@@ -1721,14 +1721,33 @@ pub fn normalize_loop_text(text: &str) -> String {
 
 /// Normalized near-match signature for one tool call (#961).
 ///
-/// Tool name + ':' + [`normalize_loop_text`] of the arguments' JSON. Calls
-/// whose arguments differ only in counters, incrementing numbers,
-/// punctuation, or whitespace collapse to the SAME signature, while
-/// genuinely different calls stay apart. Callers must exclude `read_file`
-/// before using this: its chunked reads differ only in numeric offsets
-/// (`start_line: 100` vs `150`), which digit-stripping collapses into a
-/// false collision.
+/// Tool name + ':' + one normalized part per argument field. STRING values
+/// go through [`normalize_loop_text`] (digits, punctuation, whitespace
+/// stripped), so counter-incremented repeats (`"attempt 1 of 6"` vs `2`)
+/// still collapse to the SAME signature. NUMERIC and BOOLEAN values are
+/// kept EXACT as `key=value` parts: they are parameters, not counters —
+/// `task_order: 1` vs `2`, `start_line: 100` vs `150`, `timeout_secs: 30`
+/// vs `60` are genuinely different calls, and digit-stripping made the
+/// guard flag that legitimate work as a loop (#82: a plan checklist
+/// progression was nudged, then broken, 2026-09-02). Parts are sorted so
+/// argument insertion order never changes the signature.
 pub fn normalized_call_signature(name: &str, args: &Value) -> String {
-    let args_str = serde_json::to_string(args).unwrap_or_default();
-    format!("{name}:{}", normalize_loop_text(&args_str))
+    let mut sig = String::from(name);
+    sig.push(':');
+    match args {
+        Value::Object(map) => {
+            let mut parts: Vec<String> = map
+                .iter()
+                .map(|(key, value)| match value {
+                    Value::Number(n) => format!("{key}={n}"),
+                    Value::Bool(b) => format!("{key}={b}"),
+                    other => format!("{key}={}", normalize_loop_text(&other.to_string())),
+                })
+                .collect();
+            parts.sort();
+            sig.push_str(&parts.join(" "));
+        }
+        other => sig.push_str(&normalize_loop_text(&other.to_string())),
+    }
+    sig
 }

@@ -112,10 +112,11 @@ fn signature_is_namespaced_by_tool_name() {
 }
 
 #[test]
-fn read_file_chunk_offsets_would_collide_hence_excluded() {
-    // Documents WHY the tool loop excludes read_file from the near-match:
-    // once digits are stripped, chunked reads differing only in start_line
-    // collapse to the same signature and would trip a false positive.
+fn read_file_chunk_offsets_stay_apart() {
+    // #82: numeric argument values are preserved exactly, so chunked reads
+    // differing only in start_line no longer collapse — the tool loop no
+    // longer needs its read_file exclusion, and genuine read loops (same
+    // path, same range) still collide.
     let a = normalized_call_signature(
         "read_file",
         &json!({"path": "src/main.rs", "start_line": 100, "line_count": 50}),
@@ -124,7 +125,40 @@ fn read_file_chunk_offsets_would_collide_hence_excluded() {
         "read_file",
         &json!({"path": "src/main.rs", "start_line": 150, "line_count": 50}),
     );
+    assert_ne!(a, b);
+
+    // Identical chunked reads (the stuck-loop shape) still collide.
+    let c = normalized_call_signature(
+        "read_file",
+        &json!({"path": "src/main.rs", "start_line": 100, "line_count": 50}),
+    );
+    assert_eq!(a, c);
+}
+
+#[test]
+fn plan_checklist_progression_stays_apart() {
+    // #82 real-world false positive (2026-09-02): completing plan checklist
+    // tasks differs ONLY in task_order — digit-stripping collapsed the
+    // progression into one signature, nudging and then breaking a session
+    // mid-checklist. Numeric fields must keep the calls distinct, while a
+    // literally identical stuck plan call still collides.
+    let done = |n: i64| {
+        normalized_call_signature("plan", &json!({"operation": "complete", "task_order": n}))
+    };
+    assert_ne!(done(1), done(2));
+    assert_ne!(done(2), done(3));
+    assert_eq!(done(3), done(3));
+}
+
+#[test]
+fn numeric_and_bool_fields_are_order_independent_and_exact() {
+    // Numeric/bool params are kept exactly and sorted by key, so argument
+    // insertion order never changes the signature (#82).
+    let a = normalized_call_signature("bash", &json!({"command": "sleep 5", "timeout_secs": 120}));
+    let b = normalized_call_signature("bash", &json!({"timeout_secs": 120, "command": "sleep 5"}));
     assert_eq!(a, b);
+    let c = normalized_call_signature("bash", &json!({"command": "sleep 5", "timeout_secs": 60}));
+    assert_ne!(a, c);
 }
 
 // ---- near_duplicate ----
