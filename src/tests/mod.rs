@@ -378,6 +378,13 @@ pub mod telegram_suggest_merge_test;
 pub mod telegram_table_render_test;
 pub mod telegram_token_redaction_test;
 pub mod telegram_topic_routing_test;
+#[cfg(feature = "telegram-userbot")]
+pub mod telegram_userbot_boundary_test;
+pub mod telegram_userbot_config_test;
+#[cfg(feature = "telegram-userbot")]
+pub mod telegram_userbot_reconcile_test;
+#[cfg(feature = "telegram-userbot")]
+pub mod telegram_userbot_session_test;
 pub mod tool_search_child_registry_test;
 pub mod tools_md_regression_test;
 pub mod write_opencrabs_file_inline_test;
