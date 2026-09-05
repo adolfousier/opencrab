@@ -1276,7 +1276,9 @@ pub async fn classify_recently_active(
             .flatten();
         match last_sender {
             Some(sender) if sender != crate::db::models::BOT_SENDER_ID => {
-                recovery.interrupted.push((sid, chat_id, b.thread_id));
+                recovery
+                    .interrupted
+                    .push((sid, chat_id, b.thread_id.map(i64::from)));
             }
             Some(_) => recovery.completed.push(short_session_id(sid)),
             None => recovery.unclassified.push(short_session_id(sid)),

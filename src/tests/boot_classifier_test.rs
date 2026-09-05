@@ -42,7 +42,7 @@ async fn bind_session(db: &Database, session: Uuid, chat: &str, thread: Option<i
         .await
         .unwrap();
     SessionBindingRepository::new(db.pool().clone())
-        .upsert(session.to_string().as_str(), "telegram", chat, thread)
+        .upsert(session.to_string(), "telegram", chat, thread)
         .await
         .unwrap();
 }
