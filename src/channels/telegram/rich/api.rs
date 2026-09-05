@@ -93,6 +93,72 @@ pub(crate) async fn edit_rich_html(
     post_and_check(&url, &body, origin, origin_detail).await
 }
 
+/// Edit an existing rich message with markdown input + a `media` array (#98).
+/// Same body convention as the send path (`rich_message: {markdown, media}`,
+/// Bot API 10.2+, #1044): local PNG bytes upload via multipart `attach://`,
+/// URL entries ride as server-side references. `reply_markup` is optional —
+/// pass `None` to leave the keyboard unchanged.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn edit_rich_markdown_media(
+    api_url: &str,
+    token: &str,
+    chat_id: i64,
+    message_id: i32,
+    markdown: &str,
+    media: &[super::mermaid::MediaEntry],
+    reply_markup: Option<&serde_json::Value>,
+    origin: &str,
+    origin_detail: &str,
+) -> anyhow::Result<()> {
+    let url = format!("{}/bot{token}/editMessageText", api_base(api_url));
+    let body = build_body_markdown_media_edit(chat_id, message_id, markdown, media);
+    let body = if let Some(kb) = reply_markup {
+        let mut b = body;
+        b["reply_markup"] = kb.clone();
+        b
+    } else {
+        body
+    };
+    if media.iter().any(|m| m.bytes.is_some()) {
+        post_rich_multipart(&url, media, &body, origin, origin_detail).await?;
+    } else {
+        post_and_check(&url, &body, origin, origin_detail).await?;
+    }
+    Ok(())
+}
+
+/// Build the `editMessageText` body with markdown input + a `media` array
+/// (#98). Split out so the request shape is unit-testable without a live
+/// bot, mirroring the send-path body shape (`build_body_markdown_media_target`).
+pub(crate) fn build_body_markdown_media_edit(
+    chat_id: i64,
+    message_id: i32,
+    markdown: &str,
+    media: &[super::mermaid::MediaEntry],
+) -> serde_json::Value {
+    let media_arr: Vec<serde_json::Value> = media
+        .iter()
+        .map(|m| {
+            // Local PNG bytes upload via multipart as `attach://<id>`; URL
+            // entries keep the legacy server-side fetch reference.
+            let source = match (&m.bytes, &m.url) {
+                (Some(_), _) => format!("attach://{}", m.id),
+                (None, Some(url)) => url.clone(),
+                (None, None) => String::new(),
+            };
+            serde_json::json!({
+                "id": m.id,
+                "media": { "type": "photo", "media": source },
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "rich_message": { "markdown": enforce_button_fit(markdown), "media": media_arr },
+    })
+}
+
 /// Lib-pass dead-code exempt: production callers went through the media
 /// variant; this shape stays for the cfg(test) API suite (custom api_url).
 #[allow(dead_code)]
