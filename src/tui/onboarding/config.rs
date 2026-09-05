@@ -821,8 +821,16 @@ impl OnboardingWizard {
                     "default_model",
                     "gpt-4o-mini-tts"
                 );
-                // Write selected voice to [voice] tts_voice
-                try_write!(write_errors, "voice", "tts_voice", &self.tts_api_voice);
+                // The voice lives on the provider entry: [voice] is a derived,
+                // read-only view assembled from providers.tts (#1385), and
+                // writing voice.tts_voice was rejected on save, which reverted
+                // the step and trapped the wizard on VoiceSetup (#1387).
+                try_write!(
+                    write_errors,
+                    "providers.tts.openai",
+                    "voice",
+                    &self.tts_api_voice
+                );
                 // Write API key to keys.toml (only what the user actually typed).
                 // The equality check this replaces let a seeded field that was
                 // typed into through persist as `__EXISTING_KEY__<key>`.

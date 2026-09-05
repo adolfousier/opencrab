@@ -361,6 +361,47 @@ fn tts_api_enter_advances_to_next_step() {
     });
 }
 
+/// The OpenAI voice is written to the provider entry the loader reads it
+/// from, never to the derived read-only [voice] view (#1387).
+#[test]
+fn tts_api_voice_is_written_to_the_openai_provider_entry() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let opencrabs = dir.path().join(".opencrabs");
+    std::fs::create_dir_all(&opencrabs).expect("create .opencrabs");
+    let config_path = opencrabs.join("config.toml");
+    with_home_override(opencrabs, || {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::Continue;
+        wizard.tts_provider = TtsProvider::OpenAi;
+        wizard.tts_api_voice = "echo".to_string();
+
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(
+            wizard.step,
+            OnboardingStep::ImageSetup,
+            "error_message={:?}",
+            wizard.error_message
+        );
+    });
+
+    let written = std::fs::read_to_string(&config_path).expect("wizard wrote config.toml");
+    let doc: toml::Value = toml::from_str(&written).expect("valid toml");
+    assert_eq!(
+        doc.get("providers")
+            .and_then(|p| p.get("tts"))
+            .and_then(|t| t.get("openai"))
+            .and_then(|o| o.get("voice"))
+            .and_then(|v| v.as_str()),
+        Some("echo"),
+        "the voice must land on providers.tts.openai.voice:\n{written}"
+    );
+    assert!(
+        doc.get("voice").is_none(),
+        "no [voice] section may be written; it is a derived view:\n{written}"
+    );
+}
+
 #[test]
 fn tts_local_enter_goes_to_voice_select() {
     if !crate::channels::voice::local_tts_available() {
