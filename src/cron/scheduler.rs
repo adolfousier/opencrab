@@ -217,18 +217,16 @@ async fn run_dedup_scan_job(job: &CronJob) -> anyhow::Result<()> {
 #[cfg(feature = "telegram")]
 async fn send_dedup_approval_keyboard(job: &CronJob) {
     // Pull the first `telegram:<chat_id>` target out of the (possibly
-    // comma-separated) deliver_to list.
-    let Some(chat_id) = job
-        .deliver_to
-        .as_deref()
-        .and_then(|targets| {
-            targets
-                .split(',')
-                .map(str::trim)
-                .find_map(|t| t.strip_prefix("telegram:"))
-        })
-        .and_then(|id| id.trim().parse::<i64>().ok())
-    else {
+    // comma-separated) deliver_to list. A thread component (#104) is
+    // accepted by the grammar but the approval keyboard itself is
+    // chat-level — it goes to the chat's default topic.
+    let Some((chat_id, _thread)) = job.deliver_to.as_deref().and_then(|targets| {
+        targets
+            .split(',')
+            .map(str::trim)
+            .find_map(|t| t.strip_prefix("telegram:"))
+            .and_then(parse_telegram_target)
+    }) else {
         return;
     };
     let Some(token) = read_channel_secret("telegram", "token") else {
@@ -812,6 +810,8 @@ async fn execute_job(
     // lives in its session and the scheduler is the only thing that speaks.
     // Scoped across the whole turn so it holds inside every tool call, and
     // task-local so it never reaches a sibling job on the scheduler.
+    // The scope is chat-level: a `telegram:<chat_id>:<thread_id>` target
+    // (#104) still permits exactly that chat.
     let permitted_chat = job
         .deliver_to
         .as_deref()
@@ -820,8 +820,9 @@ async fn execute_job(
                 .split(',')
                 .map(str::trim)
                 .find_map(|t| t.strip_prefix("telegram:"))
+                .and_then(parse_telegram_target)
         })
-        .and_then(|id| id.trim().parse::<i64>().ok());
+        .map(|(chat_id, _)| chat_id);
 
     // Execute with auto-approved tools (no interactive user)
     let result = crate::cron::send_scope::with_send_target(
@@ -933,9 +934,34 @@ async fn execute_job(
     Ok(())
 }
 
+/// Parse the Telegram target out of a `deliver_to` entry (fork #104).
+/// Grammar: `telegram:<chat_id>` → `(chat_id, None)` — the chat's default
+/// topic, the behavior every existing job keeps; `telegram:<chat_id>:<thread_id>`
+/// → `(chat_id, Some(thread_id))` — opt-in delivery into that forum topic.
+/// Anything else (non-numeric components, an extra `:` segment) → `None`;
+/// the caller owns the loud failure. Thread delivery is opt-in only: a job
+/// configured without a thread component never gets retargeted (#1085
+/// scope discipline).
+pub(crate) fn parse_telegram_target(target: &str) -> Option<(i64, Option<i64>)> {
+    let mut parts = target.split(':');
+    let chat_id = parts.next()?.trim().parse::<i64>().ok()?;
+    match parts.next() {
+        None => Some((chat_id, None)),
+        Some(thread) => {
+            let thread_id = thread.trim().parse::<i64>().ok()?;
+            // A third component means the target is malformed, not deeply nested.
+            if parts.next().is_some() {
+                return None;
+            }
+            Some((chat_id, Some(thread_id)))
+        }
+    }
+}
+
 /// Deliver a cron job result to the specified channel.
-/// Format: "telegram:chat_id", "discord:channel_id", "slack:channel_id",
-/// or an HTTP(S) URL for generic webhook delivery.
+/// Format: "telegram:chat_id", "telegram:chat_id:thread_id" (opt-in forum
+/// topic), "discord:channel_id", "slack:channel_id", or an HTTP(S) URL for
+/// generic webhook delivery.
 async fn deliver_result(
     deliver_to: &str,
     job_name: &str,
@@ -982,8 +1008,31 @@ async fn deliver_result(
         "telegram" => {
             #[cfg(feature = "telegram")]
             {
-                tracing::info!("Delivering cron result to Telegram chat {target_id}");
-                return deliver_telegram(target_id, job_name, &delivery_msg, pool.clone()).await;
+                match parse_telegram_target(target_id) {
+                    Some((cid, thread_id)) => {
+                        tracing::info!(
+                            "Delivering cron result to Telegram chat {cid}{}",
+                            thread_id
+                                .map(|t| format!(" thread {t}"))
+                                .unwrap_or_default()
+                        );
+                        return deliver_telegram(
+                            cid,
+                            thread_id,
+                            job_name,
+                            &delivery_msg,
+                            pool.clone(),
+                        )
+                        .await;
+                    }
+                    None => {
+                        tracing::error!(
+                            "Invalid Telegram deliver_to target '{target_id}' for job \
+                             '{job_name}' — expected 'telegram:<chat_id>' or \
+                             'telegram:<chat_id>:<thread_id>'; not delivering"
+                        );
+                    }
+                }
             }
             #[cfg(not(feature = "telegram"))]
             {
@@ -1108,7 +1157,8 @@ fn split_for_delivery(text: &str, max_len: usize) -> Vec<&str> {
 /// persisted through the same `record_outgoing` the tool path uses.
 #[cfg(feature = "telegram")]
 async fn deliver_telegram(
-    chat_id: &str,
+    chat_id: i64,
+    thread_id: Option<i64>,
     job_name: &str,
     message: &str,
     pool: Option<crate::db::Pool>,
@@ -1117,16 +1167,39 @@ async fn deliver_telegram(
         tracing::warn!("No Telegram bot token found in keys.toml — cannot deliver cron result");
         return None;
     };
-    let Ok(cid) = chat_id.parse::<i64>() else {
-        tracing::warn!("Cron job '{job_name}': invalid Telegram chat id '{chat_id}'");
-        return None;
-    };
     let bot = teloxide::Bot::new(token);
-    // Thread stays None deliberately: cron has always delivered to the
-    // chat's default topic, and silently retargeting forum jobs to the
-    // last-active topic is a behavior change nobody asked for (#1085
-    // scope discipline).
-    let thread = None;
+    // Opt-in thread delivery (fork #104): `telegram:<chat_id>:<thread_id>`
+    // routes into that forum topic; a bare `telegram:<chat_id>` stays on the
+    // chat's default topic — existing jobs are never silently retargeted
+    // (#1085 scope discipline).
+    let thread = thread_id.map(|t| teloxide::types::ThreadId(teloxide::types::MessageId(t as i32)));
+    // Fire-time validation for the opt-in path: the chat must be a forum
+    // with topics enabled. A thread pointed at a non-forum chat is a
+    // configuration error — fail LOUDLY here rather than drop the message
+    // into General (that fallback is the exact silent-retargeting behavior
+    // the deliver_to grammar must never perform). Topic *existence* has no
+    // Bot API read; it is proven by the send itself, and a dead topic id
+    // surfaces as a loud send error below.
+    if let Some(tid) = thread_id {
+        match bot.get_chat(teloxide::types::ChatId(chat_id)).await {
+            Ok(chat) if is_forum_chat(&chat) => {}
+            Ok(_) => {
+                tracing::error!(
+                    "Cron job '{job_name}': deliver_to thread {tid} rejected — chat {chat_id} \
+                     is not a forum (topics disabled); refusing delivery instead of falling \
+                     back to the default topic"
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Cron job '{job_name}': cannot validate chat {chat_id} for thread \
+                     {tid} delivery: {e} — refusing delivery"
+                );
+                return None;
+            }
+        }
+    }
     // Delivery runs detached (review F18): the shared outbox ladder can
     // legally wait out 429 windows (up to ~90s total per send). Awaiting
     // that inline would stall the whole scheduler tick — one flood-banned
@@ -1152,7 +1225,10 @@ async fn deliver_telegram(
         {
             Ok(sent) => {
                 tracing::info!(
-                    "Cron result for '{job_name}' delivered to Telegram chat {cid} ({} part(s))",
+                    "Cron result for '{job_name}' delivered to Telegram chat {cid}{} ({} part(s))",
+                    thread_id
+                        .map(|t| format!(" thread {t}"))
+                        .unwrap_or_default(),
                     sent.len()
                 );
                 // Persist keyed by message id so a reply to the cron post
@@ -1160,10 +1236,37 @@ async fn deliver_telegram(
                 crate::channels::telegram::send::record_outgoing(pool, cid, thread, &sent).await;
             }
             Err(e) => {
-                tracing::error!("Cron delivery for '{job_name}' to chat {cid} failed: {e}");
+                if thread_id.is_some() {
+                    tracing::error!(
+                        "Cron delivery for '{job_name}' to chat {cid} thread {} failed: {e} — \
+                         if the error is 'message thread not found', topic {} does not exist \
+                         in chat {cid}; fix the job's deliver_to (there is no fallback to the \
+                         default topic)",
+                        thread_id.unwrap(),
+                        thread_id.unwrap()
+                    );
+                } else {
+                    tracing::error!("Cron delivery for '{job_name}' to chat {cid} failed: {e}");
+                }
             }
         }
     }))
+}
+
+/// Whether a `get_chat` result describes a forum (topics-enabled) group.
+/// Only supergroups carry the `is_forum` flag; channels/groups/private
+/// chats are all non-forum, so opt-in thread delivery rejects them.
+#[cfg(feature = "telegram")]
+fn is_forum_chat(chat: &teloxide::types::ChatFullInfo) -> bool {
+    matches!(
+        &chat.kind,
+        teloxide::types::ChatFullInfoKind::Public(public)
+            if matches!(
+                &public.kind,
+                teloxide::types::ChatFullInfoPublicKind::Supergroup(supergroup)
+                    if supergroup.is_forum
+            )
+    )
 }
 
 /// Deliver via Discord Bot API (direct HTTP POST to the channel-messages
