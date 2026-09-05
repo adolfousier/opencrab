@@ -51,6 +51,40 @@ fn roll_line_uses_only_first_body_line() {
     assert_eq!(line, "📨 notify from ops: first");
 }
 
+/// #61 dedupe: a body that carries its own "📨 notify from …:" echo
+/// (hand-typed probe or quoted notify) must not render the phrase twice —
+/// the envelope already names the sender. Header-shaped prefix up to the
+/// first ':' is stripped (Alexey 2026-09-05, r4 smoke duplication).
+#[test]
+fn roll_line_strips_leading_self_echo_with_colon() {
+    let line = build_notify_roll_line(
+        "CLI tooling",
+        "📨 notify from Smoke probe — 🔍 SMOKE r4: land on the roll",
+    );
+    assert_eq!(line, "📨 notify from CLI tooling: land on the roll");
+}
+
+#[test]
+fn roll_line_strips_quoted_session_notify_echo() {
+    let line = build_notify_roll_line("HQ", "📨 notify from HQ: build broke");
+    assert_eq!(line, "📨 notify from HQ: build broke");
+}
+
+/// A "📨 notify from" line with no ':' can't be told apart from prose —
+/// it must pass through untouched rather than eat content.
+#[test]
+fn roll_line_keeps_echo_without_colon() {
+    let line = build_notify_roll_line("ops", "📨 notify from nobody");
+    assert_eq!(line, "📨 notify from ops: 📨 notify from nobody");
+}
+
+/// Clean bodies are byte-identical through the strip pass.
+#[test]
+fn roll_line_untouched_for_clean_body() {
+    let line = build_notify_roll_line("HQ", "*bzzt* status: green");
+    assert_eq!(line, "📨 notify from HQ: *bzzt* status: green");
+}
+
 /// #61: labels are user data (topic/chat names). Same neutralization
 /// the receipt card applies — angle brackets become single guillemets
 /// before the line hits roll chrome that renders into HTML.
