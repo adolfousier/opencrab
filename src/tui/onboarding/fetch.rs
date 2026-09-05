@@ -529,24 +529,27 @@ pub async fn fetch_provider_models(
             req.send().await
         }
         "zhipu" => {
-            // z.ai GLM — /api/paas/v4/models or /api/coding/paas/v4/models
-            // Use passed endpoint_type (from wizard state), fall back to config, then default "api"
+            // z.ai GLM: list from the same host and channel the chat URL
+            // resolves to (#1350). Wizard state wins, then the saved
+            // [providers.zhipu] (its base_url override included), then the
+            // "api" default.
+            let saved = crate::config::Config::load()
+                .ok()
+                .and_then(|c| c.providers.zhipu.clone());
             let endpoint_type = zhipu_endpoint_type
                 .map(|s| s.to_string())
-                .or_else(|| {
-                    crate::config::Config::load()
-                        .ok()
-                        .and_then(|c| c.providers.zhipu.clone())
-                        .and_then(|p| p.endpoint_type)
-                })
+                .or_else(|| saved.as_ref().and_then(|p| p.endpoint_type.clone()))
                 .unwrap_or_else(|| "api".to_string());
+            let configured_base = base_url
+                .map(str::to_string)
+                .or_else(|| saved.as_ref().and_then(|p| p.base_url.clone()));
 
-            let base = match endpoint_type.as_str() {
-                "coding" => "https://api.z.ai/api/coding/paas/v4/models",
-                _ => "https://api.z.ai/api/paas/v4/models",
-            };
+            let base = crate::brain::provider::zhipu_endpoint::models_url(
+                configured_base.as_deref(),
+                Some(endpoint_type.as_str()),
+            );
 
-            let mut req = client.get(base);
+            let mut req = client.get(&base);
             if let Some(key) = api_key
                 && !key.is_empty()
             {

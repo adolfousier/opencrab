@@ -648,3 +648,124 @@ fn create_name_ctrl_chars_not_consumed() {
     assert_eq!(out, KeyOutcome::Consumed);
     assert!(s.input_buffer.is_empty());
 }
+
+// ── #1381: create-name validates on Enter, stays with inline error ─────────
+
+#[test]
+fn create_name_invalid_charset_stays_and_sets_error() {
+    // Name with a space — should NOT advance to CreateDesc
+    let mut s = ProfilesDialogState {
+        action: ProfileAction::CreateName,
+        input_buffer: "has spaces".to_string(),
+        ..Default::default()
+    };
+    let out = decide(&mut s, &[], "default", key(KeyCode::Enter));
+    assert_eq!(out, KeyOutcome::Consumed);
+    assert_eq!(
+        s.action,
+        ProfileAction::CreateName,
+        "must stay on name step when charset is invalid"
+    );
+    assert!(s.error.is_some(), "error must be set for invalid name");
+    assert!(
+        s.error.as_ref().unwrap().contains("alphanumeric"),
+        "error should mention charset"
+    );
+}
+
+#[test]
+fn create_name_invisible_char_stays_and_sets_error() {
+    // U+00A0 no-break space — the clipboard stowaway from the bug report
+    let mut s = ProfilesDialogState {
+        action: ProfileAction::CreateName,
+        input_buffer: "some\u{00A0}bot".to_string(),
+        ..Default::default()
+    };
+    let out = decide(&mut s, &[], "default", key(KeyCode::Enter));
+    assert_eq!(out, KeyOutcome::Consumed);
+    assert_eq!(s.action, ProfileAction::CreateName);
+    assert!(s.error.is_some());
+    assert!(
+        s.error.as_ref().unwrap().contains("U+00A0"),
+        "error must name the codepoint"
+    );
+}
+
+#[test]
+fn create_name_duplicate_stays_and_sets_error() {
+    let profiles = vec![
+        entry("default", Some("Default profile")),
+        entry("hermes", Some("Messenger")),
+    ];
+    let mut s = ProfilesDialogState {
+        action: ProfileAction::CreateName,
+        input_buffer: "hermes".to_string(),
+        ..Default::default()
+    };
+    let out = decide(&mut s, &profiles, "default", key(KeyCode::Enter));
+    assert_eq!(out, KeyOutcome::Consumed);
+    assert_eq!(
+        s.action,
+        ProfileAction::CreateName,
+        "must stay on name step for duplicate"
+    );
+    assert!(s.error.is_some());
+    assert!(
+        s.error.as_ref().unwrap().contains("already exists"),
+        "error should mention duplicate"
+    );
+}
+
+#[test]
+fn create_name_reserved_default_stays_and_sets_error() {
+    let mut s = ProfilesDialogState {
+        action: ProfileAction::CreateName,
+        input_buffer: "default".to_string(),
+        ..Default::default()
+    };
+    let out = decide(&mut s, &[], "default", key(KeyCode::Enter));
+    assert_eq!(out, KeyOutcome::Consumed);
+    assert_eq!(s.action, ProfileAction::CreateName);
+    assert!(s.error.is_some());
+    assert!(s.error.as_ref().unwrap().contains("reserved"));
+}
+
+#[test]
+fn create_name_valid_advances_and_clears_error() {
+    let mut s = ProfilesDialogState {
+        action: ProfileAction::CreateName,
+        input_buffer: "my-profile".to_string(),
+        error: Some("stale error".to_string()),
+        ..Default::default()
+    };
+    let out = decide(&mut s, &[], "default", key(KeyCode::Enter));
+    assert_eq!(out, KeyOutcome::Consumed);
+    assert_eq!(s.action, ProfileAction::CreateDesc);
+    assert!(s.error.is_none(), "error must clear on successful advance");
+}
+
+#[test]
+fn create_name_typing_clears_error() {
+    let mut s = ProfilesDialogState {
+        action: ProfileAction::CreateName,
+        input_buffer: "bad name".to_string(),
+        error: Some("some error".to_string()),
+        ..Default::default()
+    };
+    decide(&mut s, &[], "default", key(KeyCode::Char('x')));
+    assert!(s.error.is_none(), "typing should clear the error");
+    assert_eq!(s.input_buffer, "bad namex");
+}
+
+#[test]
+fn create_name_backspace_clears_error() {
+    let mut s = ProfilesDialogState {
+        action: ProfileAction::CreateName,
+        input_buffer: "bad name".to_string(),
+        error: Some("some error".to_string()),
+        ..Default::default()
+    };
+    decide(&mut s, &[], "default", key(KeyCode::Backspace));
+    assert!(s.error.is_none(), "backspace should clear the error");
+    assert_eq!(s.input_buffer, "bad nam");
+}

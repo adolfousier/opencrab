@@ -1,5 +1,6 @@
 //! The one-row app title bar shown above the full-screen modes.
 
+use super::theme::{self, Role};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -36,7 +37,7 @@ pub(super) fn render_app_title(f: &mut Frame, area: Rect) {
         Span::styled(
             " 🦀 OpenCrabs AI Agent",
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(theme::role(Role::Gray))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(

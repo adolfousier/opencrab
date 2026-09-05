@@ -8,6 +8,7 @@ use super::onboarding::{
     TrelloField, WizardMode,
 };
 use super::provider_selector::CUSTOM_PROVIDER_IDX;
+use crate::tui::render::theme::{self, Role};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
@@ -17,9 +18,15 @@ use ratatui::{
 };
 
 /// Main color palette (matches existing OpenCrabs theme)
-const BRAND_BLUE: Color = Color::Rgb(120, 120, 120);
-const BRAND_GOLD: Color = Color::Rgb(215, 100, 20);
-const ACCENT_GOLD: Color = Color::Rgb(215, 100, 20);
+fn brand_blue() -> Color {
+    theme::role(Role::Gray)
+}
+fn brand_gold() -> Color {
+    theme::role(Role::Accent)
+}
+fn accent_gold() -> Color {
+    theme::role(Role::Accent)
+}
 
 /// Render the entire onboarding wizard
 /// The `[start, end)` slice of a list to draw so that `selected` stays visible
@@ -67,7 +74,9 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
     if step != OnboardingStep::Complete && !wizard.quick_jump {
         // Show logo + tagline on the first step only
         if step == OnboardingStep::ModeSelect {
-            let logo_style = Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD);
+            let logo_style = Style::default()
+                .fg(brand_gold())
+                .add_modifier(Modifier::BOLD);
             for logo_line in [
                 "   ___                    ___           _",
                 "  / _ \\ _ __  ___ _ _    / __|_ _ __ _| |__  ___",
@@ -81,7 +90,7 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
             lines.push(Line::from(Span::styled(
                 "\u{1f980} The autonomous AI agent. Self-improving. Every channel.",
                 Style::default()
-                    .fg(BRAND_GOLD)
+                    .fg(brand_gold())
                     .add_modifier(Modifier::ITALIC),
             )));
             lines.push(Line::from(""));
@@ -90,12 +99,14 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             render_progress_dots(step_current, step_total),
-            Style::default().fg(BRAND_BLUE),
+            Style::default().fg(brand_blue()),
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             step.title().to_string(),
-            Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(brand_gold())
+                .add_modifier(Modifier::BOLD),
         )));
         // Wrap subtitle so it never truncates
         let subtitle_style = Style::default().fg(Color::Gray);
@@ -144,7 +155,7 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
         for chunk in wrap_text(notice, wrap_width) {
             lines.push(Line::from(Span::styled(
                 format!("  {chunk}"),
-                Style::default().fg(BRAND_BLUE),
+                Style::default().fg(brand_blue()),
             )));
         }
     }
@@ -188,13 +199,15 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
             // Channels list: Space toggles, Enter opens setup, arrow keys navigate
             footer.push(Span::styled(
                 "[Space] ",
-                Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(brand_blue())
+                    .add_modifier(Modifier::BOLD),
             ));
             footer.push(Span::styled("Toggle  ", Style::default().fg(Color::White)));
             footer.push(Span::styled(
                 "[Enter] ",
                 Style::default()
-                    .fg(ACCENT_GOLD)
+                    .fg(accent_gold())
                     .add_modifier(Modifier::BOLD),
             ));
             footer.push(Span::styled("Setup", Style::default().fg(Color::White)));
@@ -202,18 +215,22 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
             // Channel setup screens: tab nav + editing hints
             footer.push(Span::styled(
                 "[Tab] ",
-                Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(brand_blue())
+                    .add_modifier(Modifier::BOLD),
             ));
             footer.push(Span::styled("Next  ", Style::default().fg(Color::White)));
             footer.push(Span::styled(
                 "[←→] ",
-                Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(brand_blue())
+                    .add_modifier(Modifier::BOLD),
             ));
             footer.push(Span::styled("Cursor  ", Style::default().fg(Color::White)));
             footer.push(Span::styled(
                 "[Enter] ",
                 Style::default()
-                    .fg(ACCENT_GOLD)
+                    .fg(accent_gold())
                     .add_modifier(Modifier::BOLD),
             ));
             footer.push(Span::styled("Confirm", Style::default().fg(Color::White)));
@@ -221,7 +238,7 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
             footer.push(Span::styled(
                 "[Enter] ",
                 Style::default()
-                    .fg(ACCENT_GOLD)
+                    .fg(accent_gold())
                     .add_modifier(Modifier::BOLD),
             ));
             if wizard.health_complete {
@@ -234,7 +251,9 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
             if step != OnboardingStep::ModeSelect {
                 footer.push(Span::styled(
                     "[Tab] ",
-                    Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(brand_blue())
+                        .add_modifier(Modifier::BOLD),
                 ));
                 footer.push(Span::styled(
                     "Next Field  ",
@@ -244,7 +263,7 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
             footer.push(Span::styled(
                 "[Enter] ",
                 Style::default()
-                    .fg(ACCENT_GOLD)
+                    .fg(accent_gold())
                     .add_modifier(Modifier::BOLD),
             ));
             footer.push(Span::styled("Confirm", Style::default().fg(Color::White)));
@@ -384,10 +403,12 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(BRAND_BLUE))
+                .border_style(Style::default().fg(brand_blue()))
                 .title(Span::styled(
                     title_string,
-                    Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(brand_blue())
+                        .add_modifier(Modifier::BOLD),
                 ))
                 .title_alignment(title_alignment),
         )
@@ -433,7 +454,9 @@ fn render_whatsapp_qr_popup(f: &mut Frame, qr_text: &str, area: Rect) {
     };
 
     // Build content lines — white block chars on dark bg (inverted QR, scannable by phone)
-    let qr_style = Style::default().fg(Color::White).bg(Color::Rgb(18, 18, 18));
+    let qr_style = Style::default()
+        .fg(Color::White)
+        .bg(theme::role(Role::SurfaceQr));
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(qr_h as usize + 3);
     lines.push(Line::from(Span::styled(
         " Open WhatsApp › Linked Devices › Link a Device ",
@@ -449,13 +472,13 @@ fn render_whatsapp_qr_popup(f: &mut Frame, qr_text: &str, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         " Waiting for scan... ",
-        Style::default().fg(BRAND_GOLD),
+        Style::default().fg(brand_gold()),
     )));
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(120, 120, 120)))
-        .style(Style::default().bg(Color::Rgb(18, 18, 18)));
+        .border_style(Style::default().fg(theme::role(Role::Gray)))
+        .style(Style::default().bg(theme::role(Role::SurfaceQr)));
 
     let para = Paragraph::new(lines)
         .block(block)
@@ -482,11 +505,15 @@ fn render_mode_select(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             if qs_selected { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             if qs_selected { "[*]" } else { "[ ]" },
-            Style::default().fg(if qs_selected { BRAND_GOLD } else { Color::Gray }),
+            Style::default().fg(if qs_selected {
+                brand_gold()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             " QuickStart",
@@ -513,12 +540,12 @@ fn render_mode_select(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             if adv_selected { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             if adv_selected { "[*]" } else { "[ ]" },
             Style::default().fg(if adv_selected {
-                BRAND_GOLD
+                brand_gold()
             } else {
                 Color::Gray
             }),
@@ -611,11 +638,11 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         };
 
         let mut spans = vec![
-            Span::styled(prefix, Style::default().fg(ACCENT_GOLD)),
+            Span::styled(prefix, Style::default().fg(accent_gold())),
             Span::styled(
                 marker,
                 Style::default().fg(if selected {
-                    BRAND_GOLD
+                    brand_gold()
                 } else if configured {
                     Color::Green
                 } else {
@@ -662,7 +689,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             Span::styled(
                 "  Name:     ",
                 Style::default().fg(if name_focused {
-                    BRAND_BLUE
+                    brand_blue()
                 } else {
                     Color::Gray
                 }),
@@ -687,7 +714,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             Span::styled(
                 "  Base URL: ",
                 Style::default().fg(if base_focused {
-                    BRAND_BLUE
+                    brand_blue()
                 } else {
                     Color::Gray
                 }),
@@ -720,7 +747,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             Span::styled(
                 "  API Key:  ",
                 Style::default().fg(if api_key_focused {
-                    BRAND_BLUE
+                    brand_blue()
                 } else {
                     Color::Gray
                 }),
@@ -749,7 +776,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 Span::styled(
                     "  Model:    ",
                     Style::default().fg(if model_focused {
-                        BRAND_BLUE
+                        brand_blue()
                     } else {
                         Color::Gray
                     }),
@@ -796,7 +823,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     Span::styled(
                         "  Model:    ",
                         Style::default().fg(if model_focused {
-                            BRAND_BLUE
+                            brand_blue()
                         } else {
                             Color::Gray
                         }),
@@ -841,7 +868,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 let style = if sel && model_focused {
                     Style::default()
                         .fg(Color::Black)
-                        .bg(BRAND_BLUE)
+                        .bg(brand_blue())
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::Reset)
@@ -870,7 +897,11 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         lines.push(Line::from(vec![
             Span::styled(
                 "  Context:  ",
-                Style::default().fg(if cw_focused { BRAND_BLUE } else { Color::Gray }),
+                Style::default().fg(if cw_focused {
+                    brand_blue()
+                } else {
+                    Color::Gray
+                }),
             ),
             Span::styled(
                 format!("{}{}", cw_display, cursor),
@@ -909,13 +940,17 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
                         "  Press Enter to sign in with GitHub",
-                        Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(brand_blue())
+                            .add_modifier(Modifier::BOLD),
                     )));
                 }
                 GitHubDeviceFlowStatus::WaitingForUser => {
                     lines.push(Line::from(Span::styled(
                         "  1. Go to: github.com/login/device",
-                        Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(brand_blue())
+                            .add_modifier(Modifier::BOLD),
                     )));
                     if let Some(ref code) = wizard.github_user_code {
                         lines.push(Line::from(Span::styled(
@@ -983,13 +1018,17 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
                         "  Press Enter to sign in with OpenAI",
-                        Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(brand_blue())
+                            .add_modifier(Modifier::BOLD),
                     )));
                 }
                 CodexDeviceFlowStatus::WaitingForUser => {
                     lines.push(Line::from(Span::styled(
                         "  1. Go to: https://auth.openai.com/codex/device",
-                        Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(brand_blue())
+                            .add_modifier(Modifier::BOLD),
                     )));
                     if let Some(ref code) = wizard.ps.codex_user_code {
                         lines.push(Line::from(Span::styled(
@@ -1057,7 +1096,11 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             };
             lines.push(Line::from(Span::styled(
                 "  Endpoint Type:",
-                Style::default().fg(if et_focused { BRAND_BLUE } else { Color::Gray }),
+                Style::default().fg(if et_focused {
+                    brand_blue()
+                } else {
+                    Color::Gray
+                }),
             )));
             lines.push(Line::from(vec![
                 Span::styled(
@@ -1095,7 +1138,11 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             };
             lines.push(Line::from(Span::styled(
                 "  Endpoint Type:",
-                Style::default().fg(if et_focused { BRAND_BLUE } else { Color::Gray }),
+                Style::default().fg(if et_focused {
+                    brand_blue()
+                } else {
+                    Color::Gray
+                }),
             )));
             lines.push(Line::from(vec![
                 Span::styled(
@@ -1133,7 +1180,11 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             };
             lines.push(Line::from(Span::styled(
                 "  Plan:",
-                Style::default().fg(if et_focused { BRAND_BLUE } else { Color::Gray }),
+                Style::default().fg(if et_focused {
+                    brand_blue()
+                } else {
+                    Color::Gray
+                }),
             )));
             lines.push(Line::from(vec![
                 Span::styled(
@@ -1165,7 +1216,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 lines.push(Line::from(Span::styled(
                     "  Plan tier (sets context window):",
                     Style::default().fg(if tier_focused {
-                        BRAND_BLUE
+                        brand_blue()
                     } else {
                         Color::Gray
                     }),
@@ -1224,7 +1275,11 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("  {}: ", key_label),
-                    Style::default().fg(if key_focused { BRAND_BLUE } else { Color::Gray }),
+                    Style::default().fg(if key_focused {
+                        brand_blue()
+                    } else {
+                        Color::Gray
+                    }),
                 ),
                 Span::styled(
                     format!("{}{}", masked_key, cursor),
@@ -1268,7 +1323,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(Span::styled(
                 label,
                 Style::default().fg(if model_focused {
-                    BRAND_BLUE
+                    brand_blue()
                 } else {
                     Color::Gray
                 }),
@@ -1307,7 +1362,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(vec![
                         Span::styled(
                             format!("  {}{} ", prefix, marker),
-                            Style::default().fg(if is_sel { ACCENT_GOLD } else { Color::Gray }),
+                            Style::default().fg(if is_sel { accent_gold() } else { Color::Gray }),
                         ),
                         Span::styled(
                             label,
@@ -1364,7 +1419,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     if !typed.is_empty() {
                         lines.push(Line::from(Span::styled(
                             format!("  > {} (custom — press Enter to use)", typed),
-                            Style::default().fg(BRAND_GOLD),
+                            Style::default().fg(brand_gold()),
                         )));
                     } else {
                         lines.push(Line::from(Span::styled(
@@ -1392,7 +1447,7 @@ fn render_workspace(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
         Span::styled(
             "  Path: ",
             Style::default().fg(if path_focused {
-                BRAND_BLUE
+                brand_blue()
             } else {
                 Color::Gray
             }),
@@ -1411,12 +1466,12 @@ fn render_workspace(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     lines.push(Line::from(vec![
         Span::styled(
             if seed_focused { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             if wizard.seed_templates { "[x]" } else { "[ ]" },
             Style::default().fg(if wizard.seed_templates {
-                BRAND_GOLD
+                brand_gold()
             } else {
                 Color::Gray
             }),
@@ -1456,10 +1511,10 @@ fn render_channels(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) ->
         let desc = CHANNEL_NAMES.get(i).map(|(_, d)| *d).unwrap_or("");
 
         lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(ACCENT_GOLD)),
+            Span::styled(prefix, Style::default().fg(accent_gold())),
             Span::styled(
                 marker,
-                Style::default().fg(if *enabled { BRAND_GOLD } else { Color::Gray }),
+                Style::default().fg(if *enabled { brand_gold() } else { Color::Gray }),
             ),
             Span::styled(
                 format!(" {}", name),
@@ -1487,7 +1542,7 @@ fn render_channels(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) ->
     lines.push(Line::from(vec![
         Span::styled(
             if continue_focused { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             "Continue →",
@@ -1556,7 +1611,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         Span::styled(
             "  Bot Token: ",
             Style::default().fg(if token_focused {
-                BRAND_BLUE
+                brand_blue()
             } else {
                 Color::Gray
             }),
@@ -1594,7 +1649,11 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     lines.push(Line::from(vec![
         Span::styled(
             "  User ID:   ",
-            Style::default().fg(if uid_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if uid_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", uid_display, uid_cursor),
@@ -1634,7 +1693,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         Span::styled(
             format!("  [{}] ", if wizard.telegram_rich_text { "x" } else { " " }),
             Style::default().fg(if rich_focused {
-                BRAND_BLUE
+                brand_blue()
             } else {
                 Color::Gray
             }),
@@ -1735,7 +1794,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         Span::styled(
             "  Bot Token:   ",
             Style::default().fg(if token_focused {
-                BRAND_BLUE
+                brand_blue()
             } else {
                 Color::Gray
             }),
@@ -1785,7 +1844,11 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
     lines.push(Line::from(vec![
         Span::styled(
             "  Channel ID:  ",
-            Style::default().fg(if ch_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if ch_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", ch_display, ch_cursor),
@@ -1832,7 +1895,11 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
     lines.push(Line::from(vec![
         Span::styled(
             "  Allowed List: ",
-            Style::default().fg(if al_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if al_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", al_display, al_cursor),
@@ -1902,7 +1969,7 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         )));
         lines.push(Line::from(Span::styled(
             "  Waiting for scan...",
-            Style::default().fg(BRAND_GOLD),
+            Style::default().fg(brand_gold()),
         )));
     } else if wizard.whatsapp_connecting {
         lines.push(Line::from(Span::styled(
@@ -1963,7 +2030,7 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         Span::styled(
             "  Allowed Phone: ",
             Style::default().fg(if phone_focused {
-                BRAND_BLUE
+                brand_blue()
             } else {
                 Color::Gray
             }),
@@ -2076,7 +2143,11 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  Bot Token: ",
-            Style::default().fg(if bot_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if bot_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", masked_bot, cursor_b),
@@ -2123,7 +2194,11 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  App Token: ",
-            Style::default().fg(if app_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if app_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", masked_app, cursor_a),
@@ -2167,7 +2242,11 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  Channel ID: ",
-            Style::default().fg(if ch_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if ch_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", ch_display, ch_cursor),
@@ -2214,7 +2293,11 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  Allowed List: ",
-            Style::default().fg(if al_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if al_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", al_display, al_cursor),
@@ -2266,13 +2349,15 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
 /// `selected` = 0..2, `focused` = whether this field has keyboard focus.
 fn render_respond_to_selector(lines: &mut Vec<Line<'static>>, selected: usize, focused: bool) {
     const OPTIONS: [&str; 3] = ["all", "dm_only", "mention"];
-    let label_style = Style::default().fg(if focused { BRAND_BLUE } else { Color::Gray });
+    let label_style = Style::default().fg(if focused { brand_blue() } else { Color::Gray });
     let mut spans: Vec<Span<'static>> = vec![Span::styled("  Respond to: ", label_style)];
     for (i, opt) in OPTIONS.iter().enumerate() {
         let is_sel = i == selected;
         let (prefix, suffix) = if is_sel { ("[", "]") } else { (" ", " ") };
         let style = if is_sel && focused {
-            Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(brand_gold())
+                .add_modifier(Modifier::BOLD)
         } else if is_sel {
             Style::default().fg(Color::Cyan)
         } else {
@@ -2302,7 +2387,7 @@ fn render_channel_test_status(lines: &mut Vec<Line<'static>>, wizard: &Onboardin
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "  Testing connection...",
-                Style::default().fg(BRAND_GOLD),
+                Style::default().fg(brand_gold()),
             )));
         }
         ChannelTestStatus::Success => {
@@ -2336,11 +2421,13 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         Span::styled("  Provider: ".to_string(), Style::default().fg(Color::Gray)),
         Span::styled(
             "[ Google ]".to_string(),
-            Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(brand_gold())
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "  🍌 Nano Banana".to_string(),
-            Style::default().fg(BRAND_GOLD),
+            Style::default().fg(brand_gold()),
         ),
     ]));
     lines.push(Line::from(""));
@@ -2364,7 +2451,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             if vision_focused { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             if wizard.image_vision_enabled {
@@ -2373,7 +2460,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 "[ ]".to_string()
             },
             Style::default().fg(if wizard.image_vision_enabled {
-                BRAND_GOLD
+                brand_gold()
             } else {
                 Color::Gray
             }),
@@ -2403,7 +2490,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             if gen_focused { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             if wizard.image_generation_enabled {
@@ -2412,7 +2499,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 "[ ]".to_string()
             },
             Style::default().fg(if wizard.image_generation_enabled {
-                BRAND_GOLD
+                brand_gold()
             } else {
                 Color::Gray
             }),
@@ -2455,7 +2542,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         lines.push(Line::from(Span::styled(
             "  Generation model",
             Style::default().fg(if model_focused {
-                BRAND_BLUE
+                brand_blue()
             } else {
                 Color::Gray
             }),
@@ -2501,7 +2588,11 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
 
         lines.push(Line::from(Span::styled(
             "  Google API Key",
-            Style::default().fg(if key_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if key_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         )));
         lines.push(Line::from(Span::styled(
             format!("    {}{}", masked_key, cursor),
@@ -2530,7 +2621,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 Span::styled(
                     "aistudio.google.com",
                     Style::default()
-                        .fg(BRAND_BLUE)
+                        .fg(brand_blue())
                         .add_modifier(Modifier::UNDERLINED),
                 ),
                 Span::styled("  →  Google AI Studio", Style::default().fg(Color::Gray)),
@@ -2562,12 +2653,12 @@ fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     lines.push(Line::from(vec![
         Span::styled(
             if yes_selected { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             if yes_selected { "(*)" } else { "( )" },
             Style::default().fg(if yes_selected {
-                BRAND_GOLD
+                brand_gold()
             } else {
                 Color::Gray
             }),
@@ -2585,12 +2676,12 @@ fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     lines.push(Line::from(vec![
         Span::styled(
             if !yes_selected { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         ),
         Span::styled(
             if !yes_selected { "(*)" } else { "( )" },
             Style::default().fg(if !yes_selected {
-                BRAND_GOLD
+                brand_gold()
             } else {
                 Color::Gray
             }),
@@ -2610,7 +2701,7 @@ fn render_health_check(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     for (name, status) in &wizard.health_results {
         let (icon, color) = match status {
             HealthStatus::Pending => ("...", Color::Gray),
-            HealthStatus::Running => ("...", ACCENT_GOLD),
+            HealthStatus::Running => ("...", accent_gold()),
             HealthStatus::Pass => ("OK", Color::Cyan),
             HealthStatus::Fail(_) => ("FAIL", Color::Red),
         };
@@ -2656,7 +2747,9 @@ fn render_health_check(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
                 lines.push(Line::from(vec![
                     Span::styled(
                         "  [R] ",
-                        Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(brand_blue())
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled("Re-run  ", Style::default().fg(Color::White)),
                     Span::styled(
@@ -2681,7 +2774,7 @@ fn render_brain_setup(
         lines.push(Line::from(Span::styled(
             "  Cooking up your brain files...".to_string(),
             Style::default()
-                .fg(ACCENT_GOLD)
+                .fg(accent_gold())
                 .add_modifier(Modifier::BOLD | Modifier::ITALIC),
         )));
         lines.push(Line::from(Span::styled(
@@ -2717,7 +2810,7 @@ fn render_brain_setup(
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("  {} — rolling with defaults", err),
-            Style::default().fg(Color::Rgb(215, 100, 20)),
+            Style::default().fg(theme::role(Role::Accent)),
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -2738,7 +2831,11 @@ fn render_brain_setup(
     lines.push(Line::from(Span::styled(
         "  About You:".to_string(),
         Style::default()
-            .fg(if me_focused { BRAND_BLUE } else { Color::Gray })
+            .fg(if me_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            })
             .add_modifier(Modifier::BOLD),
     )));
 
@@ -2758,7 +2855,7 @@ fn render_brain_setup(
         "  Your OpenCrabs:".to_string(),
         Style::default()
             .fg(if agent_focused {
-                BRAND_BLUE
+                brand_blue()
             } else {
                 Color::Gray
             })
@@ -2788,7 +2885,7 @@ fn render_brain_setup(
     if !wizard.original_about_me.is_empty() || !wizard.original_about_opencrabs.is_empty() {
         lines.push(Line::from(Span::styled(
             "  Loaded from existing brain files".to_string(),
-            Style::default().fg(ACCENT_GOLD),
+            Style::default().fg(accent_gold()),
         )));
     }
     let hint_style = Style::default().fg(Color::Gray);
@@ -2887,7 +2984,9 @@ fn render_complete(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Setup complete!".to_string(),
-        Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(brand_gold())
+            .add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
 
@@ -2950,7 +3049,7 @@ fn render_complete(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     lines.push(Line::from(Span::styled(
         "Entering OpenCrabs...".to_string(),
         Style::default()
-            .fg(ACCENT_GOLD)
+            .fg(accent_gold())
             .add_modifier(Modifier::BOLD | Modifier::ITALIC),
     )));
 }
@@ -3002,7 +3101,11 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(vec![
         Span::styled(
             "  API Key: ",
-            Style::default().fg(if ak_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if ak_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", masked_ak, cursor_ak),
@@ -3049,7 +3152,11 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(vec![
         Span::styled(
             "  API Token: ",
-            Style::default().fg(if at_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if at_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", masked_at, cursor_at),
@@ -3096,7 +3203,11 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(vec![
         Span::styled(
             "  Board(s): ",
-            Style::default().fg(if bd_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if bd_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", bd_display, bd_cursor),
@@ -3143,7 +3254,11 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(vec![
         Span::styled(
             "  Allowed Users: ",
-            Style::default().fg(if au_focused { BRAND_BLUE } else { Color::Gray }),
+            Style::default().fg(if au_focused {
+                brand_blue()
+            } else {
+                Color::Gray
+            }),
         ),
         Span::styled(
             format!("{}{}", au_display, au_cursor),

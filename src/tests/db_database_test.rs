@@ -108,3 +108,20 @@ async fn test_fresh_db_runs_all_migrations() {
         .unwrap();
     assert_eq!(after, Database::MIGRATION_COUNT as i64);
 }
+
+/// The count is derived from the list, so the only drift left is a `.sql`
+/// on disk that the list forgot (#1354).
+#[test]
+fn test_every_migration_file_on_disk_is_registered() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/migrations");
+    let on_disk = std::fs::read_dir(dir)
+        .expect("migrations dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "sql"))
+        .count();
+    assert_eq!(
+        on_disk,
+        Database::MIGRATION_COUNT,
+        "a migration file exists that build_migrations does not include"
+    );
+}

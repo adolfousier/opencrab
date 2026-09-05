@@ -318,8 +318,14 @@ async fn drainer_wire_round(label: &str) {
     // already counted -> the drainer sees Err, requeues, retries -> second
     // wire hit -> .expect(1) flakes (~50% of runs). A client with no
     // timeout leaves nothing for the virtual clock to race.
-    let bot = Bot::with_client("TESTTOKEN", reqwest::Client::builder().build().unwrap())
-        .set_api_url(server.url().parse().unwrap());
+    // `reqwest_teloxide` is reqwest 0.12, the version teloxide-core takes. Our
+    // own dependency is on 0.13, and `Bot::with_client` wants teloxide's type
+    // (#1345, #1346).
+    let bot = Bot::with_client(
+        "TESTTOKEN",
+        reqwest_teloxide::Client::builder().build().unwrap(),
+    )
+    .set_api_url(server.url().parse().unwrap());
     assert!(
         !governor::edit_admission(
             &bot,

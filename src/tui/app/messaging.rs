@@ -807,16 +807,117 @@ impl App {
             }
             "/compact" => {
                 let pct = self.context_usage_percent();
-                self.push_system_message(format!(
-                    "Compacting context... (currently at {:.0}%)",
-                    pct
-                ));
-                // Trigger compaction by sending a special message to the agent
+                // Send first, then report (#1375): a note printed before the
+                // trigger leaves claims a compaction that may never start,
+                // and a dropped send must never be silent.
                 let sender = self.event_sender();
-                let _ = sender.send(TuiEvent::CommandSubmitted(
+                match sender.send(TuiEvent::CommandSubmitted(
                     "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                         .to_string(),
-                ));
+                )) {
+                    Ok(()) => {
+                        self.push_system_message(crate::tui::compact_notice::requested(pct));
+                    }
+                    Err(e) => {
+                        tracing::error!("/compact: compaction trigger not dispatched: {e}");
+                        self.error_message = Some(crate::tui::compact_notice::dispatch_failed(&e));
+                    }
+                }
+                true
+            }
+            "/theme" => {
+                use crate::tui::render::presets;
+                use crate::tui::render::theme;
+                let rest = input.split_once(' ').map(|x| x.1.trim()).unwrap_or("");
+                let mut parts = rest.splitn(2, ' ');
+                let sub = parts.next().unwrap_or("");
+                let arg = parts.next().map(str::trim).unwrap_or("");
+                match sub {
+                    "" => {
+                        // Bare /theme opens the interactive picker (#1371);
+                        // `list` keeps the text surface for habits/scripts.
+                        self.theme_picker = Some(
+                            crate::tui::render::theme_picker::ThemePickerState::open(),
+                        );
+                    }
+                    "list" | "ls" => {
+                        let active_name = theme::active().name;
+                        let mut lines: Vec<String> = Vec::new();
+                        lines.push("Built-in themes:".to_string());
+                        for t in presets::built_ins() {
+                            let marker = if t.name == active_name { " *" } else { "" };
+                            lines.push(format!("  • {}{}", t.name, marker));
+                        }
+                        // User presets (S3): rescan on every list so file edits
+                        // hot-load; rejected files surface with their reason.
+                        let report = crate::tui::render::user_themes::reload();
+                        if !report.themes.is_empty() {
+                            lines.push("User presets (~/.opencrabs/themes/):".to_string());
+                            for t in &report.themes {
+                                let marker = if t.name == active_name { " *" } else { "" };
+                                lines.push(format!("  • {}{}", t.name, marker));
+                            }
+                        }
+                        for r in &report.rejected {
+                            lines.push(format!("  ✗ {} — {}", r.file, r.reason));
+                        }
+                        lines.push(format!("\nActive: {}", active_name));
+                        lines.push("Use: /theme set <name> · /theme reset".to_string());
+                        self.push_system_message(lines.join("\n"));
+                    }
+                    "set" => {
+                        if arg.is_empty() {
+                            self.push_system_message("Usage: /theme set <name>".to_string());
+                        } else if let Some(t) = presets::by_name(arg)
+                            .or_else(|| crate::tui::render::user_themes::find(arg))
+                        {
+                            theme::set(t);
+                            // Persist to config.toml; ConfigWatcher reload
+                            // re-applies on next boot / config change.
+                            if let Err(e) = crate::config::Config::write_key_string(
+                                "tui",
+                                "theme",
+                                &format!("\"{}\"", t.name),
+                            ) {
+                                self.push_system_message(format!(
+                                    "Applied '{}' (live). Persist failed: {e}",
+                                    t.name
+                                ));
+                            } else {
+                                self.push_system_message(format!(
+                                    "Theme switched to '{}' — applied live and persisted.",
+                                    t.name
+                                ));
+                            }
+                        } else {
+                            self.push_system_message(format!(
+                                "Unknown theme '{}'. Run /theme list for available names.",
+                                arg
+                            ));
+                        }
+                    }
+                    "reset" => {
+                        theme::reset();
+                        // Remove the key so boot falls through to CRAB_DARK.
+                        if let Err(e) =
+                            crate::config::Config::write_key_string("tui", "theme", "\"\"")
+                        {
+                            self.push_system_message(format!(
+                                "Reset to default. Persist failed: {e}"
+                            ));
+                        } else {
+                            self.push_system_message(
+                                "Theme reset to crab-dark (default).".to_string(),
+                            );
+                        }
+                    }
+                    other => {
+                        self.push_system_message(format!(
+                            "Unknown /theme subcommand '{}'. Try: list | set <name> | reset",
+                            other
+                        ));
+                    }
+                }
                 true
             }
             "/plan" => {

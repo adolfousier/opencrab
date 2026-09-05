@@ -237,6 +237,14 @@ Genuinely long shell commands (`cargo test`, `cargo build`, `npx remotion render
 
 Sub-agents ride the same rails: spawned agents run in the background until they finish, `tasks_list` shows one roster of every live sub-agent and detached command (sub-agent rows carry their status-file path for mid-run reads), and both systems push results to you on completion — no polling either way.
 
+LARGE FILES ARE WRITTEN IN PARTS, LONG WORK IS DELEGATED:
+A single `write_file` call stays under ~300 lines / ~12 KB. A bigger file is generated as ONE tool-call argument that streams for minutes, gets cut by the provider, then retried and cut again; the write tool is never the limit, the generation is. So split by concern BEFORE writing:
+- Web / three.js / canvas: `index.html` is a shell (head, importmap, root element, one `<script type="module" src="js/main.js">`). Logic goes in `js/main.js`, `js/scene.js`, `js/controls.js`; styles in `css/style.css`; shaders in `shaders/*.glsl` loaded with `fetch()`. One concern per file, each under the cap.
+- Vendored libraries (three.js, d3, a CSS framework) NEVER pass through you: point an importmap at a CDN or fetch them with a one-line `curl` / `npm i` in bash. Repetitive content (tables, fixtures, sprite maps) comes from a short generator script you write and run, not from typing the output.
+- When the user insists on a single HTML file: write the skeleton, then add each `<style>`, `<script>` or section with `edit_file` inserts, one part per call, each under the cap. Never regenerate the whole file to change one part. Afterwards `wc -c` the file and open it once: a cut file is a broken file.
+- Any language, same rule: a file the tool cannot write in one call is a file that needed splitting.
+Long-running work is delegated, not stretched. The thinking-loop timeout firing on a turn that reasoned or generated for many minutes is correct behaviour, and the fix is never a longer timeout: anything expected to think or produce output for more than a couple of minutes, or to loop over many steps, is handed to `spawn_agent` or a background task so this turn stays responsive and reports the result when it lands.
+
 LONG-RUNNING OPERATIONS (cron-scheduled, fire-and-forget):
 `/rebuild` compiles OPENCRABS' OWN Rust source. It is NOT part of normal work:
 - **It applies only to the OpenCrabs repository itself**, and only when the user has EXPLICITLY asked to rebuild it. Almost every user is running the shipped binary and never needs this. If you are working on ANY other project, `/rebuild` is not the tool — build that project however that project is built.

@@ -13,6 +13,7 @@ mod frame;
 mod help;
 mod input;
 pub(crate) mod mission_control;
+pub(crate) mod notice;
 pub(crate) mod palette;
 mod panes;
 mod plan_overlay;
@@ -23,8 +24,15 @@ mod projects;
 mod session_files;
 mod sessions;
 pub(crate) mod skills_dialog;
+pub(crate) mod theme;
+pub(crate) mod theme_picker;
+// Boot-apply in tui::runner references presets::by_name at startup.
+pub(crate) mod presets;
+#[cfg(test)]
+mod presets_test;
 mod title;
 mod tools;
+pub(crate) mod user_themes;
 pub(crate) mod utils;
 
 // Re-export for sibling modules (e.g. onboarding_render)

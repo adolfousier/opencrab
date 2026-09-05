@@ -322,6 +322,60 @@ impl std::io::Write for ResilientFileGuard<'_> {
     }
 }
 
+/// A `MakeWriter` that redacts secrets from every event before they reach the
+/// wrapped writer.
+///
+/// The bot token leaks through the *default* behaviour of formatting a
+/// `reqwest` error, so it can be reintroduced by any future log line on a
+/// Telegram call (#1322). Redacting per call site would mean remembering at
+/// more than a hundred of them. This sits at the one place every event has to
+/// pass through instead, so a new call site is covered the day it is written.
+pub(crate) struct ScrubbingWriter<W>(pub(crate) W);
+
+impl<'a, W: tracing_subscriber::fmt::MakeWriter<'a>> tracing_subscriber::fmt::MakeWriter<'a>
+    for ScrubbingWriter<W>
+{
+    type Writer = ScrubbingGuard<W::Writer>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        ScrubbingGuard(self.0.make_writer())
+    }
+
+    fn make_writer_for(&'a self, meta: &tracing::Metadata<'_>) -> Self::Writer {
+        ScrubbingGuard(self.0.make_writer_for(meta))
+    }
+}
+
+/// The per-event writer produced by [`ScrubbingWriter`].
+pub(crate) struct ScrubbingGuard<W>(pub(crate) W);
+
+impl<W: std::io::Write> std::io::Write for ScrubbingGuard<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // Non-UTF8 output is not something this formatter produces; pass it
+        // through untouched rather than lose the event to a lossy conversion.
+        let Ok(text) = std::str::from_utf8(buf) else {
+            return self.0.write(buf);
+        };
+        match super::redact::scrub(text) {
+            // Nothing to redact: the overwhelming majority of lines, written
+            // through unchanged so the fast path costs one substring check.
+            std::borrow::Cow::Borrowed(_) => self.0.write(buf),
+            // Redacted output is shorter than the input, so report the input
+            // length: the caller's bytes were all accepted, and reporting the
+            // short count would make `write_all` re-send the tail and
+            // duplicate part of the line.
+            std::borrow::Cow::Owned(clean) => {
+                self.0.write_all(clean.as_bytes())?;
+                Ok(buf.len())
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
 /// Initialize the logging system.
 ///
 /// Returns a guard that must be kept alive for the duration of the program.
@@ -372,7 +426,7 @@ pub fn init_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::error
     // for the #190 rationale; now lazy so a disabled gate creates no files.
     let file_appender = ResilientFileWriter::new(config.log_dir.clone(), config.log_prefix.clone());
     let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_appender)
+        .with_writer(ScrubbingWriter(file_appender))
         .with_timer(LocalTime)
         .with_ansi(false) // No colors in log files
         .with_target(true)
@@ -396,7 +450,7 @@ pub fn init_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::error
         BoxMakeWriter::new(std::io::sink)
     };
     let console_layer = tracing_subscriber::fmt::layer()
-        .with_writer(console_writer)
+        .with_writer(ScrubbingWriter(console_writer))
         .with_timer(LocalTime)
         .with_ansi(config.console_output)
         .with_target(false)

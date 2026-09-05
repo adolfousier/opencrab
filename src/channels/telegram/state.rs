@@ -137,6 +137,19 @@ pub struct TelegramState {
     /// approval/question replies route back by `chat_id` plus the per-message
     /// `thread_id` captured at send time, so the topic does not belong here.
     session_chats: Mutex<HashMap<Uuid, i64>>,
+    /// Settled flow-card handles (#1377): session_id → the StreamingState Arc
+    /// whose card settled last in this session's chat. Background-task
+    /// completion acks fold into that card (line append + counter re-stamp +
+    /// re-render) instead of spraying standalone bubbles. Registered at turn
+    /// settle, overwritten by the next settle, cleared on teardown. The Arc
+    /// keeps the full render pipeline (flow lines, sections, chrome) usable
+    /// after the turn task drops its own reference.
+    session_flow_states: Mutex<
+        HashMap<
+            Uuid,
+            std::sync::Arc<std::sync::Mutex<crate::channels::telegram::flow::StreamingState>>,
+        >,
+    >,
     /// Reverse map: (chat_id, forum_topic_id) → session_id. The topic component
     /// is `Some` only for genuine forum-topic messages (#215); DMs, non-forum
     /// groups, and the General topic key on `(chat_id, None)`, preserving the
@@ -334,6 +347,7 @@ impl TelegramState {
             bot_username: Mutex::new(None),
             bot_user_id: Mutex::new(None),
             session_chats: Mutex::new(HashMap::new()),
+            session_flow_states: Mutex::new(HashMap::new()),
             chat_sessions: Mutex::new(HashMap::new()),
             session_topic: Mutex::new(HashMap::new()),
             channel_ownership: std::sync::Mutex::new(ChannelOwnershipMirror::default()),
@@ -630,6 +644,39 @@ impl TelegramState {
     /// Look up the chat_id for a given session_id.
     pub async fn session_chat(&self, session_id: Uuid) -> Option<i64> {
         self.session_chats.lock().await.get(&session_id).copied()
+    }
+
+    /// Register the settled flow-card state for a session (#1377). Called at
+    /// turn settle when a flow card exists; overwrites any previous card.
+    pub(crate) async fn register_flow_state(
+        &self,
+        session_id: Uuid,
+        streaming: std::sync::Arc<
+            std::sync::Mutex<crate::channels::telegram::flow::StreamingState>,
+        >,
+    ) {
+        self.session_flow_states
+            .lock()
+            .await
+            .insert(session_id, streaming);
+    }
+
+    /// Take the settled flow-card state for a session, if one is registered.
+    pub(crate) async fn flow_state_for(
+        &self,
+        session_id: Uuid,
+    ) -> Option<std::sync::Arc<std::sync::Mutex<crate::channels::telegram::flow::StreamingState>>>
+    {
+        self.session_flow_states
+            .lock()
+            .await
+            .get(&session_id)
+            .cloned()
+    }
+
+    /// Clear the settled flow-card registration (card teardown, #1377).
+    pub async fn clear_flow_state(&self, session_id: Uuid) {
+        self.session_flow_states.lock().await.remove(&session_id);
     }
 
     /// Look up the forum topic_id for a given session_id. Returns `Some(tid)`

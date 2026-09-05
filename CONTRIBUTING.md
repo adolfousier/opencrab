@@ -75,6 +75,19 @@ Fixes #376 (byte/char boundary), #377 (rich API retry), #378 (HTML tag stripping
 
 This lets you batch related fixes in one PR while keeping the issue tracker clean and atomic.
 
+### Issue Titles
+
+Issue titles use the same [Conventional Commits](https://www.conventionalcommits.org/) shape as commit messages: `<type>(<scope>): <what is wrong or wanted>`. The type is one of `fix`, `feat`, `docs`, `refactor`, `test`, `chore`, `ci`; the scope is the module or surface (`tui`, `provider`, `rsi`, `telegram`, `memory`).
+
+```
+fix(tui): copy-to-clipboard notice shifts the chat history three rows
+feat(provider): send tool_stream to z.ai so tool-call arguments stream
+docs: README test counts are stale
+refactor(memory): mod.rs is declarations-only
+```
+
+A bare area prefix (`TUI:`, `z.ai:`, `Reasoning stream:`) is not the convention. The type makes the tracker filterable and lets the fixing commit reuse the title verbatim. Add labels on creation (`--label bug --label tui`), one for the type and one for the area.
+
 ## Step-by-Step: Submitting a Bug Fix
 
 1. **Find or create the issue** — Check existing issues first. If none exists, create one.
@@ -180,7 +193,9 @@ If you find an existing inline `#[cfg(test)] mod tests` while working on a file,
 
 ### Commit Discipline — Atomic Commits
 
-**One logical change per commit.** A commit should land a single bug fix, a single feature, or a single refactor — not a mixed bag.
+**Always do atomic commits:** repository-wide atomic commits (grouping all files changed for a single logical change) combined with short-lived feature branches or stacked pull requests.
+
+Repository-wide means the unit is the logical change, not the file. Every file a change touches lands in the same commit, so the tree builds and the tests pass at every commit and a revert or bisect can land on a single sha. Three unrelated edits in one file are three commits; one change spread across ten files is one commit. Each commit branches off `main` on a short-lived branch and lands as its own PR, or as one PR in a stack when later commits depend on earlier ones.
 
 - **Don't bundle** `cargo fmt` drift with feature work. Run fmt in its own commit (`chore: cargo fmt`).
 - **Don't bundle** rename / move / restructure with logic changes. The reviewer cannot tell what's mechanical and what's behavioural.
@@ -248,7 +263,7 @@ src/
 
 ### Commit Messages
 
-Use [Conventional Commits](https://www.conventionalcommits.org/):
+Use [Conventional Commits](https://www.conventionalcommits.org/), the same shape as issue titles (see **Issue Titles** above):
 
 ```
 feat: add voice message support for Discord channel

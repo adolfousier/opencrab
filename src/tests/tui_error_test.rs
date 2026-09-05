@@ -1,6 +1,7 @@
 //! Tests for `tui::error` — ErrorInfo creation, severity, category, and description.
 
 use crate::tui::error::{ErrorCategory, ErrorInfo, ErrorSeverity};
+use crate::tui::render::theme::{self, Role};
 
 // ── ErrorSeverity ───────────────────────────────────────────────
 
@@ -181,8 +182,8 @@ fn from_str() {
 fn test_error_severity_color() {
     use ratatui::style::Color;
 
-    assert_eq!(ErrorSeverity::Info.color(), Color::Rgb(120, 120, 120));
-    assert_eq!(ErrorSeverity::Warning.color(), Color::Rgb(215, 100, 20));
+    assert_eq!(ErrorSeverity::Info.color(), theme::role(Role::Gray));
+    assert_eq!(ErrorSeverity::Warning.color(), theme::role(Role::Accent));
     assert_eq!(ErrorSeverity::Error.color(), Color::Red);
     assert_eq!(ErrorSeverity::Critical.color(), Color::Magenta);
 }

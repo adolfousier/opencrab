@@ -64,6 +64,8 @@ pub fn create(app: &mut App, name: &str, description: Option<&str>) {
         }
         Err(e) => {
             app.push_system_message(format!("Failed to create profile: {}", e));
+            // Surface inline too: the full-screen dialog hides the chat log (#1381)
+            app.profiles_dialog.error = Some(e.to_string());
         }
     }
 }

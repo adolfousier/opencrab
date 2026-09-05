@@ -173,6 +173,7 @@ async fn resume_shape_loop_edits_tools_in_place_and_never_reacts() {
             DisplayItem::Intermediate("<<react:🔥>> checking the logs".into()),
         ],
         open_group_msg_id: None,
+        rich_transport_failures: 0,
         flow_entries: Vec::new(),
         flow_status: None,
         flow_rich: false,

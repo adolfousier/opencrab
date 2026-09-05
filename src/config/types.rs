@@ -94,6 +94,27 @@ pub struct Config {
     /// Self-repair configuration for `/doctor --fix` and the startup sweep
     #[serde(default)]
     pub doctor: DoctorConfig,
+
+    /// TUI (terminal UI) configuration: theme, display preferences.
+    /// Optional — defaults preserve current (crab-dark) rendering.
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+/// TUI (terminal UI) configuration.
+///
+/// ```toml
+/// [tui]
+/// theme = "dracula"   # any built-in or user preset; omit for crab-dark default
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TuiConfig {
+    /// Active theme name. Case-insensitive lookup against built-in presets
+    /// (crab-dark, dracula, alucard, monokai, solarized-light, solarized-dark,
+    /// catppuccin-mocha, catppuccin-latte) and user presets under
+    /// `~/.opencrabs/themes/*.toml`. `None` / empty = crab-dark default.
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 /// Custom deserializer for `[brain.caps]` that accepts both:
@@ -2519,9 +2540,10 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
 
-    /// Kimi reasoning control (e.g. `max` for K3, `on`/`off` for K2.x).
-    /// Applied to each request only when the active model accepts it
-    /// (see `kimi_reasoning`); an inapplicable value is a no-op.
+    /// Reasoning control, resolved per family: Kimi (`max` on K3, `on`/`off`
+    /// on K2.x), qwen rungs, DeepSeek / GLM-5.3+ `low | high | max` (a rung
+    /// from another family is mapped and logged, see `glm_reasoning`).
+    /// Applied only when the active model accepts it; otherwise a no-op.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
 
@@ -2636,6 +2658,7 @@ impl Default for Config {
                 file: None,
             },
             debug: DebugConfig::default(),
+            tui: TuiConfig::default(),
             providers: ProviderConfigs::default(),
             channels: ChannelsConfig::default(),
             agent: AgentConfig::default(),

@@ -274,6 +274,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_update_dialog(f, app, f.area());
         }
     }
+
+    // Theme picker overlay (#1371): drawn above every base surface so the
+    // live preview recolors the real UI underneath the dialog.
+    if let Some(picker) = &app.theme_picker {
+        let area = f.area();
+        crate::tui::render::theme_picker::draw(f, area, picker);
+    }
 }
 
 /// Render the chat area as split panes.

@@ -28,6 +28,10 @@ impl Tool for MemorySearchTool {
          - \"brain\" — your brain files (SOUL, USER, AGENTS, TOOLS, CODE, SECURITY, \
            MEMORY, BOOT, HEARTBEAT). Rules and policy: does a rule about this ALREADY \
            exist, and which file owns it. Use this before appending a rule. \
+         - \"external\" — the user-configured external index paths. Structural \
+           queries about indexed code (\"who calls X\", \"what does X call\", \
+           \"where is X defined\", \"who implements Y\") route to the code symbol \
+           graph and return call sites with file:line. \
          - \"all\" — both, for \"have I ever written about this anywhere\". \
          \
          Searching \"memory\" for a rule usually fails: there are far more daily notes \
@@ -50,7 +54,7 @@ impl Tool for MemorySearchTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Natural language search query for past memories"
+                    "description": "Natural language search query. For code structure over indexed external paths (callers, definitions, references), phrase it naturally: \"who calls X\", \"where is X defined\" — routes to the code symbol graph."
                 },
                 "n": {
                     "type": "integer",

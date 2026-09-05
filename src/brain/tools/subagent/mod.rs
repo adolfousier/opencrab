@@ -10,7 +10,7 @@
 pub mod agent_type;
 mod close;
 pub mod manager;
-mod notify;
+pub(crate) mod notify;
 pub(crate) mod provider_pair;
 pub mod reconcile;
 mod resume;

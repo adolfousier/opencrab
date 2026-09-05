@@ -378,6 +378,13 @@ pub fn should_try_next_provider(err: &ProviderError) -> bool {
         | ProviderError::InvalidApiKey => true,
         // Parsed model/param rejection.
         ProviderError::InvalidRequest(_) => true,
+        // The payload is too big for THIS provider's window. Windows differ
+        // by an order of magnitude across one chain (128K to 1M in a real
+        // config), so which provider is asked changes the answer, and the
+        // caller rebuilds the request for whoever receives it (#1379). When
+        // the whole chain refuses, `with_chain_summary` keeps this variant
+        // intact so the tool loop's emergency compaction still fires.
+        ProviderError::ContextLengthExceeded(_) => true,
         _ => false,
     }
 }

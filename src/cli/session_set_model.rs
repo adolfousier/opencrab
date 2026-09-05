@@ -41,19 +41,7 @@ pub(crate) fn resolve_targets(
     }
 
     if let Some(prefix) = id_prefix {
-        let prefix = prefix.to_lowercase();
-        let matches: Vec<&Session> = sessions
-            .iter()
-            .filter(|s| s.id.to_string().to_lowercase().starts_with(&prefix))
-            .collect();
-        return match matches.len() {
-            0 => Err(format!("no session id starts with '{prefix}'")),
-            1 => Ok(vec![matches[0].id]),
-            _ => Err(format!(
-                "'{prefix}' is ambiguous — candidates:\n{}",
-                candidates(&matches)
-            )),
-        };
+        return super::session_resolve::resolve_one_by_prefix(sessions, prefix).map(|id| vec![id]);
     }
 
     let sub = name_sub.expect("selector count checked").to_lowercase();
@@ -70,21 +58,7 @@ pub(crate) fn resolve_targets(
         1 => Ok(vec![matches[0].id]),
         _ => Err(format!(
             "'{sub}' matches several sessions — candidates:\n{}",
-            candidates(&matches)
+            super::session_resolve::candidates(&matches)
         )),
     }
-}
-
-fn candidates(matches: &[&Session]) -> String {
-    matches
-        .iter()
-        .map(|s| {
-            format!(
-                "  {} {}",
-                &s.id.to_string()[..8],
-                s.title.as_deref().unwrap_or("untitled")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }

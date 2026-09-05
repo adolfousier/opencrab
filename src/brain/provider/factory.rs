@@ -499,7 +499,7 @@ pub async fn create_provider_with_warning(
             if let Some(fallback) = &config.providers.fallback
                 && fallback.enabled
             {
-                let chain = fallback_chain(fallback);
+                let chain = normalized_fallback_chain(config);
                 for name in &chain {
                     if let Ok(p) = create_fallback(config, name).await {
                         tracing::warn!(
@@ -544,11 +544,16 @@ pub(crate) async fn wrap_with_fallback_chain(
     config: &Config,
     primary: Arc<dyn Provider>,
 ) -> Result<Arc<dyn Provider>> {
-    let Some(fallback) = config.providers.fallback.as_ref().filter(|f| f.enabled) else {
+    if !config
+        .providers
+        .fallback
+        .as_ref()
+        .is_some_and(|f| f.enabled)
+    {
         return Ok(primary);
-    };
+    }
 
-    let chain = fallback_chain(fallback);
+    let chain = normalized_fallback_chain(config);
     let primary_name = primary.name().to_string();
     let mut providers = Vec::new();
     for name in &chain {
@@ -815,6 +820,57 @@ pub(crate) fn fallback_chain(fallback: &crate::config::FallbackProviderConfig) -
     chain
 }
 
+/// One list of provider names, each entry normalised the way the `[agent]`
+/// keys are (#1355): a `custom:` prefix is dropped, a `<provider>/<model>`
+/// entry becomes its provider (the model has nowhere to go in a list, and
+/// the note says where it belongs), and the result is deduplicated in order
+/// so `custom:foo` and `foo` collapse. One warning per correction.
+fn normalized_names(
+    config: &Config,
+    key: crate::brain::provider_spec::ProviderKey,
+    names: &[String],
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(names.len());
+    for raw in names {
+        let pair = crate::brain::provider_spec::normalize_in(config, key, raw, None);
+        if let Some(note) = pair.note.as_deref() {
+            tracing::warn!(
+                "Fallback chain: '{raw}' corrected to '{}': {note}",
+                pair.provider
+            );
+        }
+        if !out.contains(&pair.provider) {
+            out.push(pair.provider);
+        }
+    }
+    out
+}
+
+/// [`fallback_chain`] with every entry normalised against `config` (#1355).
+/// Empty when no fallback is configured.
+pub(crate) fn normalized_fallback_chain(config: &Config) -> Vec<String> {
+    let Some(fallback) = config.providers.fallback.as_ref() else {
+        return Vec::new();
+    };
+    normalized_names(
+        config,
+        crate::brain::provider_spec::ProviderKey::FALLBACK_PROVIDERS,
+        &fallback_chain(fallback),
+    )
+}
+
+/// `[providers.fallback] vision` with every entry normalised (#1355).
+pub(crate) fn normalized_vision_chain(config: &Config) -> Vec<String> {
+    let Some(fallback) = config.providers.fallback.as_ref() else {
+        return Vec::new();
+    };
+    normalized_names(
+        config,
+        crate::brain::provider_spec::ProviderKey::FALLBACK_VISION,
+        &fallback.vision,
+    )
+}
+
 /// Create fallback provider
 async fn create_fallback(config: &Config, fallback_type: &str) -> Result<Arc<dyn Provider>> {
     // Custom entries take precedence over built-in names. If the user
@@ -915,11 +971,9 @@ pub fn any_provider_vision(config: &Config) -> Vec<(String, String, String)> {
             }
         }
     }
-    if let Some(fallback) = &config.providers.fallback {
-        for name in &fallback.vision {
-            if let Some(cand) = vision_by_name(config, name) {
-                push(cand, &mut out);
-            }
+    for name in normalized_vision_chain(config) {
+        if let Some(cand) = vision_by_name(config, &name) {
+            push(cand, &mut out);
         }
     }
     out
@@ -984,11 +1038,9 @@ pub fn vision_candidates_for(
 
     // 2. The configured chain, in order. Dedup keeps position 1 when the
     //    current provider also appears here, which is what we want.
-    if let Some(fallback) = &config.providers.fallback {
-        for name in &fallback.vision {
-            if let Some(cand) = vision_by_name(config, name) {
-                push(cand, &mut out);
-            }
+    for name in normalized_vision_chain(config) {
+        if let Some(cand) = vision_by_name(config, &name) {
+            push(cand, &mut out);
         }
     }
     out
@@ -1495,21 +1547,21 @@ fn try_create_zhipu(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         return Ok(None);
     };
 
-    // Determine base URL based on endpoint_type
-    // API endpoint: https://api.z.ai/api/paas/v4
-    // Coding endpoint: https://api.z.ai/api/coding/paas/v4
-    let base_url = match zhipu_config.endpoint_type.as_deref() {
-        Some("coding") => "https://api.z.ai/api/coding/paas/v4/chat/completions",
-        _ => "https://api.z.ai/api/paas/v4/chat/completions",
-    };
+    // A configured base_url wins (open.bigmodel.cn has no idle cut on long
+    // streams, api.z.ai does); otherwise the endpoint_type default (#1350).
+    let base_url = super::zhipu_endpoint::chat_url(
+        zhipu_config.base_url.as_deref(),
+        zhipu_config.endpoint_type.as_deref(),
+    );
 
     tracing::info!(
-        "Using z.ai GLM at: {} (endpoint_type: {:?})",
+        "Using z.ai GLM at: {} (endpoint_type: {:?}, base_url configured: {})",
         base_url,
-        zhipu_config.endpoint_type
+        zhipu_config.endpoint_type,
+        zhipu_config.base_url.is_some()
     );
     let provider = configure_openai_compatible(
-        OpenAIProvider::with_base_url(api_key.clone(), base_url.to_string()).with_name("zhipu"),
+        OpenAIProvider::with_base_url(api_key.clone(), base_url).with_name("zhipu"),
         zhipu_config,
     );
     Ok(Some(Arc::new(provider)))

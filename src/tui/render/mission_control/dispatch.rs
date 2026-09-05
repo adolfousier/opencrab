@@ -80,7 +80,7 @@ fn draw_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             active,
             Style::default()
-                .fg(theme::BORDER_ANALYTICS_FOCUS)
+                .fg(theme::border_analytics_focus())
                 .add_modifier(Modifier::BOLD),
         ),
     ]);

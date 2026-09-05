@@ -442,6 +442,10 @@ pub(crate) async fn deliver_final_response(
                     };
                     if let Some(mid) = flow_mid {
                         best_effort_delete(bot, chat_id, mid, "flow teardown").await;
+                        // #1377: the card is gone — drop the fold handle so a
+                        // later completion falls back to the bubble lane
+                        // instead of editing a deleted message.
+                        telegram_state.clear_flow_state(session_id).await;
                     }
                     if let Some(mid) = streaming_msg_id {
                         best_effort_delete(bot, chat_id, mid, "streaming teardown").await;

@@ -97,7 +97,7 @@ fn inbox_detail(app: &App) -> (String, ratatui::style::Color, Vec<Line<'static>>
         Some(item) => render_inbox_item(item),
         None => empty_lines("No proposal selected"),
     };
-    (" Inbox detail ".to_string(), theme::TEAL, lines)
+    (" Inbox detail ".to_string(), theme::teal(), lines)
 }
 
 fn render_inbox_item(item: &McInboxItem) -> Vec<Line<'static>> {
@@ -173,7 +173,7 @@ fn activity_detail(app: &App) -> (String, ratatui::style::Color, Vec<Line<'stati
         Some(e) => render_activity(e),
         None => empty_lines("No activity selected"),
     };
-    (" Activity detail ".to_string(), theme::ORANGE, lines)
+    (" Activity detail ".to_string(), theme::orange(), lines)
 }
 
 fn render_activity(entry: &McActivity) -> Vec<Line<'static>> {
@@ -213,7 +213,7 @@ fn schedule_detail(app: &App) -> (String, ratatui::style::Color, Vec<Line<'stati
         Some(i) => render_schedule(i),
         None => empty_lines("No schedule item selected"),
     };
-    (" Schedule detail ".to_string(), theme::WHITE, lines)
+    (" Schedule detail ".to_string(), theme::white(), lines)
 }
 
 fn render_schedule(item: &McScheduleItem) -> Vec<Line<'static>> {
@@ -332,10 +332,13 @@ fn kv(key: &str, value: &str) -> Line<'static> {
         Span::styled(
             format!("{key:<8} "),
             Style::default()
-                .fg(theme::TEXT_DIM)
+                .fg(theme::text_dim())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(value.to_string(), Style::default().fg(theme::TEXT_PRIMARY)),
+        Span::styled(
+            value.to_string(),
+            Style::default().fg(theme::text_primary()),
+        ),
     ])
 }
 
@@ -345,7 +348,7 @@ fn section_heading(text: &str) -> Line<'static> {
         Span::styled(
             text.to_string(),
             Style::default()
-                .fg(theme::TEXT_DIM)
+                .fg(theme::text_dim())
                 .add_modifier(Modifier::BOLD),
         ),
     ])
@@ -354,7 +357,7 @@ fn section_heading(text: &str) -> Line<'static> {
 fn body_line(text: String) -> Line<'static> {
     Line::from(vec![
         Span::raw("  "),
-        Span::styled(text, Style::default().fg(theme::TEXT_PRIMARY)),
+        Span::styled(text, Style::default().fg(theme::text_primary())),
     ])
 }
 

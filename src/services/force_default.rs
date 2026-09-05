@@ -7,7 +7,6 @@
 //! section's configured default pair.
 
 use crate::config::Config;
-use crate::db::repository::SessionListOptions;
 use crate::services::SessionService;
 use anyhow::Result;
 
@@ -25,29 +24,16 @@ pub fn force_default_pair(config: &Config) -> Option<(String, String)> {
 
 /// Apply the force-default push, returning how many sessions changed.
 /// Archived sessions are never touched, and sessions already on the pair
-/// are skipped (no updated_at churn).
+/// are skipped. Routed through the bulk UPDATE (#1367): only provider/model
+/// columns are written, `updated_at` is never stamped, so a reload cannot
+/// flatten `/sessions` recency ordering.
 pub async fn apply_force_default(config: &Config, session_svc: &SessionService) -> Result<usize> {
     let Some((provider, model)) = force_default_pair(config) else {
         return Ok(0);
     };
-    let sessions = session_svc
-        .list_sessions(SessionListOptions {
-            include_archived: false,
-            ..Default::default()
-        })
+    let updated = session_svc
+        .set_provider_model_all_sessions(&provider, &model)
         .await?;
-    let mut updated = 0usize;
-    for mut session in sessions {
-        if session.provider_name.as_deref() == Some(provider.as_str())
-            && session.model.as_deref() == Some(model.as_str())
-        {
-            continue;
-        }
-        session.provider_name = Some(provider.clone());
-        session.model = Some(model.clone());
-        session_svc.update_session(&session).await?;
-        updated += 1;
-    }
     if updated > 0 {
         tracing::info!(
             "force_default (#466): pushed {provider}/{model} to {updated} session(s) on reload"

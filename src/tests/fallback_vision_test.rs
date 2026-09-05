@@ -1200,3 +1200,70 @@ mod active_provider_generation {
         );
     }
 }
+
+// --- Normalised chains (#1355) ---
+
+mod normalized_chain {
+    use crate::brain::provider::factory::{normalized_fallback_chain, normalized_vision_chain};
+    use crate::config::Config;
+
+    fn config(json: &str) -> Config {
+        serde_json::from_str(json).expect("fixture config")
+    }
+
+    #[test]
+    fn entries_are_normalised_and_deduped_in_order() {
+        let cfg = config(
+            r#"{
+                "providers": {
+                    "fallback": {
+                        "enabled": true,
+                        "provider": "custom:myprovider",
+                        "providers": ["custom:myprovider", "minimax/MiniMax-M2", "anthropic"]
+                    },
+                    "custom": { "myprovider": { "base_url": "http://localhost:1/v1", "api_key": "k" } },
+                    "minimax": { "enabled": true, "api_key": "k" }
+                }
+            }"#,
+        );
+        assert_eq!(
+            normalized_fallback_chain(&cfg),
+            vec!["myprovider", "minimax", "anthropic"],
+            "custom: dropped, provider/model split to its provider, legacy duplicate collapsed"
+        );
+    }
+
+    #[test]
+    fn bare_names_pass_through_unchanged() {
+        let cfg = config(
+            r#"{
+                "providers": {
+                    "fallback": { "enabled": true, "providers": ["anthropic", "openai"], "vision": ["minimax"] },
+                    "minimax": { "enabled": true, "api_key": "k" }
+                }
+            }"#,
+        );
+        assert_eq!(normalized_fallback_chain(&cfg), vec!["anthropic", "openai"]);
+        assert_eq!(normalized_vision_chain(&cfg), vec!["minimax"]);
+    }
+
+    #[test]
+    fn the_vision_list_follows_the_same_rule() {
+        let cfg = config(
+            r#"{
+                "providers": {
+                    "fallback": { "enabled": true, "vision": ["custom:myprovider", "myprovider/some-vision"] },
+                    "custom": { "myprovider": { "base_url": "http://localhost:1/v1", "api_key": "k" } }
+                }
+            }"#,
+        );
+        assert_eq!(normalized_vision_chain(&cfg), vec!["myprovider"]);
+    }
+
+    #[test]
+    fn no_fallback_section_means_empty_chains() {
+        let cfg = config(r#"{ "providers": {} }"#);
+        assert!(normalized_fallback_chain(&cfg).is_empty());
+        assert!(normalized_vision_chain(&cfg).is_empty());
+    }
+}

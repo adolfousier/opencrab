@@ -11,13 +11,20 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::highlight::highlight_code;
+use crate::tui::render::theme::{self, Role};
 
 const TABLE_BORDER: Color = Color::DarkGray;
-const TABLE_HEADER: Color = Color::Rgb(120, 120, 120);
+fn table_header() -> Color {
+    theme::role(Role::Gray)
+}
 /// Dim gray used for list bullets, ordered numbers, and the blockquote gutter.
-const LIST_MARKER: Color = Color::Rgb(120, 120, 120);
+fn list_marker() -> Color {
+    theme::role(Role::Gray)
+}
 /// Link text color (underlined). Distinct from inline-code amber.
-const LINK_COLOR: Color = Color::Rgb(90, 160, 230);
+fn link_color() -> Color {
+    theme::role(Role::BlueLink)
+}
 /// Inline code (`` `like this` ``).
 ///
 /// The footer's slate blue, and NOT bold. Inline code appears many times in a
@@ -31,13 +38,15 @@ const LINK_COLOR: Color = Color::Rgb(90, 160, 230);
 /// identifiers in a sentence and has to stay legible against body text at
 /// `Rgb(200, 200, 210)`.
 ///
-/// Less saturated than `LINK_COLOR` so the two blues stay distinguishable
+/// Less saturated than `link_color()` so the two blues stay distinguishable
 /// beyond the link's underline.
 ///
-/// Deliberately local to markdown rendering and not `palette::ORANGE`: the
+/// Deliberately local to markdown rendering and not `theme::role(Role::Accent)`: the
 /// brand colour still belongs to titles, spinners and selections, which appear
 /// once each and are supposed to draw the eye.
-const INLINE_CODE: Color = Color::Rgb(125, 150, 195);
+fn inline_code() -> Color {
+    theme::role(Role::BlueCode)
+}
 
 /// Fold an emphasis style stack (bold/italic/strikethrough/link) into a single
 /// `Style`. Inner tags `patch` over outer ones so nesting composes (bold inside
@@ -103,7 +112,7 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                             Span::styled(
                                 code_language.clone(),
                                 Style::default()
-                                    .fg(Color::Rgb(120, 120, 120))
+                                    .fg(theme::role(Role::Gray))
                                     .add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(" ─", Style::default().fg(Color::DarkGray)),
@@ -132,7 +141,7 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                     };
                     current_line.push(Span::styled(
                         format!("{indent}{marker}"),
-                        Style::default().fg(LIST_MARKER),
+                        Style::default().fg(list_marker()),
                     ));
                 }
                 Tag::Table(_alignments) => {
@@ -165,7 +174,7 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                     link_url = Some(dest_url.to_string());
                     style_stack.push(
                         Style::default()
-                            .fg(LINK_COLOR)
+                            .fg(link_color())
                             .add_modifier(Modifier::UNDERLINED),
                     );
                 }
@@ -190,14 +199,14 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                     let mut styled_line = vec![Span::styled(
                         prefix.to_string(),
                         Style::default()
-                            .fg(Color::Rgb(120, 120, 120))
+                            .fg(theme::role(Role::Gray))
                             .add_modifier(Modifier::BOLD),
                     )];
 
                     for span in &mut current_line {
                         *span = span.clone().style(
                             Style::default()
-                                .fg(Color::Rgb(120, 120, 120))
+                                .fg(theme::role(Role::Gray))
                                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                         );
                     }
@@ -263,7 +272,7 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                 TagEnd::Paragraph => {
                     if blockquote_depth > 0 && !current_line.is_empty() {
                         current_line
-                            .insert(0, Span::styled("▌ ", Style::default().fg(LIST_MARKER)));
+                            .insert(0, Span::styled("▌ ", Style::default().fg(list_marker())));
                     }
                     if !current_line.is_empty() {
                         lines.push(Line::from(std::mem::take(&mut current_line)));
@@ -339,9 +348,9 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
             // item's bullet. Render a styled box so checked/unchecked is visible.
             Event::TaskListMarker(checked) => {
                 let (glyph, color) = if checked {
-                    ("[x] ", Color::Rgb(120, 200, 120))
+                    ("[x] ", theme::role(Role::GreenCheck))
                 } else {
-                    ("[ ] ", LIST_MARKER)
+                    ("[ ] ", list_marker())
                 };
                 current_line.push(Span::styled(glyph, Style::default().fg(color)));
             }
@@ -352,7 +361,7 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                 } else {
                     current_line.push(Span::styled(
                         format!("`{code}`"),
-                        Style::default().fg(INLINE_CODE),
+                        Style::default().fg(inline_code()),
                     ));
                 }
             }
@@ -547,7 +556,7 @@ fn render_table(
 
     let border_style = Style::default().fg(TABLE_BORDER);
     let header_style = Style::default()
-        .fg(TABLE_HEADER)
+        .fg(table_header())
         .add_modifier(Modifier::BOLD);
 
     if table_width <= max_width {

@@ -4,6 +4,7 @@
 
 use super::super::app::App;
 use super::plan_window::{current_task_index, pick_visible_window};
+use super::theme::{self, Role};
 use crate::tui::plan::TaskStatus;
 use ratatui::{
     Frame,
@@ -72,13 +73,13 @@ pub(super) fn render_plan_checklist(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             format!(" Plan: {}  ·  {}/{}  ", title, completed, total),
             Style::default()
-                .fg(Color::Rgb(160, 160, 160))
+                .fg(theme::role(Role::GrayMuted))
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(bar, Style::default().fg(Color::Rgb(80, 175, 175))),
+        Span::styled(bar, Style::default().fg(theme::role(Role::TealCalm))),
         Span::styled(
             format!("  {}%", percent),
-            Style::default().fg(Color::Rgb(160, 160, 160)),
+            Style::default().fg(theme::role(Role::GrayMuted)),
         ),
     ]);
 
@@ -113,8 +114,8 @@ pub(super) fn render_plan_checklist(f: &mut Frame, app: &App, area: Rect) {
     for task in &visible {
         let icon = crate::tui::plan::status_mark(&task.status).to_string();
         let color = match &task.status {
-            TaskStatus::Completed | TaskStatus::Skipped => Color::Rgb(60, 165, 165),
-            TaskStatus::InProgress => Color::Rgb(215, 100, 20),
+            TaskStatus::Completed | TaskStatus::Skipped => theme::role(Role::TealMuted),
+            TaskStatus::InProgress => theme::role(Role::Accent),
             TaskStatus::Failed => Color::Red,
             TaskStatus::Blocked(_) | TaskStatus::Pending => Color::DarkGray,
         };
@@ -142,7 +143,7 @@ pub(super) fn render_plan_checklist(f: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
-    let border_style = Style::default().fg(Color::Rgb(50, 50, 50));
+    let border_style = Style::default().fg(theme::role(Role::GrayBase));
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(border_style);

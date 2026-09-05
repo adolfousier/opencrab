@@ -117,7 +117,10 @@ impl FallbackProvider {
         }
     }
 
-    /// Build a request for a fallback provider, remapping the model if needed.
+    /// Build a request for the ACTIVE provider, remapping the model only when
+    /// it does not carry it. The active provider runs the model the session
+    /// picked; this is a validity guard, not a policy (#1374 keeps it that
+    /// way: a swap never invents a model).
     fn remap_request_for_fallback(fb: &dyn Provider, request: &LLMRequest) -> LLMRequest {
         let mut fb_request = request.clone();
         let new_model = Self::model_for(fb, &fb_request.model);
@@ -202,7 +205,7 @@ impl Provider for FallbackProvider {
         // sticky pointer — start_idx already accounts for them)
         for offset in start_idx..self.fallbacks.len() {
             let fb = &self.fallbacks[offset];
-            let fb_request = Self::remap_request_for_fallback(fb.as_ref(), &request);
+            let fb_request = substitute_request(fb.as_ref(), &request);
             let to_model = fb_request.model.clone();
             match fb.complete(fb_request).await {
                 Ok(resp) => {
@@ -260,7 +263,7 @@ impl Provider for FallbackProvider {
         // Try subsequent fallbacks
         for offset in start_idx..self.fallbacks.len() {
             let fb = &self.fallbacks[offset];
-            let fb_request = Self::remap_request_for_fallback(fb.as_ref(), &request);
+            let fb_request = substitute_request(fb.as_ref(), &request);
             let to_model = fb_request.model.clone();
             match fb.stream(fb_request).await {
                 Ok(stream) => {
@@ -453,4 +456,44 @@ impl Provider for FallbackProvider {
             Self::model_for(self.fallbacks[idx - 1].as_ref(), requested)
         }
     }
+}
+
+/// The model a substitute runs when the chain moves to it after a failure
+/// (#1374): its own configured `default_model`, not the model the failed
+/// request carried.
+///
+/// `models[]` is capability (what the endpoint can serve); `default_model` is
+/// intent (what this provider is configured to run). Carrying the previous
+/// model whenever the substitute happened to list it re-issued a byte-identical
+/// request to the same host three times in a row, and the models actually
+/// configured for those entries were never tried. A chain exists to try
+/// something different. An empty default degrades to the requested model, so
+/// a provider that publishes no default is never sent an empty model id.
+///
+/// Shared by [`FallbackProvider`] and compaction so the two paths cannot
+/// disagree about what a substitute runs.
+pub(crate) fn substitute_model(fb: &dyn Provider, requested: &str) -> String {
+    let default = fb.default_model().trim();
+    if default.is_empty() {
+        requested.to_string()
+    } else {
+        default.to_string()
+    }
+}
+
+/// `request` rebuilt for the substitute provider `fb`: same payload, the
+/// model from [`substitute_model`].
+pub(crate) fn substitute_request(fb: &dyn Provider, request: &LLMRequest) -> LLMRequest {
+    let mut fb_request = request.clone();
+    let new_model = substitute_model(fb, &fb_request.model);
+    if new_model != fb_request.model {
+        tracing::info!(
+            "Fallback '{}': running its configured model '{}' instead of the carried '{}'",
+            fb.name(),
+            new_model,
+            fb_request.model
+        );
+        fb_request.model = new_model;
+    }
+    fb_request
 }

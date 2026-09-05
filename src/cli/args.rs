@@ -512,6 +512,12 @@ pub async fn run() -> Result<()> {
         }
     }
 
+    // Seed the active profile's brain templates before any command runs
+    // (#1382): wizard abort, daemon-only, docker, channel-first, or `init`
+    // must all leave the user with a working personality on first open.
+    // Compiled-in templates, offline-safe, idempotent, never overwrites.
+    crate::config::profile::ensure_brain_seeded();
+
     match cli.command {
         None | Some(Commands::Chat { .. }) => {
             // Default: Interactive TUI mode
@@ -537,19 +543,20 @@ pub async fn run() -> Result<()> {
             prompt,
             auto_approve,
             format,
-        }) => commands::cmd_run(&config, prompt, auto_approve, format).await,
+        }) => commands::cmd_run(&config, prompt, auto_approve, format, None).await,
         Some(Commands::Agent {
             message,
-            session: _,
+            session,
             auto_approve,
             format,
         }) => {
             if let Some(msg) = message {
-                // Single message mode — same as `run`
-                commands::cmd_run(&config, msg, auto_approve, format).await
+                // Single message mode — same as `run`, plus #1368 resume:
+                // `agent --session <prefix|uuid>` continues that session.
+                commands::cmd_run(&config, msg, auto_approve, format, session).await
             } else {
-                // Interactive CLI agent (no TUI)
-                commands::cmd_agent_interactive(&config, auto_approve).await
+                // Interactive CLI agent (no TUI), resumable the same way.
+                commands::cmd_agent_interactive(&config, auto_approve, session).await
             }
         }
         Some(Commands::Channel { operation }) => commands::cmd_channel(&config, operation).await,

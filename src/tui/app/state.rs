@@ -114,6 +114,7 @@ use crate::brain::{BrainLoader, CommandLoader, SelfUpdater, UserCommand};
 use crate::db::models::{Message, Session};
 use crate::services::{FileService, MessageService, ServiceContext, SessionService};
 use crate::tui::pane::PaneManager;
+use crate::tui::render::notice::{ERROR_TTL, NOTIFICATION_TTL, notice_expired};
 use crate::utils::prompt_analyzer::PromptAnalyzer;
 use anyhow::Result;
 use ratatui::text::Line;
@@ -149,6 +150,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/compact",
         description: "Compact context now",
+    },
+    SlashCommand {
+        name: "/theme",
+        description: "List / set / reset the TUI color theme (/theme set dracula)",
     },
     SlashCommand {
         name: "/stop",
@@ -518,6 +523,9 @@ pub struct App {
     /// drag-select text natively (terminal handles selection + clipboard).
     /// Toggled with F12. Defaults to true (mouse capture on).
     pub mouse_capture_enabled: bool,
+    /// Interactive theme picker (#1371). `Some` = dialog open; all keys are
+    /// intercepted and routed through the picker's pure state machine.
+    pub theme_picker: Option<crate::tui::render::theme_picker::ThemePickerState>,
     pub selected_session_index: usize,
     pub should_quit: bool,
     /// Pending resize dimensions — runner pre-resizes buffers to avoid blink
@@ -906,6 +914,7 @@ impl App {
             prev_rendered_lines: 0,
             auto_scroll: true,
             mouse_capture_enabled: true,
+            theme_picker: None,
             selected_session_index: 0,
             should_quit: false,
             pending_resize: None,
@@ -1096,6 +1105,17 @@ impl App {
     /// themselves. Cleanup happens in `complete_response_for` (drops
     /// the entry when its turn finalises) and `demote_to_background`
     /// (snapshots foreground state in, drops empty entries).
+    /// Whether `session_id` still has a turn in flight.
+    ///
+    /// `processing_sessions` is the cross-session source of truth: the
+    /// foreground `is_processing` flag is derived from it on every focus
+    /// switch, so this answers for a focused and an off-screen session alike.
+    /// Cancelling removes the entry, which is what makes this the guard that
+    /// stops a cancelled turn's queued events being applied (#1342).
+    pub(crate) fn is_session_processing(&self, session_id: uuid::Uuid) -> bool {
+        self.processing_sessions.contains(&session_id)
+    }
+
     pub(crate) fn session_state_mut(
         &mut self,
         session_id: Uuid,
@@ -1139,7 +1159,11 @@ impl App {
             tps_tracker: self.tps_tracker.clone(),
             pending_messages: prior_pending,
         };
-        if bg.has_live_state() {
+        // A cancelled turn has no live state to preserve. Snapshotting it
+        // anyway is how a just-aborted session got its streaming fields copied
+        // straight back into the sidecar, where `panes.rs` drew them as a
+        // running turn for the rest of the session (#1342).
+        if bg.has_live_state() && self.is_session_processing(session_id) {
             self.background_sessions.insert(session_id, bg);
         }
     }
@@ -1962,6 +1986,13 @@ impl App {
                         .map(|s| s.len())
                         .unwrap_or(0)
                 );
+                // Drop chunks for a turn that has been cancelled. The agent
+                // task is aborted, but events it already emitted keep draining
+                // from the channel, and applying them re-populated the
+                // streaming state the abort had just cleared (#1342).
+                if !self.is_session_processing(session_id) {
+                    return Ok(());
+                }
                 // Route to foreground OR the per-session background
                 // sidecar so the inactive pane sees streaming chunks
                 // live instead of catching up on focus switch.
@@ -2008,6 +2039,12 @@ impl App {
                 }
             }
             TuiEvent::ReasoningChunk { session_id, text } => {
+                // Same cancellation guard as ResponseChunk: a cancelled turn's
+                // queued reasoning was what left the pane showing "is thinking"
+                // after the abort had cleared it (#1342).
+                if !self.is_session_processing(session_id) {
+                    return Ok(());
+                }
                 // Route to foreground OR background sidecar. The
                 // routing helper handles empty/whitespace filtering
                 // and the foreground-only `scroll_offset = 0` nudge
@@ -2105,12 +2142,19 @@ impl App {
                     wizard.tick_health_check();
                 }
 
-                // Auto-dismiss error/warning messages after 2.5 seconds
-                if let Some(shown_at) = self.error_message_shown_at
-                    && shown_at.elapsed() >= std::time::Duration::from_millis(2500)
-                {
+                // Auto-dismiss the transient notices on the input border
+                // (#1369). Expiry lives here, on the tick, so the renderer
+                // stays a pure read of `App`. Untimestamped errors (runner
+                // failures) are left alone: `notice_expired` is false for
+                // them, as the old `if let Some(shown_at)` guard was.
+                let now = std::time::Instant::now();
+                if notice_expired(self.error_message_shown_at, now, ERROR_TTL) {
                     self.error_message = None;
                     self.error_message_shown_at = None;
+                }
+                if notice_expired(self.notification_shown_at, now, NOTIFICATION_TTL) {
+                    self.notification = None;
+                    self.notification_shown_at = None;
                 }
             }
             TuiEvent::ToolApprovalRequested(request) => {
@@ -3193,6 +3237,48 @@ impl App {
                     self.sudo_input.push(c);
                 }
                 _ => {}
+            }
+            return Ok(());
+        }
+
+        // Theme picker dialog (#1371) intercepts all keys while open. The
+        // state machine is pure — every global effect (live preview, apply
+        // + persist, Esc revert) executes here in one place.
+        if self.theme_picker.is_some() {
+            let (origin, action) = {
+                let picker = self
+                    .theme_picker
+                    .as_mut()
+                    .expect("theme_picker checked Some above");
+                (picker.origin, picker.handle_key(&event, 10))
+            };
+            use crate::tui::render::theme_picker::PickerAction;
+            match action {
+                PickerAction::Preview(t) => crate::tui::render::theme::set(t),
+                PickerAction::Apply(t) => {
+                    crate::tui::render::theme::set(t);
+                    if let Err(e) = crate::config::Config::write_key_string(
+                        "tui",
+                        "theme",
+                        &format!("\"{}\"", t.name),
+                    ) {
+                        self.push_system_message(format!(
+                            "Applied '{}' (live). Persist failed: {e}",
+                            t.name
+                        ));
+                    } else {
+                        self.push_system_message(format!(
+                            "Theme switched to '{}' — applied live and persisted.",
+                            t.name
+                        ));
+                    }
+                    self.theme_picker = None;
+                }
+                PickerAction::Cancel => {
+                    crate::tui::render::theme::set(origin);
+                    self.theme_picker = None;
+                }
+                PickerAction::None => {}
             }
             return Ok(());
         }

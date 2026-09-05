@@ -101,6 +101,20 @@ fn force_restore_terminal() {
 
 /// Run the TUI application
 pub async fn run(mut app: App) -> Result<()> {
+    // Boot-time theme apply (#1364 commit D): read the active config and
+    // activate the named preset before the first render. `None` / empty /
+    // unknown name falls through to CRAB_DARK (byte-identical default).
+    // Live switching via `/theme set <name>` re-enters through `theme::set`
+    // below; no need to reload config on every frame.
+    {
+        let theme_name = crate::config::Config::current().tui.theme.clone();
+        if let Some(n) = theme_name.as_deref().filter(|s| !s.is_empty())
+            && let Some(t) = render::presets::by_name(n).or_else(|| render::user_themes::find(n))
+        {
+            render::theme::set(t);
+        }
+    }
+
     // Install panic hook that restores terminal before printing the panic.
     // Without this, a panic leaves the terminal in raw mode with no cursor.
     // Also stash the panic location so the render `catch_unwind` path can
@@ -166,6 +180,12 @@ pub async fn run(mut app: App) -> Result<()> {
     // Signal that the TUI owns stdout — suppress_stdio() will skip fd 1
     // redirection to avoid racing with ratatui's escape-sequence writes.
     crate::utils::fd_suppress::set_tui_active(true);
+
+    // Probe terminal truecolor capability once. Must run after terminal
+    // setup (raw mode + alternate screen) so crossterm's env-var checks
+    // see the right state. Result is cached for all subsequent `role()`
+    // calls.
+    render::theme::init_capability();
 
     // Force a full clear so stale content from a previous exec() restart
     // is wiped.

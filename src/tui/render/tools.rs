@@ -2,6 +2,7 @@
 //!
 //! Tool group display, inline approval dialogs, and approval policy menu.
 
+use super::theme::{self, Role};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -46,7 +47,7 @@ pub(super) fn render_tool_group<'a>(
         } else {
             " (ctrl+o to expand)"
         },
-        Style::default().fg(Color::Rgb(100, 100, 100)),
+        Style::default().fg(theme::role(Role::GrayMid)),
     ));
     lines.push(Line::from(header_spans));
 
@@ -97,7 +98,7 @@ pub(super) fn render_tool_group<'a>(
                         Span::styled(
                             format!("{}:", key),
                             Style::default()
-                                .fg(Color::Rgb(100, 100, 100))
+                                .fg(theme::role(Role::GrayMid))
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ]));
@@ -135,7 +136,7 @@ pub(super) fn render_tool_group<'a>(
                             ),
                             Span::styled(
                                 vline.clone(),
-                                Style::default().fg(Color::Rgb(170, 170, 170)),
+                                Style::default().fg(theme::role(Role::GraySoft)),
                             ),
                         ]);
                         for wrapped in
@@ -153,7 +154,7 @@ pub(super) fn render_tool_group<'a>(
                             Span::styled(
                                 format!("... ({} more lines)", total - 200),
                                 Style::default()
-                                    .fg(Color::Rgb(120, 120, 120))
+                                    .fg(theme::role(Role::Gray))
                                     .add_modifier(Modifier::ITALIC),
                             ),
                         ]));
@@ -168,21 +169,21 @@ pub(super) fn render_tool_group<'a>(
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("    {}  {} ", continuation, frame),
-                        Style::default().fg(Color::Rgb(120, 120, 120)),
+                        Style::default().fg(theme::role(Role::Gray)),
                     ),
-                    Span::styled("running...", Style::default().fg(Color::Rgb(215, 100, 20))),
+                    Span::styled("running...", Style::default().fg(theme::role(Role::Accent))),
                 ]));
             } else {
                 // Show tool output details (with secrets redacted)
                 if let Some(ref details) = call.details {
                     let detail_lines =
                         collapse_build_output(&crate::utils::redact_secrets(details));
-                    let default_detail_style = Style::default().fg(Color::Rgb(90, 90, 90));
+                    let default_detail_style = Style::default().fg(theme::role(Role::GrayDetail));
                     for detail_line in detail_lines.iter().take(200) {
                         let line_style = if detail_line.starts_with("+ ") {
-                            Style::default().fg(Color::Rgb(60, 185, 185))
+                            Style::default().fg(theme::role(Role::TealVivid))
                         } else if detail_line.starts_with("- ") {
-                            Style::default().fg(Color::Rgb(220, 80, 80))
+                            Style::default().fg(theme::role(Role::Error))
                         } else if detail_line.starts_with("@@ ") {
                             Style::default().fg(Color::Cyan)
                         } else {
@@ -210,7 +211,7 @@ pub(super) fn render_tool_group<'a>(
                             Span::styled(
                                 format!("... ({} more lines)", detail_lines.len() - 200),
                                 Style::default()
-                                    .fg(Color::Rgb(120, 120, 120))
+                                    .fg(theme::role(Role::Gray))
                                     .add_modifier(Modifier::ITALIC),
                             ),
                         ]));
@@ -277,7 +278,7 @@ pub(super) fn render_inline_approval<'a>(
                 } else {
                     "  [V] expand full details  [←→] navigate  [Enter] confirm"
                 },
-                Style::default().fg(Color::Rgb(80, 80, 80)),
+                Style::default().fg(theme::role(Role::GrayDim)),
             )]));
 
             // Expanded details: show all params fully, no truncation
@@ -304,7 +305,7 @@ pub(super) fn render_inline_approval<'a>(
                                 Span::styled("      ", Style::default()),
                                 Span::styled(
                                     vline.clone(),
-                                    Style::default().fg(Color::Rgb(200, 200, 200)),
+                                    Style::default().fg(theme::role(Role::GrayLight)),
                                 ),
                             ]);
                             for wrapped in
@@ -319,7 +320,7 @@ pub(super) fn render_inline_approval<'a>(
                                 Span::styled(
                                     format!("... ({} more lines)", total - 60),
                                     Style::default()
-                                        .fg(Color::Rgb(120, 120, 120))
+                                        .fg(theme::role(Role::Gray))
                                         .add_modifier(Modifier::ITALIC),
                                 ),
                             ]));
@@ -338,7 +339,7 @@ pub(super) fn render_inline_approval<'a>(
                         Span::styled("      ", Style::default()),
                         Span::styled(
                             approval.capabilities.join(", "),
-                            Style::default().fg(Color::Rgb(215, 100, 20)),
+                            Style::default().fg(theme::role(Role::Accent)),
                         ),
                     ]));
                 }
@@ -353,7 +354,7 @@ pub(super) fn render_inline_approval<'a>(
             )]));
             let options = [
                 ("Yes", Color::Cyan),
-                ("Always", Color::Rgb(215, 100, 20)),
+                ("Always", theme::role(Role::Accent)),
                 ("No", Color::Red),
             ];
             for (i, (label, color)) in options.iter().enumerate() {
@@ -475,7 +476,7 @@ pub(super) fn render_approve_menu<'a>(
 
     match &menu.state {
         ApproveMenuState::Pending => {
-            let gold = Color::Rgb(215, 100, 20);
+            let gold = theme::role(Role::Accent);
 
             lines.push(Line::from(vec![Span::styled(
                 "  TOOL APPROVAL POLICY",
@@ -540,7 +541,7 @@ pub(super) fn render_approve_menu<'a>(
         ApproveMenuState::Selected(choice) => {
             let (label, color) = match choice {
                 0 => ("Approve-only", Color::Cyan),
-                1 => ("Allow all (session)", Color::Rgb(215, 100, 20)),
+                1 => ("Allow all (session)", theme::role(Role::Accent)),
                 2 => ("Yolo mode", Color::Red),
                 _ => ("Cancelled", Color::DarkGray),
             };

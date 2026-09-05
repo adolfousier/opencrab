@@ -4,6 +4,7 @@
 
 use super::super::app::{App, DisplayMessage};
 use super::super::markdown::parse_markdown;
+use super::theme::{self, Role};
 use super::tools::{render_approve_menu, render_inline_approval, render_tool_group};
 use super::utils::wrap_line_with_padding;
 use ratatui::{
@@ -592,7 +593,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 ),
                 Span::styled(
                     header.hint.to_string(),
-                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                    Style::default().fg(theme::role(Role::GrayMid)),
                 ),
             ]));
             line_to_msg.resize(lines.len(), None);
@@ -701,7 +702,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                     } else {
                         " (ctrl+o to expand)"
                     },
-                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                    Style::default().fg(theme::role(Role::GrayMid)),
                 ));
                 lines.push(Line::from(header_spans));
 
@@ -781,7 +782,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             // System messages: visible yellow label, split on newlines so
             // multi-line content actually renders (not clipped to one line).
             let system_style = Style::default()
-                .fg(Color::Rgb(200, 170, 60))
+                .fg(theme::role(Role::WarningMuted))
                 .add_modifier(Modifier::ITALIC);
 
             for (i, text_line) in app.messages[msg_idx].content.lines().enumerate() {
@@ -802,7 +803,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                     };
                     spans.push(Span::styled(
                         hint,
-                        Style::default().fg(Color::Rgb(120, 120, 120)),
+                        Style::default().fg(theme::role(Role::Gray)),
                     ));
                 }
                 let line = Line::from(spans);
@@ -853,9 +854,9 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             // toast that vanished, the user only saw their prompt +
             // tool call + Thinking with no completion.
             let err_style = Style::default()
-                .fg(Color::Rgb(220, 70, 70))
+                .fg(theme::role(Role::ErrorSoft))
                 .add_modifier(Modifier::BOLD);
-            let body_style = Style::default().fg(Color::Rgb(220, 130, 130));
+            let body_style = Style::default().fg(theme::role(Role::ErrorFaded));
             for (i, text_line) in app.messages[msg_idx].content.lines().enumerate() {
                 let mut spans = vec![Span::styled("  ", Style::default())];
                 if i == 0 {
@@ -878,9 +879,9 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         // Highlight selected message with subtle background
         let is_selected = app.selected_message_idx == Some(msg_idx);
         let msg_bg: Option<Color> = if is_selected {
-            Some(Color::Rgb(40, 45, 55))
+            Some(theme::role(Role::SurfaceCode))
         } else if is_user {
-            Some(Color::Rgb(40, 44, 56))
+            Some(theme::role(Role::SurfaceCodeAlt))
         } else {
             None
         };
@@ -902,14 +903,14 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                     // User: arrow prefix
                     vec![Span::styled(
                         "\u{276F} ",
-                        Style::default().fg(Color::Rgb(100, 100, 100)),
+                        Style::default().fg(theme::role(Role::GrayMid)),
                     )]
                 } else {
                     // Assistant: colored dot prefix
                     vec![Span::styled(
                         "\u{25CF} ",
                         Style::default()
-                            .fg(Color::Rgb(120, 120, 120))
+                            .fg(theme::role(Role::Gray))
                             .add_modifier(Modifier::BOLD),
                     )]
                 }
@@ -1019,7 +1020,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                     lines.push(Line::from(vec![Span::styled(
                         format!("  … {} more lines (click / ctrl+o for full)", total - show),
                         Style::default()
-                            .fg(Color::Rgb(100, 100, 100))
+                            .fg(theme::role(Role::GrayMid))
                             .add_modifier(Modifier::ITALIC),
                     )]));
                 }
@@ -1111,40 +1112,45 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
 
-        // Blank line to separate content from status spinner
-        lines.push(Line::from(""));
+        // The spinner claims a turn is running, so it is gated on the turn
+        // actually running. The streamed text above is NOT gated: hiding it
+        // would make content the user is reading vanish on cancel (#1342).
+        if app.is_processing {
+            // Blank line to separate content from status spinner
+            lines.push(Line::from(""));
 
-        // Spinner at BOTTOM of streaming content so it's always visible
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame = spinner_frames[app.animation_frame % spinner_frames.len()];
+            // Spinner at BOTTOM of streaming content so it's always visible
+            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let frame = spinner_frames[app.animation_frame % spinner_frames.len()];
 
-        let elapsed = app
-            .processing_started_at
-            .map(|t| t.elapsed().as_secs())
-            .unwrap_or(0);
+            let elapsed = app
+                .processing_started_at
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(0);
 
-        let mut spans = vec![
-            Span::styled(
-                format!("{} ", frame),
-                Style::default()
-                    .fg(Color::Rgb(120, 120, 120))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "🦀 OpenCrabs ",
-                Style::default()
-                    .fg(Color::Gray)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "is responding...",
-                Style::default().fg(Color::Rgb(215, 100, 20)),
-            ),
-        ];
-        if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
-            spans.push(Span::styled(meta, Style::default().fg(Color::DarkGray)));
+            let mut spans = vec![
+                Span::styled(
+                    format!("{} ", frame),
+                    Style::default()
+                        .fg(theme::role(Role::Gray))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "🦀 OpenCrabs ",
+                    Style::default()
+                        .fg(Color::Gray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "is responding...",
+                    Style::default().fg(theme::role(Role::Accent)),
+                ),
+            ];
+            if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
+                spans.push(Span::styled(meta, Style::default().fg(Color::DarkGray)));
+            }
+            lines.push(Line::from(spans));
         }
-        lines.push(Line::from(spans));
     }
 
     // Render standalone reasoning during thinking-only phase
@@ -1152,6 +1158,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // streaming_response=None but reasoning is already streaming in
     // Hide when user has scrolled up so the viewport stays frozen.
     if !has_pending_approval
+        && app.is_processing
         && app.auto_scroll
         && app.streaming_response.is_none()
         && let Some(ref reasoning) = app.streaming_reasoning
@@ -1202,7 +1209,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(
                 format!("{} ", frame),
                 Style::default()
-                    .fg(Color::Rgb(120, 120, 120))
+                    .fg(theme::role(Role::Gray))
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
@@ -1213,7 +1220,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             ),
             Span::styled(
                 "is thinking...",
-                Style::default().fg(Color::Rgb(215, 100, 20)),
+                Style::default().fg(theme::role(Role::Accent)),
             ),
         ];
         if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
@@ -1242,18 +1249,18 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(
                 format!("  {} ", frame),
                 Style::default()
-                    .fg(Color::Rgb(120, 120, 120))
+                    .fg(theme::role(Role::Gray))
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "OpenCrabs is thinking...",
-                Style::default().fg(Color::Rgb(215, 100, 20)),
+                Style::default().fg(theme::role(Role::Accent)),
             ),
         ];
         if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
             spans.push(Span::styled(
                 meta,
-                Style::default().fg(Color::Rgb(100, 100, 100)),
+                Style::default().fg(theme::role(Role::GrayMid)),
             ));
         }
         lines.push(Line::from(spans));
@@ -1275,83 +1282,6 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         );
     }
 
-    // Show error message if present
-    if let Some(ref error) = app.error_message {
-        lines.push(Line::from(""));
-        let prefix = "  Error: ";
-        let prefix_len = prefix.len();
-        let wrap_w = content_width.saturating_sub(prefix_len + 2).max(20);
-        let mut first = true;
-        for raw_line in error.lines() {
-            let mut current = String::new();
-            for word in raw_line.split_whitespace() {
-                if current.len() + word.len() + 1 > wrap_w {
-                    if first {
-                        lines.push(Line::from(vec![
-                            Span::styled(
-                                prefix,
-                                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(current.clone(), Style::default().fg(Color::Red)),
-                        ]));
-                        first = false;
-                    } else {
-                        lines.push(Line::from(Span::styled(
-                            format!("{}{}", " ".repeat(prefix_len), current),
-                            Style::default().fg(Color::Red),
-                        )));
-                    }
-                    current.clear();
-                }
-                if !current.is_empty() {
-                    current.push(' ');
-                }
-                current.push_str(word);
-            }
-            if !current.is_empty() || first {
-                if first {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            prefix,
-                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(current.clone(), Style::default().fg(Color::Red)),
-                    ]));
-                    first = false;
-                } else {
-                    lines.push(Line::from(Span::styled(
-                        format!("{}{}", " ".repeat(prefix_len), current),
-                        Style::default().fg(Color::Red),
-                    )));
-                }
-            }
-        }
-        lines.push(Line::from(""));
-    }
-
-    // Show notification if present (auto-dismiss after 2s)
-    if let Some(ref note) = app.notification {
-        if app
-            .notification_shown_at
-            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2))
-        {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("  ", Style::default()),
-                Span::styled(
-                    note.clone(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
-            lines.push(Line::from(""));
-        } else {
-            app.notification = None;
-            app.notification_shown_at = None;
-        }
-    }
-
     // Show SSH password dialog inline (like approval dialogs).
     // Same shape as the sudo dialog, different label.
     if let Some(ref ssh_req) = app.ssh_pending {
@@ -1359,12 +1289,12 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled(
                 "  \u{1F511} ",
-                Style::default().fg(Color::Rgb(75, 160, 215)),
+                Style::default().fg(theme::role(Role::BlueSoft)),
             ),
             Span::styled(
                 "SSH password required",
                 Style::default()
-                    .fg(Color::Rgb(75, 160, 215))
+                    .fg(theme::role(Role::BlueSoft))
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -1383,7 +1313,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 "\u{2022}".repeat(app.ssh_input.len()),
                 Style::default().fg(Color::Reset),
             ),
-            Span::styled("\u{2588}", Style::default().fg(Color::Rgb(120, 120, 120))),
+            Span::styled("\u{2588}", Style::default().fg(theme::role(Role::Gray))),
         ]));
         lines.push(Line::from(vec![
             Span::styled(
@@ -1410,12 +1340,12 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled(
                 "  \u{1F512} ",
-                Style::default().fg(Color::Rgb(215, 100, 20)),
+                Style::default().fg(theme::role(Role::Accent)),
             ),
             Span::styled(
                 "sudo password required",
                 Style::default()
-                    .fg(Color::Rgb(215, 100, 20))
+                    .fg(theme::role(Role::Accent))
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -1439,7 +1369,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 "\u{2022}".repeat(app.sudo_input.len()),
                 Style::default().fg(Color::Reset),
             ),
-            Span::styled("\u{2588}", Style::default().fg(Color::Rgb(120, 120, 120))),
+            Span::styled("\u{2588}", Style::default().fg(theme::role(Role::Gray))),
         ]));
         // Help line
         lines.push(Line::from(vec![

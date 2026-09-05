@@ -52,7 +52,18 @@ config = "0.15"
 dirs = "6.0"
 
 # HTTP & LLM Clients
-reqwest = { version = "0.12", features = ["json", "multipart", "native-tls", "stream", "blocking"], default-features = false }
+reqwest = { version = "0.13", features = [
+    "json",
+    "multipart",
+    "native-tls",
+    "stream",
+    "blocking",
+    # 0.13 split these out of the default set; they are the `.form()` and
+    # `.query()` builder methods, used by the Trello client and the release
+    # check respectively.
+    "form",
+    "query",
+], default-features = false }
 
 # A2A Gateway (HTTP Server)
 axum = "0.8"
@@ -90,7 +101,18 @@ rand = "0.9"
 urlencoding = "2.1"
 
 # Syntax & Parsing
-syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+syntect = { version = "5.2", default-features = false, features = [
+    # Only the bundled binary dumps are ever loaded (`load_defaults_newlines`
+    # / `ThemeSet::load_defaults` in tui/highlight.rs), so the YAML syntax
+    # loader, the plist theme loader, the dump *writer* and the HTML emitter
+    # are all unreachable. `default-fancy` pulls them in, and with them
+    # yaml-rust, which is unmaintained (RUSTSEC-2024-0320, #1344).
+    "parsing",
+    "default-syntaxes",
+    "default-themes",
+    "dump-load",
+    "regex-fancy",
+] }
 pulldown-cmark = "0.13"
 strip-ansi = "0.1"
 tree-sitter = { version = "0.24", optional = true }
@@ -177,7 +199,7 @@ scraper = "0.27.0"
 htmd = "0.5.4"
 rust_xlsxwriter = "0.96.0"
 docx-rs = "0.4.20"
-printpdf = { version = "0.11.3", features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+printpdf = { version = "0.12.7", features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 
 [dev-dependencies]
 rstest = "0.25"
@@ -189,6 +211,13 @@ tempfile = "3.25"
 tokio-test = "0.4"
 tower = { version = "0.5", features = ["util"] }
 mockito = "1.7"
+# teloxide-core is still on reqwest 0.12 while our own dependency is on 0.13
+# (#1345, #1346). `Bot::with_client` takes teloxide's `reqwest::Client`, so a
+# test that builds one needs that exact version: this alias resolves to the
+# same 0.12 crate teloxide already pulls, rather than adding a fourth copy.
+# Dev-only, so nothing reaches the shipped binary. Drop it when teloxide
+# releases against reqwest 0.13.
+reqwest_teloxide = { package = "reqwest", version = "0.12", default-features = false }
 
 # Platform-specific dependencies
 # `pprof` used to sit here, optional and Unix-only. Nothing ever enabled it:
@@ -207,7 +236,7 @@ rwhisper = { version = "0.4", optional = true, features = ["metal", "accelerate"
 winresource = "0.1"
 
 [features]
-default = ["telegram", "whatsapp", "discord", "slack", "trello", "local-stt", "local-tts", "browser", "rtk", "code-graph"]
+default = ["telegram", "whatsapp", "discord", "slack", "trello", "local-stt", "local-tts", "browser", "rtk", "code-graph", "pdfium"]
 # Profiling feature enables pprof on Unix only (no-op on Windows)
 profiling = []
 # RTK (Rust Token Killer) integration - filters bash command outputs to save 60-90% tokens

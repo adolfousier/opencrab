@@ -1,5 +1,6 @@
 //! Split pane rendering — draws pane borders, labels, and delegates chat rendering.
 
+use super::theme::{self, Role};
 use super::utils::wrap_line_with_padding;
 use crate::tui::app::{App, DisplayMessage};
 use crate::tui::pane::PaneId;
@@ -48,8 +49,14 @@ pub(super) fn render_inactive_pane(f: &mut Frame, app: &App, pane_id: PaneId, ar
     // cached message snapshot. `None` when the session has no
     // sidecar entry (either it's idle or never had a turn while
     // off-screen).
+    // Only a session with a turn still in flight renders live rows. A
+    // cancelled session's sidecar entry is cleared on abort, but guarding here
+    // too means a stale entry from any other path cannot be drawn as a live
+    // turn, which is what left "is thinking" running forever in split view
+    // after a cancel (#1342).
     let live = pane
         .session_id
+        .filter(|sid| app.is_session_processing(*sid))
         .and_then(|sid| app.background_sessions.get(&sid));
 
     let block = Block::default()
@@ -322,11 +329,11 @@ pub(super) fn focused_pane_border(f: &mut Frame, app: &App, area: Rect) -> Rect 
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(80, 200, 120)))
+        .border_style(Style::default().fg(theme::role(Role::Success)))
         .title(Span::styled(
             format!(" {} ", session_label),
             Style::default()
-                .fg(Color::Rgb(80, 200, 120))
+                .fg(theme::role(Role::Success))
                 .add_modifier(Modifier::BOLD),
         ))
         .padding(Padding::horizontal(0));

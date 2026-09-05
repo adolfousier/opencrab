@@ -224,9 +224,13 @@ async fn a_fallback_that_carries_the_requested_model_reports_that_model() {
         .await
         .expect("the fallback answers");
 
+    // `served_model` answers for the ACTIVE provider, which after the swap is
+    // the fallback: asked for a model it lists, it runs that model. The
+    // substitute rule (#1374) applies to the request that moved the chain,
+    // and the swap event pins the session to fb-default for what follows.
     assert_eq!(
         chain.served_model("shared-model"),
         "shared-model",
-        "no remap happened, so the requested model is what ran"
+        "the active provider runs a model it lists; no remap for a listed model"
     );
 }

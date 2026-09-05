@@ -268,8 +268,8 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 | **PDF Support** | Attach PDF files by path — native Anthropic PDF support; for other providers, text is extracted locally via `pdf-extract`. **Scanned / image-only PDFs** (no embedded text) are rendered to page images so vision models can read them — this needs **poppler** (`pdftoppm`) on the system: macOS `brew install poppler`, Debian/Ubuntu `apt install poppler-utils`, Fedora `dnf install poppler-utils`. The one-line installer sets this up automatically; without it, the PDF is still saved and its path handed to the agent (text extraction and the `pdf_to_images` tool can be retried once poppler is present) |
 | **Document Parsing** | Built-in `parse_document` tool extracts text from PDF, DOC, DOCX, XLSX, XLSM, XLSB, XLS, ODS, CSV, HTML, TXT, MD, JSON, XML. All native Rust, zero external services: PDF text via `pdf-extract`, legacy Word 97-2003 `.doc` via `rwml`, DOCX/XML via a `quick-xml` streaming walk, spreadsheets (all five Excel/ODS variants) via `calamine`, CSV via `csv`. Scanned/image-only PDFs fall back to page-image rendering for vision models (see **PDF Support** above). Spreadsheet files are parsed into readable table format with sheet headers. Reading legacy binary `.ppt` is out of scope by design |
 | **Document Generation** | Built-in `generate_document` tool creates XLSX (live Excel formulas), DOCX, and PDF natively in Rust with zero host dependencies, plus PPTX via python-pptx when present. Full styling per format: brand colors, page headers/footers with logos and page numbers, zebra tables, frozen headers, autofilters, number formats, PowerPoint brand templates. Image blocks embed PNG/JPEG inline with optional captions in PDF and DOCX. Generated files are delivered as downloadable attachments on Telegram/WhatsApp/Discord. See [Document Generation](#-document-generation) |
-| **Voice (STT)** | Voice notes transcribed via **Groq Whisper API** (`whisper-large-v3-turbo`), any **OpenAI-compatible STT endpoint** (set `stt_base_url` + `stt_model` — works with self-hosted Whisper, Deepgram-compatible proxies, etc.), **Voicebox STT** (self-hosted open-source voice stack — point `voicebox_stt_base_url` at your instance; 2s liveness probe runs before each request so a dead voicebox fails fast), or **Local** whisper.cpp via `whisper-rs` (runs on-device, Tiny 75 MB / Base 142 MB / Small 466 MB / Medium 1.5 GB, zero API cost). All dispatched through a single entry point so every channel gets the same provider priority chain — and an optional `[providers.stt].fallback_chain` lets the user codify "if my local voicebox is down, try Groq, then OpenAI" so transient outages auto-route to the next provider with zero user action. Choose mode in `/onboard:voice`. Included by default |
-| **Voice (TTS)** | Agent replies to voice notes with audio via **OpenAI TTS API** (`gpt-4o-mini-tts`), any **OpenAI-compatible TTS endpoint** (set `tts_base_url` + `tts_model` + `tts_voice` — works with self-hosted Coqui/Bark, ElevenLabs-compatible proxies, etc.), **Voicebox TTS** (async `/generate` → poll `/generate/{id}/status` → fetch audio; set `voicebox_tts_base_url` + `voicebox_tts_profile_id`), or **Local** Piper TTS (runs on-device via Python venv, Ryan / Amy / Lessac / Kristin / Joe / Cori, zero API cost). All outputs normalised to OGG/Opus via `ensure_opus` before delivery — consistent format across every channel regardless of backend. `[providers.tts].fallback_chain` provides the same auto-failover behaviour as the STT side. Falls back to text if disabled |
+| **Voice (STT)** | Voice notes transcribed via **Groq Whisper API** (`whisper-large-v3-turbo`), any **OpenAI-compatible STT endpoint** (set `base_url` + `model` under `[providers.stt.openai_compatible]` — works with self-hosted Whisper, Deepgram-compatible proxies, etc.), **Voicebox STT** (self-hosted open-source voice stack — point the `base_url` of `[providers.stt.voicebox]` at your instance; 2s liveness probe runs before each request so a dead voicebox fails fast), or **Local** whisper.cpp via `whisper-rs` (runs on-device, Tiny 75 MB / Base 142 MB / Small 466 MB / Medium 1.5 GB, zero API cost). All dispatched through a single entry point so every channel gets the same provider priority chain — and an optional `[providers.stt].fallback_chain` lets the user codify "if my local voicebox is down, try Groq, then OpenAI" so transient outages auto-route to the next provider with zero user action. Choose mode in `/onboard:voice`. Included by default |
+| **Voice (TTS)** | Agent replies to voice notes with audio via **OpenAI TTS API** (`gpt-4o-mini-tts`), any **OpenAI-compatible TTS endpoint** (set `base_url` + `model` + `voice` under `[providers.tts.openai_compatible]` — works with self-hosted Coqui/Bark, ElevenLabs-compatible proxies, etc.), **Voicebox TTS** (async `/generate` → poll `/generate/{id}/status` → fetch audio; set the `base_url` + `profile_id` of `[providers.tts.voicebox]`), or **Local** Piper TTS (runs on-device via Python venv, Ryan / Amy / Lessac / Kristin / Joe / Cori, zero API cost). All outputs normalised to OGG/Opus via `ensure_opus` before delivery — consistent format across every channel regardless of backend. `[providers.tts].fallback_chain` provides the same auto-failover behaviour as the STT side. Falls back to text if disabled |
 | **Attachment Indicator** | Attached images show as `[IMG1:filename.png]` in the input title bar |
 | **Image Generation** | Agent generates images via Google Gemini (`gemini-3.1-flash-image-preview` "Nano Banana") using the `generate_image` tool — enabled via `/onboard:image`. Returned as native images/attachments in all channels |
 
@@ -303,7 +303,7 @@ api_key = "YOUR_GEMINI_KEY"
 
 > **Gotcha:** `[image.vision] api_key = "..."` in `config.toml` is silently ignored — the field carries `#[serde(skip)]` for security. Use `keys.toml` `[image]` section, or `[providers.image.gemini]` in config.toml + the key in keys.toml.
 
-> **Vision-only provider override:** Set `[image.vision] provider = "name"` to route vision requests through a specific provider regardless of its `enabled` flag. Useful when you have a vision-only provider (e.g., OpenRouter proxying Gemini) with `enabled = false` for chat but want it to serve `analyze_image` and `analyze_video`. An unresolvable name falls through to the normal provider scan.
+> **Pinning vision to a provider:** set `[providers.fallback] vision = ["name"]` to try that provider first for `analyze_image` and `analyze_video`, regardless of its `enabled` flag (vision needs only `vision_model` plus a key). Names follow the same rule as every other provider key: the bare section name, so `[providers.custom.myprovider]` is `"myprovider"`. An entry that does not resolve is skipped with a warning and resolution falls through to the normal provider scan. There is no `[image.vision] provider` key; that section configures the Gemini backend only.
 
 **Diagnostic:** when vision is unavailable for any reason, `is_vision_available` logs the exact cause at INFO level in `~/.opencrabs/logs/opencrabs.YYYY-MM-DD` — search for `target=vision`.
 
@@ -455,6 +455,47 @@ allowed_users = ["123456789"]    # who may interact
 # bot_owner = ["123456789"]      # owner for owner-only commands (auto-seeded from allowed_users[0])
 ```
 
+#### Flood governor (`[channels.telegram.rate_limiter]`)
+
+Telegram rate-limits per peer, and a forum supergroup is **one peer no matter how
+many topics it has**. Under load a busy turn can outrun that on its own, so the
+governor paces outbound calls proactively instead of only reacting to 429s.
+
+Enforcement engages **only for forum peers** (a chat seen carrying a topic id).
+DMs are never paced, so leaving this alone is the right default; the knobs exist
+for deployments whose traffic differs from the one the defaults were sized on.
+
+```toml
+[channels.telegram.rate_limiter]
+enabled = true                  # master switch; forum peers only either way
+
+typing_min_interval_secs = 3    # sendChatAction: min gap between actions
+typing_burst = 8                # ...and how many may bunch up
+typing_max_hold_secs = 30       # longest a typing indicator is held
+
+edits_per_minute = 30           # classic editMessageText budget
+edit_burst = 10
+
+rich_per_minute = 30            # sendRichMessage budget (separate bucket)
+rich_burst = 10
+
+send_min_interval_millis = 1000 # new messages: min gap
+sends_ceiling_per_minute = 18
+sends_burst = 5
+
+summary_log_secs = 300          # how often the admitted/dropped summary is logged
+```
+
+When a bucket empties, what happens depends on what is queued. **Chrome** (the
+clock, brain previews, status churn) is dropped and counted: it self-heals on the
+next full-state render, so nothing is lost. A **final** message is never dropped;
+it queues latest-wins and lands when the bucket refills. Every value is read live
+on each gate evaluation, so edits take effect without a restart.
+
+The defaults follow Telegram's documented bot regime per peer: roughly 20 typing
+actions per 5s and 40 per 30s, edits observed safe at 30/min, sends kept under
+~20/min.
+
 #### Per-group access control (per-chat ACL)
 
 Telegram groups can have their own member list, so a user can be allowed in **one group** without gaining DM access:
@@ -503,6 +544,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | **Inline Plan Approval** | Interactive plan review selector (Approve / Reject / Request Changes / View Plan) |
 | **Session Management** | Create, rename, delete sessions with persistent SQLite storage; each session remembers its provider + model — switching sessions auto-restores the provider (no manual `/models` needed); token counts and context % per session. New sessions auto-generate a meaningful title from the first user message (no more "New Chat") |
 | **Direct Model Switch** | `/models <provider/model>` switches the current session instantly — no picker — on the TUI and every channel. You can also name it the way you say it: `/models xiaomi mimo v2.5 pro` resolves the same as `/models xiaomi/mimo-v2.5-pro`, with spacing, hyphens, dots and case interchangeable. Matching is programmatic against the provider's own catalogue, so it costs no model call and never invents a model that provider doesn't serve; an ambiguous reference is refused with the candidates listed rather than guessed. Add `all` (`/models minimax/MiniMax-M3 all`) to apply to every non-archived session (Telegram also offers an inline "Apply to all sessions" button). `opencrabs session set-model` does the same from the terminal, and `[providers.<name>] force_default = true` pushes the section's default pair to all sessions on config reload |
+| **Theme Switching** | `/theme` opens an interactive picker — arrow through the roster with **live preview** (the whole UI recolors under the cursor), Enter applies + persists, Esc reverts. 8 built-ins (`crab-dark` default, dracula, alucard, monokai, solarized-light, solarized-dark, catppuccin-mocha, catppuccin-latte) plus your own presets: drop a TOML in `~/.opencrabs/themes/*.toml` and it hot-loads into the picker. `/theme list`, `/theme set <name>`, `/theme reset` keep the text surface; the active theme persists via the `[tui.theme]` config key and survives restarts. Non-truecolor terminals automatically get an ANSI-mapped fallback tier instead of broken colors |
 | **Split Panes** | Horizontal (`\|` in sessions) and vertical (`_` in sessions) pane splitting — tmux-style. Each pane runs its own session with independent provider, model, and context. Run 10 sessions side by side, all processing in parallel. `Tab` to cycle focus, `Ctrl+X` to close pane |
 | **Parallel Sessions** | Multiple sessions can have in-flight requests to different providers simultaneously. Send a message in one session, switch to another, send another — both process in parallel. Background sessions auto-approve tool calls; you'll see results when you switch back |
 | **Scroll While Streaming** | Scroll up during streaming without being yanked back to bottom; auto-scroll re-enables when you scroll back down or send a message |
@@ -561,6 +603,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | `opencrabs session list` | List all sessions with provider, model, token count (`--all` includes archived) |
 | `opencrabs session get <id>` | Show session details and recent messages |
 | `opencrabs session set-model <provider/model> [target]` | Non-interactive model switch: target by id prefix, `--name "<title match>"`, or `--all` (non-archived sessions). The pair splits on the first slash, so `openrouter/tencent/hy3:free` works. A running instance applies it on each session's next message |
+| `opencrabs session notify <id> --text "..."` | Send a notification into a session from outside it — the subcommand meant for scripts and tooling. `--title` adds a header, `--sender` sets the label the recipient sees (default "CLI tooling"), `--interrupt` delivers even while that session is mid-turn, `--format json` returns a machine-readable delivery verdict |
 | `opencrabs db init` | Initialize database |
 | `opencrabs db stats` | Show database statistics |
 | `opencrabs db clear` | Clear all sessions and messages (`--force` to skip confirmation) |
@@ -568,6 +611,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | `opencrabs logs status\|view\|clean\|open` | Log management |
 | `opencrabs service install\|start\|stop\|restart\|status\|uninstall` | OS service management (launchd on macOS, systemd on Linux) |
 | `opencrabs daemon` | Run in headless daemon mode — channels only, no TUI |
+| `opencrabs evolve` | Update to the latest release binary and hot-restart, the same path as the `/evolve` command and the automatic 24h check. `--check-only` reports whether an update exists without installing it |
 | `opencrabs completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
 | `opencrabs migrate <source>` | Migrate from OpenClaw or Hermes. Scans the system, shows interactive picker, spawns agent to handle migration. `--dry-run` to preview |
 | `opencrabs version` | Print version and exit |
@@ -1057,10 +1101,31 @@ endpoint_type = "api"  # "api" (General API) or "coding" (Coding API)
 ```
 
 z.ai GLM (Zhipu AI) offers two endpoint types selectable during onboarding or via `/models`:
-- **General API** (`api`) — standard chat completions at `open.bigmodel.cn/api/paas/v4`
-- **Coding API** (`coding`) — code-optimized endpoint at `codeapi.bigmodel.cn/api/paas/v4`
+- **General API** (`api`) — standard chat completions at `api.z.ai/api/paas/v4`
+- **Coding API** (`coding`) — Coding Plan channel at `api.z.ai/api/coding/paas/v4`
 
 Both use the same API key and model names. The endpoint type can be toggled in the onboarding wizard or `/models` dialog.
+
+The default host is `api.z.ai`, which closes an idle streaming connection after about 30 seconds; the mainland host `open.bigmodel.cn` serves the same API without that cut. To use it, or any other z.ai-compatible host, set `base_url` and it wins over `endpoint_type`:
+
+```toml
+[providers.zhipu]
+enabled = true
+base_url = "https://open.bigmodel.cn/api/paas/v4"   # optional; the /models list follows it too
+```
+
+**Thinking and effort (GLM-5.x):**
+
+```toml
+[providers.zhipu]
+enabled = true
+default_model = "glm-5.3"
+reasoning_effort = "high"   # GLM-5.3+: "low", "high" or "max" only
+```
+
+GLM-5.3 and later think on every request and cannot be turned off; `enable_thinking = false` is logged as ignored on those models (it still works on GLM-5.0 to 5.2). OpenCrabs sends z.ai's Preserved Thinking (`clear_thinking: false`) for every GLM-5.x request, so a tool loop builds on the previous step's reasoning instead of re-deriving it, and streams tool-call arguments (`tool_stream`) so a large file write is not minutes of silence.
+
+`reasoning_effort` on GLM-5.3+ takes `low`, `high` or `max`. The endpoint turns any other value into `max` without saying so, which is the deepest and slowest setting; OpenCrabs maps a value from another family (`xhigh` to `max`, `medium` to `high`, `minimal`/`none` to `low`) and logs the mapping. Use `high` for agentic sessions; `max` suits a single hard question, not a thirty-step tool loop. Leaving it unset means the server default, which is `max`.
 
 **Features:** Streaming, tools, OpenAI-compatible API, live model list from `/models` endpoint
 
@@ -1283,13 +1348,13 @@ self_improvement_model = "some-model"
 
 The same bare name goes in `subagent_provider`, `plan_provider`,
 `execute_provider`, the `[providers.fallback] providers` list, the
-`[image.vision] provider` override, and `/models myprovider/some-model`. A
+`[providers.fallback] vision` list, and `/models myprovider/some-model`. A
 provider key never takes `<provider>/<model>`: the model belongs in the matching
-`_model` key. All four `[agent]` keys (`self_improvement_`, `subagent_`, `plan_`
-and `execute_provider`) correct the `custom:` prefix and the `provider/model`
-split and say so in the log (see Troubleshooting); the fallback list and the
-vision override take what you wrote, so get the name right once and it works
-everywhere.
+`_model` key. All of them correct the `custom:` prefix and the `provider/model`
+split and say so in the log (see Troubleshooting): the four `[agent]` keys
+(`self_improvement_`, `subagent_`, `plan_` and `execute_provider`) and both
+`[providers.fallback]` lists (`providers` and `vision`). Get the name right
+once and it works everywhere.
 
 #### Free Prototyping with NVIDIA API + Kimi K2.5
 
@@ -1320,7 +1385,7 @@ api_key = "nvapi-..."
 
 **Per-session provider:** Each session remembers which provider and model it was using. Switch to Claude in one session, Kimi in another — when you `/sessions` switch between them, the provider restores automatically. No need to `/models` every time. New sessions inherit the current provider.
 
-**What `enabled = false` actually means:** it only removes the provider from the default-selection scan above. It does NOT disable the provider. By-name usage ignores the flag entirely: per-session provider restoration, `/models` switching, the `[fallback]` chain, and the `[image.vision] provider` override can all still reach a provider marked `enabled = false`. Such a provider works perfectly fine when it has an API key, or when its CLI is authenticated and working on the same machine. Think of `enabled = false` as "not the default", not "dead" (#270).
+**What `enabled = false` actually means:** it only removes the provider from the default-selection scan above. It does NOT disable the provider. By-name usage ignores the flag entirely: per-session provider restoration, `/models` switching, the `[fallback]` chain, and the `[providers.fallback] vision` list can all still reach a provider marked `enabled = false`. Such a provider works perfectly fine when it has an API key, or when its CLI is authenticated and working on the same machine. Think of `enabled = false` as "not the default", not "dead" (#270).
 
 ### Fallback Providers
 
@@ -1645,7 +1710,7 @@ All features are enabled by default. To customize, use `--no-default-features` a
 cargo install opencrabs --no-default-features --features "telegram,discord"
 
 # Everything except browser automation
-cargo install opencrabs --no-default-features --features "telegram,whatsapp,discord,slack,trello,local-stt,local-tts"
+cargo install opencrabs --no-default-features --features "telegram,whatsapp,discord,slack,trello,local-stt,local-tts,browser,rtk,code-graph,pdfium"
 ```
 
 | Feature | Crate | Description |
@@ -1658,6 +1723,9 @@ cargo install opencrabs --no-default-features --features "telegram,whatsapp,disc
 | `local-stt` | rwhisper | On-device speech-to-text (requires CMake + C++ compiler) |
 | `local-tts` | opusic-sys | On-device text-to-speech (requires `python3` + `python3-venv` at runtime) |
 | `browser` | chromey | Browser automation via CDP (Chrome, Brave, Edge, Arc, Vivaldi, Opera — not Firefox) |
+| `code-graph` | tree-sitter | Symbol/call-graph index for structural code queries (see [Structural code search](#-benchmarks)) |
+| `rtk` | — | Bash output filtering via RTK, cutting tokens on supported commands |
+| `pdfium` | pdfium-render | PDF page rendering, the primary renderer; falls back to `pdftoppm` when the system Pdfium library is absent |
 
 ### Option 4: Build from Source (full control)
 
@@ -1850,34 +1918,61 @@ In `/onboard:voice`, select **Local** mode, pick a model size, and press Enter t
 | Small | ~466 MB | High accuracy |
 | Medium | ~1.5 GB | Best accuracy |
 
-Config (`config.toml`):
+Config (engine blocks in `config.toml`, API keys in `keys.toml`):
 ```toml
-[voice]
-# Core toggles
-stt_enabled = true
-tts_enabled = true
+# Voice lives in per-engine blocks under [providers.stt] / [providers.tts].
+# There is NO writable [voice] section: the [voice] view printed by
+# `opencrabs config` is derived from these blocks and read-only.
 
-# --- Local mode (whisper.cpp + Piper) ---
-stt_mode = "local"              # "api" (default) or "local"
-local_stt_model = "local-base"  # local-tiny, local-base, local-small, local-medium
-tts_mode = "local"              # "api" (default) or "local"
-local_tts_voice = "ryan"        # ryan, amy, lessac, kristin, joe, cori
+# --- STT: Groq Whisper API ---
+[providers.stt.groq]
+enabled = true
+api_key = "your-groq-key"       # keys.toml
+model   = "whisper-large-v3-turbo"
 
-# --- OpenAI-compatible API mode (any Whisper/Coqui-compatible endpoint) ---
-# STT
-stt_base_url = "https://your-stt-host/v1/audio/transcriptions"
-stt_model    = "whisper-large-v3"
-# TTS
-tts_base_url = "https://your-tts-host/v1/audio/speech"
-tts_model    = "tts-1"
-tts_voice    = "alloy"
+# --- STT: OpenAI-compatible endpoint (self-hosted Whisper, Deepgram proxy, ...) ---
+[providers.stt.openai_compatible]
+enabled  = false
+base_url = "https://your-stt-host/v1/audio/transcriptions"
+model    = "whisper-large-v3"
+api_key  = "your-stt-key"       # keys.toml
 
-# --- Voicebox (self-hosted open-source voice stack) ---
-voicebox_stt_enabled   = false
-voicebox_stt_base_url  = "http://localhost:8000"
-voicebox_tts_enabled   = false
-voicebox_tts_base_url  = "http://localhost:8000"
-voicebox_tts_profile_id = "your-voice-profile-uuid"
+# --- STT: Voicebox (self-hosted open-source voice stack) ---
+[providers.stt.voicebox]
+enabled  = false
+base_url = "http://localhost:8000"
+
+# --- STT: Local whisper.cpp (on-device, no API key) ---
+[providers.stt.local]
+enabled = false
+model   = "local-base"          # local-tiny, local-base, local-small, local-medium
+
+# --- TTS: OpenAI TTS API ---
+[providers.tts.openai]
+enabled = false
+api_key = "your-openai-key"     # keys.toml
+model   = "gpt-4o-mini-tts"
+voice   = "echo"                # alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer
+
+# --- TTS: OpenAI-compatible endpoint (Coqui / Bark / ElevenLabs-compatible proxy) ---
+[providers.tts.openai_compatible]
+enabled  = false
+base_url = "http://localhost:11434"
+model    = "tts-1"
+voice    = "alloy"
+api_key  = "your-tts-key"       # keys.toml
+
+# --- TTS: Voicebox (self-hosted open-source voice stack) ---
+[providers.tts.voicebox]
+enabled    = false
+base_url   = "http://localhost:8000"
+profile_id = "your-voice-profile-uuid"
+engine     = "kokoro"           # kokoro, qwen, qwen_custom_voice
+
+# --- TTS: Local Piper (on-device, no API key) ---
+[providers.tts.local]
+enabled = false
+voice   = "ryan"                # ryan, amy, lessac, kristin, joe, cori
 ```
 
 **Provider priority** (first match wins, enforced in `voice::transcribe` and `voice::synthesize`):
@@ -1987,15 +2082,15 @@ api_key = "your-brave-key"
 api_key = "your-groq-key"
 
 # STT OpenAI-compatible endpoint (any Whisper-compatible server: self-hosted, Deepgram proxy, etc.)
-# Also set stt_base_url = "https://…/v1/audio/transcriptions" and stt_model in [voice] of config.toml
+# Also set base_url and model in this block (in config.toml)
 [providers.stt.openai_compatible]
 api_key = "your-stt-key"
 
 # STT Voicebox (self-hosted open-source voice stack) — no API key required
-# Set voicebox_stt_enabled = true and voicebox_stt_base_url in [voice] of config.toml
+# Set enabled = true and base_url in [providers.stt.voicebox] (in config.toml)
 
 # STT Local mode: no API key needed — runs whisper.cpp on device
-# Set stt_mode = "local" and local_stt_model in config.toml
+# Set enabled = true and model in [providers.stt.local] (in config.toml)
 
 # STT fallback chain — when the active provider fails (5xx, liveness probe
 # error, unreachable), the dispatcher walks this list in order and tries
@@ -2012,15 +2107,15 @@ fallback_chain = ["groq", "openai_compatible", "local"]
 api_key = "your-openai-key"
 
 # TTS OpenAI-compatible endpoint (self-hosted Coqui / Bark / ElevenLabs-compatible proxy)
-# Also set tts_base_url = "https://…/v1/audio/speech" + tts_model + tts_voice in [voice]
+# Also set base_url + model + voice in this block (in config.toml)
 [providers.tts.openai_compatible]
 api_key = "your-tts-key"
 
 # TTS Voicebox (self-hosted) — no API key required
-# Set voicebox_tts_enabled = true, voicebox_tts_base_url, voicebox_tts_profile_id in [voice]
+# Set enabled = true, base_url and profile_id in [providers.tts.voicebox] (in config.toml)
 
 # TTS Local mode: no API key needed — runs Piper TTS on device
-# Set tts_mode = "local" and local_tts_voice in config.toml
+# Set enabled = true and voice in [providers.tts.local] (in config.toml)
 
 # TTS fallback chain — mirror of STT. Labels: "voicebox",
 # "openai_compatible" (alias: "openai-compatible"), "openai",
@@ -2276,6 +2371,14 @@ approval_policy = "auto-always"  # auto-always (default) | auto-session | ask
                                  # run with nothing to prompt on (cron, CI, `run`) refuses gated tools
                                  # rather than hanging — pass --auto-approve there, or keep an auto policy.
 max_concurrent = 4               # tools per turn that may run in parallel (auto-approved batches only; 1 = fully sequential)
+plan_require_approval = true     # true (default): a plan stays Editing until a human approves it (plan-card
+                                 # button, /execute, reaction consent) or the agent approves under a
+                                 # user-granted in-session autonomy. approval_policy = "auto-always" does NOT
+                                 # satisfy this gate. Set false only for the legacy behaviour where yolo /
+                                 # cron / run / a2a sessions activate a plan with no human approve.
+background_compaction = true     # true (default): compaction summarises in the background instead of
+                                 # stopping the turn. Set false to make every compaction block the turn that
+                                 # triggered it. /compact is always synchronous either way.
 # The working directory is per-session, not a config key: each session keeps its own
 # (set with /cd, or inherited from the launch cwd) so isolated sessions never collide.
 redact_sensitive_data = true     # global default: redact IPs, tokens, passwords from tool output (set false for sysadmin work)
@@ -3005,7 +3108,13 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `discord_send` | 17 actions: send, reply, react, edit, delete, pin, threads, embeds, roles, kick, ban, send_file |
 | `slack_send` | 17 actions: send, reply, react, edit, delete, pin, blocks, topics, members, send_file |
 | `trello_send` | 22 actions: cards, comments, checklists, labels, members, attachments, board management, search |
+| `whatsapp_send` | Full WhatsApp control: send, reply, delete, and send photos, documents, audio, video and stickers |
 | `channel_search` | Search captured message history across all channels (Telegram, Discord, Slack, WhatsApp) |
+| `telegram_connect` | Connect a Telegram bot from chat — takes a @BotFather token and starts listening |
+| `discord_connect` | Connect a Discord bot from chat — takes a bot token and starts listening |
+| `slack_connect` | Connect a Slack bot via Socket Mode — takes the two tokens Slack issues |
+| `whatsapp_connect` | Connect WhatsApp from chat — renders a QR code to scan with the phone |
+| `trello_connect` | Connect one or more Trello boards — takes a Trello API key and token |
 
 #### Agent & System
 | Tool | Description |
@@ -3023,6 +3132,12 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `write_opencrabs_file` | Write or edit any file under `~/.opencrabs/` (brain files, memory logs, commands.toml). Enforces append-only + dedup-aware shrink + `.bak` snapshots on the 9 protected brain files (SOUL/USER/AGENTS/TOOLS/CODE/SECURITY/MEMORY/BOOT) |
 | `evolve` | Download latest release binary from GitHub and hot-restart (no Rust toolchain needed). Also runs automatically on startup and every 24h when `[agent] auto_update = true` (default), and via the `/evolve` slash command — both paths invoke the tool directly without the LLM, so they can't be dropped or refused by a provider |
 | `rebuild` | Build from source (`cargo build --release`) and hot-restart |
+| `suggest_options` | Surface up to 8 short options for the user to pick as their next input. Channel-agnostic: native buttons where the channel has them, numbered text where it does not |
+| `goal_manage` | Set and manage an autonomous goal for the session, so the agent can drive itself toward it across turns |
+| `tasks_list` | List in-flight background work: spawned sub-agents with id and label, and running background tasks |
+| `task_manager` | **Deprecated — use `plan`.** Create, update, list and track multi-step tasks with priorities |
+| `profile_list` | List profiles and their A2A gateway endpoints |
+| `mission_control_report` | Generate a shareable mission-control report for this instance: analytics, sessions, usage |
 
 #### Plan Mode: Design, Approve, Execute
 
@@ -3072,6 +3187,7 @@ Autonomous feedback loop that tracks performance and enables the agent to improv
 | `feedback_record` | Record an observation to the feedback ledger — tool outcomes, user corrections, patterns, provider errors. Auto-recorded for all tool executions; also callable manually |
 | `feedback_analyze` | Query the feedback ledger for patterns — overall summary, per-tool success rates, recent events, failure breakdown |
 | `self_improve` | Autonomously apply improvements to brain files (SOUL.md, AGENTS.md, TOOLS.md, etc.) based on feedback analysis. Changes are logged to `~/.opencrabs/rsi/improvements.md` and archived daily in `~/.opencrabs/rsi/history/YYYY-MM-DD.md` |
+| `rsi_propose` | Propose a new dynamic tool, slash command, or skill for the user to install. Proposals are surfaced for approval, never self-installed |
 
 > **How it works:** Every tool call automatically records success/failure to an append-only SQLite feedback ledger (fire-and-forget, never blocks). User corrections are detected via pattern matching (~30 negative signal phrases) and recorded automatically. On startup, a performance digest (failure rates, correction count, recent issues) is injected into the system prompt. The agent uses `feedback_analyze` to drill into patterns and `self_improve` to apply brain file edits autonomously — changes are logged to `~/.opencrabs/rsi/improvements.md` with daily archives. No human approval required.
 >
@@ -4431,10 +4547,14 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (7,566 tests across 747 test modules; 33 slower tests are
-# #[ignore]d to keep the default run fast — profile tests that touch
-# ~/.opencrabs, browser end-to-end tests, and opencode provider tests.
-# Opt in with `cargo test --all-features -- --ignored` when needed)
+# Run tests (7,751 tests across 775 modules under src/tests/, which is
+# where every test lives; 30 slower ones are #[ignore]d to keep the default
+# run fast: profile tests that touch ~/.opencrabs, browser end-to-end
+# tests, and opencode provider tests. Opt in with
+# `cargo test --all-features -- --ignored` when needed. Counts are from a
+# macOS --all-features run and are re-derived with:
+#   cargo test --all-features --lib -- --list
+#   cargo test --all-features --lib -- --list --ignored)
 cargo test --all-features
 # See TESTING.md for full test coverage documentation
 
@@ -4457,6 +4577,10 @@ cargo clippy -- -D warnings
 | `trello` | Trello board polling + card management (default: enabled) |
 | `local-stt` | Local speech-to-text via rwhisper (candle-based, pure Rust) |
 | `local-tts` | Local text-to-speech via Piper (requires `python3` + `python3-venv` at runtime) |
+| `browser` | Browser automation via CDP (default: enabled) |
+| `rtk` | Bash output filtering via RTK (default: enabled) |
+| `code-graph` | tree-sitter symbol/call-graph index behind `memory_search`'s structural lane (default: enabled) |
+| `pdfium` | PDF page rendering via the system Pdfium library, ahead of the `pdftoppm` fallback (default: enabled) |
 | `profiling` | Enable pprof flamegraph profiling (Unix only) |
 | `eval` | Offline + live evaluation harness (compiled automatically under `cfg(test)`; never in a release binary) |
 
@@ -4691,11 +4815,10 @@ All four `[agent]` provider keys now recognise both slips: they drop the
 configured providers, then log a line such as
 `RSI: self_improvement_provider corrected to '<name>'`,
 `Sub-agent provider corrected to '<name>'` or
-`Plan-mode routing: plan_provider corrected to '<name>'` naming the canonical
+`Plan-mode routing: plan_provider corrected to '<name>'` or
+`Fallback chain: '<entry>' corrected to '<name>'` naming the canonical
 spelling. If you see one of those lines, fix the config so it stops appearing.
-The `[providers.fallback] providers` list and `[image.vision] provider` take the
-value as written, so use the bare name there too. See **Custom
-(OpenAI-Compatible)** under Providers.
+See **Custom (OpenAI-Compatible)** under Providers.
 
 ### Agent Hallucinating Tool Calls
 

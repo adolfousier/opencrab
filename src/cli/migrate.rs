@@ -378,7 +378,8 @@ pub(crate) async fn cmd_migrate(source: MigrationSource, dry_run: bool) -> Resul
 
     let config = super::commands::load_config(None).await?;
     let result =
-        super::commands::cmd_run(&config, prompt, true, super::args::OutputFormat::Text).await;
+        super::commands::cmd_run(&config, prompt, true, super::args::OutputFormat::Text, None)
+            .await;
 
     // 7. Verify what actually changed (runs even if agent had errors)
     verify_migration(&before, &brain_path);

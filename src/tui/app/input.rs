@@ -1008,13 +1008,26 @@ impl App {
         }
         // Also cancel any stashed session token (e.g. from session switch)
         if let Some(ref session) = self.current_session {
-            if let Some(stashed) = self.session_cancel_tokens.remove(&session.id) {
+            let session_id = session.id;
+            if let Some(stashed) = self.session_cancel_tokens.remove(&session_id) {
                 stashed.cancel();
             }
-            self.processing_sessions.remove(&session.id);
+            self.processing_sessions.remove(&session_id);
+            // Clear the session's live state wherever it lives. Clearing only
+            // the foreground fields below is enough in single-pane, where the
+            // sidecar is never rendered, but in split view `panes.rs` draws the
+            // sidecar entry as a live turn — so a cancelled session kept showing
+            // "is thinking" forever (#1342).
+            self.background_sessions.remove(&session_id);
         }
         self.is_processing = false;
         self.processing_started_at = None;
+        // Leave a trace: the abort path emitted nothing, so a report of "cancel
+        // did not work" could not be checked against the logs at all (#1342).
+        tracing::info!(
+            "TUI: turn aborted by user for session {:?}",
+            self.current_session.as_ref().map(|s| s.id)
+        );
         // Flush any in-flight tool group into the message list
         // BEFORE touching streaming state. Per-tool DB persistence
         // already wrote them to the message row, but the TUI's
@@ -1715,66 +1728,6 @@ impl App {
                 if let Some(pending_at) = self.escape_pending_at {
                     if pending_at.elapsed() < std::time::Duration::from_secs(3) {
                         self.abort_active_turn().await;
-                    } else if event.code == KeyCode::Char('a')
-                        && event.modifiers == KeyModifiers::CONTROL
-                    {
-                        // Ctrl+A — beginning of current line (readline)
-                        let line_start = self.input_buffer[..self.cursor_position]
-                            .rfind('\n')
-                            .map(|i| i + 1)
-                            .unwrap_or(0);
-                        self.cursor_position = line_start;
-                    } else if event.code == KeyCode::Char('e')
-                        && event.modifiers == KeyModifiers::CONTROL
-                    {
-                        // Ctrl+E — end of current line (readline)
-                        let line_end = self.input_buffer[self.cursor_position..]
-                            .find('\n')
-                            .map(|i| self.cursor_position + i)
-                            .unwrap_or(self.input_buffer.len());
-                        self.cursor_position = line_end;
-                    } else if event.code == KeyCode::Char('p')
-                        && event.modifiers == KeyModifiers::CONTROL
-                        && !self.slash_suggestions_active
-                    {
-                        // Ctrl+P — previous command (history up, readline)
-                        if self.input_history_index.is_none() {
-                            // Entering history — stash current input
-                            if !self.input_buffer.is_empty() {
-                                self.input_history_stash = self.input_buffer.clone();
-                            }
-                            if !self.input_history.is_empty() {
-                                let idx = self.input_history.len() - 1;
-                                self.input_history_index = Some(idx);
-                                self.input_buffer = self.input_history[idx].clone();
-                                self.cursor_position = self.input_buffer.len();
-                            }
-                        } else if let Some(idx) = self.input_history_index
-                            && idx > 0
-                        {
-                            let idx = idx - 1;
-                            self.input_history_index = Some(idx);
-                            self.input_buffer = self.input_history[idx].clone();
-                            self.cursor_position = self.input_buffer.len();
-                        }
-                    } else if event.code == KeyCode::Char('n')
-                        && event.modifiers == KeyModifiers::CONTROL
-                        && !self.slash_suggestions_active
-                    {
-                        // Ctrl+N — next command (history down, readline)
-                        if let Some(idx) = self.input_history_index {
-                            if idx + 1 < self.input_history.len() {
-                                let idx = idx + 1;
-                                self.input_history_index = Some(idx);
-                                self.input_buffer = self.input_history[idx].clone();
-                                self.cursor_position = self.input_buffer.len();
-                            } else {
-                                // Past newest — restore stashed input
-                                self.input_history_index = None;
-                                self.input_buffer = std::mem::take(&mut self.input_history_stash);
-                                self.cursor_position = self.input_buffer.len();
-                            }
-                        }
                         // Reload session from DB so tool calls appear inline
                         // (matching the persisted order from expand_message) instead
                         // of being stacked at the bottom from in-memory finalization.
@@ -1782,8 +1735,15 @@ impl App {
                             let session_id = session.id;
                             self.load_session(session_id).await?;
                         }
+                        // Only claimed once the turn is actually torn down: this
+                        // used to print on the expired path too, telling the user
+                        // the operation had stopped while it kept running (#1343).
                         self.push_system_message("Operation cancelled.".to_string());
                     } else {
+                        // Expired — treat as a first Escape again. Without this the
+                        // stale timestamp made every later Escape take the expired
+                        // path, so the abort became unreachable until some other key
+                        // reset it (#1343).
                         self.escape_pending_at = Some(std::time::Instant::now());
                         self.error_message = Some("Press Esc again to abort".to_string());
                         self.error_message_shown_at = Some(std::time::Instant::now());

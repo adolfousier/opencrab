@@ -448,8 +448,11 @@ pub async fn rewrite_command(command: &str) -> Option<RtkResult> {
     let first_token = first_command_token(trimmed);
 
     if !is_rtk_supported(first_token) {
+        // Pass-through, not a refusal: the caller runs `command` unmodified.
+        // Worded so a model reading its own logs does not report that rtk
+        // rejected the command (#1353).
         tracing::debug!(
-            "RTK: command '{}' not supported (token: '{}')",
+            "RTK: no rewrite for '{}' (token '{}'), running unmodified",
             command,
             first_token
         );

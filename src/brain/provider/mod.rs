@@ -22,6 +22,7 @@ pub use types::*;
 // Provider implementations
 pub mod anthropic;
 pub(crate) mod bare_tool_call_extractor;
+pub(crate) mod chain_order;
 pub mod claude_cli;
 pub mod codex_cli;
 pub mod codex_oauth;
@@ -32,6 +33,8 @@ pub mod deepseek_reasoning;
 pub mod factory;
 pub mod fallback;
 pub mod gemini;
+pub mod glm_reasoning;
+pub mod identity;
 pub mod kimi_plan;
 pub mod kimi_reasoning;
 pub mod model_fetch;
@@ -39,6 +42,7 @@ pub(crate) mod nonstream_compat;
 pub mod opencode_cli;
 pub mod qwen;
 pub mod qwen_reasoning;
+pub mod zhipu_endpoint;
 
 pub use anthropic::AnthropicProvider;
 pub use claude_cli::ClaudeCliProvider;
