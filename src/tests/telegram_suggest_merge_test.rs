@@ -10,7 +10,8 @@
 
 use crate::channels::telegram::suggest_options::{
     BUTTON_LABEL_MAX_UNITS, FOLLOWUP_PREFIX, MAX_NUMBERS_PER_ROW, SHARED_ROW_MAX_CHARS,
-    SuggestLayout, enforce_button_fit, folded_list_html, pick_layout, suggestion_rows_rich_html,
+    SuggestLayout, append_rows_and_trailer_md, enforce_button_fit, folded_list_html, pick_layout,
+    suggestion_rows_rich_html,
 };
 
 fn opts(v: &[&str]) -> Vec<String> {
@@ -175,4 +176,38 @@ fn test_enforce_button_fit_folds_rows_over_the_total_budget() {
     );
     assert!(out.contains("<li>Полёт норм!!</li>"), "{out}");
     assert!(out.contains("<li>Всё чётко!!!</li>"), "{out}");
+}
+
+/// #108: the button rows and the trailer must start a FRESH markdown block.
+/// The old construction appended both after a single `\n`, so the server's
+/// parser fused the last text paragraph into the controls block and rendered
+/// it indented (owner-reported 2026-09-05 on the board chat, msg 41990).
+#[test]
+fn test_rows_and_trailer_start_a_fresh_markdown_block() {
+    let options: Vec<String> = vec!["One".into(), "Two".into(), "Three".into()];
+    for prose in [false, true] {
+        let mut md = String::from("Answer paragraph.\nSecond line.");
+        append_rows_and_trailer_md(&mut md, &options, "tok", prose, Some("Sign-off."));
+        let rows = suggestion_rows_rich_html(&options, "tok");
+        let sep = "\n\n<tg-button-row>";
+        assert!(
+            md.contains(sep),
+            "prose={prose}: rows not block-separated: {md}"
+        );
+        let trailer_sep = "\n\nSign-off.";
+        assert!(
+            md.contains(trailer_sep),
+            "prose={prose}: trailer not block-separated: {md}"
+        );
+        assert!(md.ends_with("Sign-off."));
+        assert!(md.contains(&rows));
+        if prose {
+            assert!(md.contains("1. One"));
+        }
+    }
+    // Body already ending in a newline must not grow a triple gap.
+    let mut md = String::from("Answer.\n");
+    append_rows_and_trailer_md(&mut md, &options, "tok", false, None);
+    assert!(md.starts_with("Answer.\n\n<tg-button-row>"), "{md}");
+    assert!(!md.starts_with("Answer.\n\n\n"), "{md}");
 }
