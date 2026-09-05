@@ -76,6 +76,9 @@ impl ThemePickerState {
         }
     }
 
+    /// True when the highlighted row is a rejected (non-selectable) theme.
+    /// Reserved for the pending status-line work; kept visible to clippy.
+    #[allow(dead_code)]
     fn selected_is_rejected(&self) -> bool {
         self.items.get(self.selected).is_some_and(|i| i.theme.is_none())
     }
@@ -131,8 +134,14 @@ impl ThemePickerState {
         } else {
             return PickerAction::None;
         };
+        let prev = self.selected;
         self.move_selection(step);
         self.scroll_into_view(visible_rows.max(1));
+        if self.selected == prev {
+            // Movement clamped at the list edge (or no valid row in that
+            // direction): selection unchanged, no preview re-emit.
+            return PickerAction::None;
+        }
         match self.items.get(self.selected).and_then(|i| i.theme) {
             Some(t) => PickerAction::Preview(t),
             None => PickerAction::None,
@@ -259,6 +268,18 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
         .alignment(Alignment::Center)
         .style(Style::default().fg(theme::role(theme::Role::TextMuted)));
     f.render_widget(hints, rows[1]);
+}
+
+/// Fixed-size popup centered in `area`, clamped to fit.
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let x = area.width.saturating_sub(width) / 2;
+    let y = area.height.saturating_sub(height) / 2;
+    Rect {
+        x: area.x + x,
+        y: area.y + y,
+        width: width.min(area.width),
+        height: height.min(area.height),
+    }
 }
 
 #[cfg(test)]
@@ -411,17 +432,5 @@ mod tests {
         assert_eq!(s.selected, 3);
         assert!(s.selected >= s.scroll_offset);
         assert!(s.selected < s.scroll_offset + 2);
-    }
-}
-
-/// Fixed-size popup centered in `area`, clamped to fit.
-fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-    let x = area.width.saturating_sub(width) / 2;
-    let y = area.height.saturating_sub(height) / 2;
-    Rect {
-        x: area.x + x,
-        y: area.y + y,
-        width: width.min(area.width),
-        height: height.min(area.height),
     }
 }
