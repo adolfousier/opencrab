@@ -4548,7 +4548,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (7,841 tests across 787 modules under src/tests/, which is
+# Run tests (7,886 tests across 787 modules under src/tests/, which is
 # where every test lives; 30 slower ones are #[ignore]d to keep the default
 # run fast: profile tests that touch ~/.opencrabs, browser end-to-end
 # tests, and opencode provider tests. Opt in with
@@ -4584,13 +4584,13 @@ cargo clippy -- -D warnings
 | `code-graph` | tree-sitter symbol/call-graph index behind `memory_search`'s structural lane (default: enabled) |
 | `pdfium` | PDF page rendering via the system Pdfium library, ahead of the `pdftoppm` fallback (default: enabled) |
 | `profiling` | Enable pprof flamegraph profiling (Unix only) |
-| `eval` | Offline + live evaluation harness (compiled automatically under `cfg(test)`; never in a release binary) |
+| `eval` | Offline + live evaluation harness. Compiled automatically under `cfg(test)`, and present in release binaries, which are built with `--all-features` |
 
 > **What `local-stt` brings with it.** Running voice fully on-device is deliberate, so this stays enabled by default. It pulls `rwhisper`, whose dependency tree is still on `reqwest` 0.11 / `hyper` 0.14 and carries a low-severity `h2` denial-of-service advisory (RUSTSEC-2026-0258) plus five unmaintained or unsound crates. The exposure is bounded: that HTTP client is used only to download Whisper models from Hugging Face over TLS, and the advisory needs a hostile server flooding empty HTTP/2 frames, so it is not reachable from anything a session does. Build with `--no-default-features` and your own feature list to leave it out. Tracked in [#1402](https://github.com/adolfousier/opencrabs/issues/1402), and it clears when rwhisper ships against a `reqwest` on `hyper` 1.x.
 
 ### Evaluation Harness
 
-OpenCrabs ships an **offline-first evaluation harness** (`src/eval/`) that measures how well it does two things that usually break silently: **context engineering** (does the right context survive compaction?) and **memory** (does recall surface the right things?). The whole module is gated behind `cfg(test)` / the `eval` feature, so it never ships in a release binary.
+OpenCrabs ships an **offline-first evaluation harness** (`src/eval/`) that measures how well it does two things that usually break silently: **context engineering** (does the right context survive compaction?) and **memory** (does recall surface the right things?). The whole module is gated behind `cfg(test)` / the `eval` feature. Release binaries are built with `--all-features`, so the harness is present in them; it is inert unless you invoke it.
 
 Scoring uses **BinEval-style decomposition** (arXiv 2506.27226): instead of one holistic grade, each check is a set of atomic yes/no questions answered independently and aggregated into per-dimension and overall scores — more interpretable and lower variance.
 

@@ -99,6 +99,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Brain Provider Trait | 2 | `src/tests/brain_provider_trait_test.rs` |
 | Tests — Brain Provider Types | 3 | `src/tests/brain_provider_types_test.rs` |
 | Tests — Brain Sections | 10 | `src/tests/brain_sections_test.rs` |
+| Tests — Brain Seed Entrypoint | 3 | `src/tests/brain_seed_entrypoint_test.rs` |
 | Tests — Brain Self Update | 1 | `src/tests/brain_self_update_test.rs` |
 | Tests — Brain Templates | 10 | `src/tests/brain_templates_test.rs` |
 | Tests — Brain Tokenizer | 8 | `src/tests/brain_tokenizer_test.rs` |
@@ -168,6 +169,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Chat Fold Deliverable | 6 | `src/tests/chat_fold_deliverable_test.rs` |
 | Tests — Chunk Hash Cache | 3 | `src/tests/chunk_hash_cache_test.rs` |
 | Tests — Claude CLI Model | 7 | `src/tests/claude_cli_model_test.rs` |
+| Tests — CLI Agent Session Resume | 4 | `src/tests/cli_agent_session_resume_test.rs` |
 | Tests — CLI Arg Too Long | 2 | `src/tests/cli_arg_too_long_test.rs` |
 | Tests — CLI Context Window | 5 | `src/tests/cli_context_window_test.rs` |
 | Tests — CLI Headless Tools | 4 | `src/tests/cli_headless_tools_test.rs` |
@@ -193,8 +195,8 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Config Alias Merge | 14 | `src/tests/config_alias_merge_test.rs` |
 | Tests — Config Dotted Caps | 6 | `src/tests/config_dotted_caps_test.rs` |
 | Tests — Config Guard | 5 | `src/tests/config_guard_test.rs` |
-| Tests — Config Live Home Guard | 5 | `src/tests/config_live_home_guard_test.rs` |
 | Tests — Config Last Good Recovery | 3 | `src/tests/config_last_good_recovery_test.rs` |
+| Tests — Config Live Home Guard | 5 | `src/tests/config_live_home_guard_test.rs` |
 | Tests — Config Load Status Isolation | 4 | `src/tests/config_load_status_isolation_test.rs` |
 | Tests — Config Memory External | 7 | `src/tests/config_memory_external_test.rs` |
 | Tests — Config Owner Seed Migration | 5 | `src/tests/config_owner_seed_migration_test.rs` |
@@ -236,8 +238,8 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Daemon Health | 10 | `src/tests/daemon_health_test.rs` |
 | Tests — DB Database | 7 | `src/tests/db_database_test.rs` |
 | Tests — DB Migration 33 Heal | 4 | `src/tests/db_migration_33_heal_test.rs` |
-| Tests — DB Pending Origin Heal | 5 | `src/tests/db_pending_origin_heal_test.rs` |
 | Tests — DB Models | 5 | `src/tests/db_models_test.rs` |
+| Tests — DB Pending Origin Heal | 5 | `src/tests/db_pending_origin_heal_test.rs` |
 | Tests — DB Repository Channel Message | 1 | `src/tests/db_repository_channel_message_test.rs` |
 | Tests — DB Repository File | 2 | `src/tests/db_repository_file_test.rs` |
 | Tests — DB Repository Message | 5 | `src/tests/db_repository_message_test.rs` |
@@ -259,6 +261,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Duplicate Submit | 8 | `src/tests/duplicate_submit_test.rs` |
 | Tests — Dynamic Tool Coerce | 13 | `src/tests/dynamic_tool_coerce_test.rs` |
 | Tests — Dynamic Tool Parse Error | 12 | `src/tests/dynamic_tool_parse_error_test.rs` |
+| Tests — Edit Retry | 5 | `src/tests/edit_retry_test.rs` |
 | Tests — Empty Answer Nudge | 8 | `src/tests/empty_answer_nudge_test.rs` |
 | Tests — Empty Reasoning Stub | 9 | `src/tests/empty_reasoning_stub_test.rs` |
 | Tests — Epistemic Inline | 9 | `src/tests/epistemic_inline_test.rs` |
@@ -571,6 +574,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Sanitize Quoted Secret | 9 | `src/tests/sanitize_quoted_secret_test.rs` |
 | Tests — Sanitize Reasoning Leak | 7 | `src/tests/sanitize_reasoning_leak_test.rs` |
 | Tests — Sanitize Redaction | 31 | `src/tests/sanitize_redaction_test.rs` |
+| Tests — Scope All Recency | 5 | `src/tests/scope_all_recency_test.rs` |
 | Tests — Self Healing | 88 | `src/tests/self_healing_test.rs` |
 | Tests — Self Improve Failure Log Guard | 3 | `src/tests/self_improve_failure_log_guard_test.rs` |
 | Tests — Self Improve Guard | 6 | `src/tests/self_improve_guard_test.rs` |
@@ -633,6 +637,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Acl | 12 | `src/tests/telegram_acl_test.rs` |
 | Tests — Telegram Attachment Tmp Name | 9 | `src/tests/telegram_attachment_tmp_name_test.rs` |
 | Tests — Telegram Atx Heading Agreement | 6 | `src/tests/telegram_atx_heading_agreement_test.rs` |
+| Tests — Telegram Bg Ack Fold | 7 | `src/tests/telegram_bg_ack_fold_test.rs` |
 | Tests — Telegram Bg Resume Gate | 6 | `src/tests/telegram_bg_resume_gate_test.rs` |
 | Tests — Telegram Callback Session Topic | 5 | `src/tests/telegram_callback_session_topic_test.rs` |
 | Tests — Telegram Cancel Token No Drop | 2 | `src/tests/telegram_cancel_token_no_drop_test.rs` |
@@ -716,6 +721,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Userbot Session | 4 | `src/tests/telegram_userbot_session_test.rs` |
 | Tests — Template Governance | 20 | `src/tests/template_governance_test.rs` |
 | Tests — Text Complete | 21 | `src/tests/text_complete_test.rs` |
+| Tests — TUI Theme Picker | 10 | `src/tui/render/theme_picker.rs` |
 | Tests — Thinking Loop Fallback | 5 | `src/tests/thinking_loop_fallback_test.rs` |
 | Tests — Token Report Calibration | 9 | `src/tests/token_report_calibration_test.rs` |
 | Tests — Token Tracking | 29 | `src/tests/token_tracking_test.rs` |
@@ -739,6 +745,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Tts Fallback Chain | 11 | `src/tests/tts_fallback_chain_test.rs` |
 | Tests — TUI App State | 2 | `src/tests/tui_app_state_test.rs` |
 | Tests — Tui Cancel Indicator | 4 | `src/tests/tui_cancel_indicator_test.rs` |
+| Tests — TUI Compact Notice | 2 | `src/tests/tui_compact_notice_test.rs` |
 | Tests — TUI Components Logo | 2 | `src/tests/tui_components_logo_test.rs` |
 | Tests — TUI Drop Path | 4 | `src/tests/tui_drop_path_test.rs` |
 | Tests — TUI Dropped Path | 10 | `src/tests/tui_dropped_path_test.rs` |
@@ -746,16 +753,15 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — TUI Events | 4 | `src/tests/tui_events_test.rs` |
 | Tests — TUI Highlight | 8 | `src/tests/tui_highlight_test.rs` |
 | Tests — TUI Markdown | 9 | `src/tests/tui_markdown_test.rs` |
-| Tests — TUI Plan | 38 | `src/tests/tui_plan_tests_test.rs` |
-| Tests — TUI Notice | 19 | `src/tests/tui_notice_test.rs` |
 | Tests — TUI Notice Render | 4 | `src/tests/tui_notice_render_test.rs` |
+| Tests — TUI Notice | 19 | `src/tests/tui_notice_test.rs` |
+| Tests — TUI Palette | 4 | `src/tests/tui_palette_test.rs` |
+| Tests — TUI Plan | 38 | `src/tests/tui_plan_tests_test.rs` |
 | Tests — TUI Process Commands | 3 | `src/tests/tui_process_commands_test.rs` |
 | Tests — TUI Remote Upload | 12 | `src/tests/tui_remote_upload_test.rs` |
 | Tests — TUI Render Clear | 4 | `src/tests/tui_render_clear_test.rs` |
 | Tests — TUI Render Utils | 12 | `src/tests/tui_render_utils_test.rs` |
-| Tests — TUI Theme Picker | 10 | `src/tui/render/theme_picker.rs` |
 | Tests — TUI Tool Stack | 10 | `src/tests/tui_tool_stack_test.rs` |
-| Tests — TUI User Themes | 10 | `src/tui/render/user_themes.rs` |
 | Tests — Turn Duration | 6 | `src/tests/turn_duration_test.rs` |
 | Tests — Turn Ranges | 40 | `src/tests/turn_ranges_test.rs` |
 | Tests — Usage Activity Columns | 9 | `src/tests/usage_activity_columns_test.rs` |
@@ -768,6 +774,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Usage Ledger Attribution | 3 | `src/tests/usage_ledger_attribution_test.rs` |
 | Tests — Usage Ledger | 5 | `src/tests/usage_ledger_test.rs` |
 | Tests — User Correction Metadata | 3 | `src/tests/user_correction_metadata_test.rs` |
+| Tests — TUI User Themes | 10 | `src/tui/render/user_themes.rs` |
 | Tests — Utc Timestamp | 4 | `src/tests/utc_timestamp_test.rs` |
 | Tests — Utils File Extract | 8 | `src/tests/utils_file_extract_test.rs` |
 | Tests — Utils Install | 6 | `src/tests/utils_install_test.rs` |
