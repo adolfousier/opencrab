@@ -721,7 +721,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Userbot Session | 4 | `src/tests/telegram_userbot_session_test.rs` |
 | Tests — Template Governance | 20 | `src/tests/template_governance_test.rs` |
 | Tests — Text Complete | 21 | `src/tests/text_complete_test.rs` |
-| Tests — TUI Theme Picker | 10 | `src/tui/render/theme_picker.rs` |
+| Tests — TUI Theme Picker | 10 | `src/tests/tui_theme_picker_test.rs` |
 | Tests — Thinking Loop Fallback | 5 | `src/tests/thinking_loop_fallback_test.rs` |
 | Tests — Token Report Calibration | 9 | `src/tests/token_report_calibration_test.rs` |
 | Tests — Token Tracking | 29 | `src/tests/token_tracking_test.rs` |
@@ -774,7 +774,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Usage Ledger Attribution | 3 | `src/tests/usage_ledger_attribution_test.rs` |
 | Tests — Usage Ledger | 5 | `src/tests/usage_ledger_test.rs` |
 | Tests — User Correction Metadata | 3 | `src/tests/user_correction_metadata_test.rs` |
-| Tests — TUI User Themes | 10 | `src/tui/render/user_themes.rs` |
+| Tests — TUI User Themes | 10 | `src/tests/tui_user_themes_test.rs` |
 | Tests — Utc Timestamp | 4 | `src/tests/utc_timestamp_test.rs` |
 | Tests — Utils File Extract | 8 | `src/tests/utils_file_extract_test.rs` |
 | Tests — Utils Install | 6 | `src/tests/utils_install_test.rs` |
