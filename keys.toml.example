@@ -98,6 +98,14 @@ api_key = ""
 # Format: "123456789:ABCdef..."
 token = ""
 
+# Optional receive-only MTProto user session (requires telegram-userbot feature).
+# Get api_id/api_hash from https://my.telegram.org/apps, then run:
+# opencrabs channel userbot-login
+[channels.telegram.userbot]
+api_id = 0
+api_hash = ""
+phone = ""
+
 [channels.discord]
 # Get from: Discord Developer Portal
 # Format: ~70 character base64 string

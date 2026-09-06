@@ -581,6 +581,12 @@ allowed_users = [123456789]             # Who the bot replies to (numeric user I
 # sends_ceiling_per_minute = 18         # G3 group ceiling (official ~20/min).
 # sends_burst = 5                       # G3 burst capacity.
 # summary_log_secs = 300                # Telemetry summary line spacing.
+# [channels.telegram.userbot]
+# enabled = false
+# allowed_chats = ["-1001234567890"]   # Empty = dry mode; passive text capture only.
+# session_path = "sessions/telegram_userbot.json" # Relative paths resolve under the active profile.
+# Login after placing api_id/api_hash/phone in keys.toml:
+# opencrabs channel userbot-login
 
 # Per-group access control (per-chat ACL). Tiers:
 #   - allowed_users (above) = admins: may DM the bot and act in any chat.

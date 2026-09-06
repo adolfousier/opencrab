@@ -850,30 +850,36 @@ fn tts_local_voice_select_backtab_goes_to_tts_mode() {
 
 #[test]
 fn tts_local_voice_select_tab_advances_step() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
+    // Enter on Continue saves the voice step, so this runs in a temp home
+    // (#1399: it used to rewrite the live config with Off defaults).
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
 
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Tab));
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Tab));
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]
 fn tts_local_voice_enter_when_downloaded_advances() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
-    wizard.tts_voice_downloaded = true;
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
+        wizard.tts_voice_downloaded = true;
 
-    let action = crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(action, WizardAction::None);
-    // Enter on downloaded voice goes to Continue
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
-    // Enter on Continue advances to next step
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        let action = crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(action, WizardAction::None);
+        // Enter on downloaded voice goes to Continue
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
+        // Enter on Continue advances to next step (a save, hence the temp home)
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]
@@ -1078,5 +1084,68 @@ fn voice_render_local_mode_shows_model_select() {
     assert!(
         text.contains("Select model size") || text.contains("local-stt"),
         "Local mode should show model selector or feature note"
+    );
+}
+
+// ─── #1399: the chain is written with the flags ─────────────────────────────
+
+fn chain(doc: &toml::Value, kind: &str) -> Vec<String> {
+    doc.get("providers")
+        .and_then(|p| p.get(kind))
+        .and_then(|t| t.get("fallback_chain"))
+        .and_then(|c| c.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The reported bug: Local TTS was picked once, so the chain said
+/// `["local"]` forever; switching to OpenAI enabled openai and disabled
+/// local while the chain still led with local, and TTS died on next boot.
+#[test]
+fn switching_tts_from_local_to_openai_rewrites_the_chain() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let opencrabs = dir.path().join(".opencrabs");
+    std::fs::create_dir_all(&opencrabs).expect("create .opencrabs");
+    let config_path = opencrabs.join("config.toml");
+    std::fs::write(
+        &config_path,
+        "[providers.tts]\nfallback_chain = [\"local\"]\n\n[providers.tts.local]\nenabled = true\n",
+    )
+    .expect("seed config");
+    with_home_override(opencrabs, || {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::Continue;
+        wizard.tts_provider = TtsProvider::OpenAi;
+        wizard.tts_api_voice = "echo".to_string();
+        wizard.tts_api_key_input = "sk-typed-test-key".to_string();
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(
+            wizard.step,
+            OnboardingStep::ImageSetup,
+            "{:?}",
+            wizard.error_message
+        );
+    });
+    let written = std::fs::read_to_string(&config_path).expect("config.toml");
+    let doc: toml::Value = toml::from_str(&written).expect("valid toml");
+    let tts = chain(&doc, "tts");
+    assert_eq!(
+        tts.first().map(String::as_str),
+        Some("openai"),
+        "chain must lead with the selection:\n{written}"
+    );
+    assert_eq!(
+        doc["providers"]["tts"]["local"]["enabled"].as_bool(),
+        Some(false),
+        "local was switched off by the same write:\n{written}"
+    );
+    assert!(
+        chain(&doc, "stt").is_empty(),
+        "STT is Off, so its chain is empty:\n{written}"
     );
 }

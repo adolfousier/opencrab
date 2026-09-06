@@ -805,6 +805,20 @@ impl OnboardingWizard {
                 );
             }
 
+            // The chain travels with the flags (#1399): selected engine first,
+            // then whatever else can run, so a later switch never leaves the
+            // chain pointing at an engine this same write just disabled.
+            let stt_chain = super::voice_chain::stt_chain(
+                self.stt_provider,
+                super::voice_chain::SttReady {
+                    groq_key: groq_key_exists,
+                    local: crate::channels::voice::local_stt_available(),
+                    openai_compatible: !self.stt_openai_compat_base_url.is_empty(),
+                    voicebox: !self.stt_voicebox_base_url.is_empty(),
+                },
+            );
+            try_write_array!(write_errors, "providers.stt", "fallback_chain", &stt_chain);
+
             // ── TTS providers ──
 
             // TTS: OpenAI
@@ -937,6 +951,18 @@ impl OnboardingWizard {
                     );
                 }
             }
+
+            let tts_chain = super::voice_chain::tts_chain(
+                self.tts_provider,
+                super::voice_chain::TtsReady {
+                    openai_key: super::key_field::is_stored(&self.tts_api_key_input)
+                        || super::key_field::typed_secret(&self.tts_api_key_input).is_some(),
+                    local: crate::channels::voice::local_tts_available(),
+                    openai_compatible: !self.tts_openai_compat_base_url.is_empty(),
+                    voicebox: !self.tts_voicebox_base_url.is_empty(),
+                },
+            );
+            try_write_array!(write_errors, "providers.tts", "fallback_chain", &tts_chain);
         } // end if write_voice
 
         if write_image {

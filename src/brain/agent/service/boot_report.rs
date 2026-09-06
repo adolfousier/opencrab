@@ -27,6 +27,10 @@ struct Ledger {
     delivered: usize,
     /// Resumes that errored, or whose channel never connected.
     failed: usize,
+    /// Why turns cannot be recorded for the next restart, when they cannot.
+    /// A boot that finds nothing because nothing could be written must not
+    /// read as a boot that had nothing to recover (#1401).
+    tracking_disabled: Option<String>,
 }
 
 static LEDGER: Mutex<Option<Ledger>> = Mutex::new(None);
@@ -66,6 +70,12 @@ pub fn record_failed() {
     with(|l| l.failed += 1);
 }
 
+/// The probe insert into `pending_requests` failed: no turn in this run can
+/// be recovered after the next restart.
+pub fn record_tracking_disabled(reason: String) {
+    with(|l| l.tracking_disabled = Some(reason));
+}
+
 /// The summary line.
 ///
 /// Ids in full, not counts: the whole point is being able to go from this
@@ -73,19 +83,24 @@ pub fn record_failed() {
 /// is zero, because "this boot had nothing to recover" is the fact that
 /// makes its absence meaningful on the boots that did.
 pub fn summary_line() -> String {
-    let (interrupted, resumed, delivered, failed) = with(|l| {
+    let (interrupted, resumed, delivered, failed, disabled) = with(|l| {
         (
             l.interrupted.len(),
             l.resumed.iter().map(Uuid::to_string).collect::<Vec<_>>(),
             l.delivered,
             l.failed,
+            l.tracking_disabled.clone(),
         )
     })
     .unwrap_or_default();
-    format!(
+    let mut line = format!(
         "[boot] interrupted={interrupted} resumed=[{}] delivered={delivered} failed={failed}",
         resumed.join(" ")
-    )
+    );
+    if let Some(reason) = disabled {
+        line.push_str(&format!(" recovery=DISABLED({reason})"));
+    }
+    line
 }
 
 /// Emit the summary once every bounded wait has had its chance to resolve.

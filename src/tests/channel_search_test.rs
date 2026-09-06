@@ -550,6 +550,13 @@ mod tool {
             assert!(props.contains_key("chat_id"));
             assert!(props.contains_key("query"));
             assert!(props.contains_key("n"));
+            assert!(
+                props["channel"]["enum"]
+                    .as_array()
+                    .expect("channel enum")
+                    .iter()
+                    .any(|value| value == "telegram-userbot")
+            );
             assert!(!tool.requires_approval());
         });
     }

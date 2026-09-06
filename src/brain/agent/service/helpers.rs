@@ -1728,18 +1728,70 @@ pub fn normalize_loop_text(text: &str) -> String {
     collapsed.chars().take(LOOP_MATCH_MAX_CHARS).collect()
 }
 
+/// Normalize one STRING tool argument for the near-match signature (#1397).
+///
+/// Same rules as [`normalize_loop_text`] with one difference: a digit is
+/// dropped only when it is a LONE token. A digit that sits inside a longer
+/// alphanumeric run survives. The distinction is counter versus identifier:
+/// counter loops step through `1`, `2`, `3` (`"attempt 1 of 6"`, the Luna
+/// echo loop), while the numbers a shell command carries are identifiers
+/// (`gh pr merge 1394`, `sed -n '490,570p'`, `git show b3b615ee`, port
+/// `:8080`). [`normalize_loop_text`] erased both, so paging through one
+/// file or merging PRs one by one looked like a loop, and the guard nudged
+/// then broke the turn on legitimate work (#1397, four trips on
+/// 2026-09-05, a PR merge and a conflict resolution dropped).
+///
+/// A counter that reaches two digits stops collapsing here. By then the
+/// guard has already had nine near-identical iterations to fire on, and the
+/// cross-turn announcement ring (which stays on [`normalize_loop_text`])
+/// catches the narration that accompanies such loops.
+pub fn normalize_loop_arg(text: &str) -> String {
+    let mut buf = String::with_capacity(text.len().min(LOOP_MATCH_MAX_CHARS * 4));
+    let mut token = String::new();
+    let flush = |token: &mut String, buf: &mut String| {
+        if token.chars().count() > 1 || token.chars().all(|c| !c.is_ascii_digit()) {
+            buf.push_str(token);
+        }
+        token.clear();
+    };
+    for ch in text.chars() {
+        if ch.is_alphabetic() {
+            for lc in ch.to_lowercase() {
+                token.push(lc);
+            }
+        } else if ch.is_ascii_digit() {
+            token.push(ch);
+        } else {
+            flush(&mut token, &mut buf);
+            if ch.is_whitespace() {
+                buf.push(' ');
+            } else {
+                // Punctuation and symbols split tokens but are not kept, so
+                // `'490,570p'` and `490,570p` still collide.
+                buf.push(' ');
+            }
+        }
+    }
+    flush(&mut token, &mut buf);
+    let collapsed = buf.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(LOOP_MATCH_MAX_CHARS).collect()
+}
+
 /// Normalized near-match signature for one tool call (#961).
 ///
 /// Tool name + ':' + one normalized part per argument field. STRING values
-/// go through [`normalize_loop_text`] (digits, punctuation, whitespace
-/// stripped), so counter-incremented repeats (`"attempt 1 of 6"` vs `2`)
-/// still collapse to the SAME signature. NUMERIC and BOOLEAN values are
-/// kept EXACT as `key=value` parts: they are parameters, not counters —
-/// `task_order: 1` vs `2`, `start_line: 100` vs `150`, `timeout_secs: 30`
-/// vs `60` are genuinely different calls, and digit-stripping made the
-/// guard flag that legitimate work as a loop (#82: a plan checklist
-/// progression was nudged, then broken, 2026-09-02). Parts are sorted so
-/// argument insertion order never changes the signature.
+/// go through [`normalize_loop_arg`]: punctuation and whitespace stripped,
+/// lone digits dropped so counter-incremented repeats (`"attempt 1 of 6"`
+/// vs `2`) still collapse to the SAME signature, digits inside longer
+/// tokens kept so identifiers (`gh pr merge 1394` vs `1390`, `sed -n
+/// '490,570p'` vs `'495,580p'`) stay apart (#1397). NUMERIC and BOOLEAN
+/// values are kept EXACT as `key=value` parts: they are parameters, not
+/// counters — `task_order: 1` vs `2`, `start_line: 100` vs `150`,
+/// `timeout_secs: 30` vs `60` are genuinely different calls, and
+/// digit-stripping made the guard flag that legitimate work as a loop
+/// (#82: a plan checklist progression was nudged, then broken,
+/// 2026-09-02). Parts are sorted so argument insertion order never changes
+/// the signature.
 pub fn normalized_call_signature(name: &str, args: &Value) -> String {
     let mut sig = String::from(name);
     sig.push(':');
@@ -1750,13 +1802,14 @@ pub fn normalized_call_signature(name: &str, args: &Value) -> String {
                 .map(|(key, value)| match value {
                     Value::Number(n) => format!("{key}={n}"),
                     Value::Bool(b) => format!("{key}={b}"),
-                    other => format!("{key}={}", normalize_loop_text(&other.to_string())),
+                    Value::String(text) => format!("{key}={}", normalize_loop_arg(text)),
+                    other => format!("{key}={}", normalize_loop_arg(&other.to_string())),
                 })
                 .collect();
             parts.sort();
             sig.push_str(&parts.join(" "));
         }
-        other => sig.push_str(&normalize_loop_text(&other.to_string())),
+        other => sig.push_str(&normalize_loop_arg(&other.to_string())),
     }
     sig
 }

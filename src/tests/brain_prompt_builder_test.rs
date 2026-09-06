@@ -64,6 +64,23 @@ fn test_core_brain_contains_preamble() {
 }
 
 #[test]
+fn test_core_brain_forbids_tests_writing_the_live_config() {
+    // The rule that closed #1399 lives in the always-loaded preamble, not
+    // only in an on-demand brain file: an agent writing a test must see it
+    // before it reaches for the wizard's save without a home override.
+    let dir = TempDir::new().unwrap();
+    let brain = loader(&dir).build_core_brain(None);
+    assert!(
+        brain.contains("TESTS NEVER WRITE THE LIVE CONFIG OR KEYS"),
+        "the live-config test rule must be in the preamble"
+    );
+    assert!(
+        brain.contains("with_home_override") && brain.contains("#1399"),
+        "the rule must name the override the test must use"
+    );
+}
+
+#[test]
 fn preamble_states_table_rendering_mechanics() {
     // #689: telling the agent to "use tables" is not enough — a weaker model
     // collapses them onto one line and Telegram renders raw pipes. The preamble

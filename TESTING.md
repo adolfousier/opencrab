@@ -74,7 +74,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Bash Toml Blocklist | 11 | `src/tests/bash_toml_blocklist_test.rs` |
 | Tests — Bg Push Echo | 26 | `src/tests/bg_push_echo_test.rs` |
 | Tests — Bg Resume | 3 | `src/tests/bg_resume_test.rs` |
-| Tests — Boot Report | 3 | `src/tests/boot_report_test.rs` |
+| Tests — Boot Report | 5 | `src/tests/boot_report_test.rs` |
 | Tests — Brain Agent Context | 12 | `src/tests/brain_agent_context_test.rs` |
 | Tests — Brain Agent Service Phantom Lang | 11 | `src/tests/brain_agent_service_phantom_lang_test.rs` |
 | Tests — Brain Agent Service Phantom | 22 | `src/tests/brain_agent_service_phantom_test.rs` |
@@ -86,7 +86,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Brain Hints | 8 | `src/tests/brain_hints_test.rs` |
 | Tests — Brain Live Rebuild | 5 | `src/tests/brain_live_rebuild_test.rs` |
 | Tests — Brain Project Overlay | 3 | `src/tests/brain_project_overlay_test.rs` |
-| Tests — Brain Prompt Builder | 34 | `src/tests/brain_prompt_builder_test.rs` |
+| Tests — Brain Prompt Builder | 35 | `src/tests/brain_prompt_builder_test.rs` |
 | Tests — Brain Provider Anthropic | 7 | `src/tests/brain_provider_anthropic_test.rs` |
 | Tests — Brain Provider Codex Oauth | 6 | `src/tests/brain_provider_codex_oauth_test.rs` |
 | Tests — Brain Provider Copilot | 8 | `src/tests/brain_provider_copilot_test.rs` |
@@ -99,6 +99,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Brain Provider Trait | 2 | `src/tests/brain_provider_trait_test.rs` |
 | Tests — Brain Provider Types | 3 | `src/tests/brain_provider_types_test.rs` |
 | Tests — Brain Sections | 10 | `src/tests/brain_sections_test.rs` |
+| Tests — Brain Seed Entrypoint | 3 | `src/tests/brain_seed_entrypoint_test.rs` |
 | Tests — Brain Self Update | 1 | `src/tests/brain_self_update_test.rs` |
 | Tests — Brain Templates | 10 | `src/tests/brain_templates_test.rs` |
 | Tests — Brain Tokenizer | 8 | `src/tests/brain_tokenizer_test.rs` |
@@ -168,6 +169,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Chat Fold Deliverable | 6 | `src/tests/chat_fold_deliverable_test.rs` |
 | Tests — Chunk Hash Cache | 3 | `src/tests/chunk_hash_cache_test.rs` |
 | Tests — Claude CLI Model | 7 | `src/tests/claude_cli_model_test.rs` |
+| Tests — CLI Agent Session Resume | 4 | `src/tests/cli_agent_session_resume_test.rs` |
 | Tests — CLI Arg Too Long | 2 | `src/tests/cli_arg_too_long_test.rs` |
 | Tests — CLI Context Window | 5 | `src/tests/cli_context_window_test.rs` |
 | Tests — CLI Headless Tools | 4 | `src/tests/cli_headless_tools_test.rs` |
@@ -194,6 +196,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Config Dotted Caps | 6 | `src/tests/config_dotted_caps_test.rs` |
 | Tests — Config Guard | 5 | `src/tests/config_guard_test.rs` |
 | Tests — Config Last Good Recovery | 3 | `src/tests/config_last_good_recovery_test.rs` |
+| Tests — Config Live Home Guard | 5 | `src/tests/config_live_home_guard_test.rs` |
 | Tests — Config Load Status Isolation | 4 | `src/tests/config_load_status_isolation_test.rs` |
 | Tests — Config Memory External | 7 | `src/tests/config_memory_external_test.rs` |
 | Tests — Config Owner Seed Migration | 5 | `src/tests/config_owner_seed_migration_test.rs` |
@@ -204,6 +207,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Config Section Resolve | 7 | `src/tests/config_section_resolve_test.rs` |
 | Tests — Config Types Loader | 25 | `src/tests/config_types_loader_test.rs` |
 | Tests — Config Update | 4 | `src/tests/config_update_test.rs` |
+| Tests — Config Voice Migration | 5 | `src/tests/config_voice_migration_test.rs` |
 | Tests — Config Watcher | 5 | `src/tests/config_watcher_test.rs` |
 | Tests — Config Write Path | 5 | `src/tests/config_write_path_test.rs` |
 | Tests — Content Vectors Heal | 3 | `src/tests/content_vectors_heal_test.rs` |
@@ -232,9 +236,10 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Custom Provider Section Resolver | 2 | `src/tests/custom_provider_section_resolver_test.rs` |
 | Tests — Custom Provider | 31 | `src/tests/custom_provider_test.rs` |
 | Tests — Daemon Health | 10 | `src/tests/daemon_health_test.rs` |
-| Tests — DB Database | 6 | `src/tests/db_database_test.rs` |
+| Tests — DB Database | 7 | `src/tests/db_database_test.rs` |
 | Tests — DB Migration 33 Heal | 4 | `src/tests/db_migration_33_heal_test.rs` |
 | Tests — DB Models | 5 | `src/tests/db_models_test.rs` |
+| Tests — DB Pending Origin Heal | 5 | `src/tests/db_pending_origin_heal_test.rs` |
 | Tests — DB Repository Channel Message | 1 | `src/tests/db_repository_channel_message_test.rs` |
 | Tests — DB Repository File | 2 | `src/tests/db_repository_file_test.rs` |
 | Tests — DB Repository Message | 5 | `src/tests/db_repository_message_test.rs` |
@@ -256,6 +261,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Duplicate Submit | 8 | `src/tests/duplicate_submit_test.rs` |
 | Tests — Dynamic Tool Coerce | 13 | `src/tests/dynamic_tool_coerce_test.rs` |
 | Tests — Dynamic Tool Parse Error | 12 | `src/tests/dynamic_tool_parse_error_test.rs` |
+| Tests — Edit Retry | 5 | `src/tests/edit_retry_test.rs` |
 | Tests — Empty Answer Nudge | 8 | `src/tests/empty_answer_nudge_test.rs` |
 | Tests — Empty Reasoning Stub | 9 | `src/tests/empty_reasoning_stub_test.rs` |
 | Tests — Epistemic Inline | 9 | `src/tests/epistemic_inline_test.rs` |
@@ -323,7 +329,8 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Logging Log Files | 5 | `src/tests/logging_log_files_test.rs` |
 | Tests — Logging Logger | 5 | `src/tests/logging_logger_test.rs` |
 | Tests — Long Command | 5 | `src/tests/long_command_test.rs` |
-| Tests — Loop Guard | 26 | `src/tests/loop_guard_test.rs` |
+| Tests — Loop Break | 10 | `src/tests/loop_break_test.rs` |
+| Tests — Loop Guard | 32 | `src/tests/loop_guard_test.rs` |
 | Tests — Markdown Render | 10 | `src/tests/markdown_render_test.rs` |
 | Tests — Memory Backfill Sweep | 6 | `src/tests/memory_backfill_sweep_test.rs` |
 | Tests — Memory Chunk Vector | 13 | `src/tests/memory_chunk_vector_test.rs` |
@@ -528,6 +535,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Repetition | 5 | `src/tests/repetition_test.rs` |
 | Tests — Respond To Group Persist | 3 | `src/tests/respond_to_group_persist_test.rs` |
 | Tests — Restart Recovery | 6 | `src/tests/restart_recovery_test.rs` |
+| Tests — Restart Replay Context | 1 | `src/tests/restart_replay_context_test.rs` |
 | Tests — Retry Notice Drain | 4 | `src/tests/retry_notice_drain_test.rs` |
 | Tests — RSI Brain Dedup | 31 | `src/tests/rsi_brain_dedup_test.rs` |
 | Tests — RSI Command Patterns | 5 | `src/tests/rsi_command_patterns_test.rs` |
@@ -566,6 +574,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Sanitize Quoted Secret | 9 | `src/tests/sanitize_quoted_secret_test.rs` |
 | Tests — Sanitize Reasoning Leak | 7 | `src/tests/sanitize_reasoning_leak_test.rs` |
 | Tests — Sanitize Redaction | 31 | `src/tests/sanitize_redaction_test.rs` |
+| Tests — Scope All Recency | 5 | `src/tests/scope_all_recency_test.rs` |
 | Tests — Self Healing | 88 | `src/tests/self_healing_test.rs` |
 | Tests — Self Improve Failure Log Guard | 3 | `src/tests/self_improve_failure_log_guard_test.rs` |
 | Tests — Self Improve Guard | 6 | `src/tests/self_improve_guard_test.rs` |
@@ -611,7 +620,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Streaming Active Secs | 2 | `src/tests/streaming_active_secs_test.rs` |
 | Tests — Streaming Tok Per Sec Guard | 10 | `src/tests/streaming_tok_per_sec_guard_test.rs` |
 | Tests — Streaming Tps Accumulator | 12 | `src/tests/streaming_tps_accumulator_test.rs` |
-| Tests — Stt Fallback Chain | 6 | `src/tests/stt_fallback_chain_test.rs` |
+| Tests — Stt Fallback Chain | 10 | `src/tests/stt_fallback_chain_test.rs` |
 | Tests — Subagent Compaction Preamble | 7 | `src/tests/subagent_compaction_preamble_test.rs` |
 | Tests — Subagent Natural Completion | 3 | `src/tests/subagent_natural_completion_test.rs` |
 | Tests — Subagent Notify | 15 | `src/tests/subagent_notify_test.rs` |
@@ -628,6 +637,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Acl | 12 | `src/tests/telegram_acl_test.rs` |
 | Tests — Telegram Attachment Tmp Name | 9 | `src/tests/telegram_attachment_tmp_name_test.rs` |
 | Tests — Telegram Atx Heading Agreement | 6 | `src/tests/telegram_atx_heading_agreement_test.rs` |
+| Tests — Telegram Bg Ack Fold | 7 | `src/tests/telegram_bg_ack_fold_test.rs` |
 | Tests — Telegram Bg Resume Gate | 6 | `src/tests/telegram_bg_resume_gate_test.rs` |
 | Tests — Telegram Callback Session Topic | 5 | `src/tests/telegram_callback_session_topic_test.rs` |
 | Tests — Telegram Cancel Token No Drop | 2 | `src/tests/telegram_cancel_token_no_drop_test.rs` |
@@ -704,8 +714,14 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Tool Group | 65 | `src/tests/telegram_tool_group_test.rs` |
 | Tests — Telegram Topic Listing | 6 | `src/tests/telegram_topic_listing_test.rs` |
 | Tests — Telegram Topic Routing | 3 | `src/tests/telegram_topic_routing_test.rs` |
+| Tests — Telegram Userbot Boundary | 2 | `src/tests/telegram_userbot_boundary_test.rs` |
+| Tests — Telegram Userbot Config | 6 | `src/tests/telegram_userbot_config_test.rs` |
+| Tests — Telegram Userbot Reconcile | 4 | `src/tests/telegram_userbot_reconcile_test.rs` |
+| Tests — Telegram Userbot Runner | 2 | `src/tests/telegram_userbot_runner_test.rs` |
+| Tests — Telegram Userbot Session | 4 | `src/tests/telegram_userbot_session_test.rs` |
 | Tests — Template Governance | 20 | `src/tests/template_governance_test.rs` |
 | Tests — Text Complete | 21 | `src/tests/text_complete_test.rs` |
+| Tests — TUI Theme Picker | 10 | `src/tests/tui_theme_picker_test.rs` |
 | Tests — Thinking Loop Fallback | 5 | `src/tests/thinking_loop_fallback_test.rs` |
 | Tests — Token Report Calibration | 9 | `src/tests/token_report_calibration_test.rs` |
 | Tests — Token Tracking | 29 | `src/tests/token_tracking_test.rs` |
@@ -726,9 +742,10 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Transport Ready | 7 | `src/tests/transport_ready_test.rs` |
 | Tests — Truncation Join | 15 | `src/tests/truncation_join_test.rs` |
 | Tests — Truncation | 13 | `src/tests/truncation_test.rs` |
-| Tests — Tts Fallback Chain | 6 | `src/tests/tts_fallback_chain_test.rs` |
+| Tests — Tts Fallback Chain | 11 | `src/tests/tts_fallback_chain_test.rs` |
 | Tests — TUI App State | 2 | `src/tests/tui_app_state_test.rs` |
 | Tests — Tui Cancel Indicator | 4 | `src/tests/tui_cancel_indicator_test.rs` |
+| Tests — TUI Compact Notice | 2 | `src/tests/tui_compact_notice_test.rs` |
 | Tests — TUI Components Logo | 2 | `src/tests/tui_components_logo_test.rs` |
 | Tests — TUI Drop Path | 4 | `src/tests/tui_drop_path_test.rs` |
 | Tests — TUI Dropped Path | 10 | `src/tests/tui_dropped_path_test.rs` |
@@ -736,15 +753,15 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — TUI Events | 4 | `src/tests/tui_events_test.rs` |
 | Tests — TUI Highlight | 8 | `src/tests/tui_highlight_test.rs` |
 | Tests — TUI Markdown | 9 | `src/tests/tui_markdown_test.rs` |
+| Tests — TUI Notice Render | 4 | `src/tests/tui_notice_render_test.rs` |
+| Tests — TUI Notice | 19 | `src/tests/tui_notice_test.rs` |
+| Tests — TUI Palette | 4 | `src/tests/tui_palette_test.rs` |
 | Tests — TUI Plan | 38 | `src/tests/tui_plan_tests_test.rs` |
-| Tests — TUI Notice | 17 | `src/tests/tui_notice_test.rs` |
 | Tests — TUI Process Commands | 3 | `src/tests/tui_process_commands_test.rs` |
 | Tests — TUI Remote Upload | 12 | `src/tests/tui_remote_upload_test.rs` |
 | Tests — TUI Render Clear | 4 | `src/tests/tui_render_clear_test.rs` |
 | Tests — TUI Render Utils | 12 | `src/tests/tui_render_utils_test.rs` |
-| Tests — TUI Theme Picker | 10 | `src/tui/render/theme_picker.rs` |
 | Tests — TUI Tool Stack | 10 | `src/tests/tui_tool_stack_test.rs` |
-| Tests — TUI User Themes | 10 | `src/tui/render/user_themes.rs` |
 | Tests — Turn Duration | 6 | `src/tests/turn_duration_test.rs` |
 | Tests — Turn Ranges | 40 | `src/tests/turn_ranges_test.rs` |
 | Tests — Usage Activity Columns | 9 | `src/tests/usage_activity_columns_test.rs` |
@@ -757,17 +774,21 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Usage Ledger Attribution | 3 | `src/tests/usage_ledger_attribution_test.rs` |
 | Tests — Usage Ledger | 5 | `src/tests/usage_ledger_test.rs` |
 | Tests — User Correction Metadata | 3 | `src/tests/user_correction_metadata_test.rs` |
+| Tests — TUI User Themes | 10 | `src/tests/tui_user_themes_test.rs` |
 | Tests — Utc Timestamp | 4 | `src/tests/utc_timestamp_test.rs` |
 | Tests — Utils File Extract | 8 | `src/tests/utils_file_extract_test.rs` |
 | Tests — Utils Install | 6 | `src/tests/utils_install_test.rs` |
 | Tests — Utils Retry | 8 | `src/tests/utils_retry_test.rs` |
 | Tests — Utils Sanitize | 49 | `src/tests/utils_sanitize_test.rs` |
 | Tests — Utils String | 26 | `src/tests/utils_string_test.rs` |
-| Tests — Variation Directive | 6 | `src/tests/variation_directive_test.rs` |
+| Tests — Variation Directive | 4 | `src/tests/variation_directive_test.rs` |
 | Tests — Vba Modules | 10 | `src/tests/vba_modules_test.rs` |
+| Tests — Voice Chain | 7 | `src/tests/voice_chain_test.rs` |
+| Tests — Voice Config Derivation | 7 | `src/tests/voice_config_derivation_test.rs` |
+| Tests — Voice Flag Flips | 4 | `src/tests/voice_flag_flips_test.rs` |
 | Tests — Voice Local Tts | 9 | `src/tests/voice_local_tts_test.rs` |
 | Tests — Voice Local Whisper | 25 | `src/tests/voice_local_whisper_test.rs` |
-| Tests — Voice Onboarding | 65 | `src/tests/voice_onboarding_test.rs` |
+| Tests — Voice Onboarding | 67 | `src/tests/voice_onboarding_test.rs` |
 | Tests — Voice Openai Compatible | 12 | `src/tests/voice_openai_compatible_test.rs` |
 | Tests — Voice Service | 14 | `src/tests/voice_service_test.rs` |
 | Tests — Voice Stt Dispatch | 21 | `src/tests/voice_stt_dispatch_test.rs` |
