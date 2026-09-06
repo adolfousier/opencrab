@@ -119,3 +119,75 @@ fn label_aliases_resolve_correctly() {
         "groq is STT-only — TTS chain must reject it",
     );
 }
+
+// ─── #1399: the chain names the primary, disabled engines are not candidates ──
+
+use crate::channels::voice::service::resolve_primary_tts;
+use crate::config::TtsMode;
+
+/// The reporter's live config: chain `["openai", "local"]`, OpenAI enabled
+/// with a key, local switched off. Before #1399 the heuristic put a
+/// disabled openai_compatible block first and local was still "configured".
+fn openai_first_config() -> VoiceConfig {
+    VoiceConfig {
+        tts_enabled: true,
+        tts_mode: TtsMode::Api,
+        tts_provider: Some(ProviderConfig {
+            enabled: true,
+            api_key: Some("openai-key".to_string()),
+            ..Default::default()
+        }),
+        tts_fallback_chain: vec!["openai".into(), "local".into()],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn user_chain_head_is_the_primary() {
+    assert_eq!(
+        resolve_primary_tts(&openai_first_config()),
+        TtsProviderKind::OpenAi
+    );
+}
+
+#[test]
+fn chain_head_without_config_is_skipped_for_the_primary() {
+    let cfg = VoiceConfig {
+        tts_fallback_chain: vec!["voicebox".into(), "openai".into()],
+        ..openai_first_config()
+    };
+    assert_eq!(resolve_primary_tts(&cfg), TtsProviderKind::OpenAi);
+}
+
+#[test]
+fn empty_chain_falls_back_to_the_default_priority() {
+    let cfg = VoiceConfig {
+        tts_fallback_chain: vec![],
+        ..openai_first_config()
+    };
+    assert_eq!(resolve_primary_tts(&cfg), TtsProviderKind::OpenAi);
+}
+
+#[test]
+fn disabled_local_is_not_a_fallback_even_when_listed() {
+    // tts_mode is Local exactly when providers.tts.local.enabled is set;
+    // Api here means local is switched off, so the chain must not route
+    // a failing primary into it.
+    let cfg = openai_first_config();
+    let chain = resolve_tts_fallback_chain(&cfg, TtsProviderKind::OpenAi);
+    assert!(
+        chain.is_empty(),
+        "disabled local must be skipped, got {chain:?}"
+    );
+}
+
+#[cfg(feature = "local-tts")]
+#[test]
+fn enabled_local_is_a_fallback() {
+    let cfg = VoiceConfig {
+        tts_mode: TtsMode::Local,
+        ..openai_first_config()
+    };
+    let chain = resolve_tts_fallback_chain(&cfg, TtsProviderKind::OpenAi);
+    assert_eq!(chain, vec![TtsProviderKind::Local]);
+}

@@ -176,19 +176,3 @@ pub fn variation_directive() -> &'static str {
      again, then take a genuinely different action — different flags, a different command, or \
      report completion if there is nothing left to do."
 }
-
-/// User-visible breadcrumb appended to the final response when a loop
-/// guard BREAKS a turn (#32).
-///
-/// Before this existed the break was silent: the guard logged a WARN,
-/// the model's partial text went out as the final message, and nothing
-/// told the user the turn had ended on a guard trip — the 2026-08-29
-/// incident sat that way until the owner pinged. The breadcrumb names
-/// the trip, states that no work is queued, and hands control back
-/// explicitly.
-pub fn loop_guard_breadcrumb(call_label: &str, count: usize, window: usize) -> String {
-    format!(
-        "⚠️ Loop guard ended this turn: '{call_label}' recurred {count}x in the last {window} \
-         steps. Nothing is queued — say the word to resume."
-    )
-}

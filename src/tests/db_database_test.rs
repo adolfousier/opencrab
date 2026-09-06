@@ -125,3 +125,33 @@ fn test_every_migration_file_on_disk_is_registered() {
         "a migration file exists that build_migrations does not include"
     );
 }
+
+/// The list is applied by INDEX, so two branches that each append "migration
+/// N" and a merge that re-sorts them by date skip one of them on every
+/// database already stamped N (#1401: `pending_requests.origin`). The only
+/// place that can catch it before a merge is here: the files on disk in name
+/// order must be the list, entry for entry.
+#[test]
+fn test_migration_list_is_the_on_disk_files_in_name_order() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/migrations");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .expect("migrations dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "sql"))
+        .collect();
+    files.sort();
+    let list = crate::db::database::MIGRATION_SQL;
+    assert_eq!(files.len(), list.len(), "file count and list length differ");
+    for (i, path) in files.iter().enumerate() {
+        let on_disk = std::fs::read_to_string(path).expect("read migration");
+        assert_eq!(
+            on_disk,
+            list[i],
+            "list index {} is not {} : the list is out of name order, so a database stamped \
+             past this index has skipped a migration",
+            i + 1,
+            path.file_name().unwrap().to_string_lossy()
+        );
+    }
+}

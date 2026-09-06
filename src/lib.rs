@@ -38,6 +38,25 @@
 //! opencrabs run --auto-approve "refactor this file"
 //! ```
 //!
+//! ## Stability
+//!
+//! **The command-line interface is the stable surface. The library is not.**
+//!
+//! This crate is published so the binary can be installed with `cargo install
+//! opencrabs`. The modules below are its internals: they are `pub` because the
+//! binary and the integration tests need them across module boundaries, not
+//! because they are an API anyone should build against.
+//!
+//! Under semantic versioning that distinction has to be stated rather than
+//! assumed, so: the CLI commands, their flags, the config file format and the
+//! on-disk layout of `~/.opencrabs/` are covered by the version number. Every
+//! Rust item in this crate may be renamed, moved, or removed in any release,
+//! including a patch.
+//!
+//! If you need a stable Rust API against OpenCrabs, open an issue describing
+//! what you are building. Carving a supported surface out of these internals is
+//! a decision worth making deliberately, and it has not been made.
+//!
 //! ## Architecture
 //!
 //! | Module | Purpose |

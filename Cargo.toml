@@ -1,6 +1,6 @@
 [package]
 name = "opencrabs"
-version = "0.3.83"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["Adolfo Usier <adolfo@meetneura.ai>"]
@@ -127,6 +127,14 @@ zeroize = { version = "1.8", features = ["derive"] }
 # Telegram
 teloxide = { version = "0.17", features = ["macros"], optional = true }
 
+# Telegram userbot (MTProto user session): grammers, by Telethon's author.
+# Experimental, opt-in via the telegram-userbot feature. QR login, 2FA SRP,
+# DC migration, JSON file session (grammers' SQLite session is not used).
+grammers-client = { version = "0.10", optional = true }
+grammers-session = { version = "0.10", default-features = false, features = ["serde"], optional = true }
+grammers-mtsender = { version = "0.10", optional = true }
+grammers-crypto = { version = "0.10", optional = true }
+
 # WhatsApp — pinned to upstream HEAD (past published 0.6.0) for the rewritten
 # LID/PN device registry: alias-aware LID<->PN resolution collapses a self-DM to
 # one device set, fixing the duplicate PN+LID device addressing that made the
@@ -200,6 +208,7 @@ htmd = "0.5.4"
 rust_xlsxwriter = "0.96.0"
 docx-rs = "0.4.20"
 printpdf = { version = "0.12.7", features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+rpassword = { version = "7.5.4", optional = true }
 
 [dev-dependencies]
 rstest = "0.25"
@@ -236,6 +245,12 @@ rwhisper = { version = "0.4", optional = true, features = ["metal", "accelerate"
 winresource = "0.1"
 
 [features]
+# `local-stt` stays in the default set on purpose: running voice fully
+# on-device is a headline capability, not an add-on. It carries the
+# rwhisper tree, which is still on reqwest 0.11 and brings a low-severity
+# h2 advisory (RUSTSEC-2026-0258); the exposure is bounded because that
+# client is used only to download models from Hugging Face. Documented in
+# the README and tracked in #1402.
 default = ["telegram", "whatsapp", "discord", "slack", "trello", "local-stt", "local-tts", "browser", "rtk", "code-graph", "pdfium"]
 # Profiling feature enables pprof on Unix only (no-op on Windows)
 profiling = []
@@ -245,6 +260,7 @@ rtk = []
 # under `cfg(test)` automatically; enable this feature for a standalone eval run.
 eval = []
 telegram = ["teloxide"]
+telegram-userbot = ["telegram", "dep:grammers-client", "dep:grammers-session", "dep:grammers-mtsender", "dep:grammers-crypto", "dep:qrcode", "dep:rpassword"]
 trello = []
 whatsapp = ["whatsapp-rust", "whatsapp-rust-tokio-transport", "whatsapp-rust-ureq-http-client", "wacore", "wacore-binary", "waproto", "dep:qrcode", "dep:rmp-serde"]
 discord = ["serenity"]

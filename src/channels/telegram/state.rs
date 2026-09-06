@@ -18,6 +18,9 @@ use uuid::Uuid;
 /// instead of posting a separate "Suggested next" message, the tap handler
 /// needs the bubble's exact HTML to record the pick WITHOUT erasing the
 /// answer text (`edit_message_text` replaces the whole body).
+/// #59: bound on rescued dead-host records (FIFO eviction).
+const STALE_HOST_CAP: usize = 32;
+
 #[derive(Clone)]
 pub(crate) struct MergedHost {
     pub message_id: MessageId,
@@ -28,11 +31,19 @@ pub(crate) struct MergedHost {
     /// Host lives on the native rich API: tap-record edits must ride
     /// `super::rich::api::edit_rich_html`, not teloxide's edit_message_text.
     pub rich: bool,
+<<<<<<< HEAD
     /// Markdown-plane host (#79 piece 4): the merged markdown payload.
     /// When set, pick redraws and strips ride `edit_rich_markdown` —
     /// the server-side render keeps tables intact (#679). `None` = the
     /// html plane.
     pub markdown: Option<String>,
+=======
+    /// #55: the keyboard was GLUED onto this bubble (glue tier — the body
+    /// was not merge-safe, e.g. a table-bearing rich answer). The body is
+    /// unknown/unsafe to rewrite, so a tap strips the keyboard markup-only
+    /// and echoes the pick record as its own note instead of editing text.
+    pub glued: bool,
+>>>>>>> adolfousier/main
 }
 
 /// Merge candidate captured by deliver_final_response (#tg-suggest-merge):
@@ -40,7 +51,11 @@ pub(crate) struct MergedHost {
 #[derive(Clone)]
 pub(crate) struct MergeBubble {
     pub message_id: MessageId,
-    pub body: BubbleBody,
+    /// `Some` = merge-safe body (classic HTML or table-free rich markdown).
+    /// `None` = rich answer carries a table (#55): merging would flatten it,
+    /// but the id is still a valid GLUE target — `edit_message_reply_markup`
+    /// attaches the keyboard without ever touching the body.
+    pub body: Option<BubbleBody>,
 }
 
 /// How a captured [`MergeBubble`] was sent — decides which edit call merges
@@ -183,7 +198,15 @@ pub struct TelegramState {
     /// tap handler resolves `idx -> suggestion string`; cleared on tap or when
     /// the user sends anything.
     pending_followups: Mutex<HashMap<String, PendingFollowupEntry>>,
+<<<<<<< HEAD
     /// #59: expired-but-still-rendering merged-host records, token-first.
+=======
+    /// #59: merged-host records of stash entries cleared by #597 (user sent
+    /// their own message). The stash entry dies, but RICH-merged buttons
+    /// survive visually inside the bubble body — a stale-shell tap needs to
+    /// know WHAT SHAPE of dead keyboard to strip and from where. Keyed
+    /// token-first in a FIFO deque, bounded at STALE_HOST_CAP (oldest evicted).
+>>>>>>> adolfousier/main
     stale_hosts: Mutex<VecDeque<(String, MergedHost)>>,
     /// Solo-owner auto-registration cache (#1155): chat_id → decision already
     /// reached. `true` = eligible solo group, full owner catalog registered;
@@ -888,6 +911,7 @@ impl TelegramState {
             .and_then(|e| e.host.clone())
     }
 
+<<<<<<< HEAD
     /// #91: does any live suggestion keyboard — pending or stale-but-not-yet-
     /// stripped — already ride this message? The cross-turn glue refuses such
     /// targets: a second keyboard on one bubble breaks the first one's taps,
@@ -916,6 +940,12 @@ impl TelegramState {
     /// still renders somewhere. Read-only — the record survives until the
     /// strip is confirmed, so repeated taps on the same zombie stay
     /// log-attributable instead of silently degrading to the blind strip.
+=======
+    /// #59: peek the dead-host record of a #597-cleared stash entry WITHOUT
+    /// consuming it — the stale-shell tap needs the host SHAPE (rich body
+    /// buttons vs glued/classic reply-markup) to pick the right strip; the
+    /// record is forgotten only after the strip succeeds (`forget_stale_host`).
+>>>>>>> adolfousier/main
     pub(crate) async fn peek_stale_host(&self, token: &str) -> Option<MergedHost> {
         self.stale_hosts
             .lock()
@@ -965,6 +995,12 @@ impl TelegramState {
     ) -> Option<(PendingFollowupEntry, String, usize)> {
         let entry = self.pending_followups.lock().await.remove(token)?;
         self.forget_followup(token).await;
+<<<<<<< HEAD
+=======
+        // #67: idx rides along — the tap-redraw rewrite runs in a spawned
+        // task lexically outside the arm that binds idx, so the tapped
+        // index must come back through the take's return tuple.
+>>>>>>> adolfousier/main
         entry
             .options
             .get(idx)
@@ -994,9 +1030,14 @@ impl TelegramState {
         // rendering inside the bubble body. Without the rescued shape the
         // stale-shell tap can only try a blind markup strip, which on a rich
         // host is a guaranteed "message is not modified" no-op (the zombie).
+<<<<<<< HEAD
         let (removed, rescued): (usize, Vec<(String, MergedHost)>) = {
             let mut map = self.pending_followups.lock().await;
             let before = map.len();
+=======
+        let rescued: Vec<(String, MergedHost)> = {
+            let mut map = self.pending_followups.lock().await;
+>>>>>>> adolfousier/main
             let mut rescued = Vec::new();
             map.retain(|token, e| {
                 if e.session_id == session_id {
@@ -1008,8 +1049,14 @@ impl TelegramState {
                     true
                 }
             });
+<<<<<<< HEAD
             (before - map.len(), rescued)
         };
+=======
+            rescued
+        };
+        let removed = rescued.len();
+>>>>>>> adolfousier/main
         if !rescued.is_empty() {
             let mut stale = self.stale_hosts.lock().await;
             for pair in rescued {
@@ -1200,7 +1247,13 @@ impl TelegramState {
                         message_id: MessageId(h.message_id as i32),
                         html: h.html,
                         rich: h.rich,
+<<<<<<< HEAD
                         markdown: h.markdown,
+=======
+                        // Port note (#55): persisted rows predate the glue
+                        // tier; restore as non-glued (pre-glue tap path).
+                        glued: false,
+>>>>>>> adolfousier/main
                     });
                     let token = row.token;
                     let entry = PendingFollowupEntry {

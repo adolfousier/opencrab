@@ -148,3 +148,43 @@ fn input_renderer_owns_the_notice() {
     assert!(input.contains("app.notification.as_deref()"));
     assert!(input.contains("app.error_message.as_deref()"));
 }
+
+#[test]
+fn notice_is_appended_to_the_cursor_row_not_a_border_title() {
+    // The ask was "inside the input": trailing ghost text on the cursor's
+    // row, never a title hung on the bottom border. The only title_bottom
+    // left in render_input is the ctx budget.
+    let input = include_str!("../tui/render/input.rs");
+    let body = input
+        .split("pub(super) fn render_input(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("render_input body");
+    assert!(
+        body.contains("input_lines.get_mut(cursor_row)"),
+        "the notice must be appended to the cursor row of the input"
+    );
+    assert_eq!(
+        body.matches(".title_bottom(").count(),
+        1,
+        "only the ctx budget may sit on the bottom border"
+    );
+    assert!(
+        !body.contains("block.title_bottom(title)"),
+        "the notice must not be a border title"
+    );
+}
+
+#[test]
+fn notice_label_fits_the_room_left_on_the_cursor_row() {
+    // Empty input renders "❯ " plus the cursor cell (3 cells); a 40-cell
+    // content row leaves 37 for the notice.
+    let room = 40usize.saturating_sub(3);
+    assert_eq!(
+        notice_label("Copied to clipboard", room).as_deref(),
+        Some(" Copied to clipboard ")
+    );
+    // A row already full of typed text has no room and shows nothing rather
+    // than pushing the text or wrapping onto a row the layout never allotted.
+    assert_eq!(notice_label("Copied to clipboard", 0), None);
+}

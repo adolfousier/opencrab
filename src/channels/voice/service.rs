@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
 
-use crate::config::VoiceConfig;
+use crate::config::{SttMode, TtsMode, VoiceConfig};
 
 const GROQ_TRANSCRIPTION_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
 const OPENAI_SPEECH_URL: &str = "https://api.openai.com/v1/audio/speech";
@@ -90,8 +90,22 @@ pub async fn transcribe(audio_bytes: Vec<u8>, voice_config: &VoiceConfig) -> Res
     )
 }
 
-/// Resolve which provider runs first based on the current config flags.
-fn resolve_primary_stt(cfg: &VoiceConfig) -> SttProviderKind {
+/// Resolve which provider runs first.
+///
+/// A non-empty user chain is authoritative (#1399): its first entry that
+/// is actually configured is the primary, so `fallback_chain = ["groq",
+/// "local"]` means "Groq first", not "Groq after whatever the heuristic
+/// picked". Only when the chain is empty (or names nothing usable) does
+/// the default priority below decide.
+pub(crate) fn resolve_primary_stt(cfg: &VoiceConfig) -> SttProviderKind {
+    if let Some(head) = cfg
+        .stt_fallback_chain
+        .iter()
+        .filter_map(|s| SttProviderKind::from_label(s))
+        .find(|k| provider_is_configured(*k, cfg))
+    {
+        return head;
+    }
     if cfg.voicebox_stt_enabled {
         SttProviderKind::Voicebox
     } else if cfg.stt_base_url.is_some() && cfg.stt_model.is_some() && cfg.stt_api_key.is_some() {
@@ -148,7 +162,10 @@ fn provider_is_configured(kind: SttProviderKind, cfg: &VoiceConfig) -> bool {
             .as_ref()
             .and_then(|p| p.api_key.as_ref())
             .is_some(),
-        SttProviderKind::Local => cfg!(feature = "local-stt"),
+        // Compiled in AND switched on: `providers.stt.local.enabled = false`
+        // used to leave Local "configured" and receiving dispatch attempts
+        // (#1399). `stt_mode` is Local exactly when that flag is set.
+        SttProviderKind::Local => cfg!(feature = "local-stt") && cfg.stt_mode == SttMode::Local,
     }
 }
 
@@ -472,7 +489,17 @@ fn find_word_break(text: &str) -> Option<usize> {
 }
 
 /// Resolve which TTS provider runs first based on current config flags.
-fn resolve_primary_tts(cfg: &VoiceConfig) -> TtsProviderKind {
+/// TTS twin of [`resolve_primary_stt`]: a non-empty user chain names the
+/// primary; the default priority applies only when it does not (#1399).
+pub(crate) fn resolve_primary_tts(cfg: &VoiceConfig) -> TtsProviderKind {
+    if let Some(head) = cfg
+        .tts_fallback_chain
+        .iter()
+        .filter_map(|s| TtsProviderKind::from_label(s))
+        .find(|k| tts_provider_is_configured(*k, cfg))
+    {
+        return head;
+    }
     if cfg.voicebox_tts_enabled {
         TtsProviderKind::Voicebox
     } else if cfg.tts_base_url.is_some() && cfg.tts_api_key.is_some() {
@@ -528,7 +555,9 @@ fn tts_provider_is_configured(kind: TtsProviderKind, cfg: &VoiceConfig) -> bool 
             .as_ref()
             .and_then(|p| p.api_key.as_ref())
             .is_some(),
-        TtsProviderKind::Local => cfg!(feature = "local-tts"),
+        // Compiled in AND switched on (#1399); `tts_mode` is Local exactly
+        // when `providers.tts.local.enabled` is set.
+        TtsProviderKind::Local => cfg!(feature = "local-tts") && cfg.tts_mode == TtsMode::Local,
     }
 }
 

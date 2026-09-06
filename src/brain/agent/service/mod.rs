@@ -19,6 +19,7 @@ pub(crate) mod feedback;
 pub(crate) mod fenced_command;
 mod gaslighting;
 pub(crate) mod helpers;
+pub(crate) mod loop_break;
 mod messaging;
 mod model_refresh;
 pub(crate) mod notify_receipts;

@@ -28,7 +28,7 @@ impl Tool for ChannelSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search or list channel message history captured from Telegram groups, Discord, Slack, etc. \
+        "Search or list channel message history captured from Telegram groups, Telegram userbot chats, Discord, Slack, etc. \
          Use 'list_chats' to see known groups/channels with message counts. \
          Use 'recent' to get the last N messages from a specific chat. \
          Use 'search' to find messages by content across chats."
@@ -45,7 +45,7 @@ impl Tool for ChannelSearchTool {
                 },
                 "channel": {
                     "type": "string",
-                    "enum": ["telegram", "discord", "slack", "whatsapp"],
+                    "enum": ["telegram", "telegram-userbot", "discord", "slack", "whatsapp"],
                     "description": "Filter by channel platform (omit for all)"
                 },
                 "chat_id": {

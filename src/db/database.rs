@@ -44,7 +44,7 @@ pub fn interact_err(e: InteractError) -> anyhow::Error {
 /// Every migration, oldest first. Adding one is adding its `include_str!`
 /// here and nothing else: [`Database::MIGRATION_COUNT`] is this list's
 /// length, so the count cannot drift from the list (#1354, after #1292).
-const MIGRATION_SQL: &[&str] = &[
+pub(crate) const MIGRATION_SQL: &[&str] = &[
     include_str!("../migrations/20251028000001_initial_schema.sql"),
     include_str!("../migrations/20251028000002_modernize_schema.sql"),
     include_str!("../migrations/20251111000001_add_plans.sql"),
@@ -309,43 +309,52 @@ impl Database {
             .get()
             .await
             .context("Failed to get connection for migrations")?
-            .interact(move |conn| {
-                // Detect databases previously managed by sqlx: if the _sqlx_migrations
-                // table exists but rusqlite_migration hasn't run yet (user_version == 0),
-                // stamp the current version so we don't re-run already-applied migrations.
-                let user_version: i64 =
-                    conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-                let has_sqlx: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM sqlite_master \
+            .interact(
+                move |conn| -> std::result::Result<(), rusqlite_migration::Error> {
+                    // Detect databases previously managed by sqlx: if the _sqlx_migrations
+                    // table exists but rusqlite_migration hasn't run yet (user_version == 0),
+                    // stamp the current version so we don't re-run already-applied migrations.
+                    let user_version: i64 =
+                        conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+                    let has_sqlx: bool = conn
+                        .prepare(
+                            "SELECT COUNT(*) FROM sqlite_master \
                          WHERE type='table' AND name='_sqlx_migrations'",
-                    )?
-                    .query_row([], |r| r.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
+                        )?
+                        .query_row([], |r| r.get::<_, i64>(0))
+                        .map(|c| c > 0)?;
 
-                if has_sqlx && user_version == 0 {
-                    tracing::info!(
-                        "Detected sqlx-managed database — stamping migration version to {}",
-                        Self::MIGRATION_COUNT
-                    );
-                    conn.pragma_update(None, "user_version", Self::MIGRATION_COUNT as i64)?;
-                }
+                    if has_sqlx && user_version == 0 {
+                        tracing::info!(
+                            "Detected sqlx-managed database — stamping migration version to {}",
+                            Self::MIGRATION_COUNT
+                        );
+                        conn.pragma_update(None, "user_version", Self::MIGRATION_COUNT as i64)?;
+                    }
 
-                // Defensive heal for migration 33 (add_analytics_events), #937:
-                // databases that already carry some of migration 33's artifacts
-                // (e.g. a provider column added by an intermediate build) would
-                // crash the migration's ALTER TABLE with "duplicate column name".
-                // Only fires when migration 33 is the NEXT migration to run
-                // (user_version == 32) so it can never skip migrations 1-32.
-                // Heals the schema to the full migration-33 state and stamps
-                // user_version so to_latest skips it; when nothing pre-exists
-                // the normal migration runs untouched.
-                if user_version == 32 && heal_analytics_migration_33(conn)? {
-                    conn.pragma_update(None, "user_version", 33i64)?;
-                }
+                    // Defensive heal for migration 33 (add_analytics_events), #937:
+                    // databases that already carry some of migration 33's artifacts
+                    // (e.g. a provider column added by an intermediate build) would
+                    // crash the migration's ALTER TABLE with "duplicate column name".
+                    // Only fires when migration 33 is the NEXT migration to run
+                    // (user_version == 32) so it can never skip migrations 1-32.
+                    // Heals the schema to the full migration-33 state and stamps
+                    // user_version so to_latest skips it; when nothing pre-exists
+                    // the normal migration runs untouched.
+                    if user_version == 32 && heal_analytics_migration_33(conn)? {
+                        conn.pragma_update(None, "user_version", 33i64)?;
+                    }
 
-                migrations.to_latest(conn)
-            })
+                    migrations.to_latest(conn)?;
+
+                    // Schema-checked heals run AFTER the stamp-driven pass: a
+                    // migration that two branches appended at the same index can
+                    // be skipped with the stamp already past it (#1401), and only
+                    // the schema itself can say so.
+                    crate::db::migration_heal::heal_pending_requests_origin(conn)?;
+                    Ok(())
+                },
+            )
             .await
             .map_err(interact_err)?
             .context("Failed to run database migrations")?;

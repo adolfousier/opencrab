@@ -16,11 +16,11 @@
 //! every global mutation in one place (`state.rs`'s key handler).
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
-use ratatui::Frame;
 
 use super::presets;
 use super::theme::{self, Theme};
@@ -129,11 +129,20 @@ impl ThemePickerState {
         };
         let prev = self.selected;
         self.move_selection(step);
+        if self.selected == prev {
+            // Clamped at a list end: nothing moved, so no new preview.
+            return PickerAction::None;
+        }
         self.scroll_into_view(visible_rows.max(1));
         if self.selected == prev {
+<<<<<<< HEAD
             // Clamped at a list end: no movement, no preview churn — the
             // clamp contract the tests below assert
             // (movement_clamps_at_list_ends).
+=======
+            // Movement clamped at the list edge (or no valid row in that
+            // direction): selection unchanged, no preview re-emit.
+>>>>>>> adolfousier/main
             return PickerAction::None;
         }
         match self.items.get(self.selected).and_then(|i| i.theme) {
@@ -147,7 +156,9 @@ impl ThemePickerState {
 /// presets, then rejected files as disabled rows with their reason.
 /// Returns the items plus the index of `active_name` (0 if not found —
 /// impossible in practice since the origin theme is always in the list).
-fn build_items(
+/// `pub(crate)` for the picker tests in `src/tests` — every test in this
+/// repository lives there, so the item builder has to be reachable from it.
+pub(crate) fn build_items(
     builtins: &[&'static Theme],
     report: &user_themes::LoadReport,
     active_name: &str,
@@ -194,7 +205,9 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
     // 46 cols fits `▶ ● solarized-light (user)` comfortably; 3 border rows
     // + 2 hint rows chrome; list rows capped by the roster size.
     let width = 48u16;
-    let height = (state.items.len() as u16 + 6).min(area.height.saturating_sub(4)).max(9);
+    let height = (state.items.len() as u16 + 6)
+        .min(area.height.saturating_sub(4))
+        .max(9);
     let popup = centered_rect(area, width, height);
 
     f.render_widget(Clear, popup);
@@ -221,7 +234,11 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
             let cursor = if idx == state.selected { "▶ " } else { "  " };
             let line = match (&item.theme, &item.reason) {
                 (Some(t), _) => {
-                    let applied = if t.name == state.origin.name { "● " } else { "  " };
+                    let applied = if t.name == state.origin.name {
+                        "● "
+                    } else {
+                        "  "
+                    };
                     let tag = if item.is_user { " (user)" } else { "" };
                     let style = if idx == state.selected {
                         Style::default().fg(theme::role(theme::Role::Accent))
@@ -230,7 +247,10 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
                     } else {
                         Style::default().fg(theme::role(theme::Role::TextPrimary))
                     };
-                    Line::from(Span::styled(format!("{cursor}{applied}{}{tag}", t.name), style))
+                    Line::from(Span::styled(
+                        format!("{cursor}{applied}{}{tag}", t.name),
+                        style,
+                    ))
                 }
                 (None, Some(reason)) => Line::from(Span::styled(
                     format!("  ✗ {reason}"),
@@ -251,8 +271,7 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
     }
     list_state.select(Some(state.selected));
 
-    let list = List::new(items)
-        .style(Style::default().fg(theme::role(theme::Role::TextPrimary)));
+    let list = List::new(items).style(Style::default().fg(theme::role(theme::Role::TextPrimary)));
     // ratatui reads the scroll window back out of the state after rendering,
     // so hand it our per-frame offset through the real offset slot.
     *list_state.offset_mut() = offset;
@@ -264,7 +283,10 @@ pub fn draw(f: &mut Frame, area: Rect, state: &ThemePickerState) {
     f.render_widget(hints, rows[1]);
 }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> adolfousier/main
 /// Fixed-size popup centered in `area`, clamped to fit.
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     let x = area.width.saturating_sub(width) / 2;
@@ -276,6 +298,7 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         height: height.min(area.height),
     }
 }
+<<<<<<< HEAD
 
 #[cfg(test)]
 mod tests {
@@ -429,3 +452,5 @@ mod tests {
         assert!(s.selected < s.scroll_offset + 2);
     }
 }
+=======
+>>>>>>> adolfousier/main

@@ -8,6 +8,14 @@
 
 use crate::config::{ProviderConfig, SttMode, VoiceConfig};
 
+/// Wizard saves must never land in the live default home (#1399).
+fn in_temp_home(f: impl FnOnce()) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let opencrabs = dir.path().join(".opencrabs");
+    std::fs::create_dir_all(&opencrabs).expect("create .opencrabs");
+    crate::config::profile::with_home_override(opencrabs, f);
+}
+
 // ─── STT dispatch routing ──────────────────────────────────────────────────
 
 #[tokio::test]
@@ -250,23 +258,27 @@ fn quick_jump_done_triggers_apply_config_flag() {
     use crate::tui::onboarding::{OnboardingStep, OnboardingWizard, VoiceField};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    let mut wizard = OnboardingWizard::new();
-    wizard.quick_jump = true;
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::TtsModeSelect;
+    // Enter on Continue saves the voice step: temp home, never the live
+    // config (#1399).
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.quick_jump = true;
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::TtsModeSelect;
 
-    // Tab on TtsModeSelect (Off) → Continue field
-    let action = wizard.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()));
-    assert_eq!(action, crate::tui::onboarding::WizardAction::None);
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
+        // Tab on TtsModeSelect (Off) → Continue field
+        let action = wizard.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()));
+        assert_eq!(action, crate::tui::onboarding::WizardAction::None);
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
 
-    // Enter on Continue calls next_step() → QuickJumpDone in quick_jump mode
-    let action = wizard.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
-    assert_eq!(
-        action,
-        crate::tui::onboarding::WizardAction::QuickJumpDone,
-        "Quick-jump should return QuickJumpDone after step completion"
-    );
+        // Enter on Continue calls next_step() → QuickJumpDone in quick_jump mode
+        let action = wizard.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+        assert_eq!(
+            action,
+            crate::tui::onboarding::WizardAction::QuickJumpDone,
+            "Quick-jump should return QuickJumpDone after step completion"
+        );
+    });
 }
 
 #[test]
@@ -288,24 +300,26 @@ fn non_quick_jump_tts_tab_advances_step() {
     use crate::tui::onboarding::{OnboardingStep, OnboardingWizard, VoiceField, WizardAction};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    let mut wizard = OnboardingWizard::new();
-    wizard.quick_jump = false;
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::TtsModeSelect;
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.quick_jump = false;
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::TtsModeSelect;
 
-    // Tab → Continue field
-    let action = wizard.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()));
-    assert_eq!(action, WizardAction::None);
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
+        // Tab → Continue field
+        let action = wizard.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()));
+        assert_eq!(action, WizardAction::None);
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
 
-    // Enter on Continue → next step
-    let action = wizard.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
-    assert_eq!(action, WizardAction::None);
-    assert_eq!(
-        wizard.step,
-        OnboardingStep::ImageSetup,
-        "Non-quick-jump should advance to next step"
-    );
+        // Enter on Continue → next step (a save, hence the temp home, #1399)
+        let action = wizard.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+        assert_eq!(action, WizardAction::None);
+        assert_eq!(
+            wizard.step,
+            OnboardingStep::ImageSetup,
+            "Non-quick-jump should advance to next step"
+        );
+    });
 }
 
 // ─── Local whisper codec support ───────────────────────────────────────────

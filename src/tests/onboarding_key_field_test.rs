@@ -5,11 +5,20 @@
 //! it as a value worth writing, so a configured provider displayed as empty
 //! and its key was overwritten with the literal marker on the next save.
 
-use crate::tui::onboarding::key_field::{is_configured, is_stored, masked, typed_secret};
+use crate::tui::onboarding::key_field::{is_stored, masked, typed_secret};
 use crate::tui::provider_selector::EXISTING_KEY_SENTINEL;
 
 fn is_new_secret(value: &str) -> bool {
     typed_secret(value).is_some()
+}
+
+/// The display gate as `render_secret_field` applies it: a field shows as
+/// configured exactly when `masked` has something to draw. The standalone
+/// `is_configured` helper was removed in d7e40ceb once the renderer was
+/// centralized; the contract it guarded is still pinned here through the
+/// function the renderer actually calls.
+fn is_configured(value: &str) -> bool {
+    !masked(value).is_empty()
 }
 
 #[test]
