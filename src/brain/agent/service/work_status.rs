@@ -271,6 +271,7 @@ impl WorkStatus {
             state: WorkState::Running,
             progress: None,
             finish: None,
+            parent_session_id: None,
         };
         status.write()?;
         Ok(status)
@@ -295,6 +296,7 @@ impl WorkStatus {
             state: WorkState::Running,
             progress: None,
             finish: None,
+            parent_session_id: None,
         });
         status.state = if exit.success {
             WorkState::Completed
@@ -432,8 +434,8 @@ impl WorkStatus {
     /// surface-less default. `None` for unknown, terminal, or non-agent
     /// work — those keep the existing resume behavior.
     pub fn find_agent_by_session(session_id: &str) -> Option<WorkStatus> {
-        let ids = list_all().ok()?;
-        ids.into_iter().filter_map(|id| read(&id)).find(|s| {
+        let ids = Self::list_all().ok()?;
+        ids.into_iter().filter_map(|id| Self::read(&id)).find(|s| {
             matches!(s.kind, WorkKind::Agent)
                 && s.session_id == session_id
                 && !s.state.is_terminal()
