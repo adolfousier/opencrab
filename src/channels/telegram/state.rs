@@ -366,6 +366,44 @@ impl Drop for ActiveTurnGuard {
     }
 }
 
+/// #61: everything the push-echo path needs to fold a notify line into a
+/// session's LIVE flow roll. `streaming` is the same Arc the edit loop
+/// renders from, so a fold under its lock is ordered with the loop's own
+/// writes; `chat`/`thread_id` are the coordinates the block's refresh
+/// (`refresh_flow`) edits through. A handle is only meaningful while
+/// `streaming.open_group_msg_id` is `Some` — the caller re-checks that at
+/// fold time, because the roll can close between registration and echo.
+#[derive(Clone)]
+pub(crate) struct LiveFlowHandle {
+    pub(crate) streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
+}
+
+/// RAII counterpart of [`ActiveTurnGuard`] for the #61 live-flow registry:
+/// held for the whole span of a turn so the echo path can trust that a
+/// registered handle belongs to a turn that is still running. Drop
+/// unregisters — normal return, `?`, and panic all end here.
+pub(crate) struct LiveFlowRegistration {
+    state: std::sync::Arc<TelegramState>,
+    session_id: Uuid,
+    /// The streaming Arc this registration wrote — drop compares pointer
+    /// identity so a stale guard never evicts a successor turn's entry.
+    streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
+}
+
+impl Drop for LiveFlowRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.state.live_flows.lock() {
+            let mine = map
+                .get(&self.session_id)
+                .is_some_and(|h| std::sync::Arc::ptr_eq(&h.streaming, &self.streaming));
+            if mine {
+                map.remove(&self.session_id);
+            }
+        }
+    }
+}
+
+
 impl TelegramState {
     pub fn new() -> Self {
         Self {
