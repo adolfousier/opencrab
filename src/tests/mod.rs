@@ -386,6 +386,7 @@ pub mod telegram_token_redaction_test;
 pub mod telegram_topic_routing_test;
 pub mod tool_search_child_registry_test;
 pub mod tools_md_regression_test;
+pub mod work_status_parent_binding_test;
 pub mod write_opencrabs_file_inline_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows
 // `dirs::home_dir()` uses the Win32 `SHGetKnownFolderPath` API rather

@@ -1466,6 +1466,15 @@ async fn cmd_chat_inner(
                                         response.content.len()
                                     );
                                     boot_report::record_delivered();
+                                    // A revived sub-agent session (#110): its
+                                    // result belongs to the session that spawned
+                                    // it, not to the surface-less default — route
+                                    // it to the parent, finalize the status file,
+                                    // and skip the surface event nobody reads.
+                                    if let Some(mut agent_status) = crate::brain::agent::service::work_status::WorkStatus::find_agent_by_session(&session_id.to_string()) {
+                                        crate::brain::agent::service::restart_recovery::deliver_revived_agent_outcome(&mut agent_status, Ok(&response.content)).await;
+                                        return;
+                                    }
                                     match channel.as_str() {
                                         "tui" => {
                                             let _ = ev_tx.send(
@@ -1544,6 +1553,14 @@ async fn cmd_chat_inner(
                                         e
                                     );
                                     boot_report::record_failed();
+                                    // A revived sub-agent session whose resume
+                                    // failed (#110): the parent is waiting on
+                                    // this outcome either way — report and
+                                    // finalize instead of dropping it.
+                                    if let Some(mut agent_status) = crate::brain::agent::service::work_status::WorkStatus::find_agent_by_session(&session_id.to_string()) {
+                                        crate::brain::agent::service::restart_recovery::deliver_revived_agent_outcome(&mut agent_status, Err(&e.to_string())).await;
+                                        return;
+                                    }
                                     if channel == "tui" {
                                         let _ = ev_tx.send(crate::tui::events::TuiEvent::Error {
                                             session_id,

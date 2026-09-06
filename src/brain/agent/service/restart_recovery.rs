@@ -435,7 +435,7 @@ fn tombstone_repo() -> Option<crate::db::PendingTombstoneRepository> {
 /// startup, because a report that only lives in memory still beats a report
 /// that panics the boot. The row is cleared the moment the report actually
 /// reaches a surface (see [`clear_persisted_tombstones`]).
-async fn persist_tombstone(session_id: Uuid, msg: &QueuedUserMessage) {
+pub(crate) async fn persist_tombstone(session_id: Uuid, msg: &QueuedUserMessage) {
     let Some(repo) = tombstone_repo() else {
         return;
     };
@@ -454,6 +454,76 @@ async fn persist_tombstone(session_id: Uuid, msg: &QueuedUserMessage) {
              in-memory queue alone and the next restart will lose it: {e:#}"
         );
     }
+}
+
+/// Deliver a boot-resumed sub-agent's outcome to the session that spawned it,
+/// and finalize the status file either way (#110).
+///
+/// Boot-resume revives an interrupted child session, but the child has no
+/// channel binding: the default surface route would drop the result where
+/// nobody reads it. The status file carries the spawning session, so the
+/// outcome goes there instead — the same delivery the live completion path
+/// uses. If no live route exists the report is durably parked, so the
+/// failure direction is a duplicate report, never a lost one.
+///
+/// Returns whether a status file was found and finalized (informational).
+pub(crate) async fn deliver_revived_agent_outcome(
+    status: &mut crate::brain::agent::service::work_status::WorkStatus,
+    outcome: std::result::Result<&str, &str>,
+) -> bool {
+    use crate::brain::agent::service::session_routes::{Delivery, deliver_to_session};
+
+    let Some(parent) = status
+        .parent_session_id
+        .as_deref()
+        .and_then(|p| Uuid::parse_str(p).ok())
+    else {
+        // Legacy file without a parent: nothing to route to, but still
+        // finalize so the file cannot zombie.
+        tracing::warn!(
+            target: "background_task",
+            "Revived sub-agent '{}' has no parent session recorded; finalizing status only",
+            status.id
+        );
+        return false;
+    };
+
+    let agent_id = status.id.clone();
+    let label = status.label.clone();
+    let msg = crate::brain::tools::subagent::spawn::completion_message(&label, &agent_id, outcome);
+    let delivered = matches!(
+        deliver_to_session(parent, msg.clone(), true),
+        Delivery::Delivered
+    );
+    if !delivered {
+        // Parked or unroutable: persist so a later restart cannot eat the
+        // report the same restart class produced (#73 semantics).
+        persist_tombstone(parent, &msg).await;
+    }
+    match outcome {
+        Ok(output) => {
+            if let Err(e) = status.mark_completed(truncate_tail(output, 512)) {
+                tracing::warn!(target: "background_task", "Could not finalize revived sub-agent status '{}': {e}", agent_id);
+            }
+        }
+        Err(error) => {
+            if let Err(e) = status.mark_failed(error.to_string()) {
+                tracing::warn!(target: "background_task", "Could not finalize revived sub-agent status '{}': {e}", agent_id);
+            }
+        }
+    }
+    delivered
+}
+
+/// Keep the tail of , the conclusion matters more than the opening.
+fn truncate_tail(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    let skip = count - max;
+    let tail: String = s.chars().skip(skip).collect();
+    format!("…(truncated)\n{tail}")
 }
 
 /// Re-offer every persisted tombstone from a previous process (#73).

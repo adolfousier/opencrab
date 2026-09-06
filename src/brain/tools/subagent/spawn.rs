@@ -486,12 +486,17 @@ impl Tool for SpawnAgentTool {
 
         // Create the status file in Pending state before spawning. new()
         // writes the file; we don't need the returned handle, but we do
-        // propagate any write error.
+        // propagate any write error. The parent is captured FIRST so the
+        // status file carries it: if a restart kills this agent mid-turn
+        // and boot-resume revives its session, the revived result must
+        // reach this session (#110).
+        let parent_session_id = context.session_id;
         let _ = WorkStatus::new_agent(
             &agent_id,
             &label,
             &child_session_id.to_string(),
             &full_prompt,
+            Some(&parent_session_id.to_string()),
         )
         .map_err(|e| ToolError::Execution(format!("Failed to create status file: {e}")))?;
 
@@ -503,10 +508,7 @@ impl Tool for SpawnAgentTool {
         let prompt_clone = full_prompt;
         let label_clone = label.clone();
         let mut input_rx = input_rx;
-        // The session that asked for this agent, so a result nobody is waiting
-        // on still reaches the caller instead of sitting in the manager map
-        // (#1036). Not the child's session, which nothing is listening to.
-        let parent_session_id = context.session_id;
+        // `parent_session_id` was captured above the status-file write (#110).
 
         let handle = tokio::spawn(async move {
             tracing::info!("Sub-agent {} starting: {}", agent_id_clone, prompt_clone);
@@ -518,6 +520,7 @@ impl Tool for SpawnAgentTool {
                     &label_clone,
                     &child_session_id.to_string(),
                     &prompt_clone,
+                    Some(&parent_session_id.to_string()),
                 )
                 .expect("status file")
             });
