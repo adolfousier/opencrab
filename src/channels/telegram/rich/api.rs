@@ -499,6 +499,9 @@ pub(crate) async fn send_rich_markdown_media_target_id(
 /// shape is unit-testable without a live bot. `message_id` is edit-only
 /// (#102): `editMessageText` multipart rejects with `message to edit not
 /// found` when the part is missing; `sendRichMessage` bodies carry no
+/// shape is unit-testable without a live bot. `message_id` is edit-only:
+/// `editMessageText` multipart rejects with `message to edit not found`
+/// when the part is missing; `sendRichMessage` bodies carry no
 /// `message_id`, so sends are unchanged.
 pub(crate) fn multipart_scalar_fields(body: &serde_json::Value) -> Vec<(String, String)> {
     let mut fields: Vec<(String, String)> = Vec::new();
@@ -524,6 +527,10 @@ pub(crate) fn multipart_scalar_fields(body: &serde_json::Value) -> Vec<(String, 
 /// uploaded PNG bytes via `attach://<id>`. Scalar parts come from
 /// [`multipart_scalar_fields`]; each byte entry becomes a file part named
 /// exactly `<id>` so Telegram's `attach://<id>` reference resolves
+/// Build the multipart/form-data request for a `sendRichMessage` whose media
+/// array references uploaded PNG bytes via `attach://<id>`. Scalar parts come
+/// from [`multipart_scalar_fields`]; each byte entry becomes a file part
+/// named exactly `<id>` so Telegram's `attach://<id>` reference resolves
 /// (§ Bot API multipart media convention). The JSON body is still passed in
 /// for correlation telemetry ([`rich_send_fields`] reads its `rich_message`
 /// pointer).
