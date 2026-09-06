@@ -301,6 +301,16 @@ pub struct TelegramState {
     /// `active_turns`: the echo path is async but the lock is never held
     /// across an await, so blocking contention is nil.
     live_flows: std::sync::Mutex<HashMap<Uuid, LiveFlowHandle>>,
+    /// #61 fold-dedupe (Alexey 2026-09-06): fingerprints of notifies
+    /// already folded into this session's roll. The 776a1fe5 incident
+    /// folded ONE notify into TWO concurrent rolls of the same session
+    /// (the #845 single-turn guard breach is lane #105's root cause;
+    /// this set is the roll-side defense). Entries must OUTLIVE any
+    /// single roll — the duplicate crossed rolls 25 minutes apart — so
+    /// the set is keyed by session, not by roll; it stays bounded via
+    /// `TelegramState::NOTIFY_FOLD_DEDUP_CAP` + TTL expiry.
+    notify_fold_dedup:
+        std::sync::Mutex<HashMap<Uuid, std::collections::VecDeque<(u64, std::time::Instant)>>>,
     /// Newest NON-STICKY message id seen per chat (#451, semantics sharpened
     /// by #1150). This is burial EVIDENCE for the flow block: user messages
     /// (recorded in the handler) plus non-sticky bot bubbles — intermediate
@@ -430,6 +440,7 @@ impl TelegramState {
             pending_reactions: std::sync::Mutex::new(HashMap::new()),
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
             live_flows: std::sync::Mutex::new(HashMap::new()),
+            notify_fold_dedup: std::sync::Mutex::new(HashMap::new()),
             chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
             last_sticky_action: std::sync::Mutex::new(HashMap::new()),
             media_dedup: super::outbound_dedup::MediaSendDedup::default(),
@@ -1392,6 +1403,63 @@ impl TelegramState {
         }
     }
 
+    /// #61 fold-dedupe cap: max fingerprints retained per session.
+    const NOTIFY_FOLD_DEDUP_CAP: usize = 64;
+    /// #61 fold-dedupe TTL: fingerprints expire after this window, so a
+    /// genuine re-send hours later still folds.
+    const NOTIFY_FOLD_DEDUP_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+    /// #61 fold-dedupe (Alexey 2026-09-06): atomically check-and-record a
+    /// folded notify fingerprint for the session. Returns `true` when the
+    /// fingerprint was ALREADY recorded within the TTL window — a
+    /// duplicate delivery the caller suppresses; `false` records it and
+    /// grants fold permission. Check and record share one lock scope, so
+    /// two racing folds of the same notify cannot both pass.
+    pub(crate) fn note_notify_fold(&self, session_id: Uuid, fingerprint: u64) -> bool {
+        self.note_notify_fold_at(session_id, fingerprint, std::time::Instant::now())
+    }
+
+    /// `note_notify_fold` with an injected clock — the test seam.
+    pub(crate) fn note_notify_fold_at(
+        &self,
+        session_id: Uuid,
+        fingerprint: u64,
+        now: std::time::Instant,
+    ) -> bool {
+        let mut map = self
+            .notify_fold_dedup
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let duplicate = match map.get_mut(&session_id) {
+            Some(entry) => {
+                entry.retain(|(_, at)| {
+                    now.checked_duration_since(*at)
+                        .is_some_and(|age| age < Self::NOTIFY_FOLD_DEDUP_TTL)
+                });
+                if entry.iter().any(|(fp, _)| *fp == fingerprint) {
+                    true
+                } else {
+                    entry.push_back((fingerprint, now));
+                    if entry.len() > Self::NOTIFY_FOLD_DEDUP_CAP {
+                        entry.pop_front();
+                    }
+                    false
+                }
+            }
+            None => {
+                map.insert(
+                    session_id,
+                    std::collections::VecDeque::from([(fingerprint, now)]),
+                );
+                false
+            }
+        };
+        if duplicate && map.get(&session_id).is_some_and(|e| e.is_empty()) {
+            map.remove(&session_id);
+        }
+        duplicate
+    }
+
     /// Enqueue a mid-turn reaction message for injection into the running loop.
     pub(crate) fn enqueue_reaction(
         &self,
@@ -1821,5 +1889,84 @@ mod tests {
             state.live_flow(sid).is_none(),
             "successor's own drop clears"
         );
+    }
+
+    /// #61 fold-dedupe: the same fingerprint folds once; a re-delivery is
+    /// the duplicate; a distinct fingerprint still folds.
+    #[test]
+    fn notify_fold_dedup_second_delivery_is_duplicate() {
+        let state = TelegramState::new();
+        let sid = Uuid::new_v4();
+        let now = std::time::Instant::now();
+        assert!(!state.note_notify_fold_at(sid, 111, now), "first fold");
+        assert!(state.note_notify_fold_at(sid, 111, now), "re-delivery dup");
+        assert!(!state.note_notify_fold_at(sid, 222, now), "distinct folds");
+        assert!(state.note_notify_fold_at(sid, 222, now), "its re-delivery");
+    }
+
+    /// TTL expiry: an expired fingerprint is foldable again — a genuine
+    /// re-send hours later is a real announcement, not a duplicate.
+    #[test]
+    fn notify_fold_dedup_ttl_expiry_refolds() {
+        let state = TelegramState::new();
+        let sid = Uuid::new_v4();
+        let t0 = std::time::Instant::now();
+        assert!(!state.note_notify_fold_at(sid, 7, t0));
+        let later = t0 + TelegramState::NOTIFY_FOLD_DEDUP_TTL + std::time::Duration::from_secs(1);
+        assert!(
+            !state.note_notify_fold_at(sid, 7, later),
+            "expired -> foldable"
+        );
+        assert!(state.note_notify_fold_at(sid, 7, later), "re-recorded");
+    }
+
+    /// Bounded memory: at the cap the oldest fingerprint is still held;
+    /// one more distinct push evicts it (foldable again) while younger
+    /// entries survive.
+    #[test]
+    fn notify_fold_dedup_cap_prunes_oldest() {
+        let state = TelegramState::new();
+        let sid = Uuid::new_v4();
+        let now = std::time::Instant::now();
+        for fp in 0..TelegramState::NOTIFY_FOLD_DEDUP_CAP as u64 {
+            assert!(!state.note_notify_fold_at(sid, fp, now));
+        }
+        assert!(
+            state.note_notify_fold_at(sid, 0, now),
+            "oldest still held at cap"
+        );
+        assert!(
+            !state.note_notify_fold_at(sid, 9999, now),
+            "distinct push evicts the oldest"
+        );
+        assert!(
+            state.note_notify_fold_at(sid, 1, now),
+            "younger survives the cap eviction"
+        );
+        // Re-inserting the evicted fingerprint is allowed — and itself
+        // evicts the then-oldest (fp 1), FIFO to the end.
+        assert!(
+            !state.note_notify_fold_at(sid, 0, now),
+            "evicted -> foldable"
+        );
+        assert!(
+            state.note_notify_fold_at(sid, 2, now),
+            "the rest of the window survives"
+        );
+    }
+
+    /// Dedupe is PER SESSION: two sessions fold the same fingerprint
+    /// independently.
+    #[test]
+    fn notify_fold_dedup_is_per_session() {
+        let state = TelegramState::new();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let now = std::time::Instant::now();
+        assert!(!state.note_notify_fold_at(a, 5, now));
+        assert!(
+            !state.note_notify_fold_at(b, 5, now),
+            "other session folds the same fp"
+        );
+        assert!(state.note_notify_fold_at(a, 5, now));
     }
 }

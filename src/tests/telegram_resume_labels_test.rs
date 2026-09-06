@@ -121,3 +121,45 @@ fn roll_line_under_cap_has_no_ellipsis() {
     assert!(!line.ends_with('…'));
     assert!(line.contains("short body"));
 }
+
+/// #61 fold-dedupe: identical (sender, body) pairs fingerprint equal.
+#[test]
+fn notify_fingerprint_matches_same_notify() {
+    let sender_uuid = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+    let s = NotifySender::Session(sender_uuid);
+    assert_eq!(
+        notify_fingerprint(&s, "same body"),
+        notify_fingerprint(&s, "same body")
+    );
+}
+
+/// #61 fold-dedupe: body or sender differences diverge; the tag byte
+/// keeps a session uuid apart from a CLI label spelling the same text.
+#[test]
+fn notify_fingerprint_diverges_on_body_or_sender() {
+    let u1 = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+    let u2 = Uuid::parse_str("99999999-2222-3333-4444-555555555555").unwrap();
+    let s1 = NotifySender::Session(u1);
+    let s2 = NotifySender::Session(u2);
+    assert_ne!(
+        notify_fingerprint(&s1, "body"),
+        notify_fingerprint(&s1, "other body"),
+        "body change diverges"
+    );
+    assert_ne!(
+        notify_fingerprint(&s1, "body"),
+        notify_fingerprint(&s2, "body"),
+        "sender change diverges"
+    );
+    let cli = NotifySender::CliTooling("11111111-2222-3333-4444-555555555555");
+    assert_ne!(
+        notify_fingerprint(&s1, "body"),
+        notify_fingerprint(&cli, "body"),
+        "tag byte: uuid session != cli label with same text"
+    );
+    assert_eq!(
+        notify_fingerprint(&cli, "body"),
+        notify_fingerprint(&cli, "body"),
+        "cli label stable"
+    );
+}

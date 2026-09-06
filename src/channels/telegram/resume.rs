@@ -1222,6 +1222,29 @@ pub(crate) fn build_notify_roll_line(label: &str, body: &str) -> String {
     }
 }
 
+/// #61 fold-dedupe fingerprint: tagged sender identity + the FULL body.
+/// Two deliveries of the same notify produce the same fingerprint; any
+/// body or sender difference produces a new one. The tag byte keeps a
+/// session uuid apart from a CLI label spelling the same text.
+/// DefaultHasher is deliberate: this is per-session display dedup, not a
+/// security boundary.
+pub(crate) fn notify_fingerprint(sender: &NotifySender<'_>, body: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    match sender {
+        NotifySender::Session(u) => {
+            0u8.hash(&mut hasher);
+            u.as_bytes().hash(&mut hasher);
+        }
+        NotifySender::CliTooling(label) => {
+            1u8.hash(&mut hasher);
+            label.hash(&mut hasher);
+        }
+    }
+    body.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// #61: fold a session-notify announcement into the session's LIVE flow
 /// roll. Returns `true` when the line was folded — the caller then skips
 /// the standalone #1221/#1225 bubble. Deliberate fallbacks (all →
@@ -1232,7 +1255,10 @@ pub(crate) fn build_notify_roll_line(label: &str, body: &str) -> String {
 /// under the streaming lock is the real gate; the lock is scoped and
 /// never held across the fold await). The notify CONTENT is not consumed
 /// here: the caller's normal queue/resume logic delivers it; this only
-/// replaces the announcement.
+/// replaces the announcement. Fold-dedupe (Alexey 2026-09-06): a notify
+/// already folded for this session within the TTL window also returns
+/// `true` WITHOUT re-rendering — same bubble-skip effect, nothing new on
+/// the roll (`TelegramState::note_notify_fold`).
 pub(crate) async fn fold_notify_into_roll(
     state: &TelegramState,
     bot: &teloxide::Bot,
@@ -1254,6 +1280,19 @@ pub(crate) async fn fold_notify_into_roll(
     };
     if roll_open.is_none() {
         return false;
+    }
+    // Fold-dedupe (Alexey 2026-09-06): the same notify delivered twice to
+    // one session folds ONCE — the 776a1fe5 incident rendered one notify
+    // in two concurrent rolls. Check-and-record is atomic under the state
+    // lock, so racing folds can't both pass. A duplicate returns `true`
+    // (keeps the caller's bubble gated off) without re-rendering; the
+    // content still reaches the session via the normal queue path.
+    let fingerprint = notify_fingerprint(&sender, &body);
+    if state.note_notify_fold(session_id, fingerprint) {
+        tracing::debug!(
+            "[bg-resume] #61: duplicate notify fold suppressed for session {session_id}"
+        );
+        return true;
     }
     let label = match sender {
         NotifySender::Session(s) => sender_label(state, bot, s, chat_id).await,
