@@ -302,3 +302,34 @@ fn settle_oversized_trailer_empty_host_drops_demote() {
         "empty host demotes to None, not an empty trailer"
     );
 }
+
+#[test]
+fn settle_demoted_host_trips_guard_concatenates_into_answer() {
+    // #92 demoted-host leg (the #58 matrix covered the trailer leg only):
+    // the displaced host itself trips the promotion guard — an oversized
+    // run, the config-independent leg (`should_render_mermaid` reads
+    // `Config::current()`; the fence leg shares the same guard call pinned
+    // by `trailer_promotes_to_answer_matrix`). Before the fix the
+    // fence-bearing host rode the trailer slot and shipped raw; now it is
+    // concatenated after the promoted trailer in the answer slot so BOTH
+    // texts ride the final-answer render path.
+    let big_host = "host ".repeat(121);
+    let big_trailer = "trailer ".repeat(76);
+    assert!(big_host.chars().count() > MAX_TRAILER_CHARS);
+    assert!(big_trailer.chars().count() > MAX_TRAILER_CHARS);
+    let (text, trailer) = settle_options_reclaim(
+        "unused content".into(),
+        Some(big_host.clone()),
+        Some(big_trailer.clone()),
+    );
+    assert_eq!(
+        text,
+        format!("{big_trailer}\n\n{big_host}"),
+        "promoted trailer keeps the answer head; the tripping demoted host \
+         concatenates after it"
+    );
+    assert_eq!(
+        trailer, None,
+        "trailer slot dies — both texts ride the answer render path"
+    );
+}
