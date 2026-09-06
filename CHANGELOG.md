@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 595 commits since v0.3.83. 591 files changed, +57,403 / -11,296 lines.
 
-The largest release so far by a wide margin: 595 commits against a previous
-record of 96, more than six times over. The version skips 0.4 deliberately:
+The biggest release since v0.3.9 in April, and more than six times the largest
+one since: 595 commits against a previous best of 97. Only v0.3.9 itself, at
+1,022 commits, was larger. The version skips 0.4 deliberately:
 pre-1.0 the number is communication rather than arithmetic, and 0.3.84 would
 have understated what this contains. The Rust library surface is still
 internal and unstable; see Versioning and stability in the README for what the
