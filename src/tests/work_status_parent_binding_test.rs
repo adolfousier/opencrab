@@ -67,7 +67,7 @@ fn legacy_file_without_parent_deserializes_and_is_skipped_by_nothing() {
     let child = Uuid::new_v4();
     let path = crate::brain::agent::service::work_status::status_path("agent-legacy");
     let body = format!(
-        r#"{{"id":"agent-legacy","kind":"agent","session_id":"{child}","label":"old","task":"p","spawned_at":"2026-01-01T00:00:00Z","state":"running"}}"#
+        r#"{{"id":"agent-legacy","kind":"agent","session_id":"{child}","label":"old","task":"p","spawned_at":"2026-01-01T00:00:00Z","state":"Running"}}"#
     );
     std::fs::write(&path, body).expect("write legacy file");
 
