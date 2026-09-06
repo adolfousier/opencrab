@@ -62,11 +62,11 @@ pub fn backup_before_write(path: &Path) -> std::io::Result<Option<std::path::Pat
 
     // Prune old backups: keep max 5, delete any older than 7 days
     if let Err(e) = prune_backups(path, 5, 7) {
-        eprintln!(
-            "Warning: failed to prune backups for {}: {}",
-            path.display(),
-            e
-        );
+        // tracing, not eprintln: this runs mid-turn while the TUI owns the
+        // screen, so printing lands outside the frame and corrupts the
+        // render. It also routes the message through the redacting writer
+        // (#1322), which direct printing bypasses entirely.
+        tracing::warn!("failed to prune backups for {}: {}", path.display(), e);
     }
 
     Ok(Some(backup))
@@ -121,8 +121,8 @@ fn prune_backups(path: &Path, max_count: usize, max_age_days: u64) -> std::io::R
             continue;
         }
         if let Err(e) = std::fs::remove_file(backup_path) {
-            eprintln!(
-                "Warning: failed to delete old backup {}: {}",
+            tracing::warn!(
+                "failed to delete old backup {}: {}",
                 backup_path.display(),
                 e
             );
