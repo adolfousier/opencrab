@@ -533,17 +533,6 @@ pub(crate) async fn deliver_final_response(
                             rich_md.len(),
                             intermediate_ids.len()
                         );
-<<<<<<< HEAD
-                        // Merge candidate (#tg-suggest-merge): every rich
-                        // bubble can carry the suggestion controls now —
-                        // table-bearing answers ride the markdown plane,
-                        // whose server-side render keeps tables intact
-                        // (#79 piece 4; the html plane flattened them,
-                        // #679, which is why they used to be excluded).
-                        final_bubble = Some(super::state::MergeBubble {
-                            message_id: teloxide::types::MessageId(rich_msg_id),
-                            body: super::state::BubbleBody::Markdown(pre_dedup_text.clone()),
-=======
                         // Merge candidate (#tg-suggest-merge): the id is
                         // captured ALWAYS. Table-free rich bubbles capture the
                         // body too; table-bearing ones capture body=None — #55
@@ -555,7 +544,6 @@ pub(crate) async fn deliver_final_response(
                             body: (!super::rich::contains_table(&pre_dedup_text)).then(|| {
                                 super::state::BubbleBody::Markdown(pre_dedup_text.clone())
                             }),
->>>>>>> adolfousier/main
                         });
                         // Store bot reply in channel_messages even though
                         // text_only is empty (dedup stripped it). The rich
@@ -580,11 +568,7 @@ pub(crate) async fn deliver_final_response(
                                 "text".to_string(),
                                 Some(rich_msg_id.to_string()),
                             )
-                            .with_thread(thread_id_str, None)
-                            // #91: mark the plane — this row is the legal
-                            // cross-turn glue target (stored markdown IS the
-                            // shipped body; a re-edit re-renders it 1:1).
-                            .with_ship_plane(Some("rich-md".to_string()));
+                            .with_thread(thread_id_str, None);
                             if let Err(e) = channel_msg_repo.insert(&cm).await {
                                 tracing::warn!(
                                     "Telegram: rich fallback: failed to record bot reply: {}",
@@ -820,18 +804,6 @@ pub(crate) async fn deliver_final_response(
                                     rich_md.len()
                                 );
                                 sent_reply_id = Some(id);
-<<<<<<< HEAD
-                                // Merge candidate (#tg-suggest-merge): the
-                                // controls can ride this bubble — table-bearing
-                                // answers included: the merge edit goes back out
-                                // on the markdown plane, whose server-side
-                                // render keeps tables intact (#79 piece 4; the
-                                // old html-plane merge flattened them, #679,
-                                // which is why tables used to be excluded).
-                                final_bubble = Some(super::state::MergeBubble {
-                                    message_id: teloxide::types::MessageId(id),
-                                    body: super::state::BubbleBody::Markdown(rich_md.clone()),
-=======
                                 // Merge candidate (#tg-suggest-merge): the id
                                 // is captured ALWAYS. Table-free bubbles carry
                                 // the controls in-body; table-bearing ones
@@ -843,7 +815,6 @@ pub(crate) async fn deliver_final_response(
                                     body: (!super::rich::contains_table(&rich_md)).then(|| {
                                         super::state::BubbleBody::Markdown(rich_md.clone())
                                     }),
->>>>>>> adolfousier/main
                                 });
                                 true
                             }
@@ -1039,9 +1010,7 @@ pub(crate) async fn deliver_final_response(
             // Hand the merge candidate to the turn state (#tg-suggest-merge):
             // handler.rs reads it immediately after this returns and passes it
             // into render_suggestions. None (rich / voice / suppressed paths)
-            // means suggestions fall to the #91 cross-turn glue rung — the
-            // conversation's last rich-md answer wears the controls — or the
-            // standalone block when no legal glue target exists.
+            // means suggestions fall back to their standalone block as before.
             if final_bubble.is_some() {
                 streaming
                     .lock()
