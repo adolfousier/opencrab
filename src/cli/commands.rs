@@ -1238,6 +1238,16 @@ pub(crate) async fn cmd_channel(
             println!();
             Ok(())
         }
+        #[cfg(feature = "telegram-userbot")]
+        ChannelCommands::UserbotLogin { code } => {
+            crate::channels::telegram::userbot::login::cmd_userbot_login(config, code).await
+        }
+        #[cfg(not(feature = "telegram-userbot"))]
+        ChannelCommands::UserbotLogin { .. } => {
+            anyhow::bail!(
+                "this build lacks the telegram-userbot feature — rebuild with --features telegram-userbot"
+            );
+        }
     }
 }
 

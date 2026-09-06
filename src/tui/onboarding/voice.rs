@@ -711,25 +711,14 @@ fn render_stt_openai_compat_fields(lines: &mut Vec<Line<'static>>, wizard: &Onbo
     );
 
     let key_focused = wizard.voice_field == VoiceField::SttOpenaiCompatKey;
-    // The sentinel means a key IS stored, just not shown. Reading it as
-    // "absent" is what made a configured provider render as unconfigured
-    // (#1039).
-    let has_key = super::key_field::is_configured(&wizard.stt_openai_compat_key_input);
-    render_text_field(
+    render_secret_field(
         lines,
         "  API Key: ",
-        &mask_if_not_empty(&wizard.stt_openai_compat_key_input),
+        &wizard.stt_openai_compat_key_input,
         "optional",
         key_focused,
+        Some("(API key is optional for this provider)"),
     );
-    if key_focused && !has_key {
-        lines.push(Line::from(Span::styled(
-            "    (API key is optional for this provider)",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
-        )));
-    }
 }
 
 fn render_stt_voicebox_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
@@ -844,22 +833,14 @@ fn render_tts_api_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
 
     // API Key field
     let key_focused = wizard.voice_field == VoiceField::TtsApiKey;
-    let has_key = super::key_field::typed_secret(&wizard.tts_api_key_input).is_some();
-    render_text_field(
+    render_secret_field(
         lines,
         "  API Key: ",
-        &mask_if_not_empty(&wizard.tts_api_key_input),
+        &wizard.tts_api_key_input,
         "uses OpenAI key",
         key_focused,
+        Some("(falls back to your OpenAI chat key if empty)"),
     );
-    if key_focused && !has_key && !super::key_field::is_stored(&wizard.tts_api_key_input) {
-        lines.push(Line::from(Span::styled(
-            "    (falls back to your OpenAI chat key if empty)",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
-        )));
-    }
 }
 
 fn render_tts_openai_compat_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
@@ -891,22 +872,14 @@ fn render_tts_openai_compat_fields(lines: &mut Vec<Line<'static>>, wizard: &Onbo
     );
 
     let key_focused = wizard.voice_field == VoiceField::TtsOpenaiCompatKey;
-    let has_key = super::key_field::is_configured(&wizard.tts_openai_compat_key_input);
-    render_text_field(
+    render_secret_field(
         lines,
         "  API Key: ",
-        &mask_if_not_empty(&wizard.tts_openai_compat_key_input),
+        &wizard.tts_openai_compat_key_input,
         "optional",
         key_focused,
+        Some("(API key is optional for this provider)"),
     );
-    if key_focused && !has_key {
-        lines.push(Line::from(Span::styled(
-            "    (API key is optional for this provider)",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
-        )));
-    }
 }
 
 fn render_tts_voicebox_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
@@ -971,8 +944,73 @@ fn render_radio(lines: &mut Vec<Line<'static>>, focused: bool, selected: bool, l
     ]));
 }
 
-fn mask_if_not_empty(s: &str) -> String {
-    super::key_field::masked(s)
+/// Secret input field with stored-key awareness.
+///
+/// Mirrors the Groq key field's grammar: a stored key (sentinel-seeded
+/// input) renders as masked dots in teal with an "(already configured)"
+/// hint when focused. A freshly typed key renders as dots in the normal
+/// field colors. The raw secret is never shown: every voice key field
+/// speaks the same saved-state color language.
+fn render_secret_field(
+    lines: &mut Vec<Line<'static>>,
+    label: &'static str,
+    input: &str,
+    placeholder: &'static str,
+    focused: bool,
+    empty_hint: Option<&'static str>,
+) {
+    let stored = super::key_field::is_stored(input);
+    let display = if input.is_empty() {
+        placeholder.to_string()
+    } else {
+        super::key_field::masked(input)
+    };
+    let color = if focused {
+        brand_blue()
+    } else {
+        Color::DarkGray
+    };
+    let text_color = if stored {
+        Color::Cyan
+    } else if input.is_empty() {
+        Color::DarkGray
+    } else if focused {
+        Color::White
+    } else {
+        Color::Gray
+    };
+    let cursor = if focused && !stored && input.is_empty() {
+        "\u{2588}"
+    } else {
+        ""
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(label, Style::default().fg(color)),
+        Span::styled(
+            format!("{}{}", display, cursor),
+            Style::default().fg(text_color),
+        ),
+    ]));
+
+    if stored && focused {
+        lines.push(Line::from(Span::styled(
+            "    (already configured)",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::ITALIC),
+        )));
+    } else if let Some(hint) = empty_hint
+        && focused
+        && input.is_empty()
+    {
+        lines.push(Line::from(Span::styled(
+            format!("    {}", hint),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )));
+    }
 }
 
 fn render_text_field(

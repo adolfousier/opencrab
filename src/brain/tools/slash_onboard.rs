@@ -160,6 +160,22 @@ pub(crate) fn onboard_voice(args: &str) -> Result<ToolResult> {
     }
 }
 
+/// Put the engine this command just enabled at the head of the on-disk
+/// chain (#1399): enabling a flag while the chain still leads with a
+/// disabled engine leaves voice dead from the next boot.
+fn promote_chain_head(section: &str, head: &str) -> Result<()> {
+    let vc = crate::config::Config::current().voice_config();
+    let current = if section == "providers.stt" {
+        &vc.stt_fallback_chain
+    } else {
+        &vc.tts_fallback_chain
+    };
+    let chain = crate::tui::onboarding::voice_chain::promote_head(current, head);
+    Config::write_array(section, "fallback_chain", &chain).map_err(|e| {
+        super::error::ToolError::Execution(format!("Failed to write {section}.fallback_chain: {e}"))
+    })
+}
+
 fn onboard_voice_stt(rest: &str) -> Result<ToolResult> {
     let (provider, params) = split_first(rest);
     match provider.to_lowercase().as_str() {
@@ -181,6 +197,7 @@ fn onboard_voice_stt(rest: &str) -> Result<ToolResult> {
             // Persist the enablement too: keys alone do not flip the runtime
             // voice gate (#1233). Mirrors the openai-compatible arm below.
             set_flags(&[("providers.stt.groq", "enabled", "true")])?;
+            promote_chain_head("providers.stt", "groq")?;
             Ok(ToolResult::success(
                 "Groq Whisper STT enabled (uses your Groq key).".into(),
             ))
@@ -202,6 +219,7 @@ fn onboard_voice_stt(rest: &str) -> Result<ToolResult> {
             {
                 return Ok(ToolResult::error(format!("Failed to save key: {e}")));
             }
+            promote_chain_head("providers.stt", "openai_compatible")?;
             Ok(ToolResult::success(format!(
                 "OpenAI-compatible STT enabled ({model} @ {base_url})."
             )))
@@ -228,6 +246,7 @@ fn onboard_voice_tts(rest: &str) -> Result<ToolResult> {
             if let Err(e) = crate::config::write_secret_key("providers.openai", "api_key", key) {
                 return Ok(ToolResult::error(format!("Failed to save key: {e}")));
             }
+            promote_chain_head("providers.tts", "openai")?;
             Ok(ToolResult::success("OpenAI TTS enabled.".into()))
         }
         other => Ok(ToolResult::error(format!(

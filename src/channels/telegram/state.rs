@@ -18,21 +18,23 @@ use uuid::Uuid;
 /// instead of posting a separate "Suggested next" message, the tap handler
 /// needs the bubble's exact HTML to record the pick WITHOUT erasing the
 /// answer text (`edit_message_text` replaces the whole body).
+/// #59: bound on rescued dead-host records (FIFO eviction).
+const STALE_HOST_CAP: usize = 32;
+
 #[derive(Clone)]
 pub(crate) struct MergedHost {
     pub message_id: MessageId,
-    /// Body last rendered in that bubble (final response text, plus the
-    /// folded option list when present). HTML for html-plane hosts; the
-    /// merged markdown payload for markdown-plane hosts.
+    /// HTML last rendered in that bubble (final response text, plus the
+    /// folded option list when present).
     pub html: String,
     /// Host lives on the native rich API: tap-record edits must ride
     /// `super::rich::api::edit_rich_html`, not teloxide's edit_message_text.
     pub rich: bool,
-    /// Markdown-plane host (#79 piece 4): the merged markdown payload.
-    /// When set, pick redraws and strips ride `edit_rich_markdown` —
-    /// the server-side render keeps tables intact (#679). `None` = the
-    /// html plane.
-    pub markdown: Option<String>,
+    /// #55: the keyboard was GLUED onto this bubble (glue tier — the body
+    /// was not merge-safe, e.g. a table-bearing rich answer). The body is
+    /// unknown/unsafe to rewrite, so a tap strips the keyboard markup-only
+    /// and echoes the pick record as its own note instead of editing text.
+    pub glued: bool,
 }
 
 /// Merge candidate captured by deliver_final_response (#tg-suggest-merge):
@@ -40,7 +42,11 @@ pub(crate) struct MergedHost {
 #[derive(Clone)]
 pub(crate) struct MergeBubble {
     pub message_id: MessageId,
-    pub body: BubbleBody,
+    /// `Some` = merge-safe body (classic HTML or table-free rich markdown).
+    /// `None` = rich answer carries a table (#55): merging would flatten it,
+    /// but the id is still a valid GLUE target — `edit_message_reply_markup`
+    /// attaches the keyboard without ever touching the body.
+    pub body: Option<BubbleBody>,
 }
 
 /// How a captured [`MergeBubble`] was sent — decides which edit call merges
@@ -55,12 +61,6 @@ pub(crate) enum BubbleBody {
     /// tables (#679) — and those keep the standalone fallback.
     Markdown(String),
 }
-
-/// #59: rescued merged-host records from `clear_pending_followups` — the
-/// #597 clear kills the stash, but rich-merged buttons keep rendering inside
-/// the bubble body until a stale-shell tap rewrites it clean. FIFO deque,
-/// bounded at STALE_HOST_CAP (oldest evicted).
-const STALE_HOST_CAP: usize = 32;
 
 /// One registered follow-up suggestion keyboard: which session it belongs to,
 /// the options it offered, and — when the buttons were merged onto the answer
@@ -183,7 +183,11 @@ pub struct TelegramState {
     /// tap handler resolves `idx -> suggestion string`; cleared on tap or when
     /// the user sends anything.
     pending_followups: Mutex<HashMap<String, PendingFollowupEntry>>,
-    /// #59: expired-but-still-rendering merged-host records, token-first.
+    /// #59: merged-host records of stash entries cleared by #597 (user sent
+    /// their own message). The stash entry dies, but RICH-merged buttons
+    /// survive visually inside the bubble body — a stale-shell tap needs to
+    /// know WHAT SHAPE of dead keyboard to strip and from where. Keyed
+    /// token-first in a FIFO deque, bounded at STALE_HOST_CAP (oldest evicted).
     stale_hosts: Mutex<VecDeque<(String, MergedHost)>>,
     /// Solo-owner auto-registration cache (#1155): chat_id → decision already
     /// reached. `true` = eligible solo group, full owner catalog registered;
@@ -286,27 +290,6 @@ pub struct TelegramState {
     /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
     /// session looking permanently busy.
     active_turns: std::sync::Mutex<std::collections::HashSet<Uuid>>,
-    /// #61: sessions with a LIVE flow roll on screen — the in-flight
-    /// `StreamingState` plus the chat coordinates its block renders in.
-    /// The push-echo path consults this to decide that a session notify
-    /// folds a line INTO the roll instead of posting a standalone bubble.
-    /// Registered at both turn sites (user turns and push-initiated turns)
-    /// via [`TelegramState::register_live_flow`], which returns a
-    /// [`LiveFlowRegistration`] drop-guard so any turn exit — normal,
-    /// error, or panic — unregisters. `std::sync::Mutex` like
-    /// `active_turns`: the echo path is async but the lock is never held
-    /// across an await, so blocking contention is nil.
-    live_flows: std::sync::Mutex<HashMap<Uuid, LiveFlowHandle>>,
-    /// #61 fold-dedupe (Alexey 2026-09-06): fingerprints of notifies
-    /// already folded into this session's roll. The 776a1fe5 incident
-    /// folded ONE notify into TWO concurrent rolls of the same session
-    /// (the #845 single-turn guard breach is lane #105's root cause;
-    /// this set is the roll-side defense). Entries must OUTLIVE any
-    /// single roll — the duplicate crossed rolls 25 minutes apart — so
-    /// the set is keyed by session, not by roll; it stays bounded via
-    /// `TelegramState::NOTIFY_FOLD_DEDUP_CAP` + TTL expiry.
-    notify_fold_dedup:
-        std::sync::Mutex<HashMap<Uuid, std::collections::VecDeque<(u64, std::time::Instant)>>>,
     /// Newest NON-STICKY message id seen per chat (#451, semantics sharpened
     /// by #1150). This is burial EVIDENCE for the flow block: user messages
     /// (recorded in the handler) plus non-sticky bot bubbles — intermediate
@@ -359,43 +342,6 @@ impl Drop for ActiveTurnGuard {
     }
 }
 
-/// #61: everything the push-echo path needs to fold a notify line into a
-/// session's LIVE flow roll. `streaming` is the same Arc the edit loop
-/// renders from, so a fold under its lock is ordered with the loop's own
-/// writes; `chat`/`thread_id` are the coordinates the block's refresh
-/// (`refresh_flow`) edits through. A handle is only meaningful while
-/// `streaming.open_group_msg_id` is `Some` — the caller re-checks that at
-/// fold time, because the roll can close between registration and echo.
-#[derive(Clone)]
-pub(crate) struct LiveFlowHandle {
-    pub(crate) streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
-}
-
-/// RAII counterpart of [`ActiveTurnGuard`] for the #61 live-flow registry:
-/// held for the whole span of a turn so the echo path can trust that a
-/// registered handle belongs to a turn that is still running. Drop
-/// unregisters — normal return, `?`, and panic all end here.
-pub(crate) struct LiveFlowRegistration {
-    state: std::sync::Arc<TelegramState>,
-    session_id: Uuid,
-    /// The streaming Arc this registration wrote — drop compares pointer
-    /// identity so a stale guard never evicts a successor turn's entry.
-    streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
-}
-
-impl Drop for LiveFlowRegistration {
-    fn drop(&mut self) {
-        if let Ok(mut map) = self.state.live_flows.lock() {
-            let mine = map
-                .get(&self.session_id)
-                .is_some_and(|h| std::sync::Arc::ptr_eq(&h.streaming, &self.streaming));
-            if mine {
-                map.remove(&self.session_id);
-            }
-        }
-    }
-}
-
 impl TelegramState {
     pub fn new() -> Self {
         Self {
@@ -433,8 +379,6 @@ impl TelegramState {
             pending_file_saves: Mutex::new(HashMap::new()),
             pending_reactions: std::sync::Mutex::new(HashMap::new()),
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
-            live_flows: std::sync::Mutex::new(HashMap::new()),
-            notify_fold_dedup: std::sync::Mutex::new(HashMap::new()),
             chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
             last_sticky_action: std::sync::Mutex::new(HashMap::new()),
             media_dedup: super::outbound_dedup::MediaSendDedup::default(),
@@ -899,34 +843,10 @@ impl TelegramState {
             .and_then(|e| e.host.clone())
     }
 
-    /// #91: does any live suggestion keyboard — pending or stale-but-not-yet-
-    /// stripped — already ride this message? The cross-turn glue refuses such
-    /// targets: a second keyboard on one bubble breaks the first one's taps,
-    /// and a #59 stale strip would later rip the glue's fresh buttons off.
-    pub(crate) async fn message_hosts_live_keyboard(
-        &self,
-        mid: teloxide::types::MessageId,
-    ) -> bool {
-        if self
-            .pending_followups
-            .lock()
-            .await
-            .values()
-            .any(|e| e.host.as_ref().is_some_and(|h| h.message_id == mid))
-        {
-            return true;
-        }
-        self.stale_hosts
-            .lock()
-            .await
-            .iter()
-            .any(|(_, h)| h.message_id == mid)
-    }
-
-    /// #59: the host shape of an expired token's bubble, if its keyboard
-    /// still renders somewhere. Read-only — the record survives until the
-    /// strip is confirmed, so repeated taps on the same zombie stay
-    /// log-attributable instead of silently degrading to the blind strip.
+    /// #59: peek the dead-host record of a #597-cleared stash entry WITHOUT
+    /// consuming it — the stale-shell tap needs the host SHAPE (rich body
+    /// buttons vs glued/classic reply-markup) to pick the right strip; the
+    /// record is forgotten only after the strip succeeds (`forget_stale_host`).
     pub(crate) async fn peek_stale_host(&self, token: &str) -> Option<MergedHost> {
         self.stale_hosts
             .lock()
@@ -976,6 +896,9 @@ impl TelegramState {
     ) -> Option<(PendingFollowupEntry, String, usize)> {
         let entry = self.pending_followups.lock().await.remove(token)?;
         self.forget_followup(token).await;
+        // #67: idx rides along — the tap-redraw rewrite runs in a spawned
+        // task lexically outside the arm that binds idx, so the tapped
+        // index must come back through the take's return tuple.
         entry
             .options
             .get(idx)
@@ -1005,9 +928,8 @@ impl TelegramState {
         // rendering inside the bubble body. Without the rescued shape the
         // stale-shell tap can only try a blind markup strip, which on a rich
         // host is a guaranteed "message is not modified" no-op (the zombie).
-        let (removed, rescued): (usize, Vec<(String, MergedHost)>) = {
+        let rescued: Vec<(String, MergedHost)> = {
             let mut map = self.pending_followups.lock().await;
-            let before = map.len();
             let mut rescued = Vec::new();
             map.retain(|token, e| {
                 if e.session_id == session_id {
@@ -1019,8 +941,9 @@ impl TelegramState {
                     true
                 }
             });
-            (before - map.len(), rescued)
+            rescued
         };
+        let removed = rescued.len();
         if !rescued.is_empty() {
             let mut stale = self.stale_hosts.lock().await;
             for pair in rescued {
@@ -1211,7 +1134,9 @@ impl TelegramState {
                         message_id: MessageId(h.message_id as i32),
                         html: h.html,
                         rich: h.rich,
-                        markdown: h.markdown,
+                        // Port note (#55): persisted rows predate the glue
+                        // tier; restore as non-glued (pre-glue tap path).
+                        glued: false,
                     });
                     let token = row.token;
                     let entry = PendingFollowupEntry {
@@ -1249,7 +1174,6 @@ impl TelegramState {
                     message_id: i64::from(h.message_id.0),
                     html: h.html.clone(),
                     rich: h.rich,
-                    markdown: h.markdown.clone(),
                 }),
         };
         let guard = self.followup_store.lock().await;
@@ -1370,108 +1294,6 @@ impl TelegramState {
             .lock()
             .map(|s| s.contains(&session_id))
             .unwrap_or(false)
-    }
-
-    /// #61: register this turn's live flow roll, returning the drop-guard
-    /// that unregisters it. Takes `&Arc<Self>` because the guard must be
-    /// able to reach the registry after the turn's stack is gone. One live
-    /// roll per session by construction — but a re-register CAN precede
-    /// the previous turn's guard drop (turn overlap windows), and a naive
-    /// guard drop would then evict the NEW turn's entry. So the guard
-    /// holds its own streaming Arc and its drop removes the entry only if
-    /// the stored handle's streaming Arc is the same allocation
-    /// (`Arc::ptr_eq`) — a stale guard is a no-op against the successor.
-    pub(crate) fn register_live_flow(
-        self: &std::sync::Arc<Self>,
-        session_id: Uuid,
-        handle: LiveFlowHandle,
-    ) -> LiveFlowRegistration {
-        if let Ok(mut map) = self.live_flows.lock() {
-            map.insert(session_id, handle.clone());
-        }
-        LiveFlowRegistration {
-            state: std::sync::Arc::clone(self),
-            session_id,
-            streaming: handle.streaming,
-        }
-    }
-
-    /// #61: clone out the live-flow handle for `session_id`, if one is
-    /// registered. Registration proves a turn is in flight, NOT that the
-    /// roll block is still open — the caller must re-check
-    /// `open_group_msg_id.is_some()` under the streaming lock before
-    /// folding (the roll can close between lookup and fold).
-    pub(crate) fn live_flow(&self, session_id: Uuid) -> Option<LiveFlowHandle> {
-        self.live_flows
-            .lock()
-            .ok()
-            .and_then(|map| map.get(&session_id).cloned())
-    }
-
-    /// #61: explicit unregister — used by tests and by turns that defuse
-    /// the drop-guard (rare; the guard's Drop normally suffices).
-    #[cfg(test)]
-    pub(crate) fn unregister_live_flow(&self, session_id: Uuid) {
-        if let Ok(mut map) = self.live_flows.lock() {
-            map.remove(&session_id);
-        }
-    }
-
-    /// #61 fold-dedupe cap: max fingerprints retained per session.
-    const NOTIFY_FOLD_DEDUP_CAP: usize = 64;
-    /// #61 fold-dedupe TTL: fingerprints expire after this window, so a
-    /// genuine re-send hours later still folds.
-    const NOTIFY_FOLD_DEDUP_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
-
-    /// #61 fold-dedupe (Alexey 2026-09-06): atomically check-and-record a
-    /// folded notify fingerprint for the session. Returns `true` when the
-    /// fingerprint was ALREADY recorded within the TTL window — a
-    /// duplicate delivery the caller suppresses; `false` records it and
-    /// grants fold permission. Check and record share one lock scope, so
-    /// two racing folds of the same notify cannot both pass.
-    pub(crate) fn note_notify_fold(&self, session_id: Uuid, fingerprint: u64) -> bool {
-        self.note_notify_fold_at(session_id, fingerprint, std::time::Instant::now())
-    }
-
-    /// `note_notify_fold` with an injected clock — the test seam.
-    pub(crate) fn note_notify_fold_at(
-        &self,
-        session_id: Uuid,
-        fingerprint: u64,
-        now: std::time::Instant,
-    ) -> bool {
-        let mut map = self
-            .notify_fold_dedup
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let duplicate = match map.get_mut(&session_id) {
-            Some(entry) => {
-                entry.retain(|(_, at)| {
-                    now.checked_duration_since(*at)
-                        .is_some_and(|age| age < Self::NOTIFY_FOLD_DEDUP_TTL)
-                });
-                if entry.iter().any(|(fp, _)| *fp == fingerprint) {
-                    true
-                } else {
-                    entry.push_back((fingerprint, now));
-                    if entry.len() > Self::NOTIFY_FOLD_DEDUP_CAP {
-                        entry.pop_front();
-                    }
-                    false
-                }
-            }
-            None => {
-                map.insert(
-                    session_id,
-                    std::collections::VecDeque::from([(fingerprint, now)]),
-                );
-                false
-            }
-        };
-        if duplicate && map.get(&session_id).is_some_and(|e| e.is_empty()) {
-            map.remove(&session_id);
-        }
-        duplicate
     }
 
     /// Enqueue a mid-turn reaction message for injection into the running loop.
@@ -1795,198 +1617,5 @@ impl TelegramState {
     /// Clear the profile-create flow state.
     pub async fn clear_prof_create(&self, chat_id: i64) {
         self.prof_create_states.lock().await.remove(&chat_id);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::channels::telegram::flow::StreamingState;
-    use std::sync::Arc;
-
-    /// Minimal StreamingState with one OPEN roll block — enough for
-    /// registry lifecycle tests; field set mirrors the turn-site literal
-    /// in handler.rs (house pattern, src/tests/telegram_stream_loop_resume_test.rs).
-    fn open_roll() -> std::sync::Arc<std::sync::Mutex<StreamingState>> {
-        Arc::new(std::sync::Mutex::new(StreamingState {
-            is_dm: true,
-            pending_suggestions: None,
-            pending_trailer: None,
-            msg_id: None,
-            thinking: String::new(),
-            tool_msgs: Vec::new(),
-            display_queue: Vec::new(),
-            open_group_msg_id: Some(teloxide::types::MessageId(1)),
-            rich_transport_failures: 0,
-            flow_entries: Vec::new(),
-            flow_status: None,
-            flow_rich: false,
-            response: String::new(),
-            final_bubble: None,
-            dirty: false,
-            recreate: false,
-            header_preview: None,
-            compacting: false,
-            sections: Default::default(),
-            retained_goal: None,
-            applied_plan_kb: Default::default(),
-            tool_round_count: 0,
-            tools_started_at: None,
-            turn_started_at: std::time::Instant::now(),
-            flow_outcome: None,
-            bg_indicator: None,
-            bg_count: None,
-            subagent_counts: Default::default(),
-            sent_intermediates: Vec::new(),
-            intermediate_msg_ids: Vec::new(),
-            voice_msg_ids: Vec::new(),
-            processing: true,
-            is_cli: false,
-        }))
-    }
-
-    fn handle_for(streaming: &std::sync::Arc<std::sync::Mutex<StreamingState>>) -> LiveFlowHandle {
-        LiveFlowHandle {
-            streaming: std::sync::Arc::clone(streaming),
-        }
-    }
-
-    /// Register → lookup returns the same coordinates; explicit
-    /// unregister (cfg(test) path) clears; dropping an ALREADY-spent guard
-    /// afterwards is a no-op, not a panic.
-    #[test]
-    fn live_flow_registration_roundtrip() {
-        let state = std::sync::Arc::new(TelegramState::new());
-        let sid = Uuid::new_v4();
-        assert!(state.live_flow(sid).is_none(), "fresh state: no live flow");
-        let roll = open_roll();
-        let guard = state.register_live_flow(sid, handle_for(&roll));
-        let h = state.live_flow(sid).expect("registered handle visible");
-        assert!(
-            std::sync::Arc::ptr_eq(&h.streaming, &roll),
-            "registered handle carries this turn's streaming Arc"
-        );
-        state.unregister_live_flow(sid);
-        assert!(state.live_flow(sid).is_none(), "explicit unregister clears");
-        drop(guard); // stale guard vs empty map: no panic, no resurrect
-        assert!(state.live_flow(sid).is_none());
-    }
-
-    /// The RAII contract: scope exit — normal, early return, or panic
-    /// unwind — unregisters. This pins the drop path.
-    #[test]
-    fn live_flow_guard_drop_unregisters() {
-        let state = std::sync::Arc::new(TelegramState::new());
-        let sid = Uuid::new_v4();
-        {
-            let _g = state.register_live_flow(sid, handle_for(&open_roll()));
-            assert!(state.live_flow(sid).is_some(), "live during the turn");
-        }
-        assert!(state.live_flow(sid).is_none(), "guard drop must unregister");
-    }
-
-    /// Turn-overlap window (#61): a successor turn registers before the
-    /// previous turn's guard drops. The stale guard must NOT evict the
-    /// successor's entry — Arc::ptr_eq identity is what spares it.
-    #[test]
-    fn live_flow_stale_guard_spares_successor() {
-        let state = std::sync::Arc::new(TelegramState::new());
-        let sid = Uuid::new_v4();
-        let roll1 = open_roll();
-        let roll2 = open_roll();
-        let g1 = state.register_live_flow(sid, handle_for(&roll1));
-        let g2 = state.register_live_flow(sid, handle_for(&roll2));
-        drop(g1); // stale: its streaming Arc is no longer the registered one
-        let h = state
-            .live_flow(sid)
-            .expect("successor survives the stale guard drop");
-        assert!(
-            std::sync::Arc::ptr_eq(&h.streaming, &roll2),
-            "successor's handle"
-        );
-        drop(g2);
-        assert!(
-            state.live_flow(sid).is_none(),
-            "successor's own drop clears"
-        );
-    }
-
-    /// #61 fold-dedupe: the same fingerprint folds once; a re-delivery is
-    /// the duplicate; a distinct fingerprint still folds.
-    #[test]
-    fn notify_fold_dedup_second_delivery_is_duplicate() {
-        let state = TelegramState::new();
-        let sid = Uuid::new_v4();
-        let now = std::time::Instant::now();
-        assert!(!state.note_notify_fold_at(sid, 111, now), "first fold");
-        assert!(state.note_notify_fold_at(sid, 111, now), "re-delivery dup");
-        assert!(!state.note_notify_fold_at(sid, 222, now), "distinct folds");
-        assert!(state.note_notify_fold_at(sid, 222, now), "its re-delivery");
-    }
-
-    /// TTL expiry: an expired fingerprint is foldable again — a genuine
-    /// re-send hours later is a real announcement, not a duplicate.
-    #[test]
-    fn notify_fold_dedup_ttl_expiry_refolds() {
-        let state = TelegramState::new();
-        let sid = Uuid::new_v4();
-        let t0 = std::time::Instant::now();
-        assert!(!state.note_notify_fold_at(sid, 7, t0));
-        let later = t0 + TelegramState::NOTIFY_FOLD_DEDUP_TTL + std::time::Duration::from_secs(1);
-        assert!(
-            !state.note_notify_fold_at(sid, 7, later),
-            "expired -> foldable"
-        );
-        assert!(state.note_notify_fold_at(sid, 7, later), "re-recorded");
-    }
-
-    /// Bounded memory: at the cap the oldest fingerprint is still held;
-    /// one more distinct push evicts it (foldable again) while younger
-    /// entries survive.
-    #[test]
-    fn notify_fold_dedup_cap_prunes_oldest() {
-        let state = TelegramState::new();
-        let sid = Uuid::new_v4();
-        let now = std::time::Instant::now();
-        for fp in 0..TelegramState::NOTIFY_FOLD_DEDUP_CAP as u64 {
-            assert!(!state.note_notify_fold_at(sid, fp, now));
-        }
-        assert!(
-            state.note_notify_fold_at(sid, 0, now),
-            "oldest still held at cap"
-        );
-        assert!(
-            !state.note_notify_fold_at(sid, 9999, now),
-            "distinct push evicts the oldest"
-        );
-        assert!(
-            state.note_notify_fold_at(sid, 1, now),
-            "younger survives the cap eviction"
-        );
-        // Re-inserting the evicted fingerprint is allowed — and itself
-        // evicts the then-oldest (fp 1), FIFO to the end.
-        assert!(
-            !state.note_notify_fold_at(sid, 0, now),
-            "evicted -> foldable"
-        );
-        assert!(
-            state.note_notify_fold_at(sid, 2, now),
-            "the rest of the window survives"
-        );
-    }
-
-    /// Dedupe is PER SESSION: two sessions fold the same fingerprint
-    /// independently.
-    #[test]
-    fn notify_fold_dedup_is_per_session() {
-        let state = TelegramState::new();
-        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
-        let now = std::time::Instant::now();
-        assert!(!state.note_notify_fold_at(a, 5, now));
-        assert!(
-            !state.note_notify_fold_at(b, 5, now),
-            "other session folds the same fp"
-        );
-        assert!(state.note_notify_fold_at(a, 5, now));
     }
 }

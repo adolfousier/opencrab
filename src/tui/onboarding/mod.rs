@@ -17,6 +17,7 @@ mod navigation;
 pub mod state;
 mod types;
 pub mod voice;
+pub(crate) mod voice_chain;
 mod wizard;
 
 // Re-export all public types

@@ -102,7 +102,7 @@ The docs and the landing at [opencrabs.com](https://opencrabs.com) are available
 - [TOOLS.md](src/docs/reference/templates/TOOLS.md) — tool usage and skills
 - [MEMORY.md](src/docs/reference/templates/MEMORY.md) — long-term memory
 - [CODE.md](src/docs/reference/templates/CODE.md) — coding standards
-- [SECURITY.md](src/docs/reference/templates/SECURITY.md) — security policies
+- [SECURITY.md](src/docs/reference/templates/SECURITY.md) — security policies the agent follows (not the repo's vulnerability-disclosure policy, which is [/SECURITY.md](SECURITY.md))
 - [BOOT.md](src/docs/reference/templates/BOOT.md) — startup and service config
 - [USER.md](src/docs/reference/templates/USER.md) — user profile template
 - [HEARTBEAT.md](src/docs/reference/templates/HEARTBEAT.md) — heartbeat configuration
@@ -372,6 +372,7 @@ The one user-settable TTL is `cache_ttl` (default 300s, range 1-86400), which se
 | Feature | Description |
 |---------|-------------|
 | **Telegram Bot** | Full-featured Telegram bot — owner DMs share TUI session, groups get isolated per-group sessions (keyed by chat ID). Photo/voice support (STT transcribes incoming voice notes; TTS replies as OGG/Opus voice notes via `send_voice` when input was audio). Allowed user IDs, allowed chat/group IDs, per-group allow lists (`[channels.telegram.groups.<id>]`), `respond_to` filter (`all`/`dm_only`/`mention`/`auto`, global or per-group). Passive group message capture — all messages stored for context even when bot isn't mentioned |
+| **Telegram Userbot (experimental)** | Feature-gated, opt-in, receive-only MTProto companion. Experimental: merged from #1209 without a maintainer-side live login yet; expect rough edges. Local QR/code/2FA login; allowlisted text is passively stored under `telegram-userbot` for explicit retrieval through `channel_search`. Empty `allowed_chats` is dry mode. It does not invoke the agent or send/edit/react as the user. |
 | **WhatsApp** | Pair by scanning a QR code from the TUI: first-run onboarding, or `/onboard:channels` then select WhatsApp. The QR is shown in the terminal. You run the bot AS whatever account you scan — your own number (talk via "Message Yourself") or any other number you own, including a WhatsApp Business account, to serve that account's incoming DMs. `response_policy` (`auto`/`owner_only`/`allowlist`/`open`) decides who it answers; the paired account's self-chat and `bot_owner` operator are always allowed. Text + image + voice (STT transcribes incoming voice notes; TTS replies as voice notes when input was audio and `tts_enabled=true`). Per-phone sessions, session persists across restarts |
 | **Discord** | Full Discord bot — text + image + voice. Owner DMs share TUI session, guild channels get isolated per-channel sessions. Allowed user IDs, allowed channel IDs, `respond_to` filter. Tool calls render as ONE grouped message per turn, collapsed to a summary with an Expand/Collapse button, edited in place as tools run — Slack parity. Reacting to a bot message becomes an agent turn (approval emoji = keep going with a silent react-back, stop emoji = pause and ask), and the agent reacts back via its `<<react:EMOJI>>` marker. Multiple generated files batch into one gallery-style message. Interactive components: select menus (`discord_send` with `action=select_menu`), modal forms (`action=modal`), component TTL with auto-cleanup, role-based access control, forum thread creation. Full proactive control via `discord_send` (17 actions): `send`, `reply`, `react`, `unreact`, `edit`, `delete`, `pin`, `unpin`, `create_thread`, `send_embed`, `get_messages`, `list_channels`, `add_role`, `remove_role`, `kick`, `ban`, `send_file`. Generated images sent as native Discord file attachments |
 | **Slack** | Full Slack bot via Socket Mode — owner DMs share TUI session, channels get isolated per-channel sessions. Text + image + voice (STT transcribes incoming audio attachments; TTS replies upload an OGG/Opus audio file via Slack's external upload flow — renders inline with waveform UI — when input was audio and `tts_enabled=true`). Allowed user IDs, allowed channel IDs, `respond_to` filter. Tool calls render as ONE grouped message per turn, collapsed to a summary with an Expand/Collapse button (Block Kit), edited in place as tools run — Telegram parity. Reacting to a bot message becomes an agent turn (approval emoji = keep going with a silent react-back, stop emoji = pause and ask), and the agent reacts back via its `<<react:EMOJI>>` marker. All file uploads (generated docs/images, TTS audio) use Slack's supported external upload flow (`files.getUploadURLExternal` + `completeUploadExternal`) with real MIME types. Full proactive control via `slack_send` (17 actions): `send`, `reply`, `react`, `unreact`, `edit`, `delete`, `pin`, `unpin`, `get_messages`, `get_channel`, `list_channels`, `get_user`, `list_members`, `kick_user`, `set_topic`, `send_blocks`, `send_file`. Generated images sent as native Slack file uploads. Bot token + app token from `api.slack.com/apps` (Socket Mode required). **Required Bot Token Scopes:** `chat:write`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `users:read`, `files:read`, `files:write`, `reactions:write`, `app_mentions:read` |
@@ -1716,6 +1717,7 @@ cargo install opencrabs --no-default-features --features "telegram,whatsapp,disc
 | Feature | Crate | Description |
 |---------|-------|-------------|
 | `telegram` | teloxide | Telegram bot channel |
+| `telegram-userbot` | grammers | Experimental receive-only Telegram MTProto capture |
 | `whatsapp` | whatsapp-rust | WhatsApp channel via multi-device API |
 | `discord` | serenity | Discord bot channel |
 | `slack` | slack-morphism | Slack bot channel (Socket Mode) |
@@ -3135,7 +3137,6 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `suggest_options` | Surface up to 8 short options for the user to pick as their next input. Channel-agnostic: native buttons where the channel has them, numbered text where it does not |
 | `goal_manage` | Set and manage an autonomous goal for the session, so the agent can drive itself toward it across turns |
 | `tasks_list` | List in-flight background work: spawned sub-agents with id and label, and running background tasks |
-| `task_manager` | **Deprecated — use `plan`.** Create, update, list and track multi-step tasks with priorities |
 | `profile_list` | List profiles and their A2A gateway endpoints |
 | `mission_control_report` | Generate a shareable mission-control report for this instance: analytics, sessions, usage |
 
@@ -4547,7 +4548,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (7,751 tests across 775 modules under src/tests/, which is
+# Run tests (7,886 tests across 787 modules under src/tests/, which is
 # where every test lives; 30 slower ones are #[ignore]d to keep the default
 # run fast: profile tests that touch ~/.opencrabs, browser end-to-end
 # tests, and opencode provider tests. Opt in with
@@ -4571,6 +4572,7 @@ cargo clippy -- -D warnings
 | Feature | Description |
 |---------|-------------|
 | `telegram` | Telegram bot integration (default: enabled) |
+| `telegram-userbot` | Receive-only Telegram MTProto capture (experimental) |
 | `whatsapp` | WhatsApp Web integration (default: enabled) |
 | `discord` | Discord bot integration (default: enabled) |
 | `slack` | Slack bot integration (default: enabled) |
@@ -4582,11 +4584,13 @@ cargo clippy -- -D warnings
 | `code-graph` | tree-sitter symbol/call-graph index behind `memory_search`'s structural lane (default: enabled) |
 | `pdfium` | PDF page rendering via the system Pdfium library, ahead of the `pdftoppm` fallback (default: enabled) |
 | `profiling` | Enable pprof flamegraph profiling (Unix only) |
-| `eval` | Offline + live evaluation harness (compiled automatically under `cfg(test)`; never in a release binary) |
+| `eval` | Offline + live evaluation harness. Compiled automatically under `cfg(test)`, and present in release binaries, which are built with `--all-features` |
+
+> **What `local-stt` brings with it.** Running voice fully on-device is deliberate, so this stays enabled by default. It pulls `rwhisper`, whose dependency tree is still on `reqwest` 0.11 / `hyper` 0.14 and carries a low-severity `h2` denial-of-service advisory (RUSTSEC-2026-0258) plus five unmaintained or unsound crates. The exposure is bounded: that HTTP client is used only to download Whisper models from Hugging Face over TLS, and the advisory needs a hostile server flooding empty HTTP/2 frames, so it is not reachable from anything a session does. Build with `--no-default-features` and your own feature list to leave it out. Tracked in [#1402](https://github.com/adolfousier/opencrabs/issues/1402), and it clears when rwhisper ships against a `reqwest` on `hyper` 1.x.
 
 ### Evaluation Harness
 
-OpenCrabs ships an **offline-first evaluation harness** (`src/eval/`) that measures how well it does two things that usually break silently: **context engineering** (does the right context survive compaction?) and **memory** (does recall surface the right things?). The whole module is gated behind `cfg(test)` / the `eval` feature, so it never ships in a release binary.
+OpenCrabs ships an **offline-first evaluation harness** (`src/eval/`) that measures how well it does two things that usually break silently: **context engineering** (does the right context survive compaction?) and **memory** (does recall surface the right things?). The whole module is gated behind `cfg(test)` / the `eval` feature. Release binaries are built with `--all-features`, so the harness is present in them; it is inert unless you invoke it.
 
 Scoring uses **BinEval-style decomposition** (arXiv 2506.27226): instead of one holistic grade, each check is a set of atomic yes/no questions answered independently and aggregated into per-dimension and overall scores — more interpretable and lower variance.
 
@@ -4940,6 +4944,30 @@ OpenCrabs is under active development. While functional, it may contain bugs or 
 ### Support
 
 Cloud API issues, billing questions, and account problems should be directed to the respective providers. OpenCrabs provides the tool; you manage your API relationships.
+
+---
+
+## 🔐 Reporting a vulnerability
+
+Security issues go through [GitHub's private vulnerability reporting](https://github.com/adolfousier/opencrabs/security/advisories/new), not a public issue. See [SECURITY.md](SECURITY.md) for what is in scope, what to include, and which dependency advisories are already known and tracked.
+
+---
+
+## 📌 Versioning and stability
+
+**The command-line interface is the stable surface. The Rust library is not.**
+
+The crate is published on crates.io so the binary can be installed with `cargo install opencrabs`. Its `pub` modules are internals, exposed because the binary and the integration tests need them across module boundaries, not because they are an API to build against.
+
+What the version number covers:
+
+| Covered by semver | Not covered |
+|---|---|
+| CLI commands and their flags | every Rust item in the crate |
+| the `config.toml` format | module paths, type and function signatures |
+| the on-disk layout of `~/.opencrabs/` | anything reachable as `opencrabs::…` |
+
+Any Rust item may be renamed, moved, or removed in any release, including a patch. If you need a stable Rust API, open an issue describing what you are building: carving a supported surface out of these internals is a decision worth making deliberately, and it has not been made.
 
 ---
 

@@ -697,6 +697,30 @@ pub(crate) fn merge_channel_keys(mut base: ChannelsConfig, keys: ChannelsConfig)
         base.telegram.token = Some(token.clone());
     }
 
+    // Telegram userbot (MTProto secrets from keys.toml override config.toml)
+    if let Some(ref ub) = keys.telegram.userbot.api_hash
+        && !ub.is_empty()
+    {
+        base.telegram.userbot.api_hash =
+            crate::config::stored_key::real_key(ub).map(str::to_string);
+    }
+    // keys.toml.example ships `api_id = 0` as a placeholder; a zero is not
+    // a credential and must not shadow a real api_id set in config.toml.
+    if let Some(api_id) = keys.telegram.userbot.api_id
+        && api_id != 0
+    {
+        base.telegram.userbot.api_id = Some(api_id);
+    }
+    if keys
+        .telegram
+        .userbot
+        .phone
+        .as_ref()
+        .is_some_and(|p| !p.is_empty())
+    {
+        base.telegram.userbot.phone = keys.telegram.userbot.phone.clone();
+    }
+
     // Discord
     if let Some(ref token) = keys.discord.token
         && !token.is_empty()
@@ -749,6 +773,11 @@ pub(crate) fn merge_channel_keys(mut base: ChannelsConfig, keys: ChannelsConfig)
 pub fn atomic_write(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    // Every config.toml / keys.toml writer funnels through here, so this is
+    // the one place a test build can be stopped from rewriting the user's
+    // live config (#1399). No-op outside test builds.
+    crate::config::live_home_guard::refuse_live_home_write(path)?;
 
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")

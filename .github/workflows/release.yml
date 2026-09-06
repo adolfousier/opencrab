@@ -224,6 +224,12 @@ jobs:
           CFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-march=armv8-a+crypto' || '' }}
           CXXFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-march=armv8-a+crypto' || '' }}
           AWS_LC_SYS_CMAKE_BUILDER: ${{ matrix.os == 'windows-latest' && '1' || '' }}
+        # --all-features on purpose: release binaries carry every optional
+        # feature, including `eval` and `profiling`. That is what has always
+        # shipped and nobody has wanted less. The README used to claim the
+        # eval harness never reaches a release binary; the claim was wrong,
+        # not the build, and it has been corrected rather than the binary
+        # narrowed (#1402).
         run: cargo build --locked --release --target ${{ matrix.target }} --all-features
 
       - name: Download and bundle RTK 0.40.0

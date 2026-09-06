@@ -45,13 +45,6 @@ pub(crate) fn clear_marker_before_edit(buf: &mut String) {
     }
 }
 
-/// True when a key exists for this provider, whether stored earlier or typed
-/// just now. Use for display and for "is this configured?" checks. The
-/// sentinel counts, because it only ever appears when a key is stored.
-pub(crate) fn is_configured(value: &str) -> bool {
-    !value.is_empty()
-}
-
 /// What to render in the field. Never the secret: a stored key reads as saved,
 /// a typed one as a fixed run of dots whose length says nothing about the key.
 pub(crate) fn masked(value: &str) -> String {

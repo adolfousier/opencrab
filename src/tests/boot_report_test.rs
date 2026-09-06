@@ -62,3 +62,23 @@ fn a_wake_that_never_left_survives_as_failed() {
     assert!(line.contains("delivered=0"), "line was: {line}");
     assert!(line.contains("failed=1"), "line was: {line}");
 }
+
+#[test]
+fn a_dead_tracking_table_is_named_in_the_summary() {
+    let _g = guard();
+    // Three days of `interrupted=0` hid a table that could not take a row
+    // (#1401). The line must say recovery is off and why, even at zero.
+    record_tracking_disabled("no such column: origin".to_string());
+    let line = summary_line();
+    assert!(line.starts_with("[boot] interrupted=0"), "line was: {line}");
+    assert!(
+        line.ends_with(" recovery=DISABLED(no such column: origin)"),
+        "line was: {line}"
+    );
+}
+
+#[test]
+fn a_healthy_boot_does_not_mention_recovery_state() {
+    let _g = guard();
+    assert!(!summary_line().contains("recovery="));
+}

@@ -7,6 +7,411 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-06
+
+595 commits since v0.3.83. 591 files changed, +57,403 / -11,296 lines.
+
+The largest release so far, roughly seven times the commit count of any
+previous one. The version skips 0.4 deliberately: pre-1.0 the number is
+communication rather than arithmetic, and 0.3.84 would have understated what
+this contains. The Rust library surface is still internal and unstable; see
+Versioning and stability in the README for what the version number covers.
+
+### ✨ Features
+
+- `0e9d4f1d` **boot**: probe the recovery table at boot and say when turns cannot be recorded (#1401)
+- `01986171` **prompt**: the preamble forbids tests from writing the live config or keys (#1399)
+- `859bb124` **config**: name the voice flag a reload switched off, and log every wholesale rewrite (#1399)
+- `8595c816` **core**: tap-redraw picked suggestion buttons on rich hosts (leshchenko1979/opencrabs#67) (#1394)
+- `bb4b11d7` **brain**: endorse single-option suggest_options one-tap confirms
+- `8b0a4695` **telegram**: fold bare bg-task completion acks into the settled flow card (#1377)
+- `844f57aa` **memory**: advertise external scope and structural code queries in memory_search descriptions and AGENTS template
+- `49c399e9` **tui**: interactive theme picker dialog (#1371)
+- `4e0d642f` **tui/theme**: user theme presets directory ~/.opencrabs/themes/*.toml (#1365)
+- `3523def2` **tui/theme**: truecolor capability check + ANSI-256 fallback tier (#1364 F3)
+- `6edd1f3e` **tui**: add AnsiColors field with quantizer-derived values for all 9 presets
+- `0f5633ac` **tui/theme**: add rgb_to_ansi256 quantizer with unit tests
+- `30c4ec55` **tui**: [tui.theme] config + /theme list|set|reset command (#1364 D+E)
+- `66b9de76` **tui**: upstream-verified theme presets registry (#1364)
+- `56c6c583` **tui**: theme role core with runtime slot (#1364)
+- `0844616b` **provider**: ProviderKey entries for the two [providers.fallback] lists (#1355)
+- `8283946d` **prompt**: preamble rule for writing large files in parts and delegating long work (#1352)
+- `5141045e` **pdf**: make pdfium a default feature (#1336)
+- `88859e8a` **memory**: tree-sitter symbol/call-graph indexing for structural code queries (#1324)
+- `f6e9324c` **tools**: carry the session's provider on the execution context (#1318)
+- `b220464e` **telegram**: one boundary between a topic key and a wire address (#1319)
+- `8b28159a` **rsi**: normaliser for self_improvement_provider spellings (#1314)
+- `05f3193e` **tui**: show where a tunnel-pulled drop landed instead of copying it silently (#1311)
+- `91f02a86` **agent**: boot summary counts what the recovery pass replays (#1242)
+- `0956d359` **compaction**: summarise in the background instead of stopping the turn
+- `345ea935` **tui**: attach a dropped file pulled over the tunnel (#1289)
+- `de99a641` **cli**: opencrabs drop-agent (#1289)
+- `e80182b7` **drop**: pull a dropped file over the SSH connection already open (#1289)
+- `12ae20a8` **tui**: choose how to fetch a file dropped from the client machine (#1289)
+- `2e85ad7d` **tui**: resolve a dropped path by its extension, not by word boundaries (#1288)
+- `a13cf8e9` **notify**: depth-3 injection receipts — notify_id becomes checkable
+- `d7712d49` **notify**: confirm=true returns an end-to-end delivery verdict
+- `00cdfb88` **notify**: redirect delivery to the session that owns the channel now (#19)
+- `0c57dfb0` **nudge**: shared variation directive for loop guards + loud break breadcrumb
+- `12b2fcee` **flow**: deferred-notification segment on the flow footer
+- `101a43ad` **notify**: quiet delivery mode with starvation cap and deferred verdict
+- `e90d6178` **notify**: delivery policy object with interrupt alias and action enum
+- `acd7a849` **notify**: machine-readable send verdict on session_notify
+- `29b85660` **agent**: in-loop mermaid regen nudge on parse errors (#37)
+- `1e2b5249` **agent**: mermaid_regen_nudge text builder (#37)
+- `dad3599d` **telegram**: preflight_parse_errors for the regen nudge (#37)
+- `ff919559` **telegram**: cache deterministic mermaid render outcomes (#37)
+- `bceaade7` **telegram**: classify mermaid parse errors as MermaidResult::ParseError (#37)
+- `1e1e44aa` **agent**: in-loop mermaid regen nudge on parse errors (#37)
+- `326c0f9c` **agent**: mermaid_regen_nudge text builder (#37)
+- `c222d55a` **telegram**: preflight_parse_errors for the regen nudge (#37)
+- `7f038632` **telegram**: cache deterministic mermaid render outcomes (#37)
+- `93a13aac` **telegram**: classify mermaid parse errors as MermaidResult::ParseError (#37)
+- `59eddf42` **tool-loop**: loud break — user-visible breadcrumb when a loop guard ends the turn (#32)
+- `3258c892` **tool-loop**: near-match loop-guard nudge composes the shared variation directive (#32)
+- `a12a226f` **bash**: Layer-3 retry rejection composes the shared variation directive (#32)
+- `bf827bb1` **nudge**: shared variation_directive() — the recurring-call lesson for loop guards (#32)
+- `4d8e4251` **telegram**: trailing ❕ on the ctx segment while the pressure hint is active (#29)
+- `af117dcf` **telegram**: pin flow header to a dedicated compacting state (#29)
+- `29fbf25a` **telegram**: compaction signal — event payloads, first CompactionSummary emit, flow body entries (#29)
+- `18df27ed` **cli**: add opencrabs session notify — session notifications for tooling (#23)
+- `0657e9f8` **notify**: redirect delivery to the session that owns the channel now (#19)
+- `97873452` **tg**: render bg-completion and session-notify pushes as receipt cards (#15)
+- `618d469b` **agent**: carry bg-task receipt metadata through the push envelope (#15)
+- `285af707` **session_notify**: interrupt failsafe gate for mid-flight targets (#13)
+- `624878e1` **tg**: deliver mermaid.ink renders as bytes - Telegram never fetches URLs
+- `554bdcfc` **tg**: hybrid mermaid resolve - mermaid.ink primary, local render fallback
+- `cfa260a2` **tg**: deliver locally-rendered mermaid PNGs via multipart upload
+- `807b3162` **tg**: local mermaid renderer core (feature local-mermaid)
+- `cf34c1c2` **tg**: add local-mermaid feature (mermaid-render + resvg)
+- `a38ec557` **tg**: render bg-completion and session-notify pushes as receipt cards (#15)
+- `87882b8e` **agent**: carry bg-task receipt metadata through the push envelope (#15)
+- `dc71bc8c` **cli**: add opencrabs session notify — session notifications for tooling (#23)
+- `843579d8` **rsi**: stale-scan ledger + cycle wiring - dedup, daily cadence, prompt block (#1240)
+- `241c5f79` **rsi**: stale-claim scanner core - anchors, historical-exempt classifier, deterministic verification (#1240)
+- `2dc497a7` **plan**: workers read-only by default (#1173 grant) - drift cannot mutate
+- `5cabab3a` **tools**: machine-readable session discovery (#1225)
+- `b023d7cf` **telegram**: add receive-only userbot capture
+- `4bce4302` **telegram**: add local userbot authentication
+- `cba7ffdb` **telegram**: add receive-only userbot config
+- `ecad8adf` **telegram**: single-flight session resolution per chat and topic (#1201)
+- `5f9a110b` **telegram**: tag queued mid-turn messages with their origin (#1213)
+- `d18a987d` **tg**: rich-endpoint governor, plus repairs to make #1216 build (#1211)
+- `ef41cba4` **config**: one section registry, shared by reads and writes (#1199)
+- `60dbede2` **tg**: proactive per-forum flood governors (#1211)
+- `007a1330` **tg**: render untagged fences whose body looks like mermaid
+- `55ff59fd` **recovery**: park completions for a revived channel session (#1206)
+- `6eacb2de` **tools**: session_notify — cross-session push with mechanical from=<uuid> signature (#1203)
+- `1c19d9b9` **tg**: suggestion controls ride table-free rich bubbles natively
+- `5c4e85d9` **tg**: calibrated suggestion layout ladder
+- `3b2e7447` **telegram**: merge suggest_options keyboard into the final reply bubble
+- `1fca3341` **subagent**: settle-card counts sub-agents + distinct AwaitingInput state (#1183)
+- `68827238` **phantom**: flag a fenced shell command in a zero-tool turn (#1194)
+- `b94c9b36` **tools**: write_file overwrite guard requires full read or explicit confirm (#1168)
+- `a2aa7337` **tools**: add tail operation to session_search for last-N history retrieval (#1166)
+
+### 🔧 Fixes
+
+- `7a65494f` **db**: heal a pending_requests table stamped past migration 37 without its origin column (#1401)
+- `e074b022` **agent**: wrap tool-text-leak fail-clean in AgentError::Provider
+- `b0e1d4cc` **agent**: one corrective retry on tool-text leak, then fail clean
+- `d027b2d7` **provider**: strip unrecoverable tool-call JSON from responses, flag leak
+- `a09b0abd` **tests**: refuse writes to the live default home from a test build (#1399)
+- `c58b3f6f` **config**: migration 2 writes the voice enablement it computes (#1399)
+- `c72f7a5c` **onboarding**: every voice writer persists fallback_chain with the enabled flags (#1399)
+- `b6ed3dac` **voice**: disabled engines are not dispatch candidates and the chain names the primary (#1399)
+- `b4898100` **loop-guard**: rotate the fallback chain on a loop break instead of dropping the turn (#1397)
+- `c784964a` **loop-guard**: keep identifiers in string arguments of the near-match signature (#1397)
+- `d7e40ceb` **onboarding**: remove orphaned key-field helpers left by teal centralization
+- `4c9408a8` **onboarding**: stored API keys render teal in all voice-dialog fields
+- `b3911216` **telegram**: resolve EditErr/PlaceErr type mismatch + unclosed delimiter
+- `7abe6ad8` **telegram**: tap_retry scope + PlaceErr definitions after pr-1393 merge
+- `6c19a715` **tui**: theme picker triad compliance — clippy + clamp no-op (#1395)
+- `071b9ae1` **theme-picker**: clamped movement returns no-op, not a re-Preview
+- `6974a136` **tests**: reqwest_teloxide client in edit_retry tests — Bot::with_client wants teloxide's reqwest 0.12 type (#1345)
+- `6789f236` **telegram**: 429 backstop for ephemeral posts + dedup approval sends
+- `d337d312` **telegram**: route the 18 unpaced agent.rs callback legs through edit_retry (#62)
+- `30d0b46d` **telegram**: defer one identical retry past Telegram's Retry-After window on best-effort UI edits (#68)
+- `b24c703e` **telegram**: gate stale_host_count to test builds (dead code in lib target)
+- `861889c9` **telegram**: unify stale-strip arm return types (Message -> ()); test host ids i32
+- `0fb1f74d` **telegram**: host-aware stale-shell strip — zombie rich buttons die visibly (#59)
+- `eafafabc` **tui**: show the transient notice inside the input row, not on its border (#1369)
+- `89e3b730` **telegram-userbot**: log every dropped result in the login path
+- `ddd96b72` **config**: keys.toml api_id = 0 no longer shadows the userbot api_id from config.toml
+- `40de25ea` **telegram-userbot**: abort the MTProto runner together with the watch loop
+- `b3b615ee` **tui**: transient notices render on the input's bottom border, not inside the chat body (#1369)
+- `8323f66c` **sessions**: scope-all model writes preserve recency order (#1367)
+- `c180e4b1` **onboarding**: the voice step writes the real providers.tts.openai key, not the read-only voice view (#1387)
+- `be4f7539` **tui**: /compact sends before it reports, and reports a dropped send (#1375)
+- `89a0afe1` **telegram**: drop the dead GluedHost variant, await the glue note properly
+- `dd6794da` **telegram**: cover PickRewrite::GluedHost in the tap rewrite match
+- `4b4ec62c` **telegram**: gate fixes for #55 glue tier
+- `e8e11043` **telegram**: glue tier — lamp retired, keyboard glues onto table answers
+- `394731cf` **agent**: an overflow walks the compaction chain widest window first (#1379)
+- `886e800e` **provider**: a context-length rejection walks the fallback chain (#1379)
+- `fa51dad0` **provider**: a fallback runs its own configured default_model, not the model the failed request carried (#1374)
+- `2dd2cb46` **tui**: validate profile name at input step, surface dialog errors inline (#1381)
+- `b0fd8462` **config**: sync CONFIG_SECTIONS to schema — 8 missing sections in, phantom voice out (#1385)
+- `ae9da344` **config**: accept tui+doctor as known top-level keys, pin loader list to schema
+- `8400538e` **brain**: seed templates at every entrypoint, not only on wizard completion
+- `7eabab57` **channels**: gate-clean the bg-ack fold surface
+- `29352269` **loop-guard**: preserve numeric args in near-match signature (#82)
+- `bc7b12e8` **tui/theme**: register /theme in SLASH_COMMANDS so it appears in autocomplete and help (#1364)
+- `569f0128` **tui/theme**: mission control panels follow active theme (#1364 G2)
+- `1f0be7bf` **telegram**: promote oversized or mermaid-bearing trailers to the answer
+- `442807d1` **provider**: normalise [providers.fallback] providers and vision entries like the [agent] keys (#1355)
+- `ad9822f9` **rtk**: the no-rewrite debug line no longer reads as a refusal (#1353)
+- `b5efdf8a` **agent**: end a reasoning stream on a same-character run, not only on a repeated substring (#1351)
+- `1ce7b711` **provider**: honour base_url on [providers.zhipu] and document the real hosts (#1350)
+- `c23b6406` **provider**: map reasoning_effort onto the GLM-5.3 ladder instead of letting the endpoint silently pick max (#1349)
+- `3e0266fe` **provider**: send Preserved Thinking to z.ai for GLM-5.x (#1348)
+- `d56c459b` **provider**: send tool_stream to z.ai so tool-call arguments stream as deltas (#1347)
+- `53fdedff` **tui**: clear a cancelled turn's indicator in split view (#1342, #1343)
+- `fff66170` **cli**: resolve session IDs by unambiguous prefix in get and notify
+- `d8f3626b` **telegram**: retry a rich edit that failed in transport instead of downgrading (#1323)
+- `9485c95b` **logging**: redact the Telegram bot token before anything is written (#1322)
+- `e669984d` **provider**: stop retrying a WAF block page as a transient error (#1332)
+- `ab0e7aa8` **provider**: identify OpenCrabs to every gateway, not just OpenCode (#1331, #1333, #1334)
+- `0de41ab2` **provider**: identify OpenCrabs and send a session id to OpenCode Zen (#1329)
+- `c8080d1c` **memory**: recurse into nested call expressions and impl items in symbol extractor (#1328)
+- `3cd4cc9f` **vision**: resolve candidates per request, not once at startup (#1318)
+- `377b9010` **vision**: the configured chain decides the order, not a scan (#1318)
+- `de844af1` **telegram_send**: make 'no thread' expressible, and stop re-injecting one (#1319)
+- `b3351e91` **telegram**: resolve General to no thread on every delivery path (#1319)
+- `802a3431` **telegram**: re-publish scoped command menus when skills change (#1317)
+- `9517f52b` **plan-mode**: normalise plan_provider / execute_provider before the swap (#1316)
+- `59cba8ba` **subagent**: resolve the child's provider/model through one normalised helper (#1316)
+- `d230bee7` **rsi**: resolve the cycle's pair through the normaliser and log the correction (#1314)
+- `d17027fd` **tui**: the drop-tunnel hint binds the reverse forward to loopback explicitly (#1313)
+- `2e2a29d3` **tui**: the remote-drop fallback also names the drop-agent tunnel (#1311)
+- `43edb916` **tui**: probe the default drop-tunnel port over SSH instead of requiring OPENCRABS_DROP_PORT (#1311)
+- `01e0d86b` **tui**: a file pulled over the drop tunnel keeps the client's filename (#1311)
+- `e61d939d` **db**: bump MIGRATION_COUNT to 37 for 034_pending_followups
+- `bbba209e` **tg**: bg-echo bubble rides the markdown dialect so tables stay native (#1234)
+- `4e3d80ec` **channels**: wait for a channel's transport instead of dropping the wake (#1242)
+- `f7e34f53` **compaction**: bound a summariser attempt so a wedged one hands the work on (#1255)
+- `a9673df2` **compaction**: a context that shrank always leaves a marker
+- `f308887b` **telegram**: one definition of a heading, not two (#1257)
+- `c570c768` **tui**: land a dropped file where every other share lands (#1289)
+- `70f4496f` **tui**: the scp hint had the direction backwards (#1289)
+- `9ea7eccf` **tui**: always give the scp line, mention a better tier rather than substituting (#1289)
+- `698377b4` **tui**: tell the user how to fetch an unreachable dropped file (#1289)
+- `4f0dd473` **tui**: attach a dropped file even when you type something after it (#1288)
+- `d60133a3` **notify**: E0277 test assert &String vs String; carrier rustfmt import order
+- `419ce270` **telegram**: warn! on mermaid.ink render failure — non-200 attempts were log-invisible
+- `714bbd36` **harvest**: strip fork-only #12/#31 pollution from transplanted hunks
+- `e0272596` **telegram**: drop legacy 90s plan-card restick cooldown; restick per user-turn settle (#62)
+- `dc966df8` **suggest**: resolve trailer bubble conflict with retry-after refactor
+- `f158e271` **notify**: drop leftover quiet_deferred test args after display revert
+- `001ca5c8` **telegram**: DRY the suggestion pick-record rewrite — classic host keeps the choice
+- `3bfc5328` **test**: align #19 tests with struct-variant Delivery and ToolResult fields
+- `d6f2ab83` **memory**: read chunk_hash as Option — NULL on healed legacy rows
+- `a88308c7` **tests**: satisfy clippy bool_assert_comparison in heal tests
+- `84d52803` **memory**: heal missing chunk_hash column on pre-#1107 stores (#14)
+- `85903898` **notify**: clear clippy dead-code + collapsible-if in quiet_delivery
+- `6f4313ef` **notify**: drop the summary argument from the defer_quiet callsite
+- `34bd8ff2` **telegram**: compaction progress dedupe, observed-ETA predictor, icon-aware gear strip (#1271)
+- `48d3195a` **notify**: refuse delivery into a channel a newer session now owns (#17) (#1267)
+- `3fe517e8` **telegram**: boot-time wake of recently-active sessions, log-only (#1270)
+- `057673f4` **notify**: clippy + compile fixes on the v2 rail
+- `ecbfda33` **telegram**: recalibrate shared-row button cap 8 -> 12 chars (#49)
+- `c4a9ef55` **memory**: read chunk_hash as Option — NULL on healed legacy rows
+- `a0d91e13` **tests**: satisfy clippy bool_assert_comparison in heal tests
+- `8087eb6c` **memory**: heal missing chunk_hash column on pre-#1107 stores (#14)
+- `d730e9ca` **telegram**: drop needless borrow in rich-fallback options gate (#46)
+- `00c63a0f` **telegram**: rich-fallback arm consults options_pending (#46)
+- `96fd2501` **telegram**: drop needless borrow in options_pending call (#45)
+- `c7c28754` **telegram**: button-bearing prose rides the rich plane (#45)
+- `1fa42e40` **provider**: sanitize journal text tails — embedded newlines split log lines
+- `6bc07521` **provider**: two exhaustive TokenUsage literals gain ..Default::default()
+- `1895eef5` **agent**: catch mid-sentence truncation at a backtick — fence/backtick parity + usage-gap journal
+- `6ce4c22b` **provider**: TEXT_ACCUM/STREAM_RECONCILE journal — reconcile billed usage vs received text per stream
+- `b6a4ce49` **telegram**: keep suggest_options stash alive on Retry-After, defer re-placement (#1264)
+- `6bbdf1c3` **plan**: align archive writer/reader on one stem so completion cards post again (#1265)
+- `d7afa569` **provider**: sanitize journal text tails — embedded newlines split log lines
+- `8e19c3d0` **telegram**: DRY the suggestion pick-record rewrite — classic host keeps the choice (#39)
+- `89895168` **telegram**: drop redundant top-level Requester import
+- `48972be1` **telegram**: port chrome-reclaim test to options_pending tuple API
+- `4bcac963` **telegram**: collapse trailer-embed conditionals, allow 8-arg render_suggestions (#31)
+- `c15f7891` **telegram**: gate fixes for trailer lane — Requester import + move-before-log (#31)
+- `8cecebba` **telegram**: reclaim post-halt sign-off as trailer after option-surface buttons (#31)
+- `16568074` **telegram**: drop unused FlowEntry import — REBASE-PORT keep-both leftover
+- `02779c38` **provider**: two exhaustive TokenUsage literals gain ..Default::default()
+- `c26b9adc` **agent**: catch mid-sentence truncation at a backtick — fence/backtick parity + usage-gap journal
+- `cc5f36c7` **provider**: TEXT_ACCUM/STREAM_RECONCILE journal — reconcile billed usage vs received text per stream
+- `267089af` **telegram**: union pop_trailing_folded_texts with #1253 chrome-awareness — REBASE-PORT keep-both damage
+- `4cd213f3` **telegram**: drop stray closing brace in trailing_matches — REBASE-PORT keep-both damage
+- `5e789417` **telegram**: flow chrome — strip the standing gear before another icon (#29)
+- `84b3f693` **telegram**: allow 8-arg chrome-pref renderers (#29 clippy too_many_arguments)
+- `fa75f22f` **telegram**: compaction signal — footer dedupe + observed-ETA predictor (#29)
+- `72806138` **telegram**: boot wake goes log-only — drop the 'beep' bubble, keep the audit line (#34)
+- `552653a2` **test**: drainer converge is event-driven — mode-4 flake removed (#28)
+- `268f34bc` **telegram**: capture tool-run presence before draining aside (#31)
+- `7e317380` **telegram**: collapse trailer-embed conditionals, allow 8-arg render_suggestions (#31)
+- `003a9ea5` **telegram**: gate fixes for trailer lane — Requester import + move-before-log (#31)
+- `907c7dbd` **telegram**: reclaim post-halt sign-off as trailer after option-surface buttons (#31)
+- `b71287ad` **test**: governor drainer mock — serve the full retry budget, counter-asserted exactly-once (#28)
+- `cb8f6d96` **telegram**: keep suggest_options stash alive on Retry-After, defer re-placement (#30)
+- `704843d6` **test**: compacting field in resume-test StreamingState initializer (#29)
+- `97dd5e6d` **test**: governor drainer wire test — timeout-free bot client (#28)
+- `774fbbea` **plan**: align archive writer/reader on one stem so completion cards post again (#16 round 2)
+- `168bd25f` **plan**: never let tool auto-approve satisfy the plan approval gate (#20)
+- `56c2dd4e` **tg**: strip-match arm takes the Message ok-variant (#1226)
+- `cc21d894` **tg**: reclaim the final answer across an option-surface halt (#1226 K)
+- `c1192b7b` **plan**: re-arm finalize only after completed-card lands (#16)
+- `095ef4f2` **tg**: label DM sessions with the bot's username, not the reader's name (#15)
+- `a889db12` **test**: allow await_holding_lock on the three session/notify suite tests (#23)
+- `368d1b68` **ci**: re-wrap three lines to rustfmt 1.98.0 shape (#25)
+- `e86b14bd` **clippy**: clear the four main-lane findings introduced by #19 (#22)
+- `826a1c5c` **bg-resume**: park unconditionally, never re-enter the route table (#21)
+- `1f2224b4` **test**: align #19 tests with struct-variant Delivery and ToolResult fields
+- `0e1bad85` **notify**: refuse delivery into a channel a newer session now owns (#17)
+- `5c3703fc` **tg**: count inline <details><summary> openers as rich structure (#15)
+- `b4fda5cd` **recovery**: capture push-initiated turns for restart recovery (#12)
+- `8a1bdf8c` **test**: align N4 shape expectation with the 45-char preview boundary (#15)
+- `da3233eb` **test**: point bg_push_echo_test imports at the receipt-card builders (#15)
+- `9c899d9e` **clippy**: clear PR-lane clippy debt on telegram-only tree
+- `4c9db2a3` **port**: compile 5 all-features test errors exposed by phase-1 gates job
+- `e4871884` **tg**: mermaid.ink dimension ladder — request-fitted renders, remote-only delivery (#1238)
+- `5135ea02` **subagent**: cover Delivery::RefusedInFlight in spawn push_result (#13)
+- `d9537164` **tg**: type photo-dims cap as f32 - From<u32> for f32 does not exist (#1238)
+- `0de3cc56` **tg**: borrow bot for bg-resume rich outbox call (#1234)
+- `98fe0fd3` **tg**: adaptive raster scale for oversized mermaid diagrams
+- `c6661d1a` **tg**: bg-echo bubble body rides canonical md-to-rich outbox (#1234)
+- `72fd32e7` **resume**: bounded SDK-readiness wait parks boot-window wakes instead of dropping them
+- `6af2f920` **tg**: wrap mermaid-render SVG fragment in a document root for usvg
+- `df844751` **tg**: pin ok_or_else error to String in local mermaid pixmap alloc
+- `fad31677` **tg**: pass &mut PixmapMut to resvg::render (resvg >=0.45 signature)
+- `c2d0423a` **build**: restore resvg dep eaten by usvg/tiny-skia manifest insert
+- `3362c8a8` **tg**: declare usvg + tiny-skia as direct deps of local-mermaid
+- `da1decac` **tg**: multipart carrier — swap build arg order, drop non-Clone form.clone
+- `28bc255e` **restart**: boot-time wake of recently-active bound sessions (#1227)
+- `4776bee2` **phantom**: a bare tool name counts when the model claims to have used it (#1262)
+- `a15b7f0b` **phantom**: catch a sequenced plan announcement in a zero-tool turn (#1261)
+- `2acac9bc` **channels**: a chat's /cd directory actually sticks to that chat
+- `d9d6960c` **tg**: match upstream send_markdown_outbox arg order on the receipt-card route (#15)
+- `aabc3bc3` **tg**: label DM sessions with the bot's username, not the reader's name (#15)
+- `3d0b42ef` **tg**: count inline <details><summary> openers as rich structure (#15)
+- `f8f2538a` **test**: align N4 shape expectation with the 45-char preview boundary (#15)
+- `23c00a36` **test**: point bg_push_echo_test imports at the receipt-card builders (#15)
+- `0d944a64` **provider**: a balance 429 stops telling the user to retry later (#1254)
+- `27f44bdd` **tg**: never reclaim system chrome as the turn's answer (#1253)
+- `795f9ec5` **provider**: never remove a provider from the fallback walk (#1251)
+- `a0954b63` **compaction**: walk the fallback chain instead of dying on the primary (#1247)
+- `34b26778` **provider**: reload [providers.fallback] on config change instead of at startup only (#1249)
+- `ce05e09b` **tg**: route inline-button callbacks to the session that serves the chat (#1248)
+- `a4870089` **tg**: close the brace my let-chain conversion orphaned in plan_card
+- `30f9a7c9` **tg**: token-keyed suggestion stash - each tap resolves its own keyboard (#1217)
+- `0709cf19` **voice**: persist STT/TTS enablement in both writer paths (#1233)
+- `c57de25c` **plan**: scope archived-plan selection to the completing session (#1239)
+- `3e6e1eac` **tg**: kill plan-card wrong-settle - one-shot archived consume gate replaces the 120s polling window (#1231)
+- `da6216ac` **tg**: telegram_send reply/edit route rich-first - tables render as real grids not pre blocks (#1230)
+- `4a2bcd63` **tg**: render bg-push echo bubbles as native <details> rich cards (#1221 follow-up)
+- `d8d54484` **tg**: suggestion picker edges + shared session gate + session bindings (#1226 items 1+2+5+6, #1228, #1224 core) (#1232)
+- `4d557542` **tg**: normalize General-topic sessions (#1220); recovery replay claims the turn slot (#1222) (#1223)
+- `e445180d` **telegram**: repair the merged suggestion-merge branch (#1204)
+- `1f315763` **telegram**: hold the gate across resolve and registration (#1201)
+- `b3aad40a` **telegram**: give a detached result a real tool loop, not a single round (#1213)
+- `00710210` **telegram**: mark bg and sub-agent results as detached work (#1213)
+- `63faa87a` **subagent**: bind the child's tool_search weakly (#1210, #1214)
+- `a0d0a139` **subagent**: rebind tool_search to the child registry on spawn (#1210)
+- `a62d297d` **tool_search**: bind to the registry whose active set is actually read (#1210)
+- `19145c7b` **config**: reject a write to a section that does not exist (#1199)
+- `a065eb1f` **telegram**: prefer the session's topic on the startup resume path (#1200)
+- `6acbc6bd` **telegram**: route detached-work pushes to the session's own topic (#1200)
+- `5d0a5a0e` **mermaid**: classify bare fences by the opening info string (#1208)
+- `28bd3391` **session_notify**: a parked delivery is queued, not a missing route (#1207)
+- `9c0e4b81` **routing**: report delivery as three outcomes, not a bool (#1207, #1206)
+- `c9dc7447` **tests**: assert the channel budget invariants at compile time (#1212)
+- `d7f126bf` **browser**: remove the unused EventLog::is_empty helper (#1212)
+- `b9b435e1` **tests**: drop imports left stale by the SubAgent::new refactor (#1212)
+- `931ff9e1` **subagent**: re-bind tool_search to each child registry (#1210)
+- `3660a1e7` **tg**: surface mermaid-bearing intermediates instead of folding them
+- `aa653d54` **daemon**: stop handing a headless process the TUI event channel (#1206)
+- `41085e51` **routing**: a revived channel session is not a local session (#1206)
+- `b9773e25` **session-notify**: ToolResult::error takes String not &str (E0308)
+- `0eaa4d8b` **tg**: wildcard rich flag in fallback arm — inner match can't inherit outer arm narrowing
+- `5ae79b6e` **tg**: annotate empty keyboard vec element type for inference
+- `e707cdb8` **tg**: import EditMessageTextSetters — parse_mode setter needs its payload trait
+- `7e6d9823` **tg**: declare final_bubble capture variable left undeclared
+- `2368c66a` **tg**: close RetryAfter arm left unclosed by match restructure
+- `d3000b2f` **tg**: resume path renders suggestions post-delivery with merge host
+- `4f222f6e` **tests**: resolve Into inference ambiguity in SubAgent::new fixtures
+- `0084e1ed` **#1197**: deliver results on all completion paths - resume and team agents were silent
+- `1a2911c3` **build**: gate discord/slack/whatsapp refs behind their features so non-default subsets compile (#1186)
+- `13044a30` **phantom**: accept a connective before the gerund in work_announcement_re (#1193)
+- `0e74d6bf` **phantom**: break announcement candidates on em dash, colon and semicolon (#1192)
+- `37e928d3` **image**: recover reaction directives from orphan-fence wrapped turns (#1182)
+- `ec3cad36` **channels**: wire subagent manager into channel factory so tasks_list works in chat sessions (#1170)
+- `ba449f00` **tools**: self-describing non-regular-file rejection in validate_file_path (#1164)
+- `9bd2f747` **tools**: expand ~ in bash working_dir before validation (#1165)
+- `eec98794` **tools**: autocorrect missing leading / in slash_command (#1167)
+- `0942f07d` **cron**: repair legacy dedup scan schedule and warn once (#1163)
+
+### 🔒 Security
+
+- `10c2e657` **deps**: bump dependencies, clearing the yanked chacha20 (#1344)
+- `3e40b8ad` **deps**: clear two advisories and make the audit ignore list truthful (#1344)
+
+### 📖 Documentation
+
+- `1796af02` correct the release-binary claim and refresh the test counts
+- `e698ccd5` add a vulnerability-disclosure policy (#1406)
+- `5cf0588e` drop the task_manager row — it documents a tool that is not registered
+- `78b1c3f9` state what the version number covers before 1.0 freezes it (#1403)
+- `1b629458` tests: count the restart-recovery work for #1401
+- `a293d227` tests: count the preamble live-config rule test
+- `15be6b5e` contributing: tests never touch the live config or keys (#1399)
+- `068d08fe` tests: count the voice enablement work for #1399
+- `6de2fc4f` tests: count the loop-guard work for #1397
+- `1fee0e33` contributing: update CI failure policy — comment with fix instructions, don't merge until green
+- `e6543a84` tests: count the notice tests added for #1369
+- `e9fffc33` tests: count the userbot test modules merged from PR #1209
+- `b58e188b` readme: mark the Telegram userbot rows experimental
+- `3f880c5e` tests: count the six tests merged from PRs #1372 and #1373
+- `c05c3978` voice: README teaches the real providers.stt/providers.tts engine blocks, not the retired [voice] section (#1389)
+- `c4d0e17c` theme picker + user themes in README/TESTING, refresh counts
+- `844654a3` contributing: state atomic commits as repository-wide, with short-lived branches or stacked PRs
+- `9d387543` template: two-step code-analysis rule (memory search → source verify)
+- `e75fb0ba` contributing: issue titles follow Conventional Commits like commit messages
+- `a80e8019` refresh the test counts and regenerate the TESTING.md inventory from the run (#1362)
+- `c4c28922` drop the phantom [image.vision] provider key; the vision pin is [providers.fallback] vision (#1355)
+- `ac9fbc42` refresh the test counts for the cancel-indicator suite
+- `b0adac26` close the README gaps found auditing 444 commits since v0.3.83 (#1336, #1337, #1338, #1339)
+- `5db959fa` refresh the test counts for the redaction and transport-retry suites
+- `5811b557` refresh the test counts and complete the TESTING.md inventory (#1335)
+- `9d7920a7` eval: Alexey spike vs code-graph head-to-head report (12-query comparison)
+- `13644d3e` eval: generic-heavy callers row to 5/5 post-#1328
+- `b4c4c8c0` readme: refresh benchmark to post-#1328 graph numbers (15,769 symbols / 95,601 edges, 5/5 caller recall)
+- `a6e42b5b` readme: code-graph benchmark in Benchmarks section; session_search described accurately
+- `1f0cbae6` readme: document code-graph symbol graph + benchmark, browser_find/browser_act (#1326)
+- `9c7f7da2` all four [agent] provider keys correct custom:<name> and provider/model spellings (#1316)
+- `c3c1f79d` the custom provider label is the provider's name in every other key, plus a troubleshooting entry (#1315)
+- `ab7b2e4b` the RSI provider key is the bare section name, never custom:<name> or provider/model (#1314)
+- `2c5d0bfb` drop_transfer: the module examples use the loopback-bound forward too (#1313)
+- `186e7812` say what the drop-agent tunnel exposes (#1312)
+- `e57bf27b` the VPS drop section leads with the copy, and the ssh -R flow needs nothing on the server (#1311)
+- `eee70139` fix README table of contents placement and add measured benchmarks section
+- `bcb6b965` refresh test counts in README (7,566 tests / 747 modules / 33 ignored) [skip ci]
+- `e64b3fc3` drop: name the floor before the upgrade (#1289)
+- `1f3dd95f` drag-drop into a remote TUI, over the SSH connection already open (#1289)
+- `38d3d803` dropping files into a TUI running on a VPS (#1289)
+- `b71e39fc` document [memory] extra_paths in config example and README (knowledge-base workflow, #1287)
+- `354076d8` telegram: define read-only userbot boundary
+- `96a7f4d1` #1195: plan_auto_start key - separation default, cascades as opt-in future work
+
+### 🧹 Miscellaneous
+
+224 commits of internal work not enumerated here: 88 refactors, 59 test additions, 17 chores, 14 formatting passes, 7 CI changes, and the remainder small reverts and
+housekeeping. Run `git log v0.3.83..v0.5.0 --no-merges` for the full list.
+
+### 📊 Stats
+
+- 595 commits since v0.3.83
+- 591 files changed, +57,403 / -11,296 lines
+- 7,886 tests (7,856 passed, 0 failed, 30 ignored)
+
+
 ## [0.3.83] - 2026-08-23
 
 52 commits since v0.3.82. 125 files changed, +8,152 / -834 lines.
@@ -7898,3 +8303,4 @@ fixes.
 [0.3.81]: https://github.com/adolfousier/opencrabs/compare/v0.3.80...v0.3.81
 [0.3.82]: https://github.com/adolfousier/opencrabs/compare/v0.3.81...v0.3.82
 [0.3.83]: https://github.com/adolfousier/opencrabs/compare/v0.3.82...v0.3.83
+[0.5.0]: https://github.com/adolfousier/opencrabs/compare/v0.3.83...v0.5.0

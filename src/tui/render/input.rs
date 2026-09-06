@@ -534,36 +534,36 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
             .alignment(Alignment::Right)
         });
 
-    // Transient notice ("Copied to clipboard", "Press Esc again…", an error
-    // toast) on the BOTTOM border, left, sharing the row with the ctx budget
-    // (#1369). It used to be pushed into the chat buffer, which grew the
-    // scroll content by three rows on show and shrank it on expiry, so the
-    // history jumped on every copy. A border title changes no layout.
-    let notice_title =
+    // Transient notice ("Copied to clipboard" after a drag-select, "Press
+    // Esc again…", an error toast) lives INSIDE the input box, as trailing
+    // ghost text on the cursor's row (#1369), the same slot the single
+    // follow-up suggestion uses. It used to be pushed into the chat buffer,
+    // which grew the scroll content by three rows on show and shrank it on
+    // expiry, so the history jumped on every drag-select. Here it changes
+    // no layout: the input height is derived from the buffer alone and the
+    // Paragraph below does not wrap, so a long notice is clipped, not
+    // wrapped onto a row the layout never allotted.
+    if let Some((kind, text)) =
         super::notice::pick_notice(app.error_message.as_deref(), app.notification.as_deref())
-            .and_then(|(kind, text)| {
-                let slot = (area.width as usize).saturating_sub(context_title.width() + 2);
-                super::notice::notice_label(text, slot).map(|label| {
-                    let color = match kind {
-                        super::notice::NoticeKind::Error => theme::role(Role::Error),
-                        super::notice::NoticeKind::Info => theme::role(Role::AccentTeal),
-                    };
-                    Line::from(Span::styled(
-                        label,
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
-                    ))
-                    .alignment(Alignment::Left)
-                })
-            });
+        && let Some(row) = input_lines.get_mut(cursor_row)
+    {
+        let room = input_content_width.saturating_sub(row.width());
+        if let Some(label) = super::notice::notice_label(text, room) {
+            let color = match kind {
+                super::notice::NoticeKind::Error => theme::role(Role::Error),
+                super::notice::NoticeKind::Info => theme::role(Role::AccentTeal),
+            };
+            row.spans.push(Span::styled(
+                label,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
 
     let mut block = Block::default()
         .borders(Borders::TOP | Borders::BOTTOM)
         .title_bottom(context_title)
         .border_style(border_style);
-
-    if let Some(title) = notice_title {
-        block = block.title_bottom(title);
-    }
 
     // Attachments rightmost, background task to their left (#836).
     if !app.attachments.is_empty() {
