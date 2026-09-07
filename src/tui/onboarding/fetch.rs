@@ -773,7 +773,7 @@ fn minimax_baseline_models() -> Vec<String> {
 /// sensitive (401 on some CI runners, #1419). Newest first so the
 /// picker highlights the current model. Live fetch is the primary
 /// source — this only covers offline / unreachable-API scenarios.
-fn xiaomi_baseline_models() -> Vec<String> {
+pub(crate) fn xiaomi_baseline_models() -> Vec<String> {
     vec![
         "mimo-v2.5-pro".to_string(),
         "mimo-v2-pro".to_string(),

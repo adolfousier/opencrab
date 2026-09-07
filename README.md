@@ -4550,7 +4550,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (7,942 tests across 794 modules: 7,920 of them under src/tests/,
+# Run tests (7,946 tests across 794 modules: 7,924 of them under src/tests/,
 # where tests belong, plus 22 inline in src/channels/telegram/state.rs and
 # src/tui/render/presets_test.rs; 30 slower ones are #[ignore]d to keep the default
 # run fast: profile tests that touch ~/.opencrabs, browser end-to-end
