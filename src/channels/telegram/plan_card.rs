@@ -361,7 +361,10 @@ pub(crate) async fn refresh_plan_card(
         load_goal_section(agent, session_id)
             .await
             .filter(|&(_, completed)| !completed)
-            .map(|(text, _)| GoalSection { text, completed: false })
+            .map(|(text, _)| GoalSection {
+                text,
+                completed: false,
+            })
     } else {
         None
     };
@@ -865,6 +868,55 @@ pub(crate) async fn remove_plan_card(
     let card_lock = state.plan_card_lock(session_id).await;
     let _guard = card_lock.lock().await;
     remove_plan_card_locked(bot, chat, state, session_id).await;
+}
+
+/// Settle-path plan-card tail (#69): the #62 re-stick block shared by BOTH
+/// delivery paths. The normal settle runs it after final delivery; the
+/// interrupt/replacement teardown (handle_message's cancel_token guard) runs
+/// the SAME tail, because a preempted turn's `return Ok(())` used to skip the
+/// re-stick entirely — during rapid-fire discussion the card stayed buried at
+/// a stale position for as long as the interrupt chain lasted (#69 live
+/// observation: zero normal settles for 2+ hours, resticks only from
+/// stream_loop flow-burial). Same gates as the normal path, unchanged:
+/// finalize-on-archive first, then the tracked-card claim on the shared
+/// sticky-stack budget (#1150) — a cardless settle spends nothing and retries
+/// on the next settle — then the in-place refresh riding G2, fresh post
+/// riding G3 (#1211). No cooldown: the #814 legacy stays deleted.
+///
+/// `plan_kb` is passed by the caller: the normal path forwards the value its
+/// settle render just computed (bit-identical to the pre-#69 block); the
+/// interrupt path recomputes it for a finished turn (`load_plan_state_section`
+/// with `turn_active == false`, mirroring the settle path's `refresh_sections`)
+/// so the Approve/Discard keyboard rides the resticked card.
+pub(crate) async fn restick_plan_card_after_turn(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<ThreadId>,
+    state: &Arc<TelegramState>,
+    agent: &AgentService,
+    session_id: Uuid,
+    plan_kb: PlanKb,
+) {
+    if crate::utils::plan_files::peek_plan_just_archived(session_id).await {
+        // Plan completed THIS settle (#1158, #1231): finalize the tracked
+        // card (✅ header, keyboard stripped, one-shot untrack) and re-stick
+        // the completed card to the bottom of the thread instead of
+        // re-sticking or refreshing a now-archived plan. Finalize consumes
+        // the flag only after the notice LANDED (#16): a flood-aborted
+        // finalize leaves it in place, so the next settle retries instead
+        // of losing the completion notice forever.
+        finalize_plan_card(bot, chat, thread_id, state, session_id).await;
+    } else {
+        // Gate the claim on a tracked card (in-memory only — cheap): a
+        // cardless settle must not spend the sticky budget, or the
+        // flow-block restick starves for 15s after EVERY settle (#62).
+        if state.plan_card_cached(session_id).await.is_some()
+            && state.claim_sticky_action(chat.0, TelegramState::STICKY_STACK_MIN_INTERVAL)
+        {
+            remove_plan_card(bot, chat, state, session_id).await;
+        }
+        refresh_plan_card(bot, chat, thread_id, state, agent, session_id, plan_kb).await;
+    }
 }
 
 /// Removal body, for callers already holding the per-session card lock.
