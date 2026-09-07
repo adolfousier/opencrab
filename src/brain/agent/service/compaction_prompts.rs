@@ -141,6 +141,33 @@ pub fn build_continuation(
     text
 }
 
+/// Advisory skill-inventory stamp (#125): names the skills that were
+/// active (slash-invoked) in this session before the compaction, framed
+/// as CONSIDER-not-RELOAD — the session's focus may have shifted while
+/// the context was compacting, so the waking agent weighs each skill's
+/// relevance against the IMMEDIATE TASK instead of blindly re-reading
+/// bodies it may no longer need. An empty slice produces NO stamp at
+/// all: zero marginal tokens for sessions that never touched a skill.
+///
+/// The list rides the continuation prompt (mechanically composed from
+/// in-memory session state at build time), so it is immune to the
+/// summarizer's token-budget drops — the durable-state property the
+/// research phase identified as the gap.
+pub fn append_skill_stamp(mut text: String, active_skills: &[String]) -> String {
+    if active_skills.is_empty() {
+        return text;
+    }
+    let mut names: Vec<&str> = active_skills.iter().map(|s| s.as_str()).collect();
+    names.sort();
+    text.push_str(&format!(
+        "\n\nSKILLS LOADED PRE-COMPACTION: {}. Session focus may have \
+         shifted — consider whether each is still relevant to the \
+         IMMEDIATE TASK; reload only those that are.",
+        names.join(", ")
+    ));
+    text
+}
+
 fn fun_body(kind: CompactionKind) -> &'static str {
     match kind {
         CompactionKind::Regular => {

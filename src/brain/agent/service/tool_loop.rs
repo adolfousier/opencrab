@@ -453,6 +453,30 @@ pub fn is_user_correction(msg: &str) -> bool {
 }
 
 impl AgentService {
+    /// Build the post-compaction continuation prompt for `kind` — the single
+    /// construction path shared by all five compaction sites (Regular,
+    /// MidLoop, Emergency, PostTool, Manual): continuation body + plan
+    /// recovery + advisory skill-inventory stamp (issue #125).
+    async fn continuation_prompt(
+        &self,
+        session_id: Uuid,
+        kind: super::compaction_prompts::CompactionKind,
+    ) -> String {
+        let skills = self
+            .active_skills_for_session(session_id)
+            .into_iter()
+            .collect::<Vec<_>>();
+        super::compaction_prompts::append_skill_stamp(
+            super::compaction_prompts::build_continuation(
+                kind,
+                self.silent_compaction,
+                self.auto_approve_tools,
+                super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+            ),
+            &skills,
+        )
+    }
+
     /// Core tool-execution loop — called by all public shims.
     /// `override_approval_callback` and `override_progress_callback` take
     /// precedence over the service-level callbacks (used by Telegram, etc.)
@@ -1195,12 +1219,12 @@ impl AgentService {
                     // auto-compaction behavior but uses a short sentence instead
                     // of the full POST-COMPACTION PROTOCOL. Persisted to DB so
                     // the next turn sees it.
-                    let cont_text = super::compaction_prompts::build_continuation(
-                        super::compaction_prompts::CompactionKind::Manual,
-                        self.silent_compaction,
-                        self.auto_approve_tools,
-                        super::compaction_prompts::PlanRecovery::for_session(session_id).await,
-                    );
+                    let cont_text = self
+                        .continuation_prompt(
+                            session_id,
+                            super::compaction_prompts::CompactionKind::Manual,
+                        )
+                        .await;
                     message_service
                         .create_message(session_id, "user".to_string(), cont_text.clone())
                         .await
@@ -1308,12 +1332,12 @@ impl AgentService {
                 tracing::error!("Failed to persist compaction marker to DB: {}", e);
             }
 
-            let cont_text = super::compaction_prompts::build_continuation(
-                super::compaction_prompts::CompactionKind::Regular,
-                self.silent_compaction,
-                self.auto_approve_tools,
-                super::compaction_prompts::PlanRecovery::for_session(session_id).await,
-            );
+            let cont_text = self
+                .continuation_prompt(
+                    session_id,
+                    super::compaction_prompts::CompactionKind::Regular,
+                )
+                .await;
             context.add_message(Message::user(cont_text));
         }
 
@@ -1786,12 +1810,12 @@ impl AgentService {
                     tracing::error!("Failed to persist mid-loop compaction marker to DB: {}", e);
                 }
 
-                let cont_text = super::compaction_prompts::build_continuation(
-                    super::compaction_prompts::CompactionKind::MidLoop,
-                    self.silent_compaction,
-                    self.auto_approve_tools,
-                    super::compaction_prompts::PlanRecovery::for_session(session_id).await,
-                );
+                let cont_text = self
+                    .continuation_prompt(
+                        session_id,
+                        super::compaction_prompts::CompactionKind::MidLoop,
+                    )
+                    .await;
                 context.add_message(Message::user(cont_text));
             }
 
@@ -2065,13 +2089,12 @@ impl AgentService {
                                 );
                             }
 
-                            let cont_text = super::compaction_prompts::build_continuation(
-                                super::compaction_prompts::CompactionKind::Emergency,
-                                self.silent_compaction,
-                                self.auto_approve_tools,
-                                super::compaction_prompts::PlanRecovery::for_session(session_id)
-                                    .await,
-                            );
+                            let cont_text = self
+                                .continuation_prompt(
+                                    session_id,
+                                    super::compaction_prompts::CompactionKind::Emergency,
+                                )
+                                .await;
                             context.add_message(Message::user(cont_text));
 
                             // Notify user about emergency compaction
@@ -7271,12 +7294,12 @@ impl AgentService {
                     tracing::error!("Failed to persist post-tool compaction marker to DB: {}", e);
                 }
 
-                let cont_text = super::compaction_prompts::build_continuation(
-                    super::compaction_prompts::CompactionKind::PostTool,
-                    self.silent_compaction,
-                    self.auto_approve_tools,
-                    super::compaction_prompts::PlanRecovery::for_session(session_id).await,
-                );
+                let cont_text = self
+                    .continuation_prompt(
+                        session_id,
+                        super::compaction_prompts::CompactionKind::PostTool,
+                    )
+                    .await;
                 context.add_message(Message::user(cont_text));
             }
 
