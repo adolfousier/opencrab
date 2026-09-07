@@ -93,7 +93,7 @@ fn channel_budgets_stay_sane() {
         assert!(DISCORD_LABEL_BUDGET > 0 && SLACK_LABEL_BUDGET > 0);
         // Telegram's ladder replaced its budget: past this width a label
         // cannot ride a button at all and becomes a numbered entry, so no
-        // Telegram label is never silently cut (#1204, recalibrated #79).
+        // Telegram label is ever silently cut (#1204, recalibrated #79).
         assert!(BUTTON_LABEL_MAX_UNITS > 0);
     }
 }
