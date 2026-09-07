@@ -1,45 +1,30 @@
-//! `[providers.xiaomi]` materializes to the canonical metadata defaults when the
-//! TOML omits the section, so a config that predates the provider (or a fresh
-//! `/evolve` that never appended it) still shows MiMo's catalogue in the picker
-//! with no manual edits (#194). A section the user did write is left exactly as
-//! written — the default never clobbers explicit values.
+//! `[providers.xiaomi]` is an ordinary provider section: absent from the TOML
+//! means absent, present means exactly what the user wrote.
+//!
+//! It used to materialize a populated, enabled section whenever the TOML
+//! omitted it (#194), a leftover from the window when MiMo shipped as the
+//! keyless default provider. The picker never depended on it: `load_default_models`
+//! reads every provider's catalogue out of the embedded `config.toml.example`,
+//! which ships xiaomi disabled. What the default did instead was make every
+//! config that never named xiaomi parse as though it had enabled one.
 
 use crate::config::ProviderConfigs;
-use crate::config::xiaomi_provider_defaults;
 
 #[test]
-fn missing_xiaomi_section_deserializes_to_canonical_defaults() {
-    // No [xiaomi] table at all — the bug case (old / hand-edited config).
+fn missing_xiaomi_section_stays_missing() {
+    // No [xiaomi] table at all: an old or hand-edited config, or one written
+    // before the provider existed.
     let cfgs: ProviderConfigs = toml::from_str("").expect("empty providers should parse");
-    let xiaomi = cfgs.xiaomi.expect("xiaomi must default to Some, not None");
 
-    assert!(xiaomi.enabled, "the default section is enabled");
-    assert_eq!(xiaomi.default_model.as_deref(), Some("mimo-v2.5-pro"));
     assert!(
-        xiaomi.api_key.is_none(),
-        "defaults carry no key — the user supplies one from platform.xiaomimimo.com"
-    );
-    assert!(
-        xiaomi.base_url.is_none(),
-        "base_url stays None so the factory uses the default xiaomimimo endpoint"
-    );
-    assert_eq!(xiaomi.models, xiaomi_provider_defaults().models);
-    // MiMo v2.5 is multimodal, so vision (analyze_image) routes to it natively
-    // via ProviderVisionTool when a key is set.
-    assert_eq!(xiaomi.vision_model.as_deref(), Some("mimo-v2.5-pro"));
-    // Capped at 200k despite MiMo's ~1M — quality degrades past ~200-300k and
-    // transparent compaction already gives effectively-infinite memory.
-    assert_eq!(
-        xiaomi.context_window,
-        Some(200_000),
-        "Xiaomi must default to a 200k context window"
+        cfgs.xiaomi.is_none(),
+        "a config that never named xiaomi must not parse as having enabled it"
     );
 }
 
 #[test]
 fn present_xiaomi_section_is_left_untouched() {
-    // A user who wrote their own section keeps their values; the field default
-    // only fires when the whole section is absent.
+    // A user who wrote their own section keeps their values verbatim.
     let toml =
         "[xiaomi]\nenabled = true\ndefault_model = \"mimo-v2-flash\"\napi_key = \"user-key\"\n";
     let cfgs: ProviderConfigs = toml::from_str(toml).expect("parse");
@@ -49,13 +34,11 @@ fn present_xiaomi_section_is_left_untouched() {
     assert_eq!(xiaomi.api_key.as_deref(), Some("user-key"));
     assert!(
         xiaomi.models.is_empty(),
-        "default model list must NOT be grafted onto an explicit section"
+        "no model list is grafted onto an explicit section"
     );
 }
 
 #[test]
 fn programmatic_default_keeps_xiaomi_none() {
-    // The serde default is deserialization-only; an in-memory Default::default()
-    // (used throughout tests) is unaffected, so blast radius stays small.
     assert!(ProviderConfigs::default().xiaomi.is_none());
 }

@@ -1848,47 +1848,6 @@ pub struct DebugConfig {
     pub profiling: bool,
 }
 
-/// Canonical defaults for the Xiaomi MiMo provider, applied when `config.toml`
-/// has no `[providers.xiaomi]` section.
-///
-/// This seeds model metadata (model list, vision model, context window) so the
-/// picker and `/models` show MiMo's catalogue without manual edits (#194).
-/// Xiaomi is keyed: `try_create_xiaomi` still needs an `api_key`, and the
-/// registry marks it `requires_api_key`, so an enabled section with no key is
-/// simply skipped rather than becoming a broken default.
-pub fn xiaomi_provider_defaults() -> ProviderConfig {
-    ProviderConfig {
-        enabled: true,
-        default_model: Some("mimo-v2.5-pro".to_string()),
-        models: [
-            "mimo-v2.5-pro",
-            "mimo-v2-pro",
-            "mimo-v2.5",
-            "mimo-v2-omni",
-            "mimo-v2-flash",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect(),
-        // MiMo v2.5 is multimodal, so analyze_image routes to it natively
-        // (via ProviderVisionTool) instead of needing a Gemini key. Falls back
-        // to Gemini at call time if Xiaomi ever rejects image content.
-        vision_model: Some("mimo-v2.5-pro".to_string()),
-        // Cap at 200k even though MiMo advertises ~1M: quality degrades past
-        // ~200-300k, and OpenCrabs already provides effectively-infinite memory
-        // via transparent compaction, so the extra window buys nothing but
-        // worse responses. Users can raise it manually if they really want it.
-        context_window: Some(200_000),
-        ..Default::default()
-    }
-}
-
-/// serde field-default for [`ProviderConfigs::xiaomi`] — materializes the
-/// canonical metadata section when the TOML omits `[providers.xiaomi]`.
-fn default_xiaomi_provider() -> Option<ProviderConfig> {
-    Some(xiaomi_provider_defaults())
-}
-
 /// LLM Provider configurations
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderConfigs {
@@ -1921,11 +1880,18 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub moonshot: Option<ProviderConfig>,
 
-    /// Xiaomi MiMo configuration. OpenAI-compatible, keyed: the user supplies an
-    /// API key from platform.xiaomimimo.com. Defaults to a canonical metadata
-    /// section (model list, vision model, context window) when the TOML omits
-    /// it, so the picker and /models show MiMo's catalogue (#194).
-    #[serde(default = "default_xiaomi_provider")]
+    /// Xiaomi MiMo configuration. OpenAI-compatible and keyed: the user
+    /// supplies an API key from platform.xiaomimimo.com.
+    ///
+    /// Absent from the TOML means absent, exactly as for every other provider.
+    /// It once defaulted to a populated, enabled section, from the window when
+    /// MiMo shipped as the keyless default provider. That window closed and the
+    /// default outlived it, so every config that did not name xiaomi parsed as
+    /// though it had enabled one, and any whole-file rewrite then wrote that
+    /// section to disk over providers the user had actually chosen. The picker
+    /// never needed it: `load_default_models` reads each provider's catalogue
+    /// from the embedded `config.toml.example`, where xiaomi ships disabled.
+    #[serde(default)]
     pub xiaomi: Option<ProviderConfig>,
 
     /// Named custom OpenAI-compatible providers (e.g. [providers.custom.ollama])
