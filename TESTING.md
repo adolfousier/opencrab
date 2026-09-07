@@ -441,6 +441,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Phantom Side Effect | 12 | `src/tests/phantom_side_effect_test.rs` |
 | Tests — Phantom Trigger Gap | 3 | `src/tests/phantom_trigger_gap_test.rs` |
 | Tests — Phantom Unbacked Evidence | 11 | `src/tests/phantom_unbacked_evidence_test.rs` |
+| Tests — Phantom Unbacked Facts | 16 | `src/tests/phantom_unbacked_facts_test.rs` |
 | Tests — Phantom Uncalled Command | 12 | `src/tests/phantom_uncalled_command_test.rs` |
 | Tests — Phantom Unsent File | 12 | `src/tests/phantom_unsent_file_test.rs` |
 | Tests — Phantom Work Announcement | 14 | `src/tests/phantom_work_announcement_test.rs` |
