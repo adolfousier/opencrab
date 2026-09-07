@@ -14,7 +14,6 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
 use teloxide::payloads::SendDocumentSetters;
-use teloxide::payloads::SendMessageSetters;
 use teloxide::payloads::SendPhotoSetters;
 use teloxide::prelude::*;
 use teloxide::types::{
@@ -1300,7 +1299,7 @@ impl TelegramSendTool {
         // buttons arm rides it too.
         let token = bot.token();
         match crate::channels::telegram::send::send_buttons_raw(
-            &token,
+            token,
             chat_id,
             thread_id,
             &html,
