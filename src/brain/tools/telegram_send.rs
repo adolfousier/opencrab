@@ -1291,28 +1291,37 @@ impl TelegramSendTool {
             .register_callback_origins(context.session_id, origin_keys);
         let keyboard = InlineKeyboardMarkup::new(rows);
         let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
-        match send_retrying_rate_limit("telegram_send send_buttons", || {
-            crate::channels::telegram::send::message_in_thread(
-                bot,
-                ChatId(chat_id),
-                thread_id,
-                html.clone(),
-            )
-            .parse_mode(teloxide::types::ParseMode::Html)
-            .reply_markup(keyboard.clone())
-        })
+        // Raw Bot API JSON path (#118): the teloxide request chain on this
+        // build silently drops BOTH `.parse_mode(Html)` and
+        // `.reply_markup(keyboard)` (stored probes carry no entities and no
+        // reply_markup, while the request arm logs ok). The raw-JSON path is
+        // the proven wire in this codebase — the rich plane, plan cards and
+        // ephemeral sends all ride it and keyboards store correctly — so the
+        // buttons arm rides it too.
+        let token = bot.token();
+        match crate::channels::telegram::send::send_buttons_raw(
+            &token,
+            chat_id,
+            thread_id,
+            &html,
+            &keyboard,
+        )
         .await
         {
             Ok(m) => {
+                let mid = m
+                    .get("message_id")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0) as i32;
                 log_send_success(
                     "tool",
                     "send_buttons",
-                    "send_buttons",
                     &context.session_id.to_string(),
+                    "send_buttons",
                     "html",
                     chat_id,
                     thread_id.map(|t| t.0.0),
-                    m.id.0,
+                    mid,
                     html.len(),
                     &content_hash8(&html),
                 );
@@ -1325,14 +1334,14 @@ impl TelegramSendTool {
                 log_send_failure(
                     "tool",
                     "send_buttons",
-                    "send_buttons",
                     &context.session_id.to_string(),
+                    "send_buttons",
                     "html",
                     chat_id,
                     thread_id.map(|t| t.0.0),
                     html.len(),
                     &content_hash8(&html),
-                    &e.to_string(),
+                    &e,
                 );
                 Ok(ToolResult::error(format!(
                     "Failed to send message with buttons: {e}"
