@@ -3263,11 +3263,9 @@ impl App {
                 PickerAction::Preview(t) => crate::tui::render::theme::set(t),
                 PickerAction::Apply(t) => {
                     crate::tui::render::theme::set(t);
-                    if let Err(e) = crate::config::Config::write_key_string(
-                        "tui",
-                        "theme",
-                        &format!("\"{}\"", t.name),
-                    ) {
+                    // Bare name, not a pre-quoted literal: see #1428.
+                    if let Err(e) = crate::config::Config::write_key_string("tui", "theme", t.name)
+                    {
                         self.push_system_message(format!(
                             "Applied '{}' (live). Persist failed: {e}",
                             t.name
