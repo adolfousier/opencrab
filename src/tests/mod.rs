@@ -66,6 +66,7 @@ pub mod brain_agent_context_test;
 pub mod brain_agent_service_phantom_lang_test;
 pub mod brain_agent_service_phantom_test;
 pub mod brain_agent_service_work_status_test;
+pub mod work_status_parent_binding_test;
 pub mod brain_commands_test;
 pub mod brain_file_generic_guard_test;
 pub mod brain_file_safety_test;
