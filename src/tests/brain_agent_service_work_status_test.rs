@@ -37,7 +37,7 @@ fn status_path_ends_with_json() {
 #[test]
 fn new_agent_is_pending() {
     isolate("new_pending");
-    let s = WorkStatus::new_agent("test-1", "test", "sess-1", "do things").unwrap();
+    let s = WorkStatus::new_agent("test-1", "test", "sess-1", "do things", None).unwrap();
     assert_eq!(s.state, WorkState::Pending);
     assert_eq!(s.kind, WorkKind::Agent);
     assert_eq!(s.id, "test-1");
@@ -48,7 +48,7 @@ fn new_agent_is_pending() {
 #[test]
 fn agent_transitions_to_running() {
     isolate("running");
-    let mut s = WorkStatus::new_agent("test-2", "test", "sess-1", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("test-2", "test", "sess-1", "do things", None).unwrap();
     s.mark_running().unwrap();
     assert_eq!(s.state, WorkState::Running);
 }
@@ -60,7 +60,7 @@ fn agent_parks_as_awaiting_input_and_flips_back() {
     // already finished. The parked state is distinct, not terminal, and
     // round-trips through the file so external readers see it too.
     isolate("awaiting_input");
-    let mut s = WorkStatus::new_agent("test-7", "test", "sess-1", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("test-7", "test", "sess-1", "do things", None).unwrap();
     s.mark_running().unwrap();
     s.mark_awaiting_input().unwrap();
     assert_eq!(s.state, WorkState::AwaitingInput);
@@ -80,7 +80,7 @@ fn agent_parks_as_awaiting_input_and_flips_back() {
 #[test]
 fn agent_progress_snapshot() {
     isolate("progress");
-    let mut s = WorkStatus::new_agent("test-3", "test", "sess-1", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("test-3", "test", "sess-1", "do things", None).unwrap();
     s.mark_running().unwrap();
     s.update_progress(1, Some("bash".into()), Some("cargo check ok".into()))
         .unwrap();
@@ -94,7 +94,7 @@ fn agent_progress_snapshot() {
 #[test]
 fn agent_completed_sets_finish() {
     isolate("completed");
-    let mut s = WorkStatus::new_agent("test-4", "test", "sess-1", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("test-4", "test", "sess-1", "do things", None).unwrap();
     s.mark_completed("done".into()).unwrap();
     assert_eq!(s.state, WorkState::Completed);
     let finish = s.finish.as_ref().expect("completed stamps a finish");
@@ -105,7 +105,7 @@ fn agent_completed_sets_finish() {
 #[test]
 fn agent_failed_sets_error() {
     isolate("failed");
-    let mut s = WorkStatus::new_agent("test-5", "test", "sess-1", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("test-5", "test", "sess-1", "do things", None).unwrap();
     s.mark_failed("something broke".into()).unwrap();
     assert_eq!(s.state, WorkState::Failed);
     let finish = s.finish.as_ref().expect("failed stamps a finish");
@@ -116,7 +116,7 @@ fn agent_failed_sets_error() {
 #[test]
 fn agent_read_roundtrip() {
     isolate("roundtrip");
-    let mut s = WorkStatus::new_agent("test-6", "test", "sess-1", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("test-6", "test", "sess-1", "do things", None).unwrap();
     s.mark_running().unwrap();
     s.update_progress(2, Some("write_file".into()), None)
         .unwrap();
@@ -221,7 +221,7 @@ fn interrupted_error_text_is_kind_aware() {
     // Agents keep the exact pre-#26 sentence; commands get the same
     // sentence about a command.
     isolate("interrupted_text");
-    let mut agent = WorkStatus::new_agent("agt-i", "a", "sess-1", "p").unwrap();
+    let mut agent = WorkStatus::new_agent("agt-i", "a", "sess-1", "p", None).unwrap();
     agent.mark_interrupted().unwrap();
     let mut command = WorkStatus::new_command("cmd-i", "sess-1", "c", "sleep 9").unwrap();
     command.mark_interrupted().unwrap();
@@ -243,7 +243,7 @@ fn interrupted_error_text_is_kind_aware() {
 #[test]
 fn cleanup_removes_old_files() {
     isolate("cleanup");
-    let mut s = WorkStatus::new_agent("old-1", "old", "sess", "task").unwrap();
+    let mut s = WorkStatus::new_agent("old-1", "old", "sess", "task", None).unwrap();
     s.mark_completed("done".into()).unwrap();
 
     let old_ts = chrono::Utc::now()
