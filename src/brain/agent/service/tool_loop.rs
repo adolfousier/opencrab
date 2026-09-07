@@ -462,10 +462,28 @@ impl AgentService {
         session_id: Uuid,
         kind: super::compaction_prompts::CompactionKind,
     ) -> String {
-        let skills = self
+        // Union (issue #131): slash-invoked skills (#219 registry) plus
+        // skills the session CONSUMED by reading (seen_skills registry) —
+        // the inventory must reflect every way the agent loaded a skill.
+        // Deduped by BTreeSet; slash-invocation wins nothing extra because
+        // both registries store the same slug strings.
+        let active: std::collections::BTreeSet<String> = self
             .active_skills_for_session(session_id)
             .into_iter()
-            .collect::<Vec<_>>();
+            .collect();
+        let seen: std::collections::BTreeSet<String> =
+            crate::brain::tools::seen_skills::seen_for_session(session_id)
+                .into_iter()
+                .collect();
+        let skills: Vec<String> = active.union(&seen).cloned().collect();
+        tracing::debug!(
+            "continuation_prompt({kind:?}): skill inventory stamp = {skills:?} \
+             (active {}/{} + seen {}/{})",
+            skills.len(),
+            active.len(),
+            seen.len(),
+            skills.len()
+        );
         super::compaction_prompts::append_skill_stamp(
             super::compaction_prompts::build_continuation(
                 kind,
