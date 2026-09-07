@@ -90,6 +90,7 @@ The docs and the landing at [opencrabs.com](https://opencrabs.com) are available
 - [OpenCrabs Overview](src/docs/start/OPENCRABS.md)
 
 ### Reference
+- [Ontology](src/docs/reference/ONTOLOGY.md) — shared vocabulary: one concept = one name (SSOT)
 - [Architecture](src/docs/reference/ARCHITECTURE_2026_04_14.md)
 - [Brain Constitution](src/docs/reference/BRAIN_CONSTITUTION.md)
 - [Adding New Providers](src/docs/reference/ADDING_NEW_PROVIDERS.md)
