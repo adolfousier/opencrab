@@ -11,7 +11,7 @@
 //! at boot ([`crate::brain::agent::service::restart_recovery`]) so a push
 //! parked at kill time still reaches its session on the next start.
 
-use crate::brain::agent::service::types::{BgTaskMeta, PushOrigin};
+use crate::brain::agent::{BgTaskMeta, PushOrigin};
 use crate::db::Pool;
 use crate::db::database::interact_err;
 use anyhow::{Context, Result};

@@ -35,7 +35,9 @@ where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => handle.spawn(future),
+        Ok(handle) => {
+            handle.spawn(future);
+        }
         Err(_) => {
             tracing::debug!(
                 target: "background_task",

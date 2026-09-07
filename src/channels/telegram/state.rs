@@ -1554,8 +1554,8 @@ impl TelegramState {
         // Delivered into the running loop (#111): the durable twin is
         // redundant from here. A failed clear costs a next-boot duplicate,
         // never a loss.
-        if let Some(msg) = &item {
-            crate::brain::agent::service::notify_queue::clear_on_delivery(session_id, msg);
+        if let Some(i) = &item {
+            crate::brain::agent::service::notify_queue::clear_on_delivery(session_id, &i.msg);
         }
         item.map(|i| i.msg)
     }
