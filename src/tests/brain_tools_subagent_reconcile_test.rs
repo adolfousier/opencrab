@@ -25,7 +25,8 @@ fn isolate(tag: &str) {
 #[test]
 fn a_running_agent_becomes_interrupted() {
     isolate("running");
-    let mut s = WorkStatus::new_agent("agent-1", "build docs", "sess-a", "do things", None).unwrap();
+    let mut s =
+        WorkStatus::new_agent("agent-1", "build docs", "sess-a", "do things", None).unwrap();
     s.mark_running().unwrap();
 
     let orphans = reconcile_orphaned_agents();
