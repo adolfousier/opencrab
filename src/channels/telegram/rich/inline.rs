@@ -28,7 +28,6 @@ pub(super) fn parse_inlines(input: &str) -> Vec<Inline> {
     let mut i = 0;
 
     while i < input.len() {
-        'outer: {
         let rest = &input[i..];
 
         // Literal spans first: their contents are never re-parsed.
@@ -77,13 +76,11 @@ pub(super) fn parse_inlines(input: &str) -> Vec<Inline> {
         // relayed markup) renders real styling instead of escaping into
         // visible `&lt;b&gt;` text (#106). Well-formed pairs only; an
         // unmatched opener stays literal, same law as `<sub>` above.
-        for (tag, make) in HTML_STYLE_TAGS {
-            if let Some(span) = tag_paired(rest, tag) {
-                flush(&mut text, &mut out);
-                out.push(make(parse_inlines(span)));
-                i += span.len() + tag.len() * 2 + 5;
-                continue 'outer;
-            }
+        if let Some((used, node)) = try_html_style_tag(rest) {
+            flush(&mut text, &mut out);
+            out.push(node);
+            i += used;
+            continue;
         }
         if let Some(span) = tag_paired(rest, "sub") {
             flush(&mut text, &mut out);
@@ -128,7 +125,6 @@ pub(super) fn parse_inlines(input: &str) -> Vec<Inline> {
         let ch = rest.chars().next().unwrap();
         text.push(ch);
         i += ch.len_utf8();
-        } // 'outer
     }
 
     flush(&mut text, &mut out);
@@ -190,6 +186,19 @@ fn tag_paired<'a>(rest: &'a str, tag: &str) -> Option<&'a str> {
     Some(&after[..close])
 }
 
+/// Try each standard HTML styling tag (see [`HTML_STYLE_TAGS`]) at the start
+/// of `rest`. Returns `(bytes_consumed, parsed_node)` on the first
+/// well-formed pair, `None` otherwise (#106).
+fn try_html_style_tag(rest: &str) -> Option<(usize, Inline)> {
+    for (tag, make) in HTML_STYLE_TAGS {
+        if let Some(span) = tag_paired(rest, tag) {
+            let used = span.len() + tag.len() * 2 + 5; // <t>SPAN</t>
+            return Some((used, make(parse_inlines(span))));
+        }
+    }
+    None
+}
+
 /// Parse `[text](url)` at the start of `rest`. Returns the link text, the url,
 /// and the total bytes consumed.
 fn parse_link(rest: &str) -> Option<(&str, &str, usize)> {
@@ -225,26 +234,21 @@ mod tests {
     }
 
     fn text_of(input: &str) -> String {
-        let mut out = String::new();
-        for i in parse_inlines(input) {
-            match i {
-                Inline::Text(t) | Inline::Code(t) | Inline::Math(t) => out.push_str(&t),
-                Inline::Bold(c) | Inline::Italic(c) | Inline::Underline(c) | Inline::Strike(c)
-                | Inline::Sub(c) => {
-                    out.push_str(&text_of(&c.iter().map(|x| match x {
-                        Inline::Text(t) => t.clone(),
-                        _ => String::new(),
-                    }).collect::<Vec<_>>().join("")));
-                }
-                Inline::Link { content, .. } => {
-                    for x in content {
-                        if let Inline::Text(t) = x {
-                            out.push_str(t);
-                        }
-                    }
+        fn flatten(inlines: &[Inline], out: &mut String) {
+            for i in inlines {
+                match i {
+                    Inline::Text(t) | Inline::Code(t) | Inline::Math(t) => out.push_str(t),
+                    Inline::Bold(c)
+                    | Inline::Italic(c)
+                    | Inline::Underline(c)
+                    | Inline::Strike(c)
+                    | Inline::Sub(c) => flatten(c, out),
+                    Inline::Link { content, .. } => flatten(content, out),
                 }
             }
         }
+        let mut out = String::new();
+        flatten(&parse_inlines(input), &mut out);
         out
     }
 
