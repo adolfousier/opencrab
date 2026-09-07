@@ -703,7 +703,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Session Gate | 5 | `src/tests/telegram_session_gate_test.rs` |
 | Tests — Telegram Session Resolve | 20 | `src/tests/telegram_session_resolve_test.rs` |
 | Tests — Telegram Split Message | 11 | `src/tests/telegram_split_message_test.rs` |
-| Tests — Telegram State | 7 | `src/channels/telegram/state.rs` |
+| Tests — Telegram State | 7 | `src/tests/telegram_state_test.rs` |
 | Tests — Telegram Status Message | 15 | `src/tests/telegram_status_message_test.rs` |
 | Tests — Telegram Stream Loop Resume | 1 | `src/tests/telegram_stream_loop_resume_test.rs` |
 | Tests — Telegram Suggest Merge | 12 | `src/tests/telegram_suggest_merge_test.rs` |
