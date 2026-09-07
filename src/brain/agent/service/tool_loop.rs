@@ -1195,11 +1195,17 @@ impl AgentService {
                     // auto-compaction behavior but uses a short sentence instead
                     // of the full POST-COMPACTION PROTOCOL. Persisted to DB so
                     // the next turn sees it.
-                    let cont_text = super::compaction_prompts::build_continuation(
-                        super::compaction_prompts::CompactionKind::Manual,
-                        self.silent_compaction,
-                        self.auto_approve_tools,
-                        super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+                    let cont_text = super::compaction_prompts::append_skill_stamp(
+                        super::compaction_prompts::build_continuation(
+                            super::compaction_prompts::CompactionKind::Manual,
+                            self.silent_compaction,
+                            self.auto_approve_tools,
+                            super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+                        ),
+                        &self
+                            .active_skills_for_session(session_id)
+                            .into_iter()
+                            .collect::<Vec<_>>(),
                     );
                     message_service
                         .create_message(session_id, "user".to_string(), cont_text.clone())
@@ -1308,11 +1314,17 @@ impl AgentService {
                 tracing::error!("Failed to persist compaction marker to DB: {}", e);
             }
 
-            let cont_text = super::compaction_prompts::build_continuation(
-                super::compaction_prompts::CompactionKind::Regular,
-                self.silent_compaction,
-                self.auto_approve_tools,
-                super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+            let cont_text = super::compaction_prompts::append_skill_stamp(
+                super::compaction_prompts::build_continuation(
+                    super::compaction_prompts::CompactionKind::Regular,
+                    self.silent_compaction,
+                    self.auto_approve_tools,
+                    super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+                ),
+                &self
+                    .active_skills_for_session(session_id)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
             );
             context.add_message(Message::user(cont_text));
         }
@@ -1786,11 +1798,17 @@ impl AgentService {
                     tracing::error!("Failed to persist mid-loop compaction marker to DB: {}", e);
                 }
 
-                let cont_text = super::compaction_prompts::build_continuation(
-                    super::compaction_prompts::CompactionKind::MidLoop,
-                    self.silent_compaction,
-                    self.auto_approve_tools,
-                    super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+                let cont_text = super::compaction_prompts::append_skill_stamp(
+                    super::compaction_prompts::build_continuation(
+                        super::compaction_prompts::CompactionKind::MidLoop,
+                        self.silent_compaction,
+                        self.auto_approve_tools,
+                        super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+                    ),
+                    &self
+                        .active_skills_for_session(session_id)
+                        .into_iter()
+                        .collect::<Vec<_>>(),
                 );
                 context.add_message(Message::user(cont_text));
             }
@@ -2065,12 +2083,20 @@ impl AgentService {
                                 );
                             }
 
-                            let cont_text = super::compaction_prompts::build_continuation(
-                                super::compaction_prompts::CompactionKind::Emergency,
-                                self.silent_compaction,
-                                self.auto_approve_tools,
-                                super::compaction_prompts::PlanRecovery::for_session(session_id)
+                            let cont_text = super::compaction_prompts::append_skill_stamp(
+                                super::compaction_prompts::build_continuation(
+                                    super::compaction_prompts::CompactionKind::Emergency,
+                                    self.silent_compaction,
+                                    self.auto_approve_tools,
+                                    super::compaction_prompts::PlanRecovery::for_session(
+                                        session_id,
+                                    )
                                     .await,
+                                ),
+                                &self
+                                    .active_skills_for_session(session_id)
+                                    .into_iter()
+                                    .collect::<Vec<_>>(),
                             );
                             context.add_message(Message::user(cont_text));
 
@@ -7271,11 +7297,17 @@ impl AgentService {
                     tracing::error!("Failed to persist post-tool compaction marker to DB: {}", e);
                 }
 
-                let cont_text = super::compaction_prompts::build_continuation(
-                    super::compaction_prompts::CompactionKind::PostTool,
-                    self.silent_compaction,
-                    self.auto_approve_tools,
-                    super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+                let cont_text = super::compaction_prompts::append_skill_stamp(
+                    super::compaction_prompts::build_continuation(
+                        super::compaction_prompts::CompactionKind::PostTool,
+                        self.silent_compaction,
+                        self.auto_approve_tools,
+                        super::compaction_prompts::PlanRecovery::for_session(session_id).await,
+                    ),
+                    &self
+                        .active_skills_for_session(session_id)
+                        .into_iter()
+                        .collect::<Vec<_>>(),
                 );
                 context.add_message(Message::user(cont_text));
             }
