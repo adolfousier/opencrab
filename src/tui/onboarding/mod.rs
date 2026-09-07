@@ -36,7 +36,7 @@ pub use fetch::{fetch_provider_models, is_first_time};
 // the module is private but the function is `pub(crate)`, accessible only when
 // the `fetch` module is reachable. Test access goes through a cfg(test) bridge.
 #[cfg(test)]
-pub(crate) use fetch::merge_minimax_baseline;
+pub(crate) use fetch::{merge_minimax_baseline, xiaomi_baseline_models};
 
 /// System prompt sent once after the user completes first-time onboarding.
 /// Starts with `[SYSTEM:` so it's hidden from the user display but processed

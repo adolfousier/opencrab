@@ -2446,6 +2446,17 @@ pub(crate) async fn handle_message(
         is_cli: agent.provider_for_session(session_id).cli_handles_tools(),
     }));
 
+    // #61: publish this turn's flow roll while it is live. The push-echo
+    // path reads the registry to fold session-notify lines into THIS block
+    // instead of posting standalone bubbles. Named binding — `let _ =`
+    // would drop the guard on the next line and unregister immediately.
+    let _live_flow = telegram_state.register_live_flow(
+        session_id,
+        super::state::LiveFlowHandle {
+            streaming: std::sync::Arc::clone(&streaming),
+        },
+    );
+
     let edit_cancel = CancellationToken::new();
 
     // Edit loop: sends individual tool messages + streams response at bottom

@@ -62,7 +62,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Background Task Persistence | 5 | `src/tests/background_task_persistence_test.rs` |
 | Tests — Background Task Route | 4 | `src/tests/background_task_route_test.rs` |
 | Tests — Background Tasks | 5 | `src/tests/background_tasks_test.rs` |
-| Tests — Baseline Merge | 10 | `src/tests/baseline_merge_test.rs` |
+| Tests — Baseline Merge | 14 | `src/tests/baseline_merge_test.rs` |
 | Tests — Bash Blocklist | 6 | `src/tests/bash_blocklist_test.rs` |
 | Tests — Bash Failure Classification | 10 | `src/tests/bash_failure_classification_test.rs` |
 | Tests — Bash Feedback Enrichment | 16 | `src/tests/bash_feedback_enrichment_test.rs` |
@@ -72,7 +72,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Bash Retry Loop | 11 | `src/tests/bash_retry_loop_test.rs` |
 | Tests — Bash Ssh Detection | 10 | `src/tests/bash_ssh_detection_test.rs` |
 | Tests — Bash Toml Blocklist | 11 | `src/tests/bash_toml_blocklist_test.rs` |
-| Tests — Bg Push Echo | 26 | `src/tests/bg_push_echo_test.rs` |
+| Tests — Bg Push Echo | 29 | `src/tests/bg_push_echo_test.rs` |
 | Tests — Bg Resume | 3 | `src/tests/bg_resume_test.rs` |
 | Tests — Boot Report | 5 | `src/tests/boot_report_test.rs` |
 | Tests — Brain Agent Context | 12 | `src/tests/brain_agent_context_test.rs` |
@@ -93,7 +93,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Brain Provider Error | 4 | `src/tests/brain_provider_error_test.rs` |
 | Tests — Brain Provider Factory | 4 | `src/tests/brain_provider_factory_test.rs` |
 | Tests — Brain Provider Identity | 14 | `src/tests/brain_provider_identity_test.rs` |
-| Tests — Brain Provider Json Repair | 10 | `src/tests/brain_provider_json_repair_test.rs` |
+| Tests — Brain Provider Json Repair | 20 | `src/tests/brain_provider_json_repair_test.rs` |
 | Tests — Brain Provider Qwen | 13 | `src/tests/brain_provider_qwen_test.rs` |
 | Tests — Brain Provider Response Id | 5 | `src/tests/brain_provider_response_id_test.rs` |
 | Tests — Brain Provider Trait | 2 | `src/tests/brain_provider_trait_test.rs` |
@@ -187,7 +187,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Command Label | 12 | `src/tests/command_label_test.rs` |
 | Tests — Command Rich Table | 5 | `src/tests/command_rich_table_test.rs` |
 | Tests — Compaction Background | 10 | `src/tests/compaction_background_test.rs` |
-| Tests — Compaction Fallback Chain | 11 | `src/tests/compaction_fallback_chain_test.rs` |
+| Tests — Compaction Fallback Chain | 19 | `src/tests/compaction_fallback_chain_test.rs` |
 | Tests — Compaction Prompts | 12 | `src/tests/compaction_prompts_test.rs` |
 | Tests — Compaction Signal | 16 | `src/tests/compaction_signal_test.rs` |
 | Tests — Compaction | 28 | `src/tests/compaction_test.rs` |
@@ -204,12 +204,12 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Config Reload Reason | 7 | `src/tests/config_reload_reason_test.rs` |
 | Tests — Config Repair | 7 | `src/tests/config_repair_test.rs` |
 | Tests — Config Secrets | 5 | `src/tests/config_secrets_test.rs` |
-| Tests — Config Section Resolve | 7 | `src/tests/config_section_resolve_test.rs` |
+| Tests — Config Section Resolve | 9 | `src/tests/config_section_resolve_test.rs` |
 | Tests — Config Types Loader | 25 | `src/tests/config_types_loader_test.rs` |
 | Tests — Config Update | 4 | `src/tests/config_update_test.rs` |
 | Tests — Config Voice Migration | 5 | `src/tests/config_voice_migration_test.rs` |
 | Tests — Config Watcher | 5 | `src/tests/config_watcher_test.rs` |
-| Tests — Config Write Path | 5 | `src/tests/config_write_path_test.rs` |
+| Tests — Config Write Path | 6 | `src/tests/config_write_path_test.rs` |
 | Tests — Content Vectors Heal | 3 | `src/tests/content_vectors_heal_test.rs` |
 | Tests — Context Provider Anchor | 6 | `src/tests/context_provider_anchor_test.rs` |
 | Tests — Context Store Concurrent Save | 3 | `src/tests/context_store_concurrent_save_test.rs` |
@@ -379,6 +379,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Mouse Fragment Filter | 13 | `src/tests/mouse_fragment_filter_test.rs` |
 | Tests — Nesting Gate | 4 | `src/tests/nesting_gate_test.rs` |
 | Tests — New Session Pane Binding | 3 | `src/tests/new_session_pane_binding_test.rs` |
+| Tests — No Direct Terminal Writes | 2 | `src/tests/no_direct_terminal_writes_test.rs` |
 | Tests — Nonstream Compat | 5 | `src/tests/nonstream_compat_test.rs` |
 | Tests — Notify Receipts | 4 | `src/tests/notify_receipts_test.rs` |
 | Tests — Nudge Text | 9 | `src/tests/nudge_text_test.rs` |
@@ -440,6 +441,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Phantom Side Effect | 12 | `src/tests/phantom_side_effect_test.rs` |
 | Tests — Phantom Trigger Gap | 3 | `src/tests/phantom_trigger_gap_test.rs` |
 | Tests — Phantom Unbacked Evidence | 11 | `src/tests/phantom_unbacked_evidence_test.rs` |
+| Tests — Phantom Unbacked Facts | 16 | `src/tests/phantom_unbacked_facts_test.rs` |
 | Tests — Phantom Uncalled Command | 12 | `src/tests/phantom_uncalled_command_test.rs` |
 | Tests — Phantom Unsent File | 12 | `src/tests/phantom_unsent_file_test.rs` |
 | Tests — Phantom Work Announcement | 14 | `src/tests/phantom_work_announcement_test.rs` |
@@ -474,8 +476,8 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Profile Addressing | 9 | `src/tests/profile_addressing_test.rs` |
 | Tests — Profile Pid Lock | 3 | `src/tests/profile_pid_lock_test.rs` |
 | Tests — Profile Preempt | 4 | `src/tests/profile_preempt_test.rs` |
-| Tests — Profile | 61 | `src/tests/profile_test.rs` |
-| Tests — Profiles Dialog | 49 | `src/tests/profiles_dialog_test.rs` |
+| Tests — Profile | 64 | `src/tests/profile_test.rs` |
+| Tests — Profiles Dialog | 56 | `src/tests/profiles_dialog_test.rs` |
 | Tests — Progress Callback Fanout | 4 | `src/tests/progress_callback_fanout_test.rs` |
 | Tests — Project File Archive | 3 | `src/tests/project_file_archive_test.rs` |
 | Tests — Project File Slug | 4 | `src/tests/project_file_slug_test.rs` |
@@ -648,8 +650,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Ephemeral | 9 | `src/tests/telegram_ephemeral_test.rs` |
 | Tests — Telegram Flow Chrome | 50 | `src/tests/telegram_flow_chrome_test.rs` |
 | Tests — Telegram Folded Reclaim Suppression | 6 | `src/tests/telegram_folded_reclaim_suppression_test.rs` |
-| Tests — Telegram Followup Persistence | 7 | `src/tests/telegram_followup_persistence_test.rs` |
-| Tests — Telegram Followup Pick | 12 | `src/tests/telegram_followup_pick_test.rs` |
+| Tests — Telegram Followup Pick | 25 | `src/tests/telegram_followup_pick_test.rs` |
 | Tests — Telegram General Topic Delivery | 11 | `src/tests/telegram_general_topic_delivery_test.rs` |
 | Tests — Telegram Group History Capture | 3 | `src/tests/telegram_group_history_capture_test.rs` |
 | Tests — Telegram Group Migration | 6 | `src/tests/telegram_group_migration_test.rs` |
@@ -663,7 +664,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Md To Html | 8 | `src/tests/telegram_md_to_html_test.rs` |
 | Tests — Telegram Mentions Other Bot | 6 | `src/tests/telegram_mentions_other_bot_test.rs` |
 | Tests — Telegram Menu Scope | 6 | `src/tests/telegram_menu_scope_test.rs` |
-| Tests — Telegram Mermaid | 55 | `src/tests/telegram_mermaid_test.rs` |
+| Tests — Telegram Mermaid | 58 | `src/tests/telegram_mermaid_test.rs` |
 | Tests — Telegram Model Callback Data | 3 | `src/tests/telegram_model_callback_data_test.rs` |
 | Tests — Telegram Newest Msg Id | 7 | `src/tests/telegram_newest_msg_id_test.rs` |
 | Tests — Telegram Options Reclaim | 19 | `src/tests/telegram_options_reclaim_test.rs` |
@@ -683,10 +684,10 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Reaction Routing | 7 | `src/tests/telegram_reaction_routing_test.rs` |
 | Tests — Telegram Reflow Collapsed Table | 6 | `src/tests/telegram_reflow_collapsed_table_test.rs` |
 | Tests — Telegram Reply Context Recovery | 8 | `src/tests/telegram_reply_context_recovery_test.rs` |
-| Tests — Telegram Resume Labels | 2 | `src/tests/telegram_resume_labels_test.rs` |
+| Tests — Telegram Resume Labels | 13 | `src/tests/telegram_resume_labels_test.rs` |
 | Tests — Telegram Resume | 65 | `src/tests/telegram_resume_test.rs` |
 | Tests — Telegram Retain History | 8 | `src/tests/telegram_retain_history_test.rs` |
-| Tests — Telegram Rich Api | 6 | `src/tests/telegram_rich_api_test.rs` |
+| Tests — Telegram Rich Api | 7 | `src/tests/telegram_rich_api_test.rs` |
 | Tests — Telegram Rich Decode Official | 13 | `src/tests/telegram_rich_decode_official_test.rs` |
 | Tests — Telegram Rich Decode | 21 | `src/tests/telegram_rich_decode_test.rs` |
 | Tests — Telegram Rich Json | 12 | `src/tests/telegram_rich_json_test.rs` |
@@ -702,9 +703,10 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Session Gate | 5 | `src/tests/telegram_session_gate_test.rs` |
 | Tests — Telegram Session Resolve | 20 | `src/tests/telegram_session_resolve_test.rs` |
 | Tests — Telegram Split Message | 11 | `src/tests/telegram_split_message_test.rs` |
+| Tests — Telegram State | 7 | `src/tests/telegram_state_test.rs` |
 | Tests — Telegram Status Message | 15 | `src/tests/telegram_status_message_test.rs` |
 | Tests — Telegram Stream Loop Resume | 1 | `src/tests/telegram_stream_loop_resume_test.rs` |
-| Tests — Telegram Suggest Merge | 7 | `src/tests/telegram_suggest_merge_test.rs` |
+| Tests — Telegram Suggest Merge | 12 | `src/tests/telegram_suggest_merge_test.rs` |
 | Tests — Telegram System Chrome Reclaim | 7 | `src/tests/telegram_system_chrome_reclaim_test.rs` |
 | Tests — Telegram Table Render | 2 | `src/tests/telegram_table_render_test.rs` |
 | Tests — Telegram Target Resolver | 9 | `src/tests/telegram_target_resolver_test.rs` |
@@ -760,7 +762,9 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — TUI Process Commands | 3 | `src/tests/tui_process_commands_test.rs` |
 | Tests — TUI Remote Upload | 12 | `src/tests/tui_remote_upload_test.rs` |
 | Tests — TUI Render Clear | 4 | `src/tests/tui_render_clear_test.rs` |
+| Tests — TUI Render Presets | 15 | `src/tui/render/presets_test.rs` |
 | Tests — TUI Render Utils | 12 | `src/tests/tui_render_utils_test.rs` |
+| Tests — TUI Session Switch State | 4 | `src/tests/tui_session_switch_state_test.rs` |
 | Tests — TUI Tool Stack | 10 | `src/tests/tui_tool_stack_test.rs` |
 | Tests — Turn Duration | 6 | `src/tests/turn_duration_test.rs` |
 | Tests — Turn Ranges | 40 | `src/tests/turn_ranges_test.rs` |
