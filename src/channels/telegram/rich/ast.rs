@@ -118,6 +118,10 @@ pub enum Inline {
     /// the content. Parsed as a node rather than left as text so a lone
     /// `<sub>` in prose still escapes to visible characters.
     Sub(Vec<Inline>),
+    /// `<u>` underline (classic Telegram HTML supports it natively; the rich
+    /// dialect renders it natively too). Parsed as a node so producers of
+    /// classic HTML don't escape into visible `&lt;u&gt;` (#106).
+    Underline(Vec<Inline>),
     /// Inline `code` — content is literal, never re-parsed.
     Code(String),
     /// Inline `$math$` — content is literal, never re-parsed.
