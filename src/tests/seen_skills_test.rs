@@ -2,6 +2,7 @@
 // and any skill-body consumption (read or slug-load) marks the skill SEEN so
 // the post-compaction inventory stamp (#125) lists it.
 
+use crate::brain::tools::Tool;
 use crate::brain::tools::ToolExecutionContext;
 use crate::brain::tools::load_brain_file::*;
 use crate::brain::tools::seen_skills;

@@ -68,6 +68,15 @@ impl Tool for LoadBrainFileTool {
             return Ok(ToolResult::error("name parameter is required".to_string()));
         }
 
+        // Optional: return only matching sections rather than the whole file.
+        // Extracted BEFORE the skill-slug branch: the slug form supports
+        // section-filtered reloads too.
+        let query = input
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+
         // Skill-slug form (issue #131): a bare skill name (no `.md`, no
         // separators) resolves through the skill registry — same rules as
         // slash invocation — and returns the prompt body. This gives
@@ -99,13 +108,6 @@ impl Tool for LoadBrainFileTool {
             // Not a known skill — fall through to brain-file handling,
             // which produces the appropriate "not found" error.
         }
-
-        // Optional: return only matching sections rather than the whole file.
-        let query = input
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
 
         let home = crate::config::opencrabs_home();
 
