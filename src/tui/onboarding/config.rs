@@ -50,24 +50,13 @@ impl OnboardingWizard {
                 .map_err(|e| format!("Failed to create workspace directory: {}", e))?;
         }
 
-        let config_path = workspace_path.join("config.toml");
-        let keys_path = workspace_path.join("keys.toml");
-
-        // Create config.toml if it doesn't exist (copy from embedded example)
-        if !config_path.exists() {
-            let config_content = include_str!("../../../config.toml.example");
-            std::fs::write(&config_path, config_content)
-                .map_err(|e| format!("Failed to write config.toml: {}", e))?;
-            tracing::info!("Created config.toml at {:?}", config_path);
-        }
-
-        // Create keys.toml if it doesn't exist (copy from embedded example)
-        if !keys_path.exists() {
-            let keys_content = include_str!("../../../keys.toml.example");
-            std::fs::write(&keys_path, keys_content)
-                .map_err(|e| format!("Failed to write keys.toml: {}", e))?;
-            tracing::info!("Created keys.toml at {:?}", keys_path);
-        }
+        // Seeding is shared with every other path that can create these files
+        // (#1437). It used to live here alone, which meant a run that never
+        // reached this step, or a file some earlier write had already brought
+        // into being, left the user without the provider sections the example
+        // exists to give them.
+        crate::config::seed::ensure_config_seeded();
+        crate::config::seed::ensure_keys_seeded();
 
         // Ensure usage_pricing.toml exists and is up to date
         // (also called on startup, but onboarding may run before that path)

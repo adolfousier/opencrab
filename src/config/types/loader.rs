@@ -1055,6 +1055,13 @@ impl Config {
         let path =
             Self::system_config_path().unwrap_or_else(|| opencrabs_home().join("config.toml"));
 
+        // A config.toml that does not exist yet is seeded from the shipped
+        // example rather than conjured empty (#1437). The example is where
+        // every provider section a user might want to edit comes from, and
+        // seeding only ever fires while the file is absent, so writing one
+        // bare key into an empty document used to lock it out for good.
+        crate::config::seed::ensure_config_seeded();
+
         // Format-preserving parse — only the targeted key is modified
         let mut doc: DocumentMut = if path.exists() {
             fs::read_to_string(&path)?.parse()?
@@ -1128,6 +1135,11 @@ impl Config {
         let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let path = opencrabs_home().join("keys.toml");
+
+        // Seeded for the same reason config.toml is: the example carries a
+        // slot per provider, and a file created around one written key has
+        // none of them (#1437).
+        crate::config::seed::ensure_keys_seeded();
 
         let mut doc: DocumentMut = if path.exists() {
             fs::read_to_string(&path)?.parse()?
