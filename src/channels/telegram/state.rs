@@ -403,7 +403,6 @@ impl Drop for LiveFlowRegistration {
     }
 }
 
-
 impl TelegramState {
     pub fn new() -> Self {
         Self {
@@ -1520,6 +1519,10 @@ impl TelegramState {
         origin: QueuedOrigin,
         msg: crate::brain::agent::QueuedUserMessage,
     ) {
+        // Durable twin (#111): the in-memory queue dies with the process, the
+        // row survives it. Best-effort, fire-and-forget; a no-runtime context
+        // (sync tests) skips the row and the queue alone holds the message.
+        crate::brain::agent::service::notify_queue::persist(session_id, &msg);
         match self.pending_reactions.lock() {
             Ok(mut map) => map
                 .entry(session_id)
@@ -1547,6 +1550,12 @@ impl TelegramState {
         let item = queue.pop_front();
         if queue.is_empty() {
             map.remove(&session_id);
+        }
+        // Delivered into the running loop (#111): the durable twin is
+        // redundant from here. A failed clear costs a next-boot duplicate,
+        // never a loss.
+        if let Some(msg) = &item {
+            crate::brain::agent::service::notify_queue::clear_on_delivery(session_id, msg);
         }
         item.map(|i| i.msg)
     }

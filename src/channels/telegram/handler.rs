@@ -2833,6 +2833,7 @@ pub(crate) async fn handle_message(
         let agent_for_resume = agent.clone();
         let state_for_resume = telegram_state.clone();
         let chat_for_resume = msg.chat.id;
+        let detached_for_clear = detached.clone();
         // Spawned: the turn guard is already dropped above, so the resumed
         // turn can take it, and this handler must not block until that whole
         // turn finishes.
@@ -2852,6 +2853,17 @@ pub(crate) async fn handle_message(
                 tracing::warn!(
                     "Telegram: resumed turn for a detached result failed \
                      (session {session_id}): {e}"
+                );
+            }
+            // The resume turn delivering (or even failing) retires the
+            // durable twin (#111): the retry context is gone with this run,
+            // so replaying the row next boot would double-deliver. Clear
+            // unconditionally — a lost in-memory retry costs a plain
+            // undelivered push, the pre-#111 behavior; a surviving row
+            // costs a duplicate.
+            for item in &detached_for_clear {
+                crate::brain::agent::service::notify_queue::clear_on_delivery(
+                    session_id, &item.msg,
                 );
             }
         });
@@ -2882,7 +2894,7 @@ pub(crate) async fn handle_message(
                 );
                 // Guard held across the await: the resumed pipeline owns the
                 // session exclusively, same as any other turn.
-                if let Err(e) = super::resume::resume_session_inner(
+                let result = super::resume::resume_session_inner(
                     bot.clone(),
                     msg.chat.id,
                     thread_id,
@@ -2892,8 +2904,15 @@ pub(crate) async fn handle_message(
                     telegram_state.clone(),
                     true, // stranded-reaction flush is a push-initiated wake (#12)
                 )
-                .await
-                {
+                .await;
+                // Retire the durable twin on resume ATTEMPT (#111): this run's
+                // retry context is gone either way, so a surviving row next
+                // boot would double-deliver. Failure direction is a plain
+                // undelivered push (pre-#111), never a duplicate.
+                for r in &leftover_reactions {
+                    crate::brain::agent::service::notify_queue::clear_on_delivery(session_id, r);
+                }
+                if let Err(e) = result {
                     tracing::warn!(
                         "Telegram: flushed-reaction full pipeline failed for session {session_id}: {e}"
                     );

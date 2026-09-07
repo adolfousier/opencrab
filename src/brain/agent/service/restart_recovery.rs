@@ -154,8 +154,8 @@ pub fn claim_session(session_id: Uuid, route: &MessageEnqueueCallback) -> usize 
         }
     };
     let count = mine.len();
-    for msg in mine {
-        route(session_id, msg);
+    for msg in &mine {
+        route(session_id, msg.clone());
     }
     if count > 0 {
         tracing::info!(
@@ -166,6 +166,12 @@ pub fn claim_session(session_id: Uuid, route: &MessageEnqueueCallback) -> usize 
         // redundant. Fire-and-forget — a failed clear costs a duplicate
         // after the next restart, never a lost report (#73).
         clear_persisted_tombstones(session_id);
+        // notify_queue twin (#111): clear ONLY the rows matching what was
+        // just delivered — a blanket clear-for-session here could eat a
+        // never-delivered mid-turn row for the same session.
+        for msg in &mine {
+            super::notify_queue::clear_on_delivery(session_id, msg);
+        }
     }
     count
 }
@@ -188,9 +194,12 @@ pub fn flush_parked(local: &MessageEnqueueCallback) -> usize {
     };
     let count = remaining.len();
     for (session_id, msg) in remaining {
-        local(session_id, msg);
+        local(session_id, msg.clone());
         // Delivered locally: the durable copies are redundant now (#73).
         clear_persisted_tombstones(session_id);
+        // notify_queue twin (#111) — content-exact clear of what just went
+        // out; a stale row on clear failure is a duplicate, not a loss.
+        super::notify_queue::clear_on_delivery(session_id, &msg);
     }
     if count > 0 {
         tracing::info!(
@@ -242,6 +251,9 @@ pub fn parking_route() -> MessageEnqueueCallback {
              parking until its channel claims it: {}",
             msg.display_text
         );
+        // Durable twin (#111): the in-memory park dies with the process, the
+        // row survives it. Best-effort, fire-and-forget.
+        super::notify_queue::persist(session_id, &msg);
         deliver_or_park(session_id, msg);
     })
 }
@@ -398,6 +410,17 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
 
     // Then detached commands, which keep their own table.
     reported += report_interrupted().await;
+
+    // Finally the durable notify queue (#111): pushes parked in memory by a
+    // process that died before their session claimed them. Re-offered AFTER
+    // the crash-recovery reports so the death announcements go first.
+    let redelivered = super::notify_queue::redeliver_persisted().await;
+    if redelivered > 0 {
+        tracing::info!(
+            target: "background_task",
+            "Boot notify queue: redelivered={redelivered}"
+        );
+    }
 
     if reported > 0 {
         tracing::info!(
