@@ -25,7 +25,7 @@ fn isolate(tag: &str) {
 #[test]
 fn a_running_agent_becomes_interrupted() {
     isolate("running");
-    let mut s = WorkStatus::new_agent("agent-1", "build docs", "sess-a", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("agent-1", "build docs", "sess-a", "do things", None).unwrap();
     s.mark_running().unwrap();
 
     let orphans = reconcile_orphaned_agents();
@@ -43,7 +43,7 @@ fn a_running_agent_becomes_interrupted() {
 fn a_pending_agent_becomes_interrupted() {
     // Killed between the status file being written and the task starting.
     isolate("pending");
-    WorkStatus::new_agent("agent-2", "lint", "sess-b", "do things").unwrap();
+    WorkStatus::new_agent("agent-2", "lint", "sess-b", "do things", None).unwrap();
 
     let orphans = reconcile_orphaned_agents();
 
@@ -58,7 +58,7 @@ fn a_parked_agent_becomes_interrupted() {
     // existed such a file read `Running` and was swept by the same rule, and
     // the new variant must not slip through it.
     isolate("parked");
-    let mut s = WorkStatus::new_agent("agent-4", "audit", "sess-d", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("agent-4", "audit", "sess-d", "do things", None).unwrap();
     s.mark_running().unwrap();
     s.mark_awaiting_input().unwrap();
 
@@ -76,7 +76,7 @@ fn interrupted_carries_a_reason_and_a_completion_stamp() {
     // stamp lets the file age out on the same schedule as any other
     // terminal state.
     isolate("reason");
-    let mut s = WorkStatus::new_agent("agent-3", "test", "sess-c", "do things").unwrap();
+    let mut s = WorkStatus::new_agent("agent-3", "test", "sess-c", "do things", None).unwrap();
     s.mark_running().unwrap();
 
     let orphans = reconcile_orphaned_agents();
@@ -96,9 +96,9 @@ fn interrupted_carries_a_reason_and_a_completion_stamp() {
 #[test]
 fn terminal_agents_are_left_alone() {
     isolate("terminal");
-    let mut done = WorkStatus::new_agent("agent-done", "a", "sess-d", "p").unwrap();
+    let mut done = WorkStatus::new_agent("agent-done", "a", "sess-d", "p", None).unwrap();
     done.mark_completed("output".to_string()).unwrap();
-    let mut failed = WorkStatus::new_agent("agent-failed", "b", "sess-d", "p").unwrap();
+    let mut failed = WorkStatus::new_agent("agent-failed", "b", "sess-d", "p", None).unwrap();
     failed.mark_failed("boom".to_string()).unwrap();
 
     let orphans = reconcile_orphaned_agents();
@@ -119,7 +119,7 @@ fn the_parent_session_survives_so_the_report_can_be_routed() {
     // The whole point of returning the statuses: the caller needs to know
     // which session to tell.
     isolate("parent");
-    let mut s = WorkStatus::new_agent("agent-4", "deploy", "sess-parent", "p").unwrap();
+    let mut s = WorkStatus::new_agent("agent-4", "deploy", "sess-parent", "p", None).unwrap();
     s.mark_running().unwrap();
 
     let orphans = reconcile_orphaned_agents();
@@ -131,7 +131,7 @@ fn the_parent_session_survives_so_the_report_can_be_routed() {
 fn reconciling_is_idempotent() {
     // A second startup must not re-report an agent already accounted for.
     isolate("idempotent");
-    let mut s = WorkStatus::new_agent("agent-5", "x", "sess-e", "p").unwrap();
+    let mut s = WorkStatus::new_agent("agent-5", "x", "sess-e", "p", None).unwrap();
     s.mark_running().unwrap();
 
     assert_eq!(reconcile_orphaned_agents().len(), 1);
@@ -149,7 +149,7 @@ fn unparseable_files_do_not_abort_the_pass() {
     isolate("corrupt");
     ensure_dir().unwrap();
     fs::write(status_dir().join("garbage.json"), "not json at all").unwrap();
-    let mut s = WorkStatus::new_agent("agent-6", "y", "sess-f", "p").unwrap();
+    let mut s = WorkStatus::new_agent("agent-6", "y", "sess-f", "p", None).unwrap();
     s.mark_running().unwrap();
 
     let orphans = reconcile_orphaned_agents();
@@ -191,7 +191,7 @@ fn a_running_command_is_interrupted_on_disk_but_not_reported() {
 #[test]
 fn mixed_kinds_report_only_the_agents() {
     isolate("mixed");
-    let mut agent = WorkStatus::new_agent("agent-m", "docs", "sess-m", "p").unwrap();
+    let mut agent = WorkStatus::new_agent("agent-m", "docs", "sess-m", "p", None).unwrap();
     agent.mark_running().unwrap();
     WorkStatus::new_command("cmd-m", "sess-m", "build", "make").unwrap();
 
