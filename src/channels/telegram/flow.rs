@@ -2159,6 +2159,21 @@ pub(crate) fn settle_options_reclaim(
         } else {
             Some(text)
         };
+        // #92 demoted-host guard: re-run the promotion guard on the demoted
+        // host. A fence-bearing (or oversized) displaced host riding the
+        // trailer slot would ship its fence raw — the fence→PNG conversion
+        // runs only on the final-answer send (#92). Concatenate it into the
+        // answer slot (owner-approved fix shape) so BOTH texts ride the
+        // render path; the promoted trailer keeps the answer head (#58
+        // priority stands), the trailer slot dies with nothing left to ride.
+        if let Some(d) = demoted.as_ref().filter(|d| {
+            trailer_promotes_to_answer(
+                super::rich::mermaid::should_render_mermaid(d),
+                d.chars().count(),
+            )
+        }) {
+            return (format!("{t}\n\n{d}"), None);
+        }
         return (t.clone(), demoted);
     }
     (text, trailer)
