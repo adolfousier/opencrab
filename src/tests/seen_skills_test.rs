@@ -76,7 +76,7 @@ async fn unknown_slug_falls_through_to_brain_file_error() {
     // SOFT success carrying a not-found message — the slug branch must not
     // have resolved it, so the body must be the brain-file not-found text,
     // never skill content. Also: nothing gets marked seen.
-    let out = result.output.unwrap_or_default();
+    let out = &result.output;
     assert!(
         out.contains("not found"),
         "unknown slug must fall through to the brain-file not-found body, got: {out}"
