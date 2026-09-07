@@ -18,6 +18,27 @@
 //! Decorative cycles (project badge rotation in `palette`) are
 //! deliberately NOT roles: they are preset-agnostic by design.
 
+/// The theme name as configured, tolerating a value that carries its own
+/// quote characters.
+///
+/// `/theme set` and the picker used to hand `write_key_string` a value they
+/// had already wrapped in quotes, and `write_key_string` produces the TOML
+/// string itself, so the quotes ended up inside the value: `theme = '"dracula"'`
+/// (#1428). The write sites are fixed, but a config poisoned before that fix
+/// would never match a preset again, and the failure is silent because the
+/// lookup simply falls through to the default.
+///
+/// Only a matching leading and trailing pair is stripped. A name that merely
+/// contains a quote is left alone, since that is a lookup miss rather than
+/// this bug.
+pub fn configured_name(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    trimmed
+        .strip_prefix('"')
+        .and_then(|r| r.strip_suffix('"'))
+        .unwrap_or(trimmed)
+}
+
 use std::sync::{OnceLock, RwLock};
 
 use ratatui::style::Color;

@@ -108,7 +108,10 @@ pub async fn run(mut app: App) -> Result<()> {
     // below; no need to reload config on every frame.
     {
         let theme_name = crate::config::Config::current().tui.theme.clone();
-        if let Some(n) = theme_name.as_deref().filter(|s| !s.is_empty())
+        if let Some(n) = theme_name
+            .as_deref()
+            .map(render::theme::configured_name)
+            .filter(|s| !s.is_empty())
             && let Some(t) = render::presets::by_name(n).or_else(|| render::user_themes::find(n))
         {
             render::theme::set(t);

@@ -883,11 +883,13 @@ impl App {
                             theme::set(t);
                             // Persist to config.toml; ConfigWatcher reload
                             // re-applies on next boot / config change.
-                            if let Err(e) = crate::config::Config::write_key_string(
-                                "tui",
-                                "theme",
-                                &format!("\"{}\"", t.name),
-                            ) {
+                            // The bare name: `write_key_string` produces the
+                            // TOML string itself, so quoting here stored the
+                            // quote characters inside the value and the boot
+                            // lookup could never match it (#1428).
+                            if let Err(e) =
+                                crate::config::Config::write_key_string("tui", "theme", t.name)
+                            {
                                 self.push_system_message(format!(
                                     "Applied '{}' (live). Persist failed: {e}",
                                     t.name
@@ -908,8 +910,7 @@ impl App {
                     "reset" => {
                         theme::reset();
                         // Remove the key so boot falls through to CRAB_DARK.
-                        if let Err(e) =
-                            crate::config::Config::write_key_string("tui", "theme", "\"\"")
+                        if let Err(e) = crate::config::Config::write_key_string("tui", "theme", "")
                         {
                             self.push_system_message(format!(
                                 "Reset to default. Persist failed: {e}"
