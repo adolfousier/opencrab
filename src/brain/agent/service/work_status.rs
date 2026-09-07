@@ -201,6 +201,12 @@ pub struct WorkStatus {
     /// routes the interruption report by (the pre-#26 `parent_session_id`
     /// value); for commands, the owning session.
     pub session_id: String,
+    /// The session that spawned this agent (#110). `None` for legacy files
+    /// written before the field existed and for detached commands. The
+    /// boot-resume path uses it to deliver a revived agent's result to the
+    /// session that is waiting on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
     pub label: String,
     /// The work itself: the shell command for [`WorkKind::Command`], the
     /// prompt for [`WorkKind::Agent`].
@@ -222,12 +228,14 @@ impl WorkStatus {
         label: &str,
         session_id: &str,
         prompt: &str,
+        parent_session_id: Option<&str>,
     ) -> std::io::Result<Self> {
         ensure_dir()?;
         let status = Self {
             id: id.to_string(),
             kind: WorkKind::Agent,
             session_id: session_id.to_string(),
+            parent_session_id: parent_session_id.map(str::to_string),
             label: label.to_string(),
             task: prompt.to_string(),
             spawned_at: now_rfc3339(),
@@ -259,6 +267,7 @@ impl WorkStatus {
             state: WorkState::Running,
             progress: None,
             finish: None,
+            parent_session_id: None,
         };
         status.write()?;
         Ok(status)
@@ -283,6 +292,7 @@ impl WorkStatus {
             state: WorkState::Running,
             progress: None,
             finish: None,
+            parent_session_id: None,
         });
         status.state = if exit.success {
             WorkState::Completed
@@ -411,6 +421,25 @@ impl WorkStatus {
         ids.sort();
         Ok(ids)
     }
+
+    /// Find a sub-agent status whose **child** session is `session_id` and
+    /// whose outcome is not yet decided (#110).
+    ///
+    /// The boot-resume path uses this to recognize a revived sub-agent
+    /// session: its result must go to the spawning session, not to the
+    /// recorded channel. `Interrupted` files qualify on purpose — upstream
+    /// reconciliation marks the file at boot, before the resumed session
+    /// finishes — as do `Running`/`Pending`/`AwaitingInput`. `None` for
+    /// unknown, outcome-terminal (`Completed`/`Failed`), or non-agent work —
+    /// those keep the existing resume behavior.
+    pub fn find_agent_by_session(session_id: &str) -> Option<WorkStatus> {
+        let ids = Self::list_all().ok()?;
+        ids.into_iter().filter_map(|id| Self::read(&id)).find(|s| {
+            matches!(s.kind, WorkKind::Agent)
+                && s.session_id == session_id
+                && !matches!(s.state, WorkState::Completed | WorkState::Failed)
+        })
+    }
 }
 
 // ── Legacy migration ─────────────────────────────────────────────────
@@ -484,6 +513,7 @@ pub fn migrate_legacy_dir(legacy: &Path) -> usize {
             id: old.id.clone(),
             kind: WorkKind::Agent,
             session_id: old.parent_session_id,
+            parent_session_id: None,
             label: old.label,
             task: old.prompt,
             spawned_at: old.started_at,

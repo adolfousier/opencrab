@@ -361,22 +361,25 @@ pub async fn recover(local: Option<MessageEnqueueCallback>) -> usize {
     // not, so every file still mid-flight is an agent that no longer exists.
     let orphans = crate::brain::tools::subagent::reconcile::reconcile_orphaned_agents();
     let mut reported = 0usize;
-    for orphan in orphans {
-        match Uuid::parse_str(&orphan.session_id) {
-            Ok(session_id) => {
+    for mut orphan in orphans {
+        match interrupted_report_target(&orphan) {
+            Some(session_id) => {
                 deliver_or_park(session_id, subagent_interrupted_message(&orphan));
                 reported += 1;
             }
-            Err(e) => {
+            None => {
                 // Nothing to route to. Say so rather than dropping it, since
                 // the agent's parent is waiting on a result either way.
                 tracing::error!(
                     target: "background_task",
-                    "Sub-agent '{}' has an unparseable parent session '{}', its interruption \
-                     cannot be reported: {e}",
+                    "Sub-agent '{}' has an unparseable parent session '{}' or '{}', its \
+                     interruption cannot be reported",
                     orphan.label,
+                    orphan.parent_session_id.as_deref().unwrap_or("<none>"),
                     orphan.session_id
                 );
+                // Still finalize the file so it cannot zombie.
+                orphan.mark_interrupted().ok();
             }
         }
     }
@@ -423,5 +426,115 @@ fn subagent_interrupted_message(
         display_text: format!("⚠️ Sub-agent interrupted by restart: {}", status.label),
         origin: PushOrigin::Recovery,
         bg_meta: None,
+    }
+}
+
+/// Route an interrupted sub-agent's report to the session that spawned it.
+///
+/// The status file carries `parent_session_id` since #110; older files (and
+/// any agent spawned before the binding existed) fall back to `session_id`,
+/// the pre-#26 routing value this field replaced. Returns the session to
+/// report to, if either field parses as a UUID.
+fn interrupted_report_target(
+    status: &crate::brain::agent::service::work_status::WorkStatus,
+) -> Option<Uuid> {
+    status
+        .parent_session_id
+        .as_deref()
+        .or(Some(status.session_id.as_str()))
+        .and_then(|p| Uuid::parse_str(p).ok())
+}
+
+/// Deliver a boot-resumed sub-agent's outcome to the session that spawned it,
+/// and finalize the status file either way (#110).
+///
+/// Boot-resume revives an interrupted child session, but the child has no
+/// channel binding: the default surface route would drop the result where
+/// nobody reads it. The status file carries the spawning session, so the
+/// outcome goes there instead — the same delivery the live completion path
+/// uses (`deliver_to_session`, interrupt=true). On Parked or NoRoute the
+/// message rides the durable park machinery (`deliver_or_park` handles the
+/// park; NoRoute falls back to it), so the failure direction is a duplicate
+/// report, never a lost one — no tombstone infrastructure required.
+///
+/// Returns whether the outcome was routed to a parent session (informational).
+pub(crate) fn deliver_revived_agent_outcome(
+    status: &mut crate::brain::agent::service::work_status::WorkStatus,
+    outcome: std::result::Result<&str, &str>,
+) -> bool {
+    let Some(parent) = status
+        .parent_session_id
+        .as_deref()
+        .and_then(|p| Uuid::parse_str(p).ok())
+    else {
+        // Legacy file without a parent: nothing to route to, but still
+        // finalize so the file cannot zombie.
+        tracing::warn!(
+            target: "background_task",
+            "Revived sub-agent '{}' has no parent session recorded; finalizing status only",
+            status.id
+        );
+        finalize_revived_status(status, outcome);
+        return false;
+    };
+
+    let agent_id = status.id.clone();
+    let label = status.label.clone();
+    let msg = crate::brain::tools::subagent::spawn::completion_message(&label, &agent_id, outcome);
+    match crate::brain::agent::service::session_routes::deliver_to_session(parent, msg.clone(), true) {
+        crate::brain::agent::service::session_routes::Delivery::Delivered => {
+            tracing::info!(
+                target: "background_task",
+                "Revived sub-agent {agent_id}'s result delivered to parent session {parent}"
+            );
+        }
+        crate::brain::agent::service::session_routes::Delivery::NoRoute => {
+            // No live route right now: hand it to the park machinery so the
+            // report leaves when the owning channel claims the session, or
+            // at worst flushes after the grace period — same durability the
+            // live completion path has.
+            tracing::warn!(
+                target: "background_task",
+                "Revived sub-agent {agent_id}'s result had no route for parent {parent}; parked"
+            );
+            deliver_or_park(parent, msg);
+        }
+        _ => {
+            // Parked / redirected: the delivery machinery owns it from here.
+            tracing::info!(
+                target: "background_task",
+                "Revived sub-agent {agent_id}'s result for parent {parent} handled by the \
+                 delivery machinery (parked or redirected)"
+            );
+        }
+    }
+    finalize_revived_status(status, outcome);
+    true
+}
+
+/// Stamp the terminal outcome onto a revived agent's status file.
+fn finalize_revived_status(
+    status: &mut crate::brain::agent::service::work_status::WorkStatus,
+    outcome: std::result::Result<&str, &str>,
+) {
+    match outcome {
+        Ok(output) => {
+            if let Err(e) = status.mark_completed(output.chars().take(512).collect()) {
+                tracing::warn!(
+                    target: "background_task",
+                    "Could not finalize revived sub-agent status '{}': {e}",
+                    status.id
+                );
+            }
+        }
+        Err(error) => {
+            if let Err(e) = status.mark_failed(error.to_string()) {
+                tracing::warn!(
+                    target: "background_task",
+                    "Could not finalize revived sub-agent status '{}': {e}",
+                    status.id
+                );
+            }
+        }
     }
 }
