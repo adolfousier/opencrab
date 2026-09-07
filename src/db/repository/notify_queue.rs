@@ -194,4 +194,40 @@ impl NotifyQueueRepository {
             .context("Failed to clear notify queue for session")?;
         Ok(())
     }
+
+    /// Drop the rows matching one message's content fingerprint.
+    ///
+    /// Used when the in-memory twin of a persisted row was just delivered:
+    /// an exact-content match deletes only that push, leaving any OTHER
+    /// undelivered pushes for the same session intact (a blanket
+    /// clear-for-session here could eat a second push that has not been
+    /// delivered yet). Failure direction is a stale row surviving the next
+    /// boot redelivery — a duplicate, never a lost message (#111).
+    pub async fn clear_matching(
+        &self,
+        session_id: Uuid,
+        context_text: &str,
+        display_text: &str,
+    ) -> Result<()> {
+        let (session_id, context_text, display_text) = (
+            session_id.to_string(),
+            context_text.to_string(),
+            display_text.to_string(),
+        );
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "DELETE FROM notify_queue \
+                     WHERE session_id = ?1 AND context_text = ?2 AND display_text = ?3",
+                    params![session_id, context_text, display_text],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to clear matching notify queue rows")?;
+        Ok(())
+    }
 }
