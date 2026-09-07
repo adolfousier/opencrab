@@ -72,9 +72,18 @@ async fn unknown_slug_falls_through_to_brain_file_error() {
         )
         .await
         .unwrap();
+    // Pre-existing contract (unchanged by #131): a missing brain file is a
+    // SOFT success carrying a not-found message — the slug branch must not
+    // have resolved it, so the body must be the brain-file not-found text,
+    // never skill content. Also: nothing gets marked seen.
+    let out = result.output.unwrap_or_default();
     assert!(
-        !result.success,
-        "unknown slug must not silently succeed as a brain file"
+        out.contains("not found"),
+        "unknown slug must fall through to the brain-file not-found body, got: {out}"
+    );
+    assert!(
+        !out.contains("--- skill:"),
+        "unknown slug must never render as skill content"
     );
 }
 
