@@ -1168,6 +1168,7 @@ async fn deliver_telegram(
         return None;
     };
     let bot = teloxide::Bot::new(token);
+    use teloxide::prelude::Requester;
     // Opt-in thread delivery (fork #104): `telegram:<chat_id>:<thread_id>`
     // routes into that forum topic; a bare `telegram:<chat_id>` stays on the
     // chat's default topic — existing jobs are never silently retargeted
@@ -1214,7 +1215,7 @@ async fn deliver_telegram(
     Some(tokio::spawn(async move {
         match crate::channels::telegram::send::send_markdown_outbox(
             &bot,
-            teloxide::types::ChatId(cid),
+            teloxide::types::ChatId(chat_id),
             thread,
             &message,
             "cron",
@@ -1225,7 +1226,7 @@ async fn deliver_telegram(
         {
             Ok(sent) => {
                 tracing::info!(
-                    "Cron result for '{job_name}' delivered to Telegram chat {cid}{} ({} part(s))",
+                    "Cron result for '{job_name}' delivered to Telegram chat {chat_id}{} ({} part(s))",
                     thread_id
                         .map(|t| format!(" thread {t}"))
                         .unwrap_or_default(),
@@ -1233,20 +1234,20 @@ async fn deliver_telegram(
                 );
                 // Persist keyed by message id so a reply to the cron post
                 // resolves to this exact content (#234).
-                crate::channels::telegram::send::record_outgoing(pool, cid, thread, &sent).await;
+                crate::channels::telegram::send::record_outgoing(pool, chat_id, thread, &sent).await;
             }
             Err(e) => {
                 if thread_id.is_some() {
                     tracing::error!(
-                        "Cron delivery for '{job_name}' to chat {cid} thread {} failed: {e} — \
+                        "Cron delivery for '{job_name}' to chat {chat_id} thread {} failed: {e} — \
                          if the error is 'message thread not found', topic {} does not exist \
-                         in chat {cid}; fix the job's deliver_to (there is no fallback to the \
+                         in chat {chat_id}; fix the job's deliver_to (there is no fallback to the \
                          default topic)",
                         thread_id.unwrap(),
                         thread_id.unwrap()
                     );
                 } else {
-                    tracing::error!("Cron delivery for '{job_name}' to chat {cid} failed: {e}");
+                    tracing::error!("Cron delivery for '{job_name}' to chat {chat_id} failed: {e}");
                 }
             }
         }
