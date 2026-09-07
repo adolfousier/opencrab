@@ -764,6 +764,7 @@ pub mod web_search_test;
 pub mod whatsapp_state_test;
 
 // Channel handler tests (moved from inline #[cfg(test)] modules)
+pub mod boot_classifier_test;
 pub mod brain_tools_whatsapp_send_test;
 pub mod channel_commands_test;
 pub mod cron_scheduler_dedup_job_test;
@@ -775,6 +776,7 @@ pub mod flow_progress_key_test;
 pub mod memory_search_code_graph_test;
 #[cfg(feature = "code-graph")]
 pub mod memory_symbol_extractor_tree_test;
+pub mod notify_queue_test;
 pub mod notify_receipts_test;
 pub mod pdf_page_range_parser_test;
 pub mod pdf_smart_routing_test;
@@ -866,4 +868,3 @@ pub mod whatsapp_store_test;
 pub mod word_delete_keybinding_test;
 pub mod write_partial_view_guard_test;
 pub mod zhipu_endpoint_test;
-pub mod boot_classifier_test;
