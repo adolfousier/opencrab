@@ -503,6 +503,26 @@ pub(crate) async fn send_buttons_raw(
     if let Some(t) = thread_id {
         payload["message_thread_id"] = serde_json::json!(t.0.0);
     }
+    // #118 wire evidence: log the EXACT payload leaving the process — body bytes
+    // (len+hash8) and the serialized keyboard row count. This is the logging gap
+    // that cost a full morning: text telemetry alone cannot distinguish a dropped
+    // keyboard from a malformed one.
+    let kb_rows = keyboard.inline_keyboard.len();
+    let wire_body = serde_json::to_string(&payload).unwrap_or_default();
+    tracing::info!(
+        "send_buttons wire: body_len={} body_hash8={} kb_rows={} kb_len={} chat={} thread={:?}",
+        wire_body.len(),
+        crate::channels::telegram::telemetry::content_hash8(&wire_body),
+        kb_rows,
+        serde_json::to_string(&keyboard).map(|s| s.len()).unwrap_or(0),
+        chat_id,
+        thread_id.map(|t| t.0.0),
+    );
+    if kb_rows == 0 {
+        return Err(
+            "no buttons parsed from 'buttons' input — refusing to send a keyboard-less message".to_string(),
+        );
+    }
     let url = format!("https://api.telegram.org/bot{token}/sendMessage");
     let client = reqwest::Client::new();
     let mut attempt = 0u32;
