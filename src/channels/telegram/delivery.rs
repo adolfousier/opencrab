@@ -915,9 +915,7 @@ pub(crate) async fn deliver_final_response(
                                         sent_reply_id = Some(mid.0);
                                         final_bubble = Some(super::state::MergeBubble {
                                             message_id: mid,
-                                            body: super::state::BubbleBody::Html(
-                                                chunks[0].clone(),
-                                            ),
+                                            body: super::state::BubbleBody::Html(chunks[0].clone()),
                                         });
                                     }
                                     Err(e) => {
@@ -969,9 +967,7 @@ pub(crate) async fn deliver_final_response(
                                     sent_reply_id = Some(sent.0);
                                     final_bubble = Some(super::state::MergeBubble {
                                         message_id: sent,
-                                        body: super::state::BubbleBody::Html(
-                                            chunks[0].clone(),
-                                        ),
+                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
                                     });
                                 }
                             }
