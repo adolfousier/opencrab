@@ -513,6 +513,7 @@ pub fn migrate_legacy_dir(legacy: &Path) -> usize {
             id: old.id.clone(),
             kind: WorkKind::Agent,
             session_id: old.parent_session_id,
+            parent_session_id: None,
             label: old.label,
             task: old.prompt,
             spawned_at: old.started_at,
