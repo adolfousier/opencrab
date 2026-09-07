@@ -1237,14 +1237,12 @@ async fn deliver_telegram(
                 crate::channels::telegram::send::record_outgoing(pool, chat_id, thread, &sent).await;
             }
             Err(e) => {
-                if thread_id.is_some() {
+                if let Some(t) = thread_id {
                     tracing::error!(
-                        "Cron delivery for '{job_name}' to chat {chat_id} thread {} failed: {e} — \
-                         if the error is 'message thread not found', topic {} does not exist \
+                        "Cron delivery for '{job_name}' to chat {chat_id} thread {t} failed: {e} — \
+                         if the error is 'message thread not found', topic {t} does not exist \
                          in chat {chat_id}; fix the job's deliver_to (there is no fallback to the \
-                         default topic)",
-                        thread_id.unwrap(),
-                        thread_id.unwrap()
+                         default topic)"
                     );
                 } else {
                     tracing::error!("Cron delivery for '{job_name}' to chat {chat_id} failed: {e}");
