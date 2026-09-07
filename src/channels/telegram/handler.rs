@@ -2822,7 +2822,10 @@ pub(crate) async fn handle_message(
         let agent_for_resume = agent.clone();
         let state_for_resume = telegram_state.clone();
         let chat_for_resume = msg.chat.id;
-        let detached_for_clear = detached.clone();
+        let detached_for_clear: Vec<_> = detached
+            .iter()
+            .map(|item| (session_id, item.msg.clone()))
+            .collect();
         // Spawned: the turn guard is already dropped above, so the resumed
         // turn can take it, and this handler must not block until that whole
         // turn finishes.
@@ -2850,10 +2853,8 @@ pub(crate) async fn handle_message(
             // unconditionally — a lost in-memory retry costs a plain
             // undelivered push, the pre-#111 behavior; a surviving row
             // costs a duplicate.
-            for item in &detached_for_clear {
-                crate::brain::agent::service::notify_queue::clear_on_delivery(
-                    session_id, &item.msg,
-                );
+            for (_sid, m) in &detached_for_clear {
+                crate::brain::agent::service::notify_queue::clear_on_delivery(session_id, m);
             }
         });
     }
