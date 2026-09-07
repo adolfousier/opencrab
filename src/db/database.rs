@@ -84,6 +84,9 @@ pub(crate) const MIGRATION_SQL: &[&str] = &[
     include_str!("../migrations/20260828000001_pending_requests_origin.sql"),
     include_str!("../migrations/20260902000001_add_pending_followups.sql"),
     include_str!("../migrations/20260904000000_add_pending_followups_host_markdown.sql"),
+    // FORK (#111): durable notify queue — parked session_notify /
+    // background-task pushes survive restarts and re-offer at boot.
+    include_str!("../migrations/20260906000001_add_notify_queue.sql"),
 ];
 
 pub(crate) fn build_migrations() -> Migrations<'static> {

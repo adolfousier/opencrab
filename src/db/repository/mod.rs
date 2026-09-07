@@ -41,3 +41,5 @@ pub use session_binding::SessionBindingRepository;
 pub use tool_execution::ToolExecutionRepository;
 pub use traits::Repository;
 pub use usage_ledger::UsageLedgerRepository;
+pub mod notify_queue;
+pub use notify_queue::{NotifyQueueRepository, NotifyQueueRow};
