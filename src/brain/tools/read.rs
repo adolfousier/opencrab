@@ -188,6 +188,12 @@ impl Tool for ReadTool {
             // Whole-file reads unlock later overwrites (#1168); windowed
             // reads deliberately do not.
             super::read_state::mark_fully_read(context.session_id, &path);
+            // A whole-file read of a skill definition counts as consuming
+            // that skill (issue #131): the post-compaction stamp lists it
+            // even though no slash command was ever issued.
+            if let Some(slug) = super::seen_skills::skill_slug_from_path(&path) {
+                super::seen_skills::mark_seen(context.session_id, &slug);
+            }
             if contents.len() > OUTPUT_BUDGET {
                 // Budget path (#986): emit lines until the 128 KB budget is
                 // exhausted, then stop with an announced truncation and the
