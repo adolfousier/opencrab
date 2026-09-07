@@ -58,12 +58,30 @@ pub struct EmbeddingEngine {
     dimensions: Option<usize>,
 }
 
+/// Model parameters for the embedding model: **CPU only**, deliberately (#1432).
+///
+/// The default offloads to the GPU, which on macOS routes the load through
+/// Metal and into a known llama.cpp assert that calls `abort()`. There is no
+/// unwinding and no `Result` to map, so an optional index takes the whole
+/// application with it while loading.
+///
+/// The workload argues for CPU regardless: these are small embedding models
+/// over short chunks, run in batches and off the interactive path, so offload
+/// buys little here and costs the process on an affected machine. Staying off
+/// that code path removes the crash class rather than one assertion.
+///
+/// Split out so `src/tests` can assert the offload is actually off; the crash
+/// it prevents cannot be reproduced in a test, because it aborts the runner.
+pub(crate) fn embedding_model_params() -> LlamaModelParams {
+    LlamaModelParams::default().with_n_gpu_layers(0)
+}
+
 impl EmbeddingEngine {
     /// Load a GGUF model from disk.
     pub fn new(model_path: &Path) -> Result<Self, String> {
         let backend = LlamaBackend::init().map_err(|e| format!("llama backend init: {e}"))?;
 
-        let model_params = LlamaModelParams::default();
+        let model_params = embedding_model_params();
         let model = LlamaModel::load_from_file(&backend, model_path, &model_params)
             .map_err(|e| format!("Failed to load model {}: {e}", model_path.display()))?;
 
