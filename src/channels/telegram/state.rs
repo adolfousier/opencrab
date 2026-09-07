@@ -24,17 +24,19 @@ const STALE_HOST_CAP: usize = 32;
 #[derive(Clone)]
 pub(crate) struct MergedHost {
     pub message_id: MessageId,
-    /// HTML last rendered in that bubble (final response text, plus the
-    /// folded option list when present).
+    /// Body last rendered in that bubble (final response text, plus the
+    /// folded option list when present). HTML for html-plane hosts; the
+    /// merged markdown payload for markdown-plane hosts.
     pub html: String,
     /// Host lives on the native rich API: tap-record edits must ride
-    /// `super::rich::api::edit_rich_html`, not teloxide's edit_message_text.
+    /// `super::rich::api::edit_rich_html` (or `edit_rich_markdown` for
+    /// markdown-plane hosts), not teloxide's edit_message_text.
     pub rich: bool,
-    /// #55: the keyboard was GLUED onto this bubble (glue tier — the body
-    /// was not merge-safe, e.g. a table-bearing rich answer). The body is
-    /// unknown/unsafe to rewrite, so a tap strips the keyboard markup-only
-    /// and echoes the pick record as its own note instead of editing text.
-    pub glued: bool,
+    /// Markdown-plane host (#79 piece 4): the merged markdown payload.
+    /// When set, pick redraws and strips ride `edit_rich_markdown` —
+    /// the server-side render keeps tables intact (#679). `None` = the
+    /// html plane.
+    pub markdown: Option<String>,
 }
 
 /// Merge candidate captured by deliver_final_response (#tg-suggest-merge):
@@ -42,11 +44,12 @@ pub(crate) struct MergedHost {
 #[derive(Clone)]
 pub(crate) struct MergeBubble {
     pub message_id: MessageId,
-    /// `Some` = merge-safe body (classic HTML or table-free rich markdown).
-    /// `None` = rich answer carries a table (#55): merging would flatten it,
-    /// but the id is still a valid GLUE target — `edit_message_reply_markup`
-    /// attaches the keyboard without ever touching the body.
-    pub body: Option<BubbleBody>,
+    /// Body last delivered in that bubble: classic HTML for classic
+    /// bubbles, the captured markdown for rich ones. Markdown-plane
+    /// hosts (#79 piece 4) keep the raw markdown — the merge edit rides
+    /// `edit_rich_markdown`, whose server-side render keeps tables
+    /// intact (#679).
+    pub body: BubbleBody,
 }
 
 /// How a captured [`MergeBubble`] was sent — decides which edit call merges
@@ -290,6 +293,27 @@ pub struct TelegramState {
     /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
     /// session looking permanently busy.
     active_turns: std::sync::Mutex<std::collections::HashSet<Uuid>>,
+    /// #61: sessions with a LIVE flow roll on screen — the in-flight
+    /// `StreamingState` plus the chat coordinates its block renders in.
+    /// The push-echo path consults this to decide that a session notify
+    /// folds a line INTO the roll instead of posting a standalone bubble.
+    /// Registered at both turn sites (user turns and push-initiated turns)
+    /// via [`TelegramState::register_live_flow`], which returns a
+    /// [`LiveFlowRegistration`] drop-guard so any turn exit — normal,
+    /// error, or panic — unregisters. `std::sync::Mutex` like
+    /// `active_turns`: the echo path is async but the lock is never held
+    /// across an await, so blocking contention is nil.
+    live_flows: std::sync::Mutex<HashMap<Uuid, LiveFlowHandle>>,
+    /// #61 fold-dedupe (Alexey 2026-09-06): fingerprints of notifies
+    /// already folded into this session's roll. The 776a1fe5 incident
+    /// folded ONE notify into TWO concurrent rolls of the same session
+    /// (the #845 single-turn guard breach is lane #105's root cause;
+    /// this set is the roll-side defense). Entries must OUTLIVE any
+    /// single roll — the duplicate crossed rolls 25 minutes apart — so
+    /// the set is keyed by session, not by roll; it stays bounded via
+    /// `TelegramState::NOTIFY_FOLD_DEDUP_CAP` + TTL expiry.
+    notify_fold_dedup:
+        std::sync::Mutex<HashMap<Uuid, std::collections::VecDeque<(u64, std::time::Instant)>>>,
     /// Newest NON-STICKY message id seen per chat (#451, semantics sharpened
     /// by #1150). This is burial EVIDENCE for the flow block: user messages
     /// (recorded in the handler) plus non-sticky bot bubbles — intermediate
@@ -342,6 +366,43 @@ impl Drop for ActiveTurnGuard {
     }
 }
 
+/// #61: everything the push-echo path needs to fold a notify line into a
+/// session's LIVE flow roll. `streaming` is the same Arc the edit loop
+/// renders from, so a fold under its lock is ordered with the loop's own
+/// writes; `chat`/`thread_id` are the coordinates the block's refresh
+/// (`refresh_flow`) edits through. A handle is only meaningful while
+/// `streaming.open_group_msg_id` is `Some` — the caller re-checks that at
+/// fold time, because the roll can close between registration and echo.
+#[derive(Clone)]
+pub(crate) struct LiveFlowHandle {
+    pub(crate) streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
+}
+
+/// RAII counterpart of [`ActiveTurnGuard`] for the #61 live-flow registry:
+/// held for the whole span of a turn so the echo path can trust that a
+/// registered handle belongs to a turn that is still running. Drop
+/// unregisters — normal return, `?`, and panic all end here.
+pub(crate) struct LiveFlowRegistration {
+    state: std::sync::Arc<TelegramState>,
+    session_id: Uuid,
+    /// The streaming Arc this registration wrote — drop compares pointer
+    /// identity so a stale guard never evicts a successor turn's entry.
+    streaming: std::sync::Arc<std::sync::Mutex<super::flow::StreamingState>>,
+}
+
+impl Drop for LiveFlowRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.state.live_flows.lock() {
+            let mine = map
+                .get(&self.session_id)
+                .is_some_and(|h| std::sync::Arc::ptr_eq(&h.streaming, &self.streaming));
+            if mine {
+                map.remove(&self.session_id);
+            }
+        }
+    }
+}
+
 impl TelegramState {
     pub fn new() -> Self {
         Self {
@@ -379,6 +440,8 @@ impl TelegramState {
             pending_file_saves: Mutex::new(HashMap::new()),
             pending_reactions: std::sync::Mutex::new(HashMap::new()),
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
+            live_flows: std::sync::Mutex::new(HashMap::new()),
+            notify_fold_dedup: std::sync::Mutex::new(HashMap::new()),
             chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
             last_sticky_action: std::sync::Mutex::new(HashMap::new()),
             media_dedup: super::outbound_dedup::MediaSendDedup::default(),
@@ -1134,9 +1197,10 @@ impl TelegramState {
                         message_id: MessageId(h.message_id as i32),
                         html: h.html,
                         rich: h.rich,
-                        // Port note (#55): persisted rows predate the glue
-                        // tier; restore as non-glued (pre-glue tap path).
-                        glued: false,
+                        // Port note (#79 p4): the markdown column is NULL
+                        // for rows persisted before this change, so hydrate
+                        // reads the plane straight from the row.
+                        markdown: h.markdown,
                     });
                     let token = row.token;
                     let entry = PendingFollowupEntry {
@@ -1174,6 +1238,7 @@ impl TelegramState {
                     message_id: i64::from(h.message_id.0),
                     html: h.html.clone(),
                     rich: h.rich,
+                    markdown: h.markdown.clone(),
                 }),
         };
         let guard = self.followup_store.lock().await;
@@ -1294,6 +1359,111 @@ impl TelegramState {
             .lock()
             .map(|s| s.contains(&session_id))
             .unwrap_or(false)
+    }
+
+    /// #61: register this turn's live flow roll, returning the drop-guard
+    /// that unregisters it. Takes `&Arc<Self>` because the guard must be
+    /// able to reach the registry after the turn's stack is gone. One live
+    /// roll per session by construction — but a re-register CAN precede
+    /// the previous turn's guard drop (turn overlap windows), and a naive
+    /// guard drop would then evict the NEW turn's entry. So the guard
+    /// holds its own streaming Arc and its drop removes the entry only if
+    /// the stored handle's streaming Arc is the same allocation
+    /// (`Arc::ptr_eq`) — a stale guard is a no-op against the successor.
+    pub(crate) fn register_live_flow(
+        self: &std::sync::Arc<Self>,
+        session_id: Uuid,
+        handle: LiveFlowHandle,
+    ) -> LiveFlowRegistration {
+        if let Ok(mut map) = self.live_flows.lock() {
+            map.insert(session_id, handle.clone());
+        }
+        LiveFlowRegistration {
+            state: std::sync::Arc::clone(self),
+            session_id,
+            streaming: handle.streaming,
+        }
+    }
+
+    /// #61: clone out the live-flow handle for `session_id`, if one is
+    /// registered. Registration proves a turn is in flight, NOT that the
+    /// roll block is still open — the caller must re-check
+    /// `open_group_msg_id.is_some()` under the streaming lock before
+    /// folding (the roll can close between lookup and fold).
+    pub(crate) fn live_flow(&self, session_id: Uuid) -> Option<LiveFlowHandle> {
+        self.live_flows
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&session_id).cloned())
+    }
+
+    /// #61: explicit unregister — used by tests and by turns that defuse
+    /// the drop-guard (rare; the guard's Drop normally suffices).
+    #[cfg(test)]
+    pub(crate) fn unregister_live_flow(&self, session_id: Uuid) {
+        if let Ok(mut map) = self.live_flows.lock() {
+            map.remove(&session_id);
+        }
+    }
+
+    /// #61 fold-dedupe cap: max fingerprints retained per session.
+    /// `pub(crate)` so the tests under `src/tests/` can pin the window against
+    /// the real constants instead of restating their values.
+    pub(crate) const NOTIFY_FOLD_DEDUP_CAP: usize = 64;
+    /// #61 fold-dedupe TTL: fingerprints expire after this window, so a
+    /// genuine re-send hours later still folds.
+    pub(crate) const NOTIFY_FOLD_DEDUP_TTL: std::time::Duration =
+        std::time::Duration::from_secs(30 * 60);
+
+    /// #61 fold-dedupe (Alexey 2026-09-06): atomically check-and-record a
+    /// folded notify fingerprint for the session. Returns `true` when the
+    /// fingerprint was ALREADY recorded within the TTL window — a
+    /// duplicate delivery the caller suppresses; `false` records it and
+    /// grants fold permission. Check and record share one lock scope, so
+    /// two racing folds of the same notify cannot both pass.
+    pub(crate) fn note_notify_fold(&self, session_id: Uuid, fingerprint: u64) -> bool {
+        self.note_notify_fold_at(session_id, fingerprint, std::time::Instant::now())
+    }
+
+    /// `note_notify_fold` with an injected clock — the test seam.
+    pub(crate) fn note_notify_fold_at(
+        &self,
+        session_id: Uuid,
+        fingerprint: u64,
+        now: std::time::Instant,
+    ) -> bool {
+        let mut map = self
+            .notify_fold_dedup
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let duplicate = match map.get_mut(&session_id) {
+            Some(entry) => {
+                entry.retain(|(_, at)| {
+                    now.checked_duration_since(*at)
+                        .is_some_and(|age| age < Self::NOTIFY_FOLD_DEDUP_TTL)
+                });
+                if entry.iter().any(|(fp, _)| *fp == fingerprint) {
+                    true
+                } else {
+                    entry.push_back((fingerprint, now));
+                    if entry.len() > Self::NOTIFY_FOLD_DEDUP_CAP {
+                        entry.pop_front();
+                    }
+                    false
+                }
+            }
+            None => {
+                map.insert(
+                    session_id,
+                    std::collections::VecDeque::from([(fingerprint, now)]),
+                );
+                false
+            }
+        };
+        if duplicate && map.get(&session_id).is_some_and(|e| e.is_empty()) {
+            map.remove(&session_id);
+        }
+        duplicate
     }
 
     /// Enqueue a mid-turn reaction message for injection into the running loop.

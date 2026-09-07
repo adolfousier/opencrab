@@ -1003,6 +1003,8 @@ enabled = true
 
 OpenCrabs handles all tools, memory, and context locally — the CLI is just the LLM backend.
 
+Running OpenCrabs as root (a VPS, a container)? The CLI refuses its headless mode for root until `~/.claude/settings.json` marks it: see [Claude Code CLI Refuses to Run as Root](#claude-code-cli-refuses-to-run-as-root-vps-docker) under Troubleshooting.
+
 ### OpenAI
 
 **Models:** GPT-5 Turbo, GPT-5
@@ -4548,8 +4550,9 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (7,886 tests across 787 modules under src/tests/, which is
-# where every test lives; 30 slower ones are #[ignore]d to keep the default
+# Run tests (7,946 tests across 794 modules: 7,931 of them under src/tests/,
+# where tests belong, plus 15 inline in src/tui/render/presets_test.rs;
+# 30 slower ones are #[ignore]d to keep the default
 # run fast: profile tests that touch ~/.opencrabs, browser end-to-end
 # tests, and opencode provider tests. Opt in with
 # `cargo test --all-features -- --ignored` when needed. Counts are from a
@@ -4835,6 +4838,30 @@ If the agent starts sending tool call approvals that don't render in the UI — 
 3. Continue your work in the fresh session
 
 This reliably resolves the issue. A fix is coming in a future release.
+
+### Claude Code CLI Refuses to Run as Root (VPS, Docker)
+
+**Symptom:** the `claude_cli` provider is enabled and `claude` is authenticated, but every request fails as soon as it spawns. In the log the CLI exits immediately with a message about `--dangerously-skip-permissions` not being allowed for root, or the first spawn hangs waiting on a prompt nobody can answer.
+
+**Cause:** OpenCrabs runs the CLI headless with `--dangerously-skip-permissions` (it owns tool execution itself, so the CLI never asks). Claude Code refuses that flag when the process runs as root unless it believes it is inside a sandbox, and on a fresh install it also wants a one-time interactive acknowledgement of that mode. A VPS or container where OpenCrabs runs as root hits both.
+
+**Fix:** put the acknowledgement and the sandbox marker in the CLI's own settings file, `~/.claude/settings.json` for the user OpenCrabs runs as (`/root/.claude/settings.json` on a root box):
+
+```json
+{
+  "permissions": { "defaultMode": "bypassPermissions" },
+  "skipDangerousModePermissionPrompt": true,
+  "env": { "IS_SANDBOX": "1" }
+}
+```
+
+Merge these keys into the file if it already exists (keep `model`, `theme`, and the rest). The CLI reads `settings.json` on every invocation, so no OpenCrabs restart is needed; the next spawn goes through. Verify as the same user:
+
+```bash
+echo "say OK" | claude -p --dangerously-skip-permissions
+```
+
+`IS_SANDBOX=1` only tells Claude Code that the root check may be skipped. It does not sandbox anything, so keep the box firewalled the way you would for any root agent. On a desktop where OpenCrabs runs as your own user none of this is required.
 
 ### Windows Defender Blocking OpenCrabs
 

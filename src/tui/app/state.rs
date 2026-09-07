@@ -1179,7 +1179,13 @@ impl App {
         self.streaming_response = bg.streaming_response;
         self.streaming_reasoning = bg.streaming_reasoning;
         self.active_tool_group = bg.active_tool_group;
-        self.is_processing = bg.is_processing;
+        // NOT `bg.is_processing`. That field is a snapshot taken whenever the
+        // session was last demoted, and `processing_sessions` is the
+        // cross-session source of truth that every other caller derives from.
+        // Restoring the snapshot here overwrote the correct value `load_session`
+        // had just computed, so a stale `false` left a still-running session
+        // looking idle and its thinking indicator hidden (#1420).
+        self.is_processing = self.is_session_processing(session_id);
         self.processing_started_at = bg.processing_started_at;
         self.last_input_tokens = bg.last_input_tokens;
         self.streaming_output_tokens = bg.streaming_output_tokens;

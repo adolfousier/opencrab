@@ -173,6 +173,16 @@ impl App {
         // and the next focus-switch back.
         let old_session_id = self.current_session.as_ref().map(|s| s.id);
         if let Some(old_sid) = old_session_id {
+            // Persist before demoting, so leaving a live turn is as safe as
+            // cancelling one. The sidecar is memory: when that session later
+            // finishes while it is not focused, `ResponseComplete` drops the
+            // entry on the grounds that the DB has the content, which is only
+            // true if something wrote it. Abort and /stop already flush here;
+            // the switch did not, so the same output was durable if you
+            // cancelled and lost if you merely looked elsewhere (#1421).
+            if self.is_session_processing(old_sid) {
+                self.persist_streaming_state(old_sid).await;
+            }
             self.demote_to_background(old_sid);
         }
 

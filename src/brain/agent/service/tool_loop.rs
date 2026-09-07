@@ -2,7 +2,7 @@ use super::builder::AgentService;
 use super::types::*;
 use crate::brain::agent::context::AgentContext;
 use crate::brain::agent::error::{AgentError, Result};
-use crate::brain::provider::{ContentBlock, LLMRequest, LLMResponse, Message};
+use crate::brain::provider::{ContentBlock, LLMRequest, LLMResponse, Message, Role};
 use crate::brain::tools::ToolExecutionContext;
 use crate::services::{MessageService, SessionService};
 use serde_json::Value;
@@ -663,6 +663,49 @@ impl AgentService {
         tracing::info!(
             "Restored user's mid-turn switch for session {session_id}: {provider_name}/{model}"
         );
+    }
+
+    /// Everything the conversation has actually seen, for fact-checking a
+    /// text-only iteration against it (#1423).
+    ///
+    /// Evidence only: what tools printed, what was actually run, and the user's
+    /// own words. Assistant text and thinking are deliberately left out,
+    /// because the model's earlier claims must not vouch for its later ones. A
+    /// sha invented three iterations ago would otherwise count as known by the
+    /// time it is repeated, and the check would go quiet on exactly the
+    /// fabrication it exists to catch.
+    ///
+    /// Built on demand rather than accumulated, so it also covers results from
+    /// earlier turns. That is what keeps the check honest about a sha the model
+    /// legitimately cites from work it did ten minutes ago.
+    fn conversation_evidence(context: &AgentContext, turn_tool_output: &[String]) -> String {
+        let mut evidence = String::new();
+        for msg in &context.messages {
+            for block in &msg.content {
+                match block {
+                    ContentBlock::ToolResult { content, .. } => {
+                        evidence.push_str(content);
+                        evidence.push('\n');
+                    }
+                    ContentBlock::Text { text } if msg.role == Role::User => {
+                        evidence.push_str(text);
+                        evidence.push('\n');
+                    }
+                    // What was actually run: a sha in a `git show` argument is
+                    // as real as one in its output.
+                    ContentBlock::ToolUse { input, .. } => {
+                        evidence.push_str(&input.to_string());
+                        evidence.push('\n');
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for out in turn_tool_output {
+            evidence.push_str(out);
+            evidence.push('\n');
+        }
+        evidence
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4676,6 +4719,30 @@ impl AgentService {
                 // correction quotes them back rather than gesturing (#797).
                 let uncalled_commands =
                     super::phantom::claims_uncalled_commands(&iteration_text, &turn_tool_input);
+                // Facts the iteration states that exist nowhere in the
+                // conversation (#1423). This is the check the post-success
+                // exemption was missing: it classed a 4,664-character report
+                // of invented counts and shas as a completion ack because 24
+                // tools had succeeded earlier in the turn, and every other
+                // fact-based branch here reads a shape that report prose does
+                // not have.
+                //
+                // Post-success only. On a zero-tool turn `phantom_eligible` is
+                // already true, so scanning would add cost without adding
+                // coverage; the exemption is what needs policing. The haystack
+                // is built only once the cheap extraction finds a candidate,
+                // which keeps it off the iterations that assert nothing.
+                let unbacked_facts = if tool_calls_completed_this_turn > 0 {
+                    let asserted = super::phantom::asserted_facts(&iteration_text);
+                    if asserted.is_empty() {
+                        Vec::new()
+                    } else {
+                        let evidence = Self::conversation_evidence(&context, &turn_tool_output);
+                        super::phantom::unbacked_facts(&asserted, &evidence)
+                    }
+                } else {
+                    Vec::new()
+                };
                 let phantom_eligible = !is_cli_provider
                     && (tool_calls_completed_this_turn == 0
                         // Every call this turn did nothing (#825). `true` and a
@@ -4711,7 +4778,13 @@ impl AgentService {
                         // sentence claiming `gh issue list` ran when no tool
                         // input contains it is false as a matter of fact
                         // (#789).
-                        || !uncalled_commands.is_empty());
+                        || !uncalled_commands.is_empty()
+                        // A stated sha or tally that is in no tool result and
+                        // no message (#1423). Same footing as the command
+                        // check: the conversation is the record of what
+                        // happened, so a fact absent from it was invented
+                        // however the sentence around it is phrased.
+                        || !unbacked_facts.is_empty());
                 // Analytics (#897): if a phantom was detected earlier this turn
                 // and the current iteration produced real tool calls, the
                 // self-heal recovered. Mark the phantom resolved.
@@ -4928,7 +5001,14 @@ impl AgentService {
                         || super::phantom::claims_unbacked_evidence(
                             &iteration_text,
                             &turn_tool_output,
-                        ))
+                        )
+                        // The check the exemption was missing (#1423): a sha or
+                        // tally absent from every tool result and message in
+                        // the conversation. Deliberately NOT gated on a
+                        // zero-tool turn, because the case it exists for is a
+                        // turn that DID run tools and then invented the report
+                        // about them.
+                        || !unbacked_facts.is_empty())
                 {
                     phantom_detections_total += 1;
                     phantom_retries_used += 1;
@@ -4991,13 +5071,16 @@ impl AgentService {
                     // new responses from the correction feedback itself.
                     // Naming the fabricated command outranks the generic
                     // wording: it cites a fact instead of a category, so the
-                    // model cannot rationalise it (#797). Falls back to the
-                    // generic correction for the other phantom triggers, which
-                    // identify no specific command.
-                    let nudge = if uncalled_commands.is_empty() {
-                        super::nudge::no_tool_calls_nudge(is_local_provider)
-                    } else {
+                    // model cannot rationalise it (#797). An invented sha or
+                    // tally is the same argument one level down (#1423), and
+                    // the generic correction covers the triggers that identify
+                    // nothing specific.
+                    let nudge = if !uncalled_commands.is_empty() {
                         super::nudge::uncalled_commands_nudge(&uncalled_commands)
+                    } else if !unbacked_facts.is_empty() {
+                        super::nudge::unbacked_facts_nudge(&unbacked_facts)
+                    } else {
+                        super::nudge::no_tool_calls_nudge(is_local_provider)
                     };
                     context.add_message(Message::user(nudge));
                     continue;
