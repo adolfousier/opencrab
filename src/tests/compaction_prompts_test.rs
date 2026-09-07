@@ -20,7 +20,7 @@
 //!   auto_approve=false.
 
 use crate::brain::agent::service::compaction_prompts::{
-    CompactionKind, PlanRecovery, build_continuation,
+    CompactionKind, PlanRecovery, append_skill_stamp, build_continuation,
 };
 
 const APPROVAL_TAIL: &str = "Tool approval is REQUIRED";
@@ -213,4 +213,93 @@ fn manual_compaction_is_brief() {
             "Manual compaction must still reference the IMMEDIATE TASK: {body}"
         );
     }
+}
+
+// ── #125: advisory skill-inventory stamp ────────────────────────────────────
+//
+// The stamp must: (1) carry the sorted skill list with the advisory
+// "consider, reload only those" framing, (2) be absent entirely when no
+// skills were active (zero marginal tokens), (3) ride EVERY compaction
+// kind in both fun and silent variants. String sentinels, same policy
+// as the rest of this file: exact wording may drift, these invariants
+// must not.
+
+const STAMP_HEADER: &str = "SKILLS LOADED PRE-COMPACTION:";
+const STAMP_ADVISORY: &str = "reload only those that are";
+
+#[test]
+fn skill_stamp_lists_active_skills_with_advisory_framing() {
+    let body = build_continuation(CompactionKind::Regular, false, true, PlanRecovery::Active);
+    let stamped = append_skill_stamp(body, &["opencrabs-dev".to_string(), "grafana".to_string()]);
+    assert!(
+        stamped.contains(STAMP_HEADER),
+        "stamp must carry the inventory header: {stamped}"
+    );
+    assert!(
+        stamped.contains("opencrabs-dev") && stamped.contains("grafana"),
+        "stamp must list every active skill: {stamped}"
+    );
+    assert!(
+        stamped.contains(STAMP_ADVISORY),
+        "stamp must be advisory (consider, reload selectively) not prescriptive: {stamped}"
+    );
+}
+
+#[test]
+fn skill_stamp_is_silent_when_no_skills_active() {
+    for kind in [
+        CompactionKind::Regular,
+        CompactionKind::MidLoop,
+        CompactionKind::Emergency,
+        CompactionKind::PostTool,
+        CompactionKind::Manual,
+    ] {
+        for silent in [false, true] {
+            let body = build_continuation(kind, silent, true, PlanRecovery::NoPlan);
+            let stamped = append_skill_stamp(body, &[]);
+            assert!(
+                !stamped.contains(STAMP_HEADER),
+                "{kind:?} silent={silent}: no skills → no stamp, zero marginal tokens: {stamped}"
+            );
+        }
+    }
+}
+
+#[test]
+fn skill_stamp_rides_all_kinds_and_variants() {
+    let skills = vec!["opencrabs-dev".to_string()];
+    for kind in [
+        CompactionKind::Regular,
+        CompactionKind::MidLoop,
+        CompactionKind::Emergency,
+        CompactionKind::PostTool,
+        CompactionKind::Manual,
+    ] {
+        for silent in [false, true] {
+            let body = build_continuation(kind, silent, true, PlanRecovery::Active);
+            let stamped = append_skill_stamp(body, &skills);
+            assert!(
+                stamped.contains(STAMP_HEADER) && stamped.contains(STAMP_ADVISORY),
+                "{kind:?} silent={silent}: stamp must ride every kind/variant: {stamped}"
+            );
+        }
+    }
+}
+
+#[test]
+fn skill_stamp_sorts_names_for_determinism() {
+    let body = build_continuation(CompactionKind::Regular, false, true, PlanRecovery::NoPlan);
+    let stamped = append_skill_stamp(
+        body,
+        &["zeta".to_string(), "alpha".to_string(), "mid".to_string()],
+    );
+    let header_pos = stamped.find(STAMP_HEADER).expect("stamp present");
+    let list = &stamped[header_pos..];
+    let alpha = list.find("alpha").expect("alpha present");
+    let mid = list.find("mid").expect("mid present");
+    let zeta = list.find("zeta").expect("zeta present");
+    assert!(
+        alpha < mid && mid < zeta,
+        "stamp list must be sorted for deterministic rendering: {list}"
+    );
 }
