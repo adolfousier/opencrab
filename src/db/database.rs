@@ -88,6 +88,9 @@ pub(crate) const MIGRATION_SQL: &[&str] = &[
     // FORK (#73): durable parked-tombstone store — death reports survive
     // restart storms instead of dying in the in-memory PARKED queue.
     include_str!("../migrations/20260905000000_add_pending_tombstones.sql"),
+    // FORK (#111): durable notify queue — parked session_notify /
+    // background-task pushes survive restarts and re-offer at boot.
+    include_str!("../migrations/20260906000001_add_notify_queue.sql"),
 ];
 
 pub(crate) fn build_migrations() -> Migrations<'static> {
