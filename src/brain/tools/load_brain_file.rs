@@ -84,29 +84,29 @@ impl Tool for LoadBrainFileTool {
         // filename form cannot (skills live in subdirectories). A success
         // here marks the skill as SEEN for this session, feeding the
         // post-compaction inventory stamp (#125/#131 union).
-        if !name.ends_with(".md") && !name.contains('/') && !name.contains('\\') {
-            if let Some(skill) = crate::brain::skills::resolve_skill(name) {
-                super::seen_skills::mark_seen(ctx.session_id, &skill.name);
+        if !name.ends_with(".md")
+            && !name.contains('/')
+            && !name.contains('\\')
+            && let Some(skill) = crate::brain::skills::resolve_skill(name)
+        {
+            super::seen_skills::mark_seen(ctx.session_id, &skill.name);
+            tracing::info!(
+                "load_brain_file: resolved skill slug '{}', marked seen for session {}",
+                skill.name,
+                ctx.session_id
+            );
+            let body = skill.prompt_body();
+            return Ok(ToolResult::success(if query.is_empty() {
+                format!("--- skill: {} ---\n{}", skill.name, body)
+            } else {
+                let matches = crate::brain::brain_sections::find_sections(&body, query);
                 tracing::info!(
-                    "load_brain_file: resolved skill slug '{}', marked seen for session {}",
+                    "load_brain_file(skill {}): query={query:?}: {} section(s) returned",
                     skill.name,
-                    ctx.session_id
+                    matches.sections.len()
                 );
-                let body = skill.prompt_body();
-                return Ok(ToolResult::success(if query.is_empty() {
-                    format!("--- skill: {} ---\n{}", skill.name, body)
-                } else {
-                    let matches = crate::brain::brain_sections::find_sections(&body, query);
-                    tracing::info!(
-                        "load_brain_file(skill {}): query={query:?}: {} section(s) returned",
-                        skill.name,
-                        matches.sections.len()
-                    );
-                    matches.render(&format!("skill: {}", skill.name), query)
-                }));
-            }
-            // Not a known skill — fall through to brain-file handling,
-            // which produces the appropriate "not found" error.
+                matches.render(&format!("skill: {}", skill.name), query)
+            }));
         }
 
         let home = crate::config::opencrabs_home();
