@@ -1170,6 +1170,171 @@ pub fn claims_uncalled_commands(text: &str, executed_inputs: &[String]) -> Vec<S
     out
 }
 
+/// Facts a text-only iteration asserts that can be checked against the
+/// conversation: git object ids and result tallies.
+///
+/// The post-success exemption lets a wrap-up through once the turn has real
+/// work behind it, on the reasoning that `Pushed.` is an acknowledgement
+/// rather than a claim. That holds for an ack and fails for a report: a
+/// 4,664-character iteration full of invented counts and commit shas was
+/// exempted as a "pure completion acknowledgement" because 24 tools had
+/// succeeded earlier in the same turn (#1423).
+///
+/// Length cannot separate the two. Across 128 exempted iterations over three
+/// days the median is 968 characters and p90 is 2,563, so most exempted text
+/// is legitimately long, and bounding the exemption by size would re-break
+/// the regression it was added for. What separates a report from a
+/// fabrication is not its size but whether the facts in it exist.
+///
+/// Same principle as `claims_uncalled_commands` and `claims_unbacked_evidence`:
+/// read fact, not wording (#1073). Deliberately narrow, because the shapes
+/// those two recognize are exactly the ones a report-shaped fabrication
+/// avoids: `claims_unbacked_evidence` needs three lines shaped like a grep
+/// dump, an `===` frame, padded key-value or a column row, and a markdown
+/// table with prose between its rows matches none of them.
+pub fn asserted_facts(text: &str) -> Vec<String> {
+    /// Bound the nudge and the scan; a pathological iteration states a
+    /// handful of facts, not hundreds.
+    const MAX_FACTS: usize = 20;
+    let mut out = asserted_shas(text);
+    out.extend(asserted_tallies(text));
+    out.sort();
+    out.dedup();
+    out.truncate(MAX_FACTS);
+    out
+}
+
+/// Which of the asserted facts appear nowhere in the conversation's evidence.
+pub fn unbacked_facts(facts: &[String], known: &str) -> Vec<String> {
+    facts
+        .iter()
+        .filter(|fact| !fact_is_backed(fact, known))
+        .cloned()
+        .collect()
+}
+
+/// Git object ids the text states.
+///
+/// A maximal run of hex characters, 7 to 40 long, standing alone. Three
+/// filters keep this off ordinary words, each trading a small miss rate for a
+/// large false-positive reduction:
+///
+/// * the run must not touch a letter, digit, underscore or hyphen, so a
+///   uuid's segments and a dotted path are not read as shas
+/// * it must contain a digit, so `defaced` is not a sha
+/// * it must contain a letter, so a bare number like `7892345` is not one
+///
+/// A real 7-character id misses the digit test about 4% of the time and the
+/// letter test about as often. Missing a few shas is acceptable; flagging an
+/// English word would put the exemption back where it started.
+fn asserted_shas(text: &str) -> Vec<String> {
+    const MIN_SHA: usize = 7;
+    const MAX_SHA: usize = 40;
+    let chars: Vec<char> = text.chars().collect();
+    let touches_word =
+        |c: Option<&char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-');
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_hexdigit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_hexdigit() {
+            i += 1;
+        }
+        let run: String = chars[start..i].iter().collect();
+        let standalone =
+            (start == 0 || !touches_word(Some(&chars[start - 1]))) && !touches_word(chars.get(i));
+        if run.len() >= MIN_SHA
+            && run.len() <= MAX_SHA
+            && standalone
+            && run.chars().any(|c| c.is_ascii_digit())
+            && run.chars().any(|c| c.is_ascii_alphabetic())
+        {
+            // Git prints lowercase; a report may not.
+            out.push(run.to_ascii_lowercase());
+        }
+    }
+    out
+}
+
+/// Result tallies the text states: `7,896 passed`, `0 failed`, `30 ignored`.
+///
+/// The fact keeps its keyword so the nudge can quote the claim, and
+/// `fact_is_backed` reads the digits back out of it.
+fn asserted_tallies(text: &str) -> Vec<String> {
+    const KEYWORDS: [&str; 3] = ["passed", "failed", "ignored"];
+    let lower = text.to_lowercase();
+    let mut out = Vec::new();
+    for kw in KEYWORDS {
+        let mut search = 0;
+        while let Some(rel) = lower[search..].find(kw) {
+            let at = search + rel;
+            search = at + kw.len();
+            // Word-bounded, so the `passed` in `bypassed` is not a tally.
+            if lower[at + kw.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphanumeric())
+            {
+                continue;
+            }
+            let before = lower[..at].trim_end();
+            let digits: String = before
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit() || *c == ',')
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            let plain: String = digits.chars().filter(|c| *c != ',').collect();
+            // A number has to actually precede the keyword.
+            if plain.is_empty() || !before.ends_with(&digits) {
+                continue;
+            }
+            out.push(format!("{digits} {kw}"));
+        }
+    }
+    out
+}
+
+/// Whether one asserted fact exists in the conversation's evidence.
+///
+/// A tally is checked in both spellings: a report may quote `7,926` from a run
+/// that printed `7926`, and neither spelling is a fabrication.
+fn fact_is_backed(fact: &str, known: &str) -> bool {
+    if let Some(plain) = digits_of(fact) {
+        return known.contains(&plain) || known.contains(&group_thousands(&plain));
+    }
+    known.contains(fact)
+}
+
+/// The digits of a tally fact, or None for a sha.
+fn digits_of(fact: &str) -> Option<String> {
+    let (digits, _keyword) = fact.split_once(' ')?;
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit() || c == ',') {
+        return None;
+    }
+    let plain: String = digits.chars().filter(|c| *c != ',').collect();
+    (!plain.is_empty()).then_some(plain)
+}
+
+/// `7926` into `7,926`, the spelling a report quotes from a tallied run.
+fn group_thousands(digits: &str) -> String {
+    let chars: Vec<char> = digits.chars().collect();
+    let mut out = String::new();
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(*c);
+    }
+    out
+}
+
 /// Sentence fragments, split on the usual terminators but never inside a
 /// backticked span (#1074).
 ///

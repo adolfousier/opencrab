@@ -252,6 +252,48 @@ fn bg_receipt_card_fence_outgrows_backtick_runs_in_the_tail() {
 }
 
 #[test]
+fn bg_receipt_card_empty_tail_is_a_flat_one_liner() {
+    // A whitespace-only tail leaves nothing inside the <details> wrapper —
+    // the rich API rejects the card with RICH_MESSAGE_EMPTY and the outbox
+    // fallback escapes the literal wrapper tags into the chat. The guard
+    // must emit a flat card with no wrapper on either leg.
+    for tail in ["", "   ", "\n\t"] {
+        let (md, classic) = build_bg_receipt_card(&meta(true, "gh run watch 1", 61.0, tail));
+        assert!(!md.contains("<details>"), "no wrapper to reject: {md}");
+        assert!(
+            !classic.contains("<details>"),
+            "no wrapper to leak: {classic}"
+        );
+        assert!(
+            md.starts_with("✅ `gh run watch 1` 🕒 "),
+            "flat markdown card: {md}"
+        );
+        assert!(!md.contains('\n'), "one line only: {md}");
+        assert!(
+            classic.starts_with("<b>✅ gh run watch 1 🕒 "),
+            "flat classic card: {classic}"
+        );
+    }
+}
+
+#[test]
+fn bg_receipt_card_empty_tail_escapes_the_label_on_the_classic_leg() {
+    let (md, classic) = build_bg_receipt_card(&meta(false, "grep <b>", 1.0, ""));
+    assert!(
+        classic.contains("&lt;b&gt;"),
+        "classic leg escapes the label: {classic}"
+    );
+    assert!(
+        !classic.contains("<b>grep"),
+        "label cannot open a tag: {classic}"
+    );
+    assert!(
+        md.starts_with("❌ `grep <b>` 🕒 "),
+        "markdown leg keeps the label verbatim: {md}"
+    );
+}
+
+#[test]
 fn notify_receipt_card_matches_the_locked_n4_shape() {
     let body = "RECEIPT CONTRACT DELIVERED — swap verified, all three clauses journal-anchored.\n\n\
                 | Clause | Anchor |\n|---|---|\n| Build | run 1 |";
@@ -281,6 +323,23 @@ fn notify_receipt_card_sanitizes_angle_brackets_in_sender() {
         "angle brackets neutralized so the sender can't open a tag: {md}"
     );
     assert!(!md.contains("<script>"));
+}
+
+#[test]
+fn notify_receipt_card_empty_body_is_a_flat_one_liner() {
+    // Same defect class as the bg card: a whitespace-only body leaves an
+    // empty card inside the <details> wrapper (RICH_MESSAGE_EMPTY). The
+    // guard must emit a flat card with no wrapper on either leg.
+    for body in ["", "  \n\t "] {
+        let (md, classic) = build_notify_receipt_card("Compiler", body);
+        assert!(!md.contains("<details>"), "no wrapper to reject: {md}");
+        assert!(
+            !classic.contains("<details>"),
+            "no wrapper to leak: {classic}"
+        );
+        assert_eq!(md, "📨 From **Compiler**", "flat markdown card");
+        assert_eq!(classic, "📨 From <b>Compiler</b>", "flat classic card");
+    }
 }
 
 #[test]

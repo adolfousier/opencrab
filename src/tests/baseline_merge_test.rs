@@ -23,7 +23,7 @@
 //! and re-running is idempotent (zero entries added on the second
 //! call with the same baseline).
 
-use crate::tui::onboarding::merge_minimax_baseline;
+use crate::tui::onboarding::{merge_minimax_baseline, xiaomi_baseline_models};
 use crate::usage::pricing::{PricingConfig, PricingEntry, ProviderBlock};
 use std::collections::HashMap;
 
@@ -223,4 +223,96 @@ fn minimax_merge_internal_user_dedup() {
     ];
     let merged = merge_minimax_baseline(baseline, user);
     assert_eq!(merged.len(), 3, "duplicates removed inside user list too");
+}
+
+// ── Xiaomi baseline fallback (#1419) ──────────────────────────
+//
+// The xiaomi branch GETs a keyless live endpoint that answers 401 on
+// some CI runners. Before #1419 an empty fetch returned an empty list,
+// so the onboarding picker showed nothing and the /models test red-lined
+// the whole Test job. The fix mirrors MiniMax: fall back to a
+// compiled-in baseline. The branch shadows the base_url parameter
+// (fetch.rs:341), so it cannot be driven offline through a refused
+// local port — these pin the baseline data directly and assert the
+// branch is still wired to it.
+
+#[test]
+fn xiaomi_baseline_is_never_empty_and_every_entry_is_a_mimo_model() {
+    // The picker's whole guarantee after a failed fetch. The /models
+    // test in xiaomi_onboarding_test.rs asserts the same two properties,
+    // but only by way of the live endpoint; this needs no network.
+    let baseline = xiaomi_baseline_models();
+    assert!(!baseline.is_empty(), "the fallback must never be empty");
+    for model in &baseline {
+        assert!(
+            model.contains("mimo"),
+            "every baseline entry must be a mimo model, got {model}"
+        );
+    }
+}
+
+#[test]
+fn xiaomi_baseline_has_no_duplicates() {
+    // merge_minimax_baseline dedups the user list against the baseline,
+    // not the baseline against itself, so a repeated entry here would
+    // reach the picker twice.
+    let baseline = xiaomi_baseline_models();
+    let mut seen: Vec<&String> = Vec::new();
+    for model in &baseline {
+        assert!(
+            !seen.iter().any(|s| s.eq_ignore_ascii_case(model)),
+            "baseline lists {model} twice"
+        );
+        seen.push(model);
+    }
+}
+
+#[test]
+fn xiaomi_fallback_keeps_user_models_and_stays_non_empty() {
+    // Exactly the shape the fix returns when the live fetch comes back
+    // empty: baseline first, saved models preserved, and still non-empty
+    // with no user config at all.
+    let user = vec!["mimo-custom-variant".to_string()];
+    let merged = merge_minimax_baseline(xiaomi_baseline_models(), user.clone());
+    assert!(merged.len() > user.len(), "the baseline must add entries");
+    for model in &user {
+        assert!(merged.contains(model), "user model {model} must survive");
+    }
+    let alone = merge_minimax_baseline(xiaomi_baseline_models(), Vec::new());
+    assert!(
+        !alone.is_empty(),
+        "no user config must still yield a usable picker"
+    );
+}
+
+#[test]
+fn xiaomi_branch_falls_back_to_the_baseline_when_the_fetch_is_empty() {
+    // The regression trip. The three tests above are worthless if the
+    // branch stops consulting the baseline, and that absence is exactly
+    // the bug: no `is_empty` guard, straight to merge(api_models, user).
+    // A source sentinel because the branch cannot be driven offline.
+    //
+    // Line-based, and deliberately NOT sliced on a structural anchor:
+    // `let client = reqwest::Client::new()` appears inside the xiaomi
+    // branch as well as after it, so splitting on it truncates the
+    // branch before the fallback. Locate the unique call instead and
+    // read the lines above it, which keeps the window tight enough that
+    // a fallback wired to some other condition still fails.
+    let src = include_str!("../tui/onboarding/fetch.rs");
+    let call = "merge_minimax_baseline(xiaomi_baseline_models(), user_models)";
+    let lines: Vec<&str> = src.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains(call))
+        .expect("the empty-fetch fallback must merge the compiled-in xiaomi baseline");
+    // Inclusive of the call line: `return` is on it, not above it.
+    let window = lines[at.saturating_sub(12)..=at].join("\n");
+    assert!(
+        window.contains("if api_models.is_empty()"),
+        "an empty live fetch must take a fallback path, not merge nothing"
+    );
+    assert!(
+        window.contains("return"),
+        "the empty-fetch branch must return the baseline, not fall through to merge the empty list"
+    );
 }
