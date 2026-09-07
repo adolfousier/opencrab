@@ -481,7 +481,7 @@ pub(crate) fn deliver_revived_agent_outcome(
     let agent_id = status.id.clone();
     let label = status.label.clone();
     let msg = crate::brain::tools::subagent::spawn::completion_message(&label, &agent_id, outcome);
-    match crate::brain::agent::service::session_routes::deliver_to_session(parent, msg, true) {
+    match crate::brain::agent::service::session_routes::deliver_to_session(parent, msg.clone(), true) {
         crate::brain::agent::service::session_routes::Delivery::Delivered => {
             tracing::info!(
                 target: "background_task",
