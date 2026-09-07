@@ -187,6 +187,7 @@ pub mod config_live_home_guard_test;
 pub mod config_load_status_isolation_test;
 pub mod config_memory_external_test;
 pub mod config_owner_seed_migration_test;
+pub mod config_phantom_xiaomi_default_test;
 pub mod config_provider_registry_test;
 pub mod config_reload_reason_test;
 pub mod config_repair_test;
