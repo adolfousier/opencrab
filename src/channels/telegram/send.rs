@@ -24,7 +24,9 @@ use teloxide::payloads::SendPhotoSetters;
 use teloxide::payloads::SendPollSetters;
 use teloxide::prelude::Requester;
 use teloxide::requests::JsonRequest;
-use teloxide::types::{ChatAction, ChatId, InputFile, MessageId, ThreadId};
+use teloxide::types::{
+    ChatAction, ChatId, InlineKeyboardMarkup, InputFile, MessageId, ThreadId,
+};
 
 /// Look up the thread_id of the most recent Telegram message stored for
 /// `chat_id` in `channel_messages`. Returns `None` when no row exists,
@@ -470,5 +472,76 @@ pub(crate) async fn record_outgoing(
                 "telegram outbox: failed to persist message {mid} for reply-recovery: {e}"
             );
         }
+    }
+}
+
+/// Raw Bot API `sendMessage` with an inline keyboard — the #118 fix.
+///
+/// The teloxide request chain (`message_in_thread(...).parse_mode(..)
+/// .reply_markup(..)`) on this build silently drops both setters: stored
+/// probes carry no entities and no `reply_markup` while the arm logs ok.
+/// This helper posts the exact same payload as raw JSON to the Bot API —
+/// the same wire the rich plane (`rich::api::post_rich`) and the ephemeral
+/// sends (`ephemeral::post`) already use in production, where keyboards
+/// store correctly. Returns the sent message on Telegram's `ok:true`.
+///
+/// 429s wait out `retry_after` (capped) and retry once, mirroring
+/// `ephemeral::post`'s ladder; other failures return the API error text.
+pub(crate) async fn send_buttons_raw(
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    html: &str,
+    keyboard: &InlineKeyboardMarkup,
+) -> Result<serde_json::Value, String> {
+    let mut payload = serde_json::json!({
+        "chat_id": chat_id,
+        "text": html,
+        "parse_mode": "HTML",
+        "reply_markup": keyboard,
+    });
+    if let Some(t) = thread_id {
+        payload["message_thread_id"] = serde_json::json!(t.0.0);
+    }
+    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+    let client = reqwest::Client::new();
+    let mut attempt = 0u32;
+    loop {
+        let resp = client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("transport: {e}"))?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        if status.as_u16() == 429 {
+            if attempt >= 1 {
+                return Err("rate-limited after retry".to_string());
+            }
+            attempt += 1;
+            let wait = parsed
+                .get("parameters")
+                .and_then(|p| p.get("retry_after"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(5)
+                .min(15);
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            continue;
+        }
+        if status.is_success()
+            && parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+        {
+            return Ok(parsed
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null));
+        }
+        let desc = parsed
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown error");
+        return Err(format!("({status}): {desc}"));
     }
 }
