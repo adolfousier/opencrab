@@ -8,10 +8,13 @@
 
 use super::ast::Inline;
 
+/// Factory producing the [`Inline`] styling node for a matched HTML tag.
+type StyleNodeFactory = fn(Vec<Inline>) -> Inline;
+
 /// Standard HTML styling tags mapped onto [`Inline`] variants by
 /// [`parse_inlines`] (#106). Order matters only for overlaps — none exist
 /// between these tags, so table order is read order.
-const HTML_STYLE_TAGS: &[(&str, fn(Vec<Inline>) -> Inline)] = &[
+const HTML_STYLE_TAGS: &[(&str, StyleNodeFactory)] = &[
     ("b", Inline::Bold),
     ("strong", Inline::Bold),
     ("i", Inline::Italic),
