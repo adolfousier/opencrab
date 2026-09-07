@@ -515,7 +515,7 @@ enabled = false
 # any other number you own, including a WhatsApp Business account, to serve that
 # account's incoming DMs.
 # Phone numbers allowed to message the bot (E.164 format, leading + optional)
-allowed_phones = ["+15551234567"]
+# allowed_phones = ["+15551234567"]
 # bot_owner = ["+15551234567"]          # Operator phone(s) for owner-only commands. The operator can DM the
                                         # bot and is always allowed regardless of response_policy. Auto-seeded
                                         # from the first allowed_phones entry on first run; set explicitly to
@@ -532,7 +532,7 @@ allowed_phones = ["+15551234567"]
 [channels.discord]
 enabled = false
 allowed_channels = ["channel_id"]       # Where the bot operates (empty = all channels)
-allowed_users = [123456789012345]        # Who the bot replies to (numeric user ID, empty = everyone)
+# allowed_users = [123456789012345]        # Who the bot replies to (numeric user ID, empty = everyone)
 # bot_owner = [123456789012345]         # Owner ID(s) for owner-only commands. Auto-seeded from the first
                                         # allowed_users entry on first run; set explicitly to pin the owner.
 # respond_to = "all"                    # "all" | "dm_only" | "mention"
@@ -540,7 +540,7 @@ allowed_users = [123456789012345]        # Who the bot replies to (numeric user 
 
 [channels.telegram]
 enabled = false
-allowed_users = [123456789]             # Who the bot replies to (numeric user ID, empty = everyone)
+# allowed_users = [123456789]             # Who the bot replies to (numeric user ID, empty = everyone)
 # bot_owner = [123456789]               # Owner ID(s): owner-only commands (e.g. /cd) and gated actions.
                                         # Auto-seeded from the first allowed_users entry on first run; set it
                                         # explicitly to pin the owner instead of relying on list order.
@@ -604,7 +604,7 @@ allowed_users = [123456789]             # Who the bot replies to (numeric user I
 [channels.slack]
 enabled = false
 allowed_channels = ["C12345678"]        # Where the bot operates (Slack channel ID, empty = all)
-allowed_users = ["U12345678"]           # Who the bot replies to (Slack user ID, empty = everyone)
+# allowed_users = ["U12345678"]           # Who the bot replies to (Slack user ID, empty = everyone)
 # bot_owner = ["U12345678"]             # Owner ID(s) for owner-only commands. Auto-seeded from the first
                                         # allowed_users entry on first run; set explicitly to pin the owner.
 # respond_to = "all"                    # "all" | "dm_only" | "mention"

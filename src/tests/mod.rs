@@ -62,6 +62,7 @@ pub mod bash_toml_blocklist_test;
 pub mod bg_push_echo_test;
 pub mod bg_resume_test;
 pub mod boot_report_test;
+pub mod bot_owner_placeholder_seed_test;
 pub mod brain_agent_context_test;
 pub mod brain_agent_service_phantom_lang_test;
 pub mod brain_agent_service_phantom_test;
