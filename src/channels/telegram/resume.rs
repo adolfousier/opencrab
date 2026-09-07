@@ -134,7 +134,31 @@ pub(crate) fn build_enqueue_callback(
                 } else {
                     false
                 };
-                if !folded {
+                // #61: a notify landing while THIS session's flow roll is live
+                // folds a compact line INTO the block instead of posting the
+                // standalone bubble below — the bubble visually detached the
+                // announcement from the block the notify may have caused. The
+                // fold is best-effort (idle wake, bg completion, dead roll, or
+                // unparseable sender → `false`) and every false case falls
+                // through to the receipt card, byte-unchanged. BackgroundTask
+                // pushes never hit this: the #1377 settled-card fold above
+                // already owns them.
+                let notify_folded = if state.is_turn_active(session_id)
+                    && msg.origin == crate::brain::agent::PushOrigin::SessionNotify
+                {
+                    fold_notify_into_roll(
+                        &state,
+                        &bot,
+                        session_id,
+                        chat_id,
+                        thread_id,
+                        &msg.context_text,
+                    )
+                    .await
+                } else {
+                    false
+                };
+                if !folded && !notify_folded {
                     // #15: receipt cards. A bg completion carries the typed
                     // payload (icon/label/duration/tail) in `bg_meta` — the card
                     // renders from it, never by parsing the `[System: ...]`
@@ -1080,6 +1104,19 @@ pub(crate) fn build_bg_receipt_card(meta: &crate::brain::agent::BgTaskMeta) -> (
         label
     };
     let duration = background_tasks::format_elapsed(meta.elapsed_secs);
+    // Empty-body guard: a whitespace-only tail leaves nothing inside the
+    // <details> wrapper — the rich API rejects the whole card with 400
+    // RICH_MESSAGE_EMPTY and the outbox fallback escapes the literal
+    // wrapper tags into the chat. Emit a flat one-line card instead —
+    // nothing to reject, no wrapper to leak on any wire.
+    if meta.tail.trim().is_empty() {
+        let markdown = format!("{icon} `{label}` 🕒 {duration}");
+        let classic = format!(
+            "<b>{icon} {} 🕒 {duration}</b>",
+            super::markdown::escape_html(label)
+        );
+        return (markdown, classic);
+    }
     let fence = receipt_fence(&meta.tail);
     let markdown = format!(
         "<details>\n<summary><sub>{icon} `{label}` 🕒 {duration}</sub></summary>\n\n\
@@ -1122,6 +1159,15 @@ pub(crate) fn build_notify_receipt_card(sender_label: &str, body: &str) -> (Stri
     } else {
         sender
     };
+    // Empty-body guard: whitespace-only body = an empty card inside the
+    // <details> wrapper = 400 RICH_MESSAGE_EMPTY (same defect class as the
+    // bg card). Flat one-line card instead — no wrapper to reject.
+    if body.trim().is_empty() {
+        return (
+            format!("📨 From **{sender}**"),
+            format!("📨 From <b>{sender}</b>"),
+        );
+    }
     let preview = first_line_preview(body);
     let truncated = body.chars().count() > BG_ECHO_BODY_CAP_CHARS;
     let body = crate::utils::string::truncate_chars(body, BG_ECHO_BODY_CAP_CHARS);
@@ -1133,6 +1179,140 @@ pub(crate) fn build_notify_receipt_card(sender_label: &str, body: &str) -> (Stri
     let flat_title = format!("📨 From {sender}: {preview}");
     let (_, classic_html) = build_bg_echo_bubble(&format!("{body}{suffix}"), &flat_title);
     (markdown, classic_html)
+}
+
+/// #61: hard cap for the folded notify roll line (chars, not bytes) —
+/// one long notify title must not blow out the roll block.
+pub(crate) const NOTIFY_ROLL_LINE_MAX: usize = 160;
+
+/// #61: the compact roll line for a folded notify —
+/// `📨 notify from <label>: <first body line>`. The label gets the same
+/// angle-bracket neutralization the receipt card applies (topic/chat names
+/// are user data; roll chrome renders verbatim). The first body line
+/// carries the gist — the FULL notify text still reaches the session via
+/// the queue below; this line is only the announcement. Capped so one
+/// long title cannot blow out the roll block.
+/// Strip a leading self-echo from a notify body's first line: a sender
+/// (or a hand-typed probe) that pastes its own "📨 notify from …:" header
+/// into the payload would otherwise render the phrase twice — the envelope
+/// already carries the label (Alexey 2026-09-05, r4 smoke duplication).
+/// Strips the header-shaped prefix up to the first ':'; a matching line
+/// with no ':' is left alone (can't tell header from prose).
+fn strip_leading_notify_echo(first: &str) -> &str {
+    let Some(rest) = first.strip_prefix("📨 notify from") else {
+        return first;
+    };
+    match rest.find(':') {
+        Some(idx) => rest[idx + 1..].trim_start(),
+        None => first,
+    }
+}
+
+pub(crate) fn build_notify_roll_line(label: &str, body: &str) -> String {
+    let sanitized = label.replace('<', "‹").replace('>', "›");
+    let first = body.lines().next().map(str::trim).unwrap_or("");
+    let first = strip_leading_notify_echo(first);
+    let line = format!("📨 notify from {sanitized}: {first}");
+    if line.chars().count() > NOTIFY_ROLL_LINE_MAX {
+        let mut cut: String = line.chars().take(NOTIFY_ROLL_LINE_MAX).collect();
+        cut.push('…');
+        cut
+    } else {
+        line
+    }
+}
+
+/// #61 fold-dedupe fingerprint: tagged sender identity + the FULL body.
+/// Two deliveries of the same notify produce the same fingerprint; any
+/// body or sender difference produces a new one. The tag byte keeps a
+/// session uuid apart from a CLI label spelling the same text.
+/// DefaultHasher is deliberate: this is per-session display dedup, not a
+/// security boundary.
+pub(crate) fn notify_fingerprint(sender: &NotifySender<'_>, body: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    match sender {
+        NotifySender::Session(u) => {
+            0u8.hash(&mut hasher);
+            u.as_bytes().hash(&mut hasher);
+        }
+        NotifySender::CliTooling(label) => {
+            1u8.hash(&mut hasher);
+            label.hash(&mut hasher);
+        }
+    }
+    body.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// #61: fold a session-notify announcement into the session's LIVE flow
+/// roll. Returns `true` when the line was folded — the caller then skips
+/// the standalone #1221/#1225 bubble. Deliberate fallbacks (all →
+/// `false`, bubble unchanged): no parseable sender (the bubble's
+/// defensive arm owns that), no registered live flow (session idle), or
+/// the roll block no longer open (registration proves a turn is in
+/// flight, not that the block survived — `open_group_msg_id` re-checked
+/// under the streaming lock is the real gate; the lock is scoped and
+/// never held across the fold await). The notify CONTENT is not consumed
+/// here: the caller's normal queue/resume logic delivers it; this only
+/// replaces the announcement. Fold-dedupe (Alexey 2026-09-06): a notify
+/// already folded for this session within the TTL window also returns
+/// `true` WITHOUT re-rendering — same bubble-skip effect, nothing new on
+/// the roll (`TelegramState::note_notify_fold`).
+pub(crate) async fn fold_notify_into_roll(
+    state: &TelegramState,
+    bot: &teloxide::Bot,
+    session_id: Uuid,
+    chat_id: i64,
+    thread_id: Option<teloxide::types::ThreadId>,
+    context_text: &str,
+) -> bool {
+    let (sender, body) = split_bg_echo_parts(context_text);
+    let Some(sender) = sender else {
+        return false;
+    };
+    let Some(handle) = state.live_flow(session_id) else {
+        return false;
+    };
+    let roll_open = {
+        let s = handle.streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.open_group_msg_id
+    };
+    if roll_open.is_none() {
+        return false;
+    }
+    // Fold-dedupe (Alexey 2026-09-06): the same notify delivered twice to
+    // one session folds ONCE — the 776a1fe5 incident rendered one notify
+    // in two concurrent rolls. Check-and-record is atomic under the state
+    // lock, so racing folds can't both pass. A duplicate returns `true`
+    // (keeps the caller's bubble gated off) without re-rendering; the
+    // content still reaches the session via the normal queue path.
+    let fingerprint = notify_fingerprint(&sender, &body);
+    if state.note_notify_fold(session_id, fingerprint) {
+        tracing::debug!(
+            "[bg-resume] #61: duplicate notify fold suppressed for session {session_id}"
+        );
+        return true;
+    }
+    let label = match sender {
+        NotifySender::Session(s) => sender_label(state, bot, s, chat_id).await,
+        // CLI lane (#23): no sender session to humanize — carried label
+        // renders verbatim (build_notify_roll_line neutralizes brackets).
+        NotifySender::CliTooling(l) => l.to_string(),
+    };
+    let line = build_notify_roll_line(&label, &body);
+    super::flow::append_system_to_flow(
+        bot,
+        teloxide::types::ChatId(chat_id),
+        thread_id,
+        &handle.streaming,
+        &line,
+    )
+    .await;
+    tracing::info!(
+        "[bg-resume] #61: notify from session {session_id} folded into the live flow roll"
+    );
+    true
 }
 
 /// Bubble header for a background-task echo: reuse the producer's display

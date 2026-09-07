@@ -53,6 +53,32 @@ pub fn uncalled_commands_nudge(commands: &[String]) -> String {
     )
 }
 
+/// Correction naming facts the turn asserted that exist nowhere in the
+/// conversation's evidence (#1423).
+///
+/// A commit sha or a test tally has to have come from somewhere. When it is in
+/// no tool result and no message, it was written rather than read, and quoting
+/// it back is what makes the correction unarguable: the model cannot reword its
+/// way past a token that does not exist (#797).
+pub fn unbacked_facts_nudge(facts: &[String]) -> String {
+    let quoted = facts
+        .iter()
+        .map(|f| format!("`{f}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let subject = if facts.len() == 1 {
+        "this fact:"
+    } else {
+        "these facts:"
+    };
+    format!(
+        "[System: You reported {subject} {quoted}. None of it appears in any tool result or \
+         message in this conversation, so it was written, not read. \
+         {NO_EXECUTION_WHILE_REASONING} Run the tool that produces it through the structured \
+         tool-call API, or retract the claim and say it has not been verified.{FINISHED_ESCAPE}]"
+    )
+}
+
 /// Correction for a turn that produced no tool calls, when no specific
 /// fabricated command was identified.
 ///
