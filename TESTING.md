@@ -62,7 +62,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Background Task Persistence | 5 | `src/tests/background_task_persistence_test.rs` |
 | Tests — Background Task Route | 4 | `src/tests/background_task_route_test.rs` |
 | Tests — Background Tasks | 5 | `src/tests/background_tasks_test.rs` |
-| Tests — Baseline Merge | 10 | `src/tests/baseline_merge_test.rs` |
+| Tests — Baseline Merge | 14 | `src/tests/baseline_merge_test.rs` |
 | Tests — Bash Blocklist | 6 | `src/tests/bash_blocklist_test.rs` |
 | Tests — Bash Failure Classification | 10 | `src/tests/bash_failure_classification_test.rs` |
 | Tests — Bash Feedback Enrichment | 16 | `src/tests/bash_feedback_enrichment_test.rs` |
