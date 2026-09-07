@@ -85,6 +85,12 @@ pub(crate) const MIGRATION_SQL: &[&str] = &[
     include_str!("../migrations/20260902000001_add_pending_followups.sql"),
     include_str!("../migrations/20260904000000_add_pending_followups_host_markdown.sql"),
     include_str!("../migrations/20260908000001_pending_requests_thread_id.sql"),
+    // #111: durable notify queue — parked session_notify / background-task
+    // pushes survive restarts and re-offer at boot. Appended AFTER the
+    // thread_id migration despite its earlier filename date: rusqlite_migration
+    // applies by list INDEX, so a database already stamped past this position
+    // would skip it and never create the table (#1401).
+    include_str!("../migrations/20260906000001_add_notify_queue.sql"),
 ];
 
 pub(crate) fn build_migrations() -> Migrations<'static> {
