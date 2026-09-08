@@ -11,7 +11,6 @@
 //! The registry lives here rather than in the config tool because both sides
 //! need it and `config` cannot depend on `brain::tools`.
 
-
 use crate::config::Config;
 /// Top-level tables that actually exist in `config.toml`.
 ///

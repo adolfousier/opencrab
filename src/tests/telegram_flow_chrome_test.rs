@@ -268,15 +268,9 @@ fn completed_goal_keeps_target_icon_live_and_swaps_to_check_at_settle() {
     let mut s = sections(None, None, Some("close the audit"));
     s.goal.as_mut().expect("goal set").completed = true;
     // While the turn is still running a completed goal keeps 🎯 (Decision 10).
-    assert_eq!(
-        s.chrome_rich(false),
-        "<p><b>🎯</b> close the audit</p>"
-    );
+    assert_eq!(s.chrome_rich(false), "<p><b>🎯</b> close the audit</p>");
     // At settle only the icon swaps; the word never changes.
-    assert_eq!(
-        s.chrome_rich(true),
-        "<p><b>✅</b> close the audit</p>"
-    );
+    assert_eq!(s.chrome_rich(true), "<p><b>✅</b> close the audit</p>");
     assert_eq!(
         s.chrome_classic(true),
         "<blockquote expandable><b>✅</b> close the audit</blockquote>"
@@ -546,9 +540,9 @@ fn details_populated_flow_keeps_chrome_outside_the_details() {
     );
     // Chrome is an always-visible <p> block BEFORE the collapsed log, with a
     // kept spacer, not inside the summary.
-    assert!(out.starts_with(
-        "<p><b>🎯</b> finish the audit</p><p>&nbsp;</p><details><summary><sub>"
-    ));
+    assert!(
+        out.starts_with("<p><b>🎯</b> finish the audit</p><p>&nbsp;</p><details><summary><sub>")
+    );
     assert!(out.ends_with("</details>"));
     assert!(out.contains("⏱ 0:08"));
 }

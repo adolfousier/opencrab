@@ -1237,7 +1237,8 @@ async fn deliver_telegram(
                 );
                 // Persist keyed by message id so a reply to the cron post
                 // resolves to this exact content (#234).
-                crate::channels::telegram::send::record_outgoing(pool, chat_id, thread, &sent).await;
+                crate::channels::telegram::send::record_outgoing(pool, chat_id, thread, &sent)
+                    .await;
             }
             Err(e) => {
                 if let Some(t) = thread_id {

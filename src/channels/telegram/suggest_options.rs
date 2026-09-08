@@ -312,7 +312,9 @@ pub(crate) fn row_fits(labels: &[&str]) -> bool {
         labels[0].chars().count() <= SINGLE_BUTTON_MAX_UNITS
     } else {
         let total: usize = labels.iter().map(|l| l.chars().count()).sum();
-        labels.iter().all(|l| l.chars().count() <= SHARED_ROW_MAX_CHARS)
+        labels
+            .iter()
+            .all(|l| l.chars().count() <= SHARED_ROW_MAX_CHARS)
             && total <= SHARED_ROW_TOTAL_UNITS
     }
 }
@@ -320,10 +322,7 @@ pub(crate) fn row_fits(labels: &[&str]) -> bool {
 pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     let width = |o: &String| o.chars().count();
     let refs: Vec<&str> = options.iter().map(|o| o.as_str()).collect();
-    if options.len() > 1
-        && options.len() <= MAX_NUMBERS_PER_ROW
-        && row_fits(&refs)
-    {
+    if options.len() > 1 && options.len() <= MAX_NUMBERS_PER_ROW && row_fits(&refs) {
         SuggestLayout::SharedRow
     } else if options.iter().all(|o| width(o) <= BUTTON_LABEL_MAX_UNITS)
         || (options.len() == 1 && width(&options[0]) <= SINGLE_BUTTON_MAX_UNITS)

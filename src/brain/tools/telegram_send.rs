@@ -1299,11 +1299,7 @@ impl TelegramSendTool {
         // buttons arm rides it too.
         let token = bot.token();
         match crate::channels::telegram::send::send_buttons_raw(
-            token,
-            chat_id,
-            thread_id,
-            &html,
-            &keyboard,
+            token, chat_id, thread_id, &html, &keyboard,
         )
         .await
         {
