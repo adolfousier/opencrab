@@ -24,9 +24,7 @@ use teloxide::payloads::SendPhotoSetters;
 use teloxide::payloads::SendPollSetters;
 use teloxide::prelude::Requester;
 use teloxide::requests::JsonRequest;
-use teloxide::types::{
-    ChatAction, ChatId, InlineKeyboardMarkup, InputFile, MessageId, ThreadId,
-};
+use teloxide::types::{ChatAction, ChatId, InlineKeyboardMarkup, InputFile, MessageId, ThreadId};
 
 /// Look up the thread_id of the most recent Telegram message stored for
 /// `chat_id` in `channel_messages`. Returns `None` when no row exists,
@@ -514,13 +512,16 @@ pub(crate) async fn send_buttons_raw(
         wire_body.len(),
         crate::channels::telegram::telemetry::content_hash8(&wire_body),
         kb_rows,
-        serde_json::to_string(&keyboard).map(|s| s.len()).unwrap_or(0),
+        serde_json::to_string(&keyboard)
+            .map(|s| s.len())
+            .unwrap_or(0),
         chat_id,
         thread_id.map(|t| t.0.0),
     );
     if kb_rows == 0 {
         return Err(
-            "no buttons parsed from 'buttons' input — refusing to send a keyboard-less message".to_string(),
+            "no buttons parsed from 'buttons' input — refusing to send a keyboard-less message"
+                .to_string(),
         );
     }
     let url = format!("https://api.telegram.org/bot{token}/sendMessage");
