@@ -19,6 +19,7 @@
 pub(crate) mod api;
 pub(crate) mod ast;
 pub(crate) mod detect;
+pub(crate) mod edit_dedup;
 mod inline;
 mod list;
 pub(crate) mod mermaid;
