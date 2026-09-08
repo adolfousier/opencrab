@@ -432,5 +432,5 @@ fn md_plane_appends_plain_markdown_pick_record() {
 #[test]
 fn go_tier_lines_markdown_renders_119_lines() {
     let list = go_tier_lines(&["первый".to_string(), "второй|с таблицей".to_string()]);
-    assert_eq!(list, "Go: первый?\nGo: второй|с таблицей");
+    assert_eq!(list, "Go: первый?\nGo: второй|с таблицей?");
 }
