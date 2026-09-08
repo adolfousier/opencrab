@@ -374,7 +374,7 @@ const GO_TIER_VERB: &str = "Go";
 /// otherwise (`Go: Smoke OK — ack both units?`). The label is NOT re-wrapped
 /// in markup here: the rich plane escapes+formats via `go_tier_lines_rich`;
 /// the markdown plane takes the raw line.
-fn go_tier_line(label: &str) -> String {
+pub(crate) fn go_tier_line(label: &str) -> String {
     let starts_with_verb = label
         .trim_start()
         .get(..GO_TIER_VERB.len())

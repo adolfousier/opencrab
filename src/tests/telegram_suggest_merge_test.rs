@@ -11,7 +11,7 @@
 use crate::channels::telegram::suggest_options::{
     BUTTON_LABEL_MAX_UNITS, FOLLOWUP_PREFIX, GO_BUTTON_LABEL, MAX_NUMBERS_PER_ROW,
     SHARED_ROW_MAX_CHARS, SINGLE_BUTTON_MAX_UNITS, SuggestLayout, append_rows_and_trailer_md,
-    enforce_button_fit, go_tier_line, go_tier_lines, go_tier_lines_rich, pick_layout, row_fits,
+    enforce_button_fit, go_tier_line, go_tier_lines_rich, pick_layout, row_fits,
     suggestion_rows_rich_html,
 };
 
@@ -144,7 +144,7 @@ fn test_go_tier_buttons_carry_go_label_not_digits() {
     // #119 owner design: buttons in the fold tier read `Go!`, never bare
     // digits. Callback data still carries the absolute index.
     let token = "ab12cd34";
-    let html = suggestion_rows_rich_html(&opts(&["Ship it", "x".repeat(30)]), token);
+    let html = suggestion_rows_rich_html(&opts(&["Ship it", &"x".repeat(30)]), token);
     assert!(html.contains(&format!(">{GO_BUTTON_LABEL}<")), "{html}");
     assert!(!html.contains(">1</tg-button>"), "no digit buttons: {html}");
     assert!(
