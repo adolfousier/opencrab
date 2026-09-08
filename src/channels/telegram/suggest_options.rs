@@ -287,30 +287,49 @@ pub(crate) enum SuggestLayout {
     NumberedProse,
 }
 
+/// THE budget verdict — sole authority on whether one button row ships
+/// byte-identical or folds (#119 refactor, option A). Both consumers call
+/// THIS: `pick_layout` at the emitter and `enforce_button_fit` at the
+/// rich/api.rs funnel. Before this function, the two sites carried
+/// divergent copies of the budgets — the funnel re-folded full-width
+/// single-button rows the emitter had just approved, which is exactly
+/// the live #119 regression. One verdict = the divergence class is
+/// structurally impossible.
+///
+/// Row shapes:
+/// - ONE button renders FULL-WIDTH, so it gets the solo budget
+///   [`SINGLE_BUTTON_MAX_UNITS`] (30) — sized below every measured cut
+///   datapoint (32 wide-glyph native, 40-44 rich-plane — see #79) while
+///   clearing confirm-style labels (27 units) that the 20-unit shared
+///   gate wrongly folded.
+/// - Multi-button rows share keyboard width, so every label must fit
+///   [`SHARED_ROW_MAX_CHARS`] and the row total [`SHARED_ROW_TOTAL_UNITS`].
+///
+/// Width is the raw character count of the (already escaped) label text;
+/// entities overcount display width, which errs safe.
+pub(crate) fn row_fits(labels: &[&str]) -> bool {
+    if labels.len() == 1 {
+        labels[0].chars().count() <= SINGLE_BUTTON_MAX_UNITS
+    } else {
+        let total: usize = labels.iter().map(|l| l.chars().count()).sum();
+        labels.iter().all(|l| l.chars().count() <= SHARED_ROW_MAX_CHARS)
+            && total <= SHARED_ROW_TOTAL_UNITS
+    }
+}
+
 pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     let width = |o: &String| o.chars().count();
-    let total: usize = options.iter().map(&width).sum();
-    if options.len() <= MAX_NUMBERS_PER_ROW
-        && options.iter().all(|o| width(o) <= SHARED_ROW_MAX_CHARS)
-        && total <= SHARED_ROW_TOTAL_UNITS
+    let refs: Vec<&str> = options.iter().map(|o| o.as_str()).collect();
+    if options.len() > 1
+        && options.len() <= MAX_NUMBERS_PER_ROW
+        && row_fits(&refs)
     {
         SuggestLayout::SharedRow
-    } else if options.len() == 1 {
-        // Single-option set (#119): the fold tier's premise — cramming
-        // many long labels into shared rows — never applies at n=1, and
-        // a lone option folded into "1. <label>" prose plus a bare "1"
-        // button renders absurdly. One option rides a full-width button
-        // under its own clip point; only a label too wide even for a
-        // dedicated row folds. The budget sits below every measured cut
-        // datapoint (32 wide-glyph native, 40-44 rich-plane — see #79)
-        // while clearing confirm-style labels ("Smoke OK — ack both
-        // units", 27) that the 20-unit shared-row gate wrongly folded.
-        if width(&options[0]) <= SINGLE_BUTTON_MAX_UNITS {
-            SuggestLayout::Column
-        } else {
-            SuggestLayout::NumberedProse
-        }
-    } else if options.iter().all(|o| width(o) <= BUTTON_LABEL_MAX_UNITS) {
+    } else if options.iter().all(|o| width(o) <= BUTTON_LABEL_MAX_UNITS)
+        || (options.len() == 1 && width(&options[0]) <= SINGLE_BUTTON_MAX_UNITS)
+    {
+        // n=1 with a label past the shared 20-unit cap still rides
+        // full-width up to the solo budget (#119) — row_fits's solo arm.
         SuggestLayout::Column
     } else {
         SuggestLayout::NumberedProse
@@ -385,27 +404,29 @@ pub(crate) fn empty_keyboard() -> teloxide::types::InlineKeyboardMarkup {
 /// controls passes through here on send and edit (the `rich/api.rs`
 /// funnel), so hand-authored button rows from any lane get the same
 /// measured fit rule the suggestion cards enforce at their own emitter —
-/// the n8n-card cut class. If every label fits [`BUTTON_LABEL_MAX_UNITS`]
-/// and every row's total fits [`SHARED_ROW_TOTAL_UNITS`], the body ships
-/// byte-identical. Otherwise the whole set folds to the NumberedProse
-/// shape (proven cut-free twice in #79): buttons keep their attributes —
-/// callback data and URL routing are untouched — but render their 1-based
-/// index, and the original labels move into an `<ol>` after the last row.
-/// Idempotent: a folded body's digit labels never re-trigger the fold.
-/// Width is the raw character count of the (already escaped) label text;
-/// entities overcount display width, which errs safe.
+/// the n8n-card cut class. Row verdicts go through [`row_fits`] — the
+/// single budget authority (#119 option A): one-button rows ride the
+/// solo budget, shared rows the per-label + row-total caps. If every
+/// row fits, the body ships byte-identical. Otherwise the whole set
+/// folds to the NumberedProse shape (proven cut-free twice in #79):
+/// buttons keep their attributes — callback data and URL routing are
+/// untouched — but render their 1-based index, and the original labels
+/// move into an `<ol>` after the last row. Idempotent: a folded body's
+/// digit labels never re-trigger the fold.
 pub(crate) fn enforce_button_fit(html: &str) -> String {
     const ROW_OPEN: &str = "<tg-button-row>";
     const ROW_CLOSE: &str = "</tg-button-row>";
     const BTN_OPEN: &str = "<tg-button";
     const BTN_CLOSE: &str = "</tg-button>";
 
-    let width = |s: &str| s.chars().count();
-
     // Pass 1 — collect row spans, per-row open tags, and all labels.
+    // Per-row verdicts go through row_fits — THE single budget authority
+    // (#119 option A): the funnel no longer carries its own cap copies,
+    // so it can never re-fold a row the emitter legitimately approved.
     let mut rows: Vec<(usize, usize)> = Vec::new();
     let mut open_tags: Vec<Vec<&str>> = Vec::new();
     let mut labels: Vec<&str> = Vec::new();
+    let mut row_labels: Vec<&str> = Vec::new();
     let mut fits = true;
     let mut scan_from = 0usize;
     while let Some(rel) = html[scan_from..].find(ROW_OPEN) {
@@ -415,8 +436,8 @@ pub(crate) fn enforce_button_fit(html: &str) -> String {
         };
         let row_end = row_start + crel + ROW_CLOSE.len();
         let block = &html[row_start + ROW_OPEN.len()..row_end - ROW_CLOSE.len()];
-        let mut row_total = 0usize;
         let mut tags_in_row: Vec<&str> = Vec::new();
+        row_labels.clear();
         let mut bscan = 0usize;
         while let Some(brel) = block[bscan..].find(BTN_OPEN) {
             let bstart = bscan + brel;
@@ -435,13 +456,12 @@ pub(crate) fn enforce_button_fit(html: &str) -> String {
                 break;
             };
             let label = &block[label_start..label_start + lrel];
-            row_total += width(label);
-            fits &= width(label) <= BUTTON_LABEL_MAX_UNITS;
+            row_labels.push(label);
             tags_in_row.push(open_tag);
             labels.push(label);
             bscan = label_start + lrel + BTN_CLOSE.len();
         }
-        fits &= row_total <= SHARED_ROW_TOTAL_UNITS;
+        fits &= row_fits(&row_labels);
         rows.push((row_start, row_end));
         open_tags.push(tags_in_row);
         scan_from = row_end;

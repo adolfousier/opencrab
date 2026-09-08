@@ -11,7 +11,7 @@
 use crate::channels::telegram::suggest_options::{
     BUTTON_LABEL_MAX_UNITS, FOLLOWUP_PREFIX, MAX_NUMBERS_PER_ROW, SHARED_ROW_MAX_CHARS,
     SINGLE_BUTTON_MAX_UNITS, SuggestLayout, append_rows_and_trailer_md, enforce_button_fit,
-    folded_list_html, pick_layout, suggestion_rows_rich_html,
+    folded_list_html, pick_layout, row_fits, suggestion_rows_rich_html,
 };
 
 fn opts(v: &[&str]) -> Vec<String> {
@@ -206,6 +206,54 @@ fn test_enforce_button_fit_folds_rows_over_the_total_budget() {
     );
     assert!(out.contains("<li>Полёт норм!!</li>"), "{out}");
     assert!(out.contains("<li>Всё чётко!!!</li>"), "{out}");
+}
+
+// ── row_fits — the single budget verdict (#119 option A) ─────────────────
+
+#[test]
+fn test_row_fits_solo_arm_grants_the_solo_budget() {
+    // One button renders full-width: it rides SINGLE_BUTTON_MAX_UNITS,
+    // NOT the 20-unit shared caps — the arm whose absence made the #79
+    // funnel re-fold full-width single-button rows the emitter approved.
+    let label = "x".repeat(SINGLE_BUTTON_MAX_UNITS);
+    assert!(row_fits(&[&label]));
+    assert!(!row_fits(&[&"x".repeat(SINGLE_BUTTON_MAX_UNITS + 1)]));
+    // A solo label past the SHARED caps but inside the solo budget:
+    // exactly the live-failure class (25-27 char confirm labels).
+    let confirm = "Smoke OK — ack both units".to_string();
+    assert!(confirm.chars().count() > BUTTON_LABEL_MAX_UNITS);
+    assert!(row_fits(&[&confirm]));
+}
+
+#[test]
+fn test_row_fits_shared_arm_keeps_the_79_caps() {
+    // Multi-button rows: per-label SHARED_ROW_MAX_CHARS AND row-total
+    // SHARED_ROW_TOTAL_UNITS — byte-identical to the pre-refactor rule.
+    let a = "x".repeat(SHARED_ROW_MAX_CHARS);
+    let b = "y".repeat(SHARED_ROW_MAX_CHARS);
+    // 2x12 = 24 total > 20: does not fit (folds, as before the refactor).
+    assert!(!row_fits(&[&a, &b]));
+    let short = "x".repeat(SHARED_ROW_MAX_CHARS - 4);
+    // 2x8 = 16 total, labels within per-label cap: fits.
+    assert!(row_fits(&[&short, &short]));
+    // One label past the per-label cap kills the row even under budget.
+    let long = "x".repeat(SHARED_ROW_MAX_CHARS + 1);
+    assert!(!row_fits(&[&short, &long]));
+}
+
+#[test]
+fn test_chokepoint_ships_solo_rows_the_emitter_approved() {
+    // THE #119 live regression, pinned at the funnel: a single-button row
+    // with a 25-char label used to be re-folded by enforce_button_fit
+    // (old inline caps) after pick_layout's Column tier approved it —
+    // owner saw "button 1 + 1. <label>" prose on ship ed0ae1d9. Under
+    // the single-verdict refactor the funnel ships it byte-identical.
+    let label = "Smoke OK — ack both units"; // 25 chars: > 20, <= 30
+    let body = format!(
+        "<tg-button-row><tg-button type=\"callback_data\" data=\"followup:tok:0\" \
+         style=\"primary\">{label}</tg-button></tg-button-row>"
+    );
+    assert_eq!(enforce_button_fit(&body), body);
 }
 
 /// #108: the button rows and the trailer must start a FRESH markdown block.
