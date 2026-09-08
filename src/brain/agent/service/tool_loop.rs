@@ -1,4 +1,6 @@
 use super::builder::AgentService;
+use super::compaction::CompactionOutcome;
+use super::compaction_prompts::CompactionKind;
 use super::types::*;
 use crate::brain::agent::context::AgentContext;
 use crate::brain::agent::error::{AgentError, Result};
@@ -493,6 +495,41 @@ impl AgentService {
             ),
             &skills,
         )
+    }
+
+    /// Persist the compaction marker, then inject the stamped continuation
+    /// (issue #134): the single adoption path for all six compaction sites.
+    /// A site adopting this helper cannot skip the continuation or its
+    /// #125/#131 skill stamp. Errors are returned so each site keeps its
+    /// own handling (Manual propagates; budget sites log and continue).
+    async fn apply_compaction_continuation(
+        &self,
+        session_id: Uuid,
+        message_service: &MessageService,
+        context: &mut AgentContext,
+        outcome: &CompactionOutcome,
+        kind: super::compaction_prompts::CompactionKind,
+        marker_suffix: &str,
+        persist: bool,
+    ) -> Result<()> {
+        message_service
+            .create_message(
+                session_id,
+                "user".to_string(),
+                outcome.marker(marker_suffix),
+            )
+            .await
+            .map_err(AgentError::db)?;
+
+        let cont_text = self.continuation_prompt(session_id, kind).await;
+        if persist {
+            message_service
+                .create_message(session_id, "user".to_string(), cont_text.clone())
+                .await
+                .map_err(AgentError::db)?;
+        }
+        context.add_message(Message::user(cont_text));
+        Ok(())
     }
 
     /// Core tool-execution loop — called by all public shims.
@@ -1230,18 +1267,7 @@ impl AgentService {
                 .await
             {
                 Ok(summary) => {
-                    // Persist compaction marker to DB so restarts load from this point
-                    let compaction_marker = format!(
-                        "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                         Below is a structured summary of everything before this point.]\n\n{}",
-                        summary
-                    );
-                    message_service
-                        .create_message(session_id, "user".to_string(), compaction_marker)
-                        .await
-                        .map_err(AgentError::db)?;
-
-                    // Persist summary as the assistant response (for DB/search continuity)
+                    // #134 helper below persists marker + stamped continuation.
                     message_service
                         .append_content(assistant_db_msg.id, &summary)
                         .await
@@ -1249,19 +1275,17 @@ impl AgentService {
 
                     // Add a brief continuation prompt to context — matches
                     // auto-compaction behavior but uses a short sentence instead
-                    // of the full POST-COMPACTION PROTOCOL. Persisted to DB so
-                    // the next turn sees it.
-                    let cont_text = self
-                        .continuation_prompt(
-                            session_id,
-                            super::compaction_prompts::CompactionKind::Manual,
-                        )
-                        .await;
-                    message_service
-                        .create_message(session_id, "user".to_string(), cont_text.clone())
-                        .await
-                        .map_err(AgentError::db)?;
-                    context.add_message(Message::user(cont_text));
+                    // of the full POST-COMPACTION PROTOCOL.
+                    self.apply_compaction_continuation(
+                        session_id,
+                        &message_service,
+                        &mut context,
+                        &CompactionOutcome::Summarised(summary),
+                        CompactionKind::Manual,
+                        "",
+                        true,
+                    )
+                    .await?;
 
                     if let Some(ref cb) = progress_callback {
                         cb(session_id, ProgressEvent::TokenCount(context.token_count));
@@ -1356,21 +1380,17 @@ impl AgentService {
         };
 
         if let Some(ref outcome) = compaction_result {
-            // Persist compaction marker to DB so restarts load from this point
-            if let Err(e) = message_service
-                .create_message(session_id, "user".to_string(), outcome.marker(""))
-                .await
-            {
-                tracing::error!("Failed to persist compaction marker to DB: {}", e);
-            }
-
-            let cont_text = self
-                .continuation_prompt(
-                    session_id,
-                    super::compaction_prompts::CompactionKind::Regular,
-                )
-                .await;
-            context.add_message(Message::user(cont_text));
+            self.apply_compaction_continuation(
+                session_id,
+                &message_service,
+                &mut context,
+                outcome,
+                CompactionKind::Regular,
+                "",
+                false,
+            )
+            .await
+            .unwrap_or_else(|e| tracing::error!("compaction marker persist failed: {}"));
         }
 
         // Restore the directory `/cd` persisted for this session before the
@@ -1837,21 +1857,19 @@ impl AgentService {
                 )
                 .await
             } {
-                // Persist compaction marker to DB so restarts load from this point
-                if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), outcome.marker(""))
-                    .await
-                {
-                    tracing::error!("Failed to persist mid-loop compaction marker to DB: {}", e);
-                }
-
-                let cont_text = self
-                    .continuation_prompt(
-                        session_id,
-                        super::compaction_prompts::CompactionKind::MidLoop,
-                    )
-                    .await;
-                context.add_message(Message::user(cont_text));
+                self.apply_compaction_continuation(
+                    session_id,
+                    &message_service,
+                    &mut context,
+                    outcome,
+                    CompactionKind::MidLoop,
+                    "",
+                    false,
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("mid-loop compaction marker persist failed: {}")
+                });
             }
 
             // Build LLM request with tools if available
@@ -2108,29 +2126,19 @@ impl AgentService {
                         .await
                     {
                         Ok(summary) => {
-                            // Persist compaction marker to DB so restarts load from this point
-                            let compaction_marker = format!(
-                                "[CONTEXT COMPACTION — The conversation was automatically compacted. \
-                                 Below is a structured summary of everything before this point.]\n\n{}",
-                                summary
-                            );
-                            if let Err(e) = message_service
-                                .create_message(session_id, "user".to_string(), compaction_marker)
-                                .await
-                            {
-                                tracing::error!(
-                                    "Failed to persist emergency compaction marker to DB: {}",
-                                    e
-                                );
-                            }
-
-                            let cont_text = self
-                                .continuation_prompt(
-                                    session_id,
-                                    super::compaction_prompts::CompactionKind::Emergency,
-                                )
-                                .await;
-                            context.add_message(Message::user(cont_text));
+                            self.apply_compaction_continuation(
+                                session_id,
+                                &message_service,
+                                &mut context,
+                                &CompactionOutcome::Summarised(summary),
+                                CompactionKind::Emergency,
+                                "",
+                                false,
+                            )
+                            .await
+                            .unwrap_or_else(|e| {
+                                tracing::error!("emergency compaction marker persist failed: {}")
+                            });
 
                             // Notify user about emergency compaction
                             if let Some(ref cb) = progress_callback {
@@ -3951,26 +3959,19 @@ impl AgentService {
                 )
                 .await
             } {
-                if let Err(e) = message_service
-                    .create_message(
-                        session_id,
-                        "user".to_string(),
-                        outcome.marker(" after token calibration revealed high context usage"),
-                    )
-                    .await
-                {
-                    tracing::error!(
-                        "Failed to persist post-calibration compaction marker: {}",
-                        e
-                    );
-                }
-                context.add_message(Message::user(
-                    "[SYSTEM: Context was auto-compacted after calibration. \
-                     Review the summary above. The \"IMMEDIATE TASK\" section tells you \
-                     exactly what to do next. Continue that task immediately. \
-                     Do NOT start a new topic or deviate to unrelated work.]"
-                        .to_string(),
-                ));
+                self.apply_compaction_continuation(
+                    session_id,
+                    &message_service,
+                    &mut context,
+                    outcome,
+                    CompactionKind::MidLoop,
+                    " after token calibration revealed high context usage",
+                    false,
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("post-calibration compaction marker persist failed: {}")
+                });
             }
 
             // --- CANCEL CHECK BEFORE STREAM DROP RETRY ---
@@ -7321,21 +7322,19 @@ impl AgentService {
                 )
                 .await
             } {
-                // Persist compaction marker to DB so restarts load from this point
-                if let Err(e) = message_service
-                    .create_message(session_id, "user".to_string(), outcome.marker(""))
-                    .await
-                {
-                    tracing::error!("Failed to persist post-tool compaction marker to DB: {}", e);
-                }
-
-                let cont_text = self
-                    .continuation_prompt(
-                        session_id,
-                        super::compaction_prompts::CompactionKind::PostTool,
-                    )
-                    .await;
-                context.add_message(Message::user(cont_text));
+                self.apply_compaction_continuation(
+                    session_id,
+                    &message_service,
+                    &mut context,
+                    outcome,
+                    CompactionKind::PostTool,
+                    "",
+                    false,
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("post-tool compaction marker persist failed: {}")
+                });
             }
 
             // Check for queued user messages to inject between tool iterations.
