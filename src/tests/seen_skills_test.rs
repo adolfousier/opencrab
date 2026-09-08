@@ -263,8 +263,8 @@ mod persistence {
             .expect("conn")
             .interact(move |conn| {
                 conn.execute(
-                    "INSERT INTO sessions (id, title, model, provider, created_at, updated_at) \
-                     VALUES (?1, 't', 'm', 'p', strftime('%s','now'), strftime('%s','now'))",
+                    "INSERT INTO sessions (id, title, model, created_at, updated_at) \
+                     VALUES (?1, 't', 'm', unixepoch(), unixepoch())",
                     rusqlite::params![live.to_string()],
                 )
             })
