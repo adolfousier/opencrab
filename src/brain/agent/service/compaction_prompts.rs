@@ -96,9 +96,9 @@ pub fn build_continuation(
     plan_recovery: PlanRecovery,
 ) -> String {
     let mut text = if silent {
-        silent_body(kind).to_string()
+        silent_body(kind)
     } else {
-        fun_body(kind).to_string()
+        fun_body(kind)
     };
     // Session-recovery hint: applies to ALL variants (fun + silent).
     // Branches on plan state; the coding-standards hint rides along.
@@ -168,36 +168,44 @@ pub fn append_skill_stamp(mut text: String, active_skills: &[String]) -> String 
     text
 }
 
-fn fun_body(kind: CompactionKind) -> &'static str {
+/// Shared head of the fun Regular/MidLoop continuation order (#134 DRY —
+/// was copy-pasted in both arms; PostTool reuses its first sentence).
+const FUN_IMMEDIATE_TASK: &str = "IMMEDIATELY continue the task described in the \"IMMEDIATE TASK\" section of the compaction summary. This is NOT optional — \
+         you MUST pick up exactly where you left off. Do NOT start a new topic. \
+         Do NOT ask what to do next. Do NOT deviate to unrelated work.";
+
+/// First sentence of FUN_IMMEDIATE_TASK, for arms that continue mid-sentence
+/// (fun PostTool: the ack invitation rides between "then" and the task order).
+const FUN_IMMEDIATE_TASK_FIRST: &str = "IMMEDIATELY continue the task described in the \"IMMEDIATE TASK\" section of the compaction summary.";
+
+fn fun_body(kind: CompactionKind) -> String {
     match kind {
         CompactionKind::Regular => {
-            "[SYSTEM: Context was auto-compacted. The summary above includes a snapshot \
-             of recent messages before compaction.\n\
-             POST-COMPACTION PROTOCOL (follow in order):\n\
-             1. Read the compaction summary and the recent message snapshot to understand \
-             the current task, tools in use, and what you were doing.\n\
-             2. If the summary references older context you don't have in the snapshot, use \
-             `session_search` with specific keywords to find those messages. Example: if the \
-             summary mentions \"vision fallback investigation\", run session_search with that \
-             query to recover the details.\n\
-             3. If you need specific brain context, selectively load ONLY the relevant \
-             brain file (e.g. TOOLS.md, SOUL.md, USER.md). NEVER use name=\"all\".\n\
-             4. IMMEDIATELY continue the task described in the \"IMMEDIATE TASK\" section \
-             of the compaction summary. This is NOT optional — you MUST pick up exactly \
-             where you left off. Do NOT start a new topic. Do NOT ask what to do next. \
-             Do NOT deviate to unrelated work. If the IMMEDIATE TASK section says \
-             \"CONTINUE: fixing X\", then fix X.]"
+            format!(
+                "[SYSTEM: Context was auto-compacted. The summary above includes a snapshot \
+                 of recent messages before compaction.\n\
+                 POST-COMPACTION PROTOCOL (follow in order):\n\
+                 1. Read the compaction summary and the recent message snapshot to understand \
+                 the current task, tools in use, and what you were doing.\n\
+                 2. If the summary references older context you don't have in the snapshot, use \
+                 `session_search` with specific keywords to find those messages. Example: if the \
+                 summary mentions \"vision fallback investigation\", run session_search with that \
+                 query to recover the details.\n\
+                 3. If you need specific brain context, selectively load ONLY the relevant \
+                 brain file (e.g. TOOLS.md, SOUL.md, USER.md). NEVER use name=\"all\".\n\
+                 4. {FUN_IMMEDIATE_TASK} If the IMMEDIATE TASK section says \
+                 \"CONTINUE: fixing X\", then fix X.]"
+            )
         }
         CompactionKind::MidLoop => {
-            "[SYSTEM: Context was auto-compacted mid-loop. The summary above includes \
-             a snapshot of recent messages. POST-COMPACTION PROTOCOL:\n\
-             1. Review the summary and snapshot to understand current task state.\n\
-             2. Use `session_search` with keywords from the summary if you need older \
-             context not in the snapshot.\n\
-             3. IMMEDIATELY continue the task described in the \"IMMEDIATE TASK\" section \
-             of the compaction summary. This is NOT optional — you MUST pick up exactly \
-             where you left off. Do NOT start a new topic. Do NOT ask what to do next. \
-             Do NOT deviate to unrelated work.]"
+            format!(
+                "[SYSTEM: Context was auto-compacted mid-loop. The summary above includes \
+                 a snapshot of recent messages. POST-COMPACTION PROTOCOL:\n\
+                 1. Review the summary and snapshot to understand current task state.\n\
+                 2. Use `session_search` with keywords from the summary if you need older \
+                 context not in the snapshot.\n\
+                 3. {FUN_IMMEDIATE_TASK}]"
+            )
         }
         CompactionKind::Emergency => {
             "[SYSTEM: Emergency compaction — provider rejected the prompt as \
@@ -206,27 +214,30 @@ fn fun_body(kind: CompactionKind) -> &'static str {
              2. Use `session_search` with keywords if you need older context.\n\
              3. Briefly acknowledge the compaction with a fun/cheeky remark, \
              then resume the task. Do NOT repeat completed work.]"
+                .to_string()
         }
         CompactionKind::PostTool => {
-            "[SYSTEM: Mid-loop context compaction complete. The summary above has \
-             full context of everything done so far. POST-COMPACTION PROTOCOL:\n\
-             1. Review the summary to understand current task state.\n\
-             2. Use `session_search` with keywords if you need older context.\n\
-             Briefly acknowledge the compaction to the user with a fun/cheeky remark (be \
-             creative, surprise them — cursing allowed), then IMMEDIATELY continue the task \
-             described in the \"IMMEDIATE TASK\" section of the compaction summary. \
-             Do NOT start a new topic. Do NOT deviate to unrelated work. \
-             Do NOT re-do completed work.]"
+            format!(
+                "[SYSTEM: Mid-loop context compaction complete. The summary above has \
+                 full context of everything done so far. POST-COMPACTION PROTOCOL:\n\
+                 1. Review the summary to understand current task state.\n\
+                 2. Use `session_search` with keywords if you need older context.\n\
+                 Briefly acknowledge the compaction to the user with a fun/cheeky remark (be \
+                 creative, surprise them — cursing allowed), then {FUN_IMMEDIATE_TASK_FIRST} \
+                 Do NOT start a new topic. Do NOT deviate to unrelated work. \
+                 Do NOT re-do completed work.]"
+            )
         }
         CompactionKind::Manual => {
             "[SYSTEM: Context was manually compacted. The summary above is your memory of \
              everything before this point. Resume the IMMEDIATE TASK from the summary. \
              Do NOT acknowledge the compaction to the user — they already know.]"
+                .to_string()
         }
     }
 }
 
-fn silent_body(kind: CompactionKind) -> &'static str {
+fn silent_body(kind: CompactionKind) -> String {
     match kind {
         CompactionKind::Regular => {
             "[SYSTEM: Context was auto-compacted. The summary above includes a snapshot \
@@ -242,6 +253,7 @@ fn silent_body(kind: CompactionKind) -> &'static str {
              FALLBACK: only if the summary genuinely doesn't make the next step clear, send \
              ONE short cheeky line (\"brain refresh — what was I working on?\") and ask. \
              Default behaviour is silent continuation.]"
+                .to_string()
         }
         CompactionKind::MidLoop => {
             "[SYSTEM: Context was auto-compacted mid-loop. The summary above includes \
@@ -252,6 +264,7 @@ fn silent_body(kind: CompactionKind) -> &'static str {
              mentioning. Do NOT restart, ask what to do, or deviate.\n\n\
              Use `session_search` with keywords from the summary if older context is \
              missing from the snapshot.]"
+                .to_string()
         }
         CompactionKind::Emergency => {
             "[SYSTEM: Emergency compaction — the prompt was too large and got \
@@ -265,6 +278,7 @@ fn silent_body(kind: CompactionKind) -> &'static str {
              FALLBACK: only if the next step is genuinely unclear from the \
              summary, send ONE short cheeky line (\"brain refresh — what was \
              I doing?\") and ask. Default behaviour is silent continuation.]"
+                .to_string()
         }
         CompactionKind::PostTool => {
             "[SYSTEM: Mid-loop context compaction complete. The summary above has \
@@ -273,11 +287,13 @@ fn silent_body(kind: CompactionKind) -> &'static str {
              or narrate the compaction. Do NOT start a new topic. Do NOT deviate to \
              unrelated work. Do NOT re-do completed work.\n\n\
              Use `session_search` with keywords if you need older context.]"
+                .to_string()
         }
         CompactionKind::Manual => {
             "[SYSTEM: Context was manually compacted. Silently resume the IMMEDIATE \
              TASK from the summary. Do not acknowledge the compaction — the user \
              triggered it intentionally and already sees the confirmation.]"
+                .to_string()
         }
     }
 }
