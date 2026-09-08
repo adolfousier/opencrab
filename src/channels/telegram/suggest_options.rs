@@ -36,7 +36,9 @@ const CROSS_TURN_GLUE_MAX_AGE_SECS: i64 = 900;
 /// minutes after its choices were consumed).
 pub(crate) fn standalone_fallback_body(layout: &SuggestLayout, options: &[String]) -> String {
     if *layout == SuggestLayout::NumberedProse {
-        folded_list_html(options).trim_start().to_string()
+        // #119 fold tier: the Go lines carry the questions; nothing else
+        // needed — no lamp, no list.
+        go_tier_lines_rich(options)
     } else {
         String::from("\u{1f4a1} <i>(choices may have expired)</i>")
     }
@@ -269,7 +271,7 @@ pub(crate) const SHARED_ROW_TOTAL_UNITS: usize = 20;
 /// the message body, so 12 keeps a safety margin under the worst bubble
 /// while doubling information per row vs the old 8.
 pub(crate) const SHARED_ROW_MAX_CHARS: usize = 12;
-/// Tap ergonomics (Alexey, 2026-08-25): numbered buttons never pack more
+/// Tap ergonomics (Alexey, 2026-08-25): #119 Go! buttons never pack more
 /// than 4 per row, so every target stays big enough for a finger.
 pub(crate) const MAX_NUMBERS_PER_ROW: usize = 4;
 
@@ -281,9 +283,11 @@ pub(crate) enum SuggestLayout {
     SharedRow,
     /// Every label fits a full-width button: one button per row.
     Column,
-    /// Some label too long even full-width: texts fold into the message
-    /// body as a numbered list, buttons collapse to bare numbers packed
-    /// [`MAX_NUMBERS_PER_ROW`] per row.
+    /// Some label too long even full-width (#119 owner design): the BODY
+    /// carries one `Go: <label>?` line per option (label verbatim + `?` when
+    /// it already starts with the verb) and the buttons collapse to compact
+    /// `Go!` controls packed [`MAX_NUMBERS_PER_ROW`] per row — never a
+    /// numbered list, never bare digit buttons.
     NumberedProse,
 }
 
@@ -335,39 +339,59 @@ pub(crate) fn pick_layout(options: &[String]) -> SuggestLayout {
     }
 }
 
-/// The folded option list as rich HTML. REUSES the canonical inline
-/// primitives from `super::markdown` — `escape_html` → `format_inline`,
-/// the exact pair the outbound renderer's default line branch applies —
-/// instead of a private formatter. Options are independent ONE-line texts,
-/// so they deliberately skip document-level interpretation (a stray `|`
-/// must not turn the list into a table); inline markup (`code`, bold) and
+/// The folded option list as rich HTML (#119 fold tier): one
+/// `Go: <label>?` line per option through the canonical inline primitives
+/// from `super::markdown` — `escape_html` → `format_inline`, the exact pair
+/// the outbound renderer's default line branch applies — instead of a
+/// private formatter. Options are independent ONE-line texts, so they
+/// deliberately skip document-level interpretation (a stray `|`
+/// must not turn the line into a table); inline markup (`code`, bold) and
 /// HTML escaping behave identically to every other Telegram surface.
-/// No "Suggested next" header — the list rides directly under the answer
-/// text in the same bubble (#tg-suggest-merge), so the label would only
+/// No "Suggested next" header — the lines ride directly under the answer
+/// text in the same bubble (#tg-suggest-merge), so a header would only
 /// duplicate what the buttons already say.
-pub(crate) fn folded_list_html(options: &[String]) -> String {
+pub(crate) fn go_tier_lines_rich(options: &[String]) -> String {
     options
         .iter()
-        .enumerate()
-        .map(|(i, opt)| {
-            format!(
-                "{}. {}",
-                i + 1,
-                super::markdown::format_inline(&super::markdown::escape_html(opt))
-            )
+        .map(|opt| {
+            super::markdown::format_inline(&super::markdown::escape_html(&go_tier_line(opt)))
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// NumberedProse fold for the markdown plane (#79 piece 4): a plain
-/// numbered list — the server's markdown render keeps the numbering and
-/// the line breaks, no `<p>` wrapping needed on this plane.
-pub(crate) fn folded_list_markdown(options: &[String]) -> String {
+/// The label of every NumberedProse-tier button after the #119 owner
+/// redesign: the option text moves into the body, the button just says Go!.
+pub(crate) const GO_BUTTON_LABEL: &str = "Go!";
+
+/// The verb the #119 fold tier names options with — the first word of the
+/// `Go: <label>?` body line and the GO_BUTTON_LABEL button minus its bang.
+const GO_TIER_VERB: &str = "Go";
+
+/// One #119 fold-tier body line for one option (owner design 06:42Z +
+/// verb-repeat amendment 06:46Z): the label verbatim + `?` when it already
+/// starts with the verb (`Go — implement #98…?`), `<Verb>: <label>?`
+/// otherwise (`Go: Smoke OK — ack both units?`). The label is NOT re-wrapped
+/// in markup here: the rich plane escapes+formats via `go_tier_lines_rich`;
+/// the markdown plane takes the raw line.
+fn go_tier_line(label: &str) -> String {
+    let starts_with_verb = label
+        .trim_start()
+        .get(..GO_TIER_VERB.len())
+        .is_some_and(|first| first.eq_ignore_ascii_case(GO_TIER_VERB));
+    if starts_with_verb {
+        format!("{label}?")
+    } else {
+        format!("{GO_TIER_VERB}: {label}?")
+    }
+}
+
+/// The #119 fold-tier body block: one go_tier_line per option, one line
+/// each, in order.
+pub(crate) fn go_tier_lines(options: &[String]) -> String {
     options
         .iter()
-        .enumerate()
-        .map(|(i, opt)| format!("{}. {}", i + 1, opt))
+        .map(|o| go_tier_line(o))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -527,10 +551,12 @@ pub(crate) fn append_rows_and_trailer_md(
     trailer: Option<&str>,
 ) {
     if prose {
-        // Markdown plane: plain numbered list — the server's
-        // markdown render keeps numbering and line breaks.
+        // Markdown plane, #119 fold tier: one `Go: <label>?` line per
+        // option (label verbatim when it starts with the verb) — never a
+        // numbered list. Raw lines: the markdown plane renders them
+        // plainly, no html primitives needed.
         md.push('\n');
-        md.push_str(&folded_list_markdown(options));
+        md.push_str(&go_tier_lines(options));
     }
     push_blank_line(md);
     md.push_str(&suggestion_rows_rich_html(options, token));
@@ -569,7 +595,7 @@ pub(crate) fn suggestion_rows_rich_html(options: &[String], token: &str) -> Stri
             .collect::<Vec<_>>()
             .join("\n"),
         SuggestLayout::NumberedProse => (0..options.len())
-            .map(|i| btn(i, &(i + 1).to_string()))
+            .map(|i| btn(i, GO_BUTTON_LABEL))
             .collect::<Vec<_>>()
             .chunks(MAX_NUMBERS_PER_ROW)
             .map(|c| format!("<tg-button-row>{}</tg-button-row>", c.concat()))
@@ -626,16 +652,14 @@ pub(crate) async fn render_suggestions(
     // and SINGLE_BUTTON_MAX_UNITS): short labels share one row, medium
     // labels get a full-width row each, a lone option rides one
     // full-width button up to its own clip point (#119), and anything
-    // longer folds into the body as a numbered list with compact
-    // number buttons (<=4 per row). The absolute index is encoded in the
+    // longer folds into the body as `Go: <label>?` lines with compact
+    // Go! buttons (<=4 per row) — never a numbered list (#119 owner
+    // design). The absolute index is encoded in the
     // callback data; the option text itself can exceed Telegram's 64-byte
     // callback-data limit, so we never put it there.
     let layout = pick_layout(&options);
     let text_btn = |i: usize, opt: &str| {
         InlineKeyboardButton::callback(opt.to_string(), format!("{FOLLOWUP_PREFIX}{token}:{i}"))
-    };
-    let num_btn = |i: usize| {
-        InlineKeyboardButton::callback((i + 1).to_string(), format!("{FOLLOWUP_PREFIX}{token}:{i}"))
     };
     let rows: Vec<Vec<InlineKeyboardButton>> = match layout {
         SuggestLayout::SharedRow => vec![
@@ -651,7 +675,14 @@ pub(crate) async fn render_suggestions(
             .map(|(i, opt)| vec![text_btn(i, opt)])
             .collect(),
         SuggestLayout::NumberedProse => {
-            let all: Vec<InlineKeyboardButton> = (0..options.len()).map(num_btn).collect();
+            let all: Vec<InlineKeyboardButton> = (0..options.len())
+                .map(|i| {
+                    InlineKeyboardButton::callback(
+                        GO_BUTTON_LABEL.to_string(),
+                        format!("{FOLLOWUP_PREFIX}{token}:{i}"),
+                    )
+                })
+                .collect();
             all.chunks(MAX_NUMBERS_PER_ROW)
                 .map(|c| c.to_vec())
                 .collect()
@@ -661,7 +692,8 @@ pub(crate) async fn render_suggestions(
     let keyboard = InlineKeyboardMarkup::new(rows);
 
     // Primary path: MERGE onto the answer bubble (#tg-suggest-merge). Prose
-    // mode appends the numbered list under the answer text; button modes add
+    // mode appends the `Go: <label>?` lines under the answer text (#119
+    // fold tier); button modes add
     // nothing on the classic surface (the buttons carry everything). Rich
     // bubbles additionally get native <tg-button-row> controls INSIDE the
     // message body. Both placement payloads are built ONCE — before the first
@@ -680,9 +712,10 @@ pub(crate) async fn render_suggestions(
                 let mut body = html;
                 if layout == SuggestLayout::NumberedProse {
                     // Classic hosts preserve the raw newline join via
-                    // folded_list_html.
+                    // go_tier_lines_rich (#119 fold tier: Go: label? lines,
+                    // never a numbered list).
                     body.push('\n');
-                    body.push_str(folded_list_html(&options).trim_start());
+                    body.push_str(&go_tier_lines_rich(&options));
                 }
                 (body, false, None)
             }
@@ -750,7 +783,8 @@ pub(crate) async fn render_suggestions(
 
     // Standalone fallback (no merge candidate, no glue target, or the edit
     // lost a race / grew too old): the header sentence is still gone per
-    // #tg-suggest-merge — prose mode shows just the numbered list, button
+    // #tg-suggest-merge — prose mode shows just the `Go: <label>?` lines
+    // (#119 fold tier; they ARE the questions), button
     // modes need SOME text for the Bot API to accept the message, so they
     // degrade to the bare 💡.
     let standalone_body = standalone_fallback_body(&layout, &options);
@@ -912,8 +946,10 @@ async fn cross_turn_glue(
     // with the html conversion kept only as the strip source.
     let mut new_md = target.1;
     if *layout == SuggestLayout::NumberedProse {
+        // #119 fold tier: Go lines replace the numbered list (mirrors the
+        // markdown-merge arm byte-for-byte in construction).
         new_md.push('\n');
-        new_md.push_str(&folded_list_markdown(options));
+        new_md.push_str(&go_tier_lines(options));
     }
     new_md.push('\n');
     new_md.push_str(&suggestion_rows_rich_html(options, token));

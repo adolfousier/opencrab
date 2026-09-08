@@ -9,9 +9,10 @@
 //! rule is that no source file carries a `#[cfg(test)] mod tests` block.
 
 use crate::channels::telegram::suggest_options::{
-    BUTTON_LABEL_MAX_UNITS, FOLLOWUP_PREFIX, MAX_NUMBERS_PER_ROW, SHARED_ROW_MAX_CHARS,
-    SINGLE_BUTTON_MAX_UNITS, SuggestLayout, append_rows_and_trailer_md, enforce_button_fit,
-    folded_list_html, pick_layout, row_fits, suggestion_rows_rich_html,
+    BUTTON_LABEL_MAX_UNITS, FOLLOWUP_PREFIX, GO_BUTTON_LABEL, MAX_NUMBERS_PER_ROW,
+    SHARED_ROW_MAX_CHARS, SINGLE_BUTTON_MAX_UNITS, SuggestLayout, append_rows_and_trailer_md,
+    enforce_button_fit, go_tier_line, go_tier_lines, go_tier_lines_rich, pick_layout, row_fits,
+    suggestion_rows_rich_html,
 };
 
 fn opts(v: &[&str]) -> Vec<String> {
@@ -102,16 +103,53 @@ fn test_shared_row_respects_the_total_budget() {
 }
 
 #[test]
-fn test_a_folded_list_carries_no_header_and_is_escaped() {
-    let body = folded_list_html(&opts(&["Ship it", "Review & merge"]));
+fn test_go_tier_body_lines_carry_the_119_shape() {
+    // #119 owner design 06:42Z: the fold tier renders `Go: <label>?` in the
+    // body — never a numbered list.
+    let body = go_tier_lines_rich(&opts(&["Ship it", "Review & merge"]));
     assert!(
         !body.contains("Suggested next"),
-        "#1204: the list rides under the answer, so it has no header of its own"
+        "#1204: the lines ride under the answer, no header of their own"
     );
-    assert!(body.contains("1. Ship it"));
     assert!(
-        body.contains("2. Review &amp; merge"),
-        "escaping proves the shared renderer ran, not a private one: {body}"
+        body.contains("Go: Ship it?") && body.contains("Go: Review &amp; merge?"),
+        "one Go line per option, escaping via the shared renderer: {body}"
+    );
+    assert!(
+        !body.contains("1. Ship it") && !body.contains("<ol>"),
+        "the numbered-prose shape is gone, not renamed: {body}"
+    );
+}
+
+#[test]
+fn test_go_tier_verb_repeat_rule() {
+    // #119 owner amendment 06:46Z: a label that already starts with the
+    // verb renders verbatim + `?`; otherwise the `Go:` prefix is added.
+    assert_eq!(
+        go_tier_line("Go — implement #98 after the #96 gate lands"),
+        "Go — implement #98 after the #96 gate lands?"
+    );
+    assert_eq!(
+        go_tier_line("Smoke OK — ack both units"),
+        "Go: Smoke OK — ack both units?"
+    );
+    // Case-insensitive verb match (Go!/go both start the label).
+    assert_eq!(go_tier_line("go fast"), "go fast?");
+    // Prefix-verb must not false-positive mid-word.
+    assert_eq!(go_tier_line("Gossip about it"), "Go: Gossip about it?");
+}
+
+#[test]
+fn test_go_tier_buttons_carry_go_label_not_digits() {
+    // #119 owner design: buttons in the fold tier read `Go!`, never bare
+    // digits. Callback data still carries the absolute index.
+    let token = "ab12cd34";
+    let html = suggestion_rows_rich_html(&opts(&["Ship it", "x".repeat(30)]), token);
+    assert!(html.contains(&format!(">{GO_BUTTON_LABEL}<")), "{html}");
+    assert!(!html.contains(">1</tg-button>"), "no digit buttons: {html}");
+    assert!(
+        html.contains(&format!("{FOLLOWUP_PREFIX}{token}:0")),
+        "callback data still routes by index: {html}"
     );
 }
 
