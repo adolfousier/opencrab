@@ -126,16 +126,16 @@ fn compacting_rich_footer_suppresses_duplicate_status() {
 #[test]
 fn compacted_line_under_a_minute() {
     assert_eq!(
-        compacted_flow_line(68.0, 26.0, Duration::from_secs(42)),
-        "✅ Compacted: 68% → 26% in 42s"
+        compacted_flow_line(68.0, 26.0, 132_000, 51_000, Duration::from_secs(42)),
+        "✅ Compacted: 68% → 26% (132K → 51K tokens) in 42s"
     );
 }
 
 #[test]
 fn compacted_line_multi_minute() {
     assert_eq!(
-        compacted_flow_line(71.0, 24.0, Duration::from_secs(132)),
-        "✅ Compacted: 71% → 24% in 2 min 12s"
+        compacted_flow_line(71.0, 24.0, 94_559, 34_197, Duration::from_secs(132)),
+        "✅ Compacted: 71% → 24% (95K → 34K tokens) in 2 min 12s"
     );
 }
 
@@ -144,8 +144,8 @@ fn compacted_line_floors_subsecond_elapsed_to_1s() {
     // A sub-second summarizer call still reads as a real duration — "0s"
     // would look like the line was printed before the work happened.
     assert_eq!(
-        compacted_flow_line(66.0, 30.0, Duration::from_millis(300)),
-        "✅ Compacted: 66% → 30% in 1s"
+        compacted_flow_line(66.0, 30.0, 90_000, 40_000, Duration::from_millis(300)),
+        "✅ Compacted: 66% → 30% (90K → 40K tokens) in 1s"
     );
 }
 

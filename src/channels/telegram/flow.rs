@@ -788,16 +788,22 @@ pub(crate) fn compacting_flow_line(
 
 /// Flow-block body line posted when compaction finishes (#29). Doubles as
 /// the definitive completion signal: arrival means the silent window is
-/// over, so a FAILED compaction never emits one (no false ✅).
+/// over, so a FAILED compaction never emits one (no false ✅). Absolute
+/// token counts added alongside the percentages (#135): the owner reads
+/// "94,559 → 34,197 tokens", not just "94% → 34%".
 pub(crate) fn compacted_flow_line(
     before_pct: f64,
     after_pct: f64,
+    before_tokens: usize,
+    after_tokens: usize,
     elapsed: std::time::Duration,
 ) -> String {
     format!(
-        "✅ Compacted: {:.0}% → {:.0}% in {}",
+        "✅ Compacted: {:.0}% → {:.0}% ({} → {} tokens) in {}",
         before_pct,
         after_pct,
+        crate::utils::format_token_count(u32::try_from(before_tokens).unwrap_or(u32::MAX)),
+        crate::utils::format_token_count(u32::try_from(after_tokens).unwrap_or(u32::MAX)),
         humanize_duration(elapsed.as_secs().max(1))
     )
 }

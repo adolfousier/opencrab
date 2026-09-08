@@ -21,6 +21,7 @@ pub(crate) fn build_progress_cb(
     bot: &Bot,
     chat_id: ChatId,
     thread_id: Option<ThreadId>,
+    ctx_max: u32,
 ) -> ProgressCallback {
     let st = streaming.clone();
     let bot_typing = bot.clone();
@@ -56,6 +57,20 @@ pub(crate) fn build_progress_cb(
                         .push(DisplayItem::Intermediate(compacting_flow_line(
                             usage_pct, predicted,
                         )));
+                }
+            }
+            // Live ctx meter (#135): TokenCount fires after every API
+            // response, tool execution and compaction merge. The running
+            // card's footer already has a ctx slot — feed it, so the meter
+            // moves during the turn instead of appearing only at settle.
+            ProgressEvent::TokenCount(tokens) => {
+                if let Ok(mut s) = st.lock() {
+                    s.sections.ctx = Some(crate::utils::format_ctx_footer(
+                        u32::try_from(tokens).unwrap_or(u32::MAX),
+                        ctx_max,
+                        None,
+                    ));
+                    s.dirty = true;
                 }
             }
             ProgressEvent::ReasoningChunk { text } => {
@@ -191,6 +206,8 @@ pub(crate) fn build_progress_cb(
             ProgressEvent::CompactionSummary {
                 before_pct,
                 after_pct,
+                before_tokens,
+                after_tokens,
                 elapsed,
                 ..
             } => {
@@ -202,7 +219,11 @@ pub(crate) fn build_progress_cb(
                     s.header_preview = None;
                     s.display_queue
                         .push(DisplayItem::Intermediate(compacted_flow_line(
-                            before_pct, after_pct, elapsed,
+                            before_pct,
+                            after_pct,
+                            before_tokens,
+                            after_tokens,
+                            elapsed,
                         )));
                 }
             }

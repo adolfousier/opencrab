@@ -114,7 +114,7 @@ pub fn truncate_middle(s: &str, max_bytes: usize) -> String {
 }
 
 /// Format a token count as a compact human-readable string (e.g. "150K", "1.2M").
-fn format_token_count(tokens: u32) -> String {
+pub fn format_token_count(tokens: u32) -> String {
     let tokens = tokens as f64;
     if tokens >= 1_000_000.0 {
         format!("{:.1}M", tokens / 1_000_000.0)
