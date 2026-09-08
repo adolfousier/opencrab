@@ -6,6 +6,7 @@ use crate::brain::tools::Tool;
 use crate::brain::tools::ToolExecutionContext;
 use crate::brain::tools::load_brain_file::*;
 use crate::brain::tools::seen_skills;
+use std::path::Path;
 use uuid::Uuid;
 
 fn ctx() -> ToolExecutionContext {
@@ -148,3 +149,69 @@ fn stamp_union_dedupes_active_and_seen() {
 // Verified by code inspection of continuation_prompt (tracing::debug! with
 // the full inventory list); zero-skill silence is covered by the existing
 // skill_stamp_is_silent_when_no_skills_active test on append_skill_stamp.
+
+// ── moved out of an inline `mod tests` in src/brain/tools/seen_skills.rs ──
+//
+// Tests live under src/tests/ (house rule); the slug/registry unit cases
+// arrived inline with the #131 port and are exercised here through the same
+// public API instead.
+
+#[test]
+fn slug_extraction_from_skill_paths() {
+    assert_eq!(
+        seen_skills::skill_slug_from_path(Path::new(
+            "/root/.opencrabs/profiles/ops/skills/opencrabs-dev/SKILL.md"
+        )),
+        Some("opencrabs-dev".to_string())
+    );
+    assert_eq!(
+        seen_skills::skill_slug_from_path(Path::new("skills/foo/SKILL.md")),
+        Some("foo".to_string())
+    );
+}
+
+#[test]
+fn non_skill_paths_yield_none() {
+    assert_eq!(
+        seen_skills::skill_slug_from_path(Path::new("/home/user/MEMORY.md")),
+        None
+    );
+    assert_eq!(
+        seen_skills::skill_slug_from_path(Path::new("skills/foo/other.md")),
+        None
+    );
+    assert_eq!(
+        seen_skills::skill_slug_from_path(Path::new("not-skills/foo/SKILL.md")),
+        None
+    );
+    assert_eq!(
+        seen_skills::skill_slug_from_path(Path::new("skills/foo/")),
+        None
+    );
+}
+
+#[test]
+fn mark_seen_is_idempotent_and_session_scoped() {
+    let a = Uuid::new_v4();
+    let b = Uuid::new_v4();
+    seen_skills::mark_seen(a, "opencrabs-dev");
+    seen_skills::mark_seen(a, "opencrabs-dev");
+    assert!(seen_skills::was_seen(a, "opencrabs-dev"));
+    assert_eq!(
+        seen_skills::seen_for_session(a),
+        vec!["opencrabs-dev".to_string()]
+    );
+    assert!(!seen_skills::was_seen(b, "opencrabs-dev"));
+    assert!(seen_skills::seen_for_session(b).is_empty());
+}
+
+#[test]
+fn seen_list_is_sorted_and_multi() {
+    let a = Uuid::new_v4();
+    seen_skills::mark_seen(a, "zeta");
+    seen_skills::mark_seen(a, "alpha");
+    assert_eq!(
+        seen_skills::seen_for_session(a),
+        vec!["alpha".to_string(), "zeta".to_string()]
+    );
+}
