@@ -851,6 +851,20 @@ impl AgentService {
         // But if the LLM call fails (provider down, 5xx, timeout), the flag
         // stays true forever and the session is stuck. The Err arm now
         // resets the flag so the next message retries.
+        // Link the session to the project its working directory names, on the
+        // same first turn that titles it (#1445). Deliberately NOT inside the
+        // spawned title future: the title is an LLM call that can fail, time
+        // out, or hit a rate-limited provider, while this is a string match
+        // and one UPDATE. Nesting it would make a provider outage leave
+        // sessions unlinked, which is the failure this fixes. Gated on the
+        // first turn so it is attempted once, and idempotent besides.
+        if !session.auto_title_attempted && session.project_id.is_none() {
+            let project_svc = crate::services::ProjectService::new(self.context.clone());
+            if let Err(e) = project_svc.link_session_by_directory(&session).await {
+                tracing::warn!(error = %e, "failed to link session to a project");
+            }
+        }
+
         if !user_message.trim().is_empty()
             && !session.auto_title_attempted
             && session

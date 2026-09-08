@@ -173,6 +173,78 @@ impl ProjectService {
         repo.find_unassigned_sessions().await
     }
 
+    /// Link a session to the project its working directory names, if it is not
+    /// already linked and the directory matches one.
+    ///
+    /// Returns the project it linked to, or `None` when there was nothing to
+    /// do: no working directory (channel sessions carry none), no match, or a
+    /// session already assigned. Idempotent, so calling it twice is harmless
+    /// and the backfill can be re-run.
+    pub async fn link_session_by_directory(&self, session: &Session) -> Result<Option<Project>> {
+        if session.project_id.is_some() {
+            return Ok(None);
+        }
+        let Some(ref working_directory) = session.working_directory else {
+            return Ok(None);
+        };
+        let projects = self.list_projects().await?;
+        let Some(project) =
+            crate::services::project_match::match_by_directory(working_directory, &projects)
+        else {
+            return Ok(None);
+        };
+        self.assign_session(session.id, project.id).await?;
+        tracing::info!(
+            "Linked session {} to project '{}' from working directory {}",
+            session.id,
+            project.name,
+            working_directory,
+        );
+        Ok(Some(project.clone()))
+    }
+
+    /// Link every unassigned session whose working directory names a project.
+    ///
+    /// Returns how many were linked. For sessions that predate the project
+    /// they belong to, or that were created before anything linked them at all
+    /// (#1445). Idempotent: an assigned session is never revisited, so a second
+    /// run links only what the first could not.
+    ///
+    /// A single session failing to link does not abandon the rest. The failure
+    /// is logged and the sweep continues, because the alternative is that one
+    /// bad row keeps every later session unlinked forever.
+    pub async fn backfill_unassigned_sessions(&self) -> Result<usize> {
+        let sessions = self.get_unassigned_sessions().await?;
+        let projects = self.list_projects().await?;
+        if projects.is_empty() {
+            return Ok(0);
+        }
+        let mut linked = 0usize;
+        for session in &sessions {
+            let Some(ref working_directory) = session.working_directory else {
+                continue;
+            };
+            let Some(project) =
+                crate::services::project_match::match_by_directory(working_directory, &projects)
+            else {
+                continue;
+            };
+            match self.assign_session(session.id, project.id).await {
+                Ok(()) => linked += 1,
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "backfill: could not link session {} to project '{}'",
+                    session.id,
+                    project.name,
+                ),
+            }
+        }
+        if linked > 0 {
+            tracing::info!("Linked {linked} existing session(s) to projects by working directory");
+        }
+        Ok(linked)
+    }
+
     /// Get stats for a project (session count, file count)
     pub async fn get_project_stats(&self, project_id: Uuid) -> Result<ProjectStats> {
         let repo = ProjectRepository::new(self.context.pool());
