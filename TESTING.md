@@ -75,6 +75,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Bg Push Echo | 29 | `src/tests/bg_push_echo_test.rs` |
 | Tests — Bg Resume | 3 | `src/tests/bg_resume_test.rs` |
 | Tests — Boot Report | 5 | `src/tests/boot_report_test.rs` |
+| Tests — Bot Owner Placeholder Seed | 3 | `src/tests/bot_owner_placeholder_seed_test.rs` |
 | Tests — Brain Agent Context | 12 | `src/tests/brain_agent_context_test.rs` |
 | Tests — Brain Agent Service Phantom Lang | 11 | `src/tests/brain_agent_service_phantom_lang_test.rs` |
 | Tests — Brain Agent Service Phantom | 22 | `src/tests/brain_agent_service_phantom_test.rs` |
@@ -188,28 +189,31 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Command Rich Table | 5 | `src/tests/command_rich_table_test.rs` |
 | Tests — Compaction Background | 10 | `src/tests/compaction_background_test.rs` |
 | Tests — Compaction Fallback Chain | 19 | `src/tests/compaction_fallback_chain_test.rs` |
-| Tests — Compaction Prompts | 12 | `src/tests/compaction_prompts_test.rs` |
+| Tests — Compaction Prompts | 16 | `src/tests/compaction_prompts_test.rs` |
 | Tests — Compaction Signal | 16 | `src/tests/compaction_signal_test.rs` |
 | Tests — Compaction | 28 | `src/tests/compaction_test.rs` |
+| Tests — Compaction Single Continuation Path | 2 | `src/tests/compaction_single_continuation_path_test.rs` |
 | Tests — Compaction Truncation Marker | 5 | `src/tests/compaction_truncation_marker_test.rs` |
-| Tests — Config Alias Merge | 14 | `src/tests/config_alias_merge_test.rs` |
+| Tests — Config Alias Merge | 17 | `src/tests/config_alias_merge_test.rs` |
 | Tests — Config Dotted Caps | 6 | `src/tests/config_dotted_caps_test.rs` |
 | Tests — Config Guard | 5 | `src/tests/config_guard_test.rs` |
 | Tests — Config Last Good Recovery | 3 | `src/tests/config_last_good_recovery_test.rs` |
 | Tests — Config Live Home Guard | 5 | `src/tests/config_live_home_guard_test.rs` |
 | Tests — Config Load Status Isolation | 4 | `src/tests/config_load_status_isolation_test.rs` |
 | Tests — Config Memory External | 7 | `src/tests/config_memory_external_test.rs` |
-| Tests — Config Owner Seed Migration | 5 | `src/tests/config_owner_seed_migration_test.rs` |
+| Tests — Config Owner Seed Migration | 7 | `src/tests/config_owner_seed_migration_test.rs` |
+| Tests — Config Phantom Xiaomi Default | 2 | `src/tests/config_phantom_xiaomi_default_test.rs` |
 | Tests — Config Provider Registry | 3 | `src/tests/config_provider_registry_test.rs` |
 | Tests — Config Reload Reason | 7 | `src/tests/config_reload_reason_test.rs` |
 | Tests — Config Repair | 7 | `src/tests/config_repair_test.rs` |
 | Tests — Config Secrets | 5 | `src/tests/config_secrets_test.rs` |
 | Tests — Config Section Resolve | 9 | `src/tests/config_section_resolve_test.rs` |
+| Tests — Config Seed On Create | 4 | `src/tests/config_seed_on_create_test.rs` |
 | Tests — Config Types Loader | 25 | `src/tests/config_types_loader_test.rs` |
 | Tests — Config Update | 4 | `src/tests/config_update_test.rs` |
 | Tests — Config Voice Migration | 5 | `src/tests/config_voice_migration_test.rs` |
 | Tests — Config Watcher | 5 | `src/tests/config_watcher_test.rs` |
-| Tests — Config Write Path | 6 | `src/tests/config_write_path_test.rs` |
+| Tests — Config Write Path | 7 | `src/tests/config_write_path_test.rs` |
 | Tests — Content Vectors Heal | 3 | `src/tests/content_vectors_heal_test.rs` |
 | Tests — Context Provider Anchor | 6 | `src/tests/context_provider_anchor_test.rs` |
 | Tests — Context Store Concurrent Save | 3 | `src/tests/context_store_concurrent_save_test.rs` |
@@ -219,6 +223,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Cowork Connect | 2 | `src/tests/cowork_connect_test.rs` |
 | Tests — Cron Dedup Repair | 3 | `src/tests/cron_dedup_repair_test.rs` |
 | Tests — Cron Dedup Scan Schedule | 3 | `src/tests/cron_dedup_scan_schedule_test.rs` |
+| Tests — Cron Deliver To Thread | 7 | `src/tests/cron_deliver_to_thread_test.rs` |
 | Tests — Cron Profile Isolation | 6 | `src/tests/cron_profile_isolation_test.rs` |
 | Tests — Cron Schedule Util | 12 | `src/tests/cron_schedule_util_test.rs` |
 | Tests — Cron Scheduler Dedup Job | 1 | `src/tests/cron_scheduler_dedup_job_test.rs` |
@@ -232,7 +237,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Custom Provider Key Fetch | 3 | `src/tests/custom_provider_key_fetch_test.rs` |
 | Tests — Custom Provider Live Fetch Regression | 5 | `src/tests/custom_provider_live_fetch_regression_test.rs` |
 | Tests — Custom Provider No Models | 3 | `src/tests/custom_provider_no_models_test.rs` |
-| Tests — Custom Provider Rename Keys Toml | 8 | `src/tests/custom_provider_rename_keys_toml_test.rs` |
+| Tests — Custom Provider Rename Keys Toml | 11 | `src/tests/custom_provider_rename_keys_toml_test.rs` |
 | Tests — Custom Provider Section Resolver | 2 | `src/tests/custom_provider_section_resolver_test.rs` |
 | Tests — Custom Provider | 31 | `src/tests/custom_provider_test.rs` |
 | Tests — Daemon Health | 10 | `src/tests/daemon_health_test.rs` |
@@ -246,6 +251,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — DB Repository Project | 5 | `src/tests/db_repository_project_test.rs` |
 | Tests — DB Repository Session | 2 | `src/tests/db_repository_session_test.rs` |
 | Tests — DB Retry | 8 | `src/tests/db_retry_test.rs` |
+| Tests — Daily Backup Rotation | 3 | `src/tests/daily_backup_rotation_test.rs` |
 | Tests — Deepseek Reasoning | 13 | `src/tests/deepseek_reasoning_test.rs` |
 | Tests — Directive Discovery | 13 | `src/tests/directive_discovery_test.rs` |
 | Tests — Discord Handler | 2 | `src/tests/discord_handler_test.rs` |
@@ -342,7 +348,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Memory External Sweep | 4 | `src/tests/memory_external_sweep_test.rs` |
 | Tests — Memory External | 4 | `src/tests/memory_external_test.rs` |
 | Tests — Memory Health Report | 9 | `src/tests/memory_health_report_test.rs` |
-| Tests — Memory Local Engine | 4 | `src/tests/memory_local_engine_test.rs` |
+| Tests — Memory Local Engine | 5 | `src/tests/memory_local_engine_test.rs` |
 | Tests — Memory Recall Eval | 5 | `src/tests/memory_recall_eval_test.rs` |
 | Tests — Memory Recall Multilingual | 6 | `src/tests/memory_recall_multilingual_test.rs` |
 | Tests — Memory Recall | 11 | `src/tests/memory_recall_test.rs` |
@@ -417,6 +423,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Pdf To Images | 4 | `src/tests/pdf_to_images_test.rs` |
 | Tests — Pdf Vision | 3 | `src/tests/pdf_vision_test.rs` |
 | Tests — Pending Request Age | 4 | `src/tests/pending_request_age_test.rs` |
+| Tests — Pending Request Thread | 3 | `src/tests/pending_request_thread_test.rs` |
 | Tests — Pending Resume No Reinsert | 3 | `src/tests/pending_resume_no_reinsert_test.rs` |
 | Tests — Phantom Allowlist | 7 | `src/tests/phantom_allowlist_test.rs` |
 | Tests — Phantom Bare Completion | 5 | `src/tests/phantom_bare_completion_test.rs` |
@@ -491,7 +498,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Prompt Inline Edit Directive | 5 | `src/tests/prompt_inline_edit_directive_test.rs` |
 | Tests — Prompt Known Paths | 9 | `src/tests/prompt_known_paths_test.rs` |
 | Tests — Provider By Name Restore | 5 | `src/tests/provider_by_name_restore_test.rs` |
-| Tests — Provider Config Regression | 29 | `src/tests/provider_config_regression_test.rs` |
+| Tests — Provider Config Regression | 32 | `src/tests/provider_config_regression_test.rs` |
 | Tests — Provider Context Window Override | 2 | `src/tests/provider_context_window_override_test.rs` |
 | Tests — Provider Error Proxy | 27 | `src/tests/provider_error_proxy_test.rs` |
 | Tests — Provider Factory Regression | 31 | `src/tests/provider_factory_regression_test.rs` |
@@ -528,7 +535,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Reasoning Lines | 7 | `src/tests/reasoning_lines_test.rs` |
 | Tests — Reasoning Run | 6 | `src/tests/reasoning_run_test.rs` |
 | Tests — Reasoning Split | 13 | `src/tests/reasoning_split_test.rs` |
-| Tests — Rebuild Notify | 5 | `src/tests/rebuild_notify_test.rs` |
+| Tests — Rebuild Notify | 7 | `src/tests/rebuild_notify_test.rs` |
 | Tests — Recent Paths | 17 | `src/tests/recent_paths_test.rs` |
 | Tests — Redact Scope | 3 | `src/tests/redact_scope_test.rs` |
 | Tests — Rename Session | 7 | `src/tests/rename_session_test.rs` |
@@ -577,6 +584,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Sanitize Reasoning Leak | 7 | `src/tests/sanitize_reasoning_leak_test.rs` |
 | Tests — Sanitize Redaction | 31 | `src/tests/sanitize_redaction_test.rs` |
 | Tests — Scope All Recency | 5 | `src/tests/scope_all_recency_test.rs` |
+| Tests — Seen Skills | 11 | `src/tests/seen_skills_test.rs` |
 | Tests — Self Healing | 88 | `src/tests/self_healing_test.rs` |
 | Tests — Self Improve Failure Log Guard | 3 | `src/tests/self_improve_failure_log_guard_test.rs` |
 | Tests — Self Improve Guard | 6 | `src/tests/self_improve_guard_test.rs` |
@@ -590,6 +598,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Session Cwd Restore | 4 | `src/tests/session_cwd_restore_test.rs` |
 | Tests — Session Enqueue Callback | 2 | `src/tests/session_enqueue_callback_test.rs` |
 | Tests — Session Notify | 20 | `src/tests/session_notify_test.rs` |
+| Tests — Session Project Autolink | 9 | `src/tests/session_project_autolink_test.rs` |
 | Tests — Session Provider Restore | 3 | `src/tests/session_provider_restore_test.rs` |
 | Tests — Session Provider Wrap | 9 | `src/tests/session_provider_wrap_test.rs` |
 | Tests — Session Search Query | 5 | `src/tests/session_search_query_test.rs` |
@@ -664,13 +673,14 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Md To Html | 8 | `src/tests/telegram_md_to_html_test.rs` |
 | Tests — Telegram Mentions Other Bot | 6 | `src/tests/telegram_mentions_other_bot_test.rs` |
 | Tests — Telegram Menu Scope | 6 | `src/tests/telegram_menu_scope_test.rs` |
-| Tests — Telegram Mermaid | 58 | `src/tests/telegram_mermaid_test.rs` |
+| Tests — Telegram Mermaid | 59 | `src/tests/telegram_mermaid_test.rs` |
 | Tests — Telegram Model Callback Data | 3 | `src/tests/telegram_model_callback_data_test.rs` |
 | Tests — Telegram Newest Msg Id | 7 | `src/tests/telegram_newest_msg_id_test.rs` |
-| Tests — Telegram Options Reclaim | 19 | `src/tests/telegram_options_reclaim_test.rs` |
+| Tests — Telegram Options Reclaim | 20 | `src/tests/telegram_options_reclaim_test.rs` |
 | Tests — Telegram Outbound Dedup | 3 | `src/tests/telegram_outbound_dedup_test.rs` |
 | Tests — Telegram Outbox Record | 4 | `src/tests/telegram_outbox_record_test.rs` |
 | Tests — Telegram Photo Batching | 8 | `src/tests/telegram_photo_batching_test.rs` |
+| Tests — Telegram Plan Card Interrupt Restick | 2 | `src/tests/telegram_plan_card_interrupt_restick_test.rs` |
 | Tests — Telegram Plan Finalize | 4 | `src/tests/telegram_plan_finalize_test.rs` |
 | Tests — Telegram Plan Render | 9 | `src/tests/telegram_plan_render_test.rs` |
 | Tests — Telegram Pre Tool Rolling | 1 | `src/tests/telegram_pre_tool_rolling_test.rs` |
@@ -690,6 +700,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Rich Api | 7 | `src/tests/telegram_rich_api_test.rs` |
 | Tests — Telegram Rich Decode Official | 13 | `src/tests/telegram_rich_decode_official_test.rs` |
 | Tests — Telegram Rich Decode | 21 | `src/tests/telegram_rich_decode_test.rs` |
+| Tests — Telegram Rich Edit Dedup | 5 | `src/tests/telegram_rich_edit_dedup_test.rs` |
 | Tests — Telegram Rich Json | 12 | `src/tests/telegram_rich_json_test.rs` |
 | Tests — Telegram Rich Parse | 30 | `src/tests/telegram_rich_parse_test.rs` |
 | Tests — Telegram Rich | 11 | `src/tests/telegram_rich_test.rs` |
@@ -697,6 +708,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Rich Wrap P | 9 | `src/tests/telegram_rich_wrap_p_test.rs` |
 | Tests — Telegram Send Caption | 9 | `src/tests/telegram_send_caption_test.rs` |
 | Tests — Telegram Send Input File | 5 | `src/tests/telegram_send_input_file_test.rs` |
+| Tests — Telegram Send Origin Thread Echo | 7 | `src/tests/telegram_send_origin_thread_echo_test.rs` |
 | Tests — Telegram Send Retry | 7 | `src/tests/telegram_send_retry_test.rs` |
 | Tests — Telegram Send String Coercion | 3 | `src/tests/telegram_send_string_coercion_test.rs` |
 | Tests — Telegram Send Thread Id Override | 10 | `src/tests/telegram_send_thread_id_override_test.rs` |
@@ -724,6 +736,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Template Governance | 20 | `src/tests/template_governance_test.rs` |
 | Tests — Text Complete | 21 | `src/tests/text_complete_test.rs` |
 | Tests — TUI Theme Picker | 10 | `src/tests/tui_theme_picker_test.rs` |
+| Tests — Theme Persist Roundtrip | 4 | `src/tests/theme_persist_roundtrip_test.rs` |
 | Tests — Thinking Loop Fallback | 5 | `src/tests/thinking_loop_fallback_test.rs` |
 | Tests — Token Report Calibration | 9 | `src/tests/token_report_calibration_test.rs` |
 | Tests — Token Tracking | 29 | `src/tests/token_tracking_test.rs` |
@@ -817,6 +830,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Whatsapp State | 8 | `src/tests/whatsapp_state_test.rs` |
 | Tests — Whatsapp Store | 15 | `src/tests/whatsapp_store_test.rs` |
 | Tests — Word Delete Keybinding | 7 | `src/tests/word_delete_keybinding_test.rs` |
+| Tests — Work Status Parent Binding | 4 | `src/tests/work_status_parent_binding_test.rs` |
 | Tests — Write Opencrabs File Inline | 4 | `src/tests/write_opencrabs_file_inline_test.rs` |
 | Tests — Write Partial View Guard | 4 | `src/tests/write_partial_view_guard_test.rs` |
 | Tests — Xiaomi Config Default | 3 | `src/tests/xiaomi_config_default_test.rs` |
