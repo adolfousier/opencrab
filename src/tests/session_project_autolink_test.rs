@@ -1,0 +1,247 @@
+//! A session is linked to its project on the first turn, not only when someone
+//! runs `/cd`.
+//!
+//! Sessions were titled automatically on their first turn but never linked to
+//! a project at that moment. The only path that created the link was the `/cd`
+//! handler, so a session carried a correct `working_directory` and a
+//! `project_id` of NULL unless the user happened to change directory by hand,
+//! and every per-project view and cost rollup under-reported by however many
+//! sessions that was (#1445).
+
+use crate::db::Database;
+use crate::db::models::Project;
+use crate::services::project_match::match_by_directory;
+use crate::services::{ProjectService, ServiceContext, SessionService};
+
+async fn services() -> (ProjectService, SessionService) {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let context = ServiceContext::new(db.pool().clone());
+    (
+        ProjectService::new(context.clone()),
+        SessionService::new(context),
+    )
+}
+
+fn project_named(name: &str) -> Project {
+    Project {
+        id: uuid::Uuid::new_v4(),
+        name: name.to_string(),
+        description: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    }
+}
+
+// ── the rule itself ─────────────────────────────────────────────────────────
+
+#[test]
+fn a_directory_matches_the_project_its_basename_names() {
+    let projects = vec![project_named("Alpha"), project_named("project-b")];
+
+    assert_eq!(
+        match_by_directory("/home/u/src/project-b", &projects).map(|p| p.name.as_str()),
+        Some("project-b")
+    );
+    // The project name is slugified, so display casing and spacing still match.
+    assert_eq!(
+        match_by_directory("/home/u/src/alpha", &projects).map(|p| p.name.as_str()),
+        Some("Alpha")
+    );
+}
+
+#[test]
+fn a_trailing_separator_is_still_the_same_directory() {
+    let projects = vec![project_named("Alpha")];
+    assert_eq!(
+        match_by_directory("/home/u/src/alpha/", &projects).map(|p| p.name.as_str()),
+        Some("Alpha"),
+        "a path typed with a trailing slash names the same directory"
+    );
+}
+
+#[test]
+fn an_unrelated_directory_matches_nothing() {
+    let projects = vec![project_named("Alpha")];
+    assert!(match_by_directory("/home/u/src/something-else", &projects).is_none());
+    assert!(
+        match_by_directory("", &projects).is_none(),
+        "a session with no path must not match by accident"
+    );
+}
+
+// ── linking a session ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_session_is_linked_when_its_directory_names_a_project() {
+    let (project_svc, session_svc) = services().await;
+    let project = project_svc
+        .create_project("Alpha".to_string(), None)
+        .await
+        .unwrap();
+    let session = session_svc.create_session(None).await.unwrap();
+    session_svc
+        .update_session_working_directory(session.id, Some("/home/u/src/alpha".to_string()))
+        .await
+        .unwrap();
+    let session = session_svc.get_session(session.id).await.unwrap().unwrap();
+
+    let linked = project_svc
+        .link_session_by_directory(&session)
+        .await
+        .unwrap();
+
+    assert_eq!(linked.map(|p| p.id), Some(project.id));
+    let after = session_svc.get_session(session.id).await.unwrap().unwrap();
+    assert_eq!(after.project_id, Some(project.id));
+}
+
+#[tokio::test]
+async fn a_session_whose_directory_matches_nothing_is_left_alone() {
+    let (project_svc, session_svc) = services().await;
+    project_svc
+        .create_project("Alpha".to_string(), None)
+        .await
+        .unwrap();
+    let session = session_svc.create_session(None).await.unwrap();
+    session_svc
+        .update_session_working_directory(session.id, Some("/home/u/src/unrelated".to_string()))
+        .await
+        .unwrap();
+    let session = session_svc.get_session(session.id).await.unwrap().unwrap();
+
+    assert!(
+        project_svc
+            .link_session_by_directory(&session)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let after = session_svc.get_session(session.id).await.unwrap().unwrap();
+    assert_eq!(after.project_id, None);
+}
+
+#[tokio::test]
+async fn an_already_assigned_session_is_never_reassigned() {
+    let (project_svc, session_svc) = services().await;
+    let alpha = project_svc
+        .create_project("Alpha".to_string(), None)
+        .await
+        .unwrap();
+    let beta = project_svc
+        .create_project("Beta".to_string(), None)
+        .await
+        .unwrap();
+
+    let session = session_svc.create_session(None).await.unwrap();
+    session_svc
+        .update_session_working_directory(session.id, Some("/home/u/src/alpha".to_string()))
+        .await
+        .unwrap();
+    // Deliberately filed somewhere its directory does not name.
+    project_svc
+        .assign_session(session.id, beta.id)
+        .await
+        .unwrap();
+    let session = session_svc.get_session(session.id).await.unwrap().unwrap();
+
+    assert!(
+        project_svc
+            .link_session_by_directory(&session)
+            .await
+            .unwrap()
+            .is_none(),
+        "an explicit assignment is a decision; the directory rule must not overrule it"
+    );
+    let after = session_svc.get_session(session.id).await.unwrap().unwrap();
+    assert_eq!(after.project_id, Some(beta.id));
+    assert_ne!(after.project_id, Some(alpha.id));
+}
+
+#[tokio::test]
+async fn a_channel_session_with_no_directory_is_skipped() {
+    let (project_svc, session_svc) = services().await;
+    project_svc
+        .create_project("Alpha".to_string(), None)
+        .await
+        .unwrap();
+    // Channel sessions carry no path at all, so no directory rule can classify
+    // them and none should try.
+    let session = session_svc.create_session(None).await.unwrap();
+
+    assert!(
+        project_svc
+            .link_session_by_directory(&session)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+// ── backfill ────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn the_backfill_links_existing_sessions_and_is_idempotent() {
+    let (project_svc, session_svc) = services().await;
+    let alpha = project_svc
+        .create_project("Alpha".to_string(), None)
+        .await
+        .unwrap();
+
+    // Two that should link, one that should not, mirroring an install where
+    // the project was created after the sessions.
+    for dir in ["/home/u/src/alpha", "/home/u/other/alpha"] {
+        let s = session_svc.create_session(None).await.unwrap();
+        session_svc
+            .update_session_working_directory(s.id, Some(dir.to_string()))
+            .await
+            .unwrap();
+    }
+    let stray = session_svc.create_session(None).await.unwrap();
+    session_svc
+        .update_session_working_directory(stray.id, Some("/home/u/src/unrelated".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(project_svc.backfill_unassigned_sessions().await.unwrap(), 2);
+    assert_eq!(
+        project_svc.backfill_unassigned_sessions().await.unwrap(),
+        0,
+        "a second sweep must find nothing left to do"
+    );
+
+    let after = session_svc.get_session(stray.id).await.unwrap().unwrap();
+    assert_eq!(after.project_id, None);
+    assert_eq!(
+        project_svc
+            .get_sessions_for_project(alpha.id)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+// ── the ordering the fix depends on ─────────────────────────────────────────
+
+#[test]
+fn the_link_runs_outside_the_auto_title_future() {
+    // The title is an LLM call that can fail, time out, or hit a rate-limited
+    // provider. The link is a string match and one UPDATE. If the link were
+    // nested inside the spawned title future, a provider outage would leave
+    // sessions unlinked, which is the failure this change exists to fix. Pin
+    // the ordering, since nothing else would notice it being moved.
+    let src = std::fs::read_to_string("src/brain/agent/service/tool_loop.rs")
+        .expect("tool_loop.rs must be readable");
+    let link = src
+        .find("link_session_by_directory")
+        .expect("the first-turn link must still be here");
+    let spawn = src[..link]
+        .rfind("tokio::spawn")
+        .map(|at| src[at..link].contains("auto_title"))
+        .unwrap_or(false);
+    assert!(
+        !spawn,
+        "the project link must not sit inside the spawned auto-title future"
+    );
+}
