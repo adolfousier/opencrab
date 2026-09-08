@@ -111,9 +111,9 @@ pub const KNOWN_PROVIDERS: &[ProviderMeta] = &[
         needs_api_key: true,
     },
     ProviderMeta {
-        id: "zhipu",
-        display_name: "z.ai GLM",
-        config_section: "providers.zhipu",
+        id: "zai",
+        display_name: "z.ai",
+        config_section: "providers.zai",
         needs_api_key: true,
     },
     ProviderMeta {
@@ -133,7 +133,7 @@ pub fn find_provider_meta(name: &str) -> Option<&'static ProviderMeta> {
             || match p.id {
                 "github" => n == "github copilot",
                 "gemini" => n == "google" || n == "google gemini",
-                "zhipu" => n == "z.ai glm",
+                "zai" => n == "zhipu" || n == "z.ai glm",
                 "moonshot" => n == "kimi" || n == "moonshotai" || n == "moonshot ai",
                 "claude-cli" => n == "claude_cli",
                 "codex-cli" => n == "codex_cli",
@@ -204,7 +204,7 @@ pub fn config_for<'a>(providers: &'a ProviderConfigs, name: &str) -> Option<&'a 
         Some("openrouter") => providers.openrouter.as_ref(),
         Some("minimax") => providers.minimax.as_ref(),
         Some("moonshot") => providers.moonshot.as_ref(),
-        Some("zhipu") => providers.zhipu.as_ref(),
+        Some("zai") => providers.zai.as_ref(),
         Some("xiaomi") => providers.xiaomi.as_ref(),
         Some("claude-cli") => providers.claude_cli.as_ref(),
         Some("codex-cli") => providers.codex_cli.as_ref(),

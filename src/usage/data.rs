@@ -543,7 +543,7 @@ pub(crate) fn sql_normalize_model(raw: &str) -> String {
             "kimi-k2.6".to_string()
         }
         "glm-5.1" | "glm-5-1" | "glm-5" => "glm-5.1".to_string(),
-        "glm-5-turbo" | "zhipu" => "glm-5-turbo".to_string(),
+        "glm-5-turbo" | "zhipu" | "zai" => "glm-5-turbo".to_string(),
         _ => m3.to_string(),
     }
 }

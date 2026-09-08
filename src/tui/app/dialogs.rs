@@ -259,7 +259,7 @@ impl App {
                     };
 
                     // Capture zhipu endpoint type from wizard state (not yet saved to config)
-                    let zhipu_et = if wizard.ps.provider_id() == "zhipu" {
+                    let zhipu_et = if wizard.ps.provider_id() == "zai" {
                         Some(if wizard.ps.zhipu_endpoint_type == 1 {
                             "coding".to_string()
                         } else {

@@ -19,6 +19,120 @@
 /// Legacy spellings and the canonical key each folds into.
 const ALIASES: &[(&str, &str)] = &[("gateway", "a2a")];
 
+/// Nested legacy spellings: dotted paths under a shared parent table.
+///
+/// The zhipu → zai provider rename left `providers.zhipu` in every config
+/// written before it, with `#[serde(alias = "zhipu")]` keeping the old
+/// spelling loading. Same trap as #1116 one level deeper: a file carrying
+/// both `[providers.zhipu]` and `[providers.zai]` is one field written twice
+/// as far as serde is concerned, and fails with `duplicate field \`zai\`` —
+/// which the write guard then turns into a denied write.
+const NESTED_ALIASES: &[(&str, &str)] = &[("providers.zhipu", "providers.zai")];
+
+/// Split a dotted alias pair into (parent path, legacy leaf, canonical leaf).
+///
+/// Both spellings must sit under the same parent path: nested aliases rename
+/// a section within one table, they do not move it across parents. Anything
+/// else is a declaration bug and yields `None`.
+fn split_nested<'a>(
+    legacy: &'a str,
+    canonical: &'a str,
+) -> Option<(Vec<&'a str>, &'a str, &'a str)> {
+    let lp: Vec<&str> = legacy.split('.').collect();
+    let cp: Vec<&str> = canonical.split('.').collect();
+    if lp.len() < 2 || lp.len() != cp.len() {
+        return None;
+    }
+    if lp[..lp.len() - 1] != cp[..cp.len() - 1] {
+        return None;
+    }
+    let parents = lp[..lp.len() - 1].to_vec();
+    Some((parents, *lp.last()?, *cp.last()?))
+}
+
+/// Walk a dotted parent path inside a `toml::Value` table; `None` if any
+/// segment is missing or not a table. The fold never creates parents: a file
+/// without `[providers]` has nothing to fold.
+fn navigate_value<'a>(
+    table: &'a mut toml::value::Table,
+    path: &[&str],
+) -> Option<&'a mut toml::value::Table> {
+    let mut cur = table;
+    for &p in path {
+        cur = cur.get_mut(p)?.as_table_mut()?;
+    }
+    Some(cur)
+}
+
+/// Same walk for the `toml_edit` world used by the file rewriter.
+fn navigate_edit<'a>(
+    table: &'a mut toml_edit::Table,
+    path: &[&str],
+) -> Option<&'a mut toml_edit::Table> {
+    let mut cur = table;
+    for &p in path {
+        cur = cur.get_mut(p)?.as_table_mut()?;
+    }
+    Some(cur)
+}
+
+/// Fold `legacy_key` into `canonical_key` within one parent table
+/// (`toml::Value` world). `label` is what gets reported — the dotted path for
+/// nested aliases, the bare key for top-level ones.
+fn fold_in_value_table(
+    table: &mut toml::value::Table,
+    legacy_key: &str,
+    canonical_key: &str,
+    label: &'static str,
+    folded: &mut Vec<&'static str>,
+) {
+    let Some(legacy_val) = table.remove(legacy_key) else {
+        return;
+    };
+    folded.push(label);
+    match table.get_mut(canonical_key) {
+        // Both present: merge, canonical wins per key.
+        Some(canon_val) => merge_into(canon_val, legacy_val),
+        // Only the legacy spelling: rename it.
+        None => {
+            table.insert(canonical_key.to_string(), legacy_val);
+        }
+    }
+}
+
+/// `toml_edit` twin of [`fold_in_value_table`], preserving comments and
+/// formatting: the legacy table is moved as-is, per-key merges copy items
+/// verbatim.
+fn fold_in_edit_table(
+    table: &mut toml_edit::Table,
+    legacy_key: &str,
+    canonical_key: &str,
+    label: &'static str,
+    renamed: &mut Vec<&'static str>,
+) {
+    let Some(legacy_item) = table.remove(legacy_key) else {
+        return;
+    };
+    renamed.push(label);
+    match table.get_mut(canonical_key) {
+        // Both present: fold the legacy keys in, canonical winning, so
+        // nothing the user wrote under either name is lost.
+        Some(existing) => {
+            if let (Some(into), Some(from)) = (existing.as_table_mut(), legacy_item.as_table()) {
+                for (k, v) in from.iter() {
+                    if !into.contains_key(k) {
+                        into.insert(k, v.clone());
+                    }
+                }
+            }
+        }
+        // The ordinary case: a straight rename, contents and comments kept.
+        None => {
+            table.insert(canonical_key, legacy_item);
+        }
+    }
+}
+
 /// Merge every known legacy section into its canonical one, in place.
 ///
 /// Returns the names that were folded, so the caller can say what happened
@@ -33,18 +147,16 @@ pub(crate) fn fold_legacy_sections(doc: &mut toml::Value) -> Vec<&'static str> {
         return folded;
     };
     for (legacy, canonical) in ALIASES {
-        let Some(legacy_val) = table.remove(*legacy) else {
+        fold_in_value_table(table, legacy, canonical, legacy, &mut folded);
+    }
+    for (legacy, canonical) in NESTED_ALIASES {
+        let Some((parents, legacy_leaf, canonical_leaf)) = split_nested(legacy, canonical) else {
             continue;
         };
-        folded.push(*legacy);
-        match table.get_mut(*canonical) {
-            // Both present: merge, canonical wins per key.
-            Some(canon_val) => merge_into(canon_val, legacy_val),
-            // Only the legacy spelling: rename it.
-            None => {
-                table.insert((*canonical).to_string(), legacy_val);
-            }
-        }
+        let Some(parent) = navigate_value(table, &parents) else {
+            continue;
+        };
+        fold_in_value_table(parent, legacy_leaf, canonical_leaf, legacy, &mut folded);
     }
     folded
 }
@@ -93,28 +205,16 @@ pub(crate) fn migrate_file(path: &std::path::Path) -> std::io::Result<Vec<&'stat
 
     let mut renamed = Vec::new();
     for (legacy, canonical) in ALIASES {
-        let Some(legacy_item) = doc.as_table_mut().remove(legacy) else {
+        fold_in_edit_table(doc.as_table_mut(), legacy, canonical, legacy, &mut renamed);
+    }
+    for (legacy, canonical) in NESTED_ALIASES {
+        let Some((parents, legacy_leaf, canonical_leaf)) = split_nested(legacy, canonical) else {
             continue;
         };
-        renamed.push(*legacy);
-        match doc.as_table_mut().get_mut(canonical) {
-            // Both present: fold the legacy keys in, canonical winning, so
-            // nothing the user wrote under either name is lost.
-            Some(existing) => {
-                if let (Some(into), Some(from)) = (existing.as_table_mut(), legacy_item.as_table())
-                {
-                    for (k, v) in from.iter() {
-                        if !into.contains_key(k) {
-                            into.insert(k, v.clone());
-                        }
-                    }
-                }
-            }
-            // The ordinary case: a straight rename, contents and comments kept.
-            None => {
-                doc.as_table_mut().insert(canonical, legacy_item);
-            }
-        }
+        let Some(parent) = navigate_edit(doc.as_table_mut(), &parents) else {
+            continue;
+        };
+        fold_in_edit_table(parent, legacy_leaf, canonical_leaf, legacy, &mut renamed);
     }
 
     if !renamed.is_empty() {

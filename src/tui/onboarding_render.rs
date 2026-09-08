@@ -1082,7 +1082,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         lines.push(Line::from(""));
 
         // z.ai GLM endpoint type toggle (api vs coding) — BEFORE API key
-        if wizard.ps.provider_id() == "zhipu" {
+        if wizard.ps.provider_id() == "zai" {
             let et_focused = wizard.auth_field == AuthField::ZhipuEndpointType;
             let api_marker = if wizard.ps.zhipu_endpoint_type == 0 {
                 "[*]"

@@ -265,3 +265,73 @@ enabled = true\n";
     assert!(after.contains("# keep"));
     let _ = std::fs::remove_file(&p);
 }
+
+#[test]
+fn nested_provider_sections_fold_into_one() {
+    let mut d = doc(
+        "[providers]\nother = 1\n\n[providers.zhipu]\nenabled = true\n\n[providers.zai]\nbase_url = \"https://z.ai/api\"\n",
+    );
+    let folded = fold_legacy_sections(&mut d);
+
+    assert_eq!(
+        folded,
+        vec!["providers.zhipu"],
+        "nested aliases report their dotted path"
+    );
+    let prov = d
+        .as_table()
+        .unwrap()
+        .get("providers")
+        .unwrap()
+        .as_table()
+        .unwrap();
+    assert!(!prov.contains_key("zhipu"), "legacy key is consumed");
+    let zai = prov.get("zai").unwrap().as_table().unwrap();
+    assert_eq!(zai.get("enabled").unwrap().as_bool(), Some(true));
+    assert_eq!(
+        zai.get("base_url").unwrap().as_str(),
+        Some("https://z.ai/api")
+    );
+    assert_eq!(
+        prov.get("other").unwrap().as_integer(),
+        Some(1),
+        "siblings under the parent table are untouched"
+    );
+}
+
+#[test]
+fn nested_fold_canonical_wins_a_per_key_conflict() {
+    let mut d = doc("[providers.zhipu]\nenabled = true\n\n[providers.zai]\nenabled = false\n");
+    fold_legacy_sections(&mut d);
+
+    let zai = d
+        .as_table()
+        .unwrap()
+        .get("providers")
+        .unwrap()
+        .as_table()
+        .unwrap()
+        .get("zai")
+        .unwrap()
+        .as_table()
+        .unwrap();
+    assert_eq!(zai.get("enabled").unwrap().as_bool(), Some(false));
+}
+
+#[test]
+fn legacy_provider_section_is_renamed_on_disk_with_comments() {
+    let p = write_tmp(
+        "zai",
+        "# provider notes\n[providers.zhipu]\nenabled = false  # flip to enable\n",
+    );
+
+    let renamed = migrate_file(&p).expect("migrate");
+
+    assert_eq!(renamed, vec!["providers.zhipu"]);
+    let after = std::fs::read_to_string(&p).unwrap();
+    assert!(after.contains("[providers.zai]"));
+    assert!(!after.contains("zhipu"), "no legacy spelling survives");
+    assert!(after.contains("# provider notes"));
+    assert!(after.contains("# flip to enable"));
+    let _ = std::fs::remove_file(&p);
+}

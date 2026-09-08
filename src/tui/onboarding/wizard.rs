@@ -264,7 +264,7 @@ impl OnboardingWizard {
                         String::new(),
                         String::new(),
                     )
-                } else if config.providers.zhipu.as_ref().is_some_and(|p| p.enabled) {
+                } else if config.providers.zai.as_ref().is_some_and(|p| p.enabled) {
                     (
                         6,
                         EXISTING_KEY_SENTINEL.to_string(),
@@ -680,11 +680,11 @@ impl OnboardingWizard {
             {
                 wizard.ps.custom_model = model.clone();
             }
-        } else if config.providers.zhipu.as_ref().is_some_and(|p| p.enabled) {
-            wizard.ps.selected_provider = resolve("zhipu");
+        } else if config.providers.zai.as_ref().is_some_and(|p| p.enabled) {
+            wizard.ps.selected_provider = resolve("zai");
             if let Some(model) = &config
                 .providers
-                .zhipu
+                .zai
                 .as_ref()
                 .and_then(|p| p.default_model.clone())
             {

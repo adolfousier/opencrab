@@ -1091,13 +1091,16 @@ MiniMax is an OpenAI-compatible provider with competitive pricing. It does not e
 **Setup** — get your API key from [open.bigmodel.cn](https://open.bigmodel.cn). Add to `keys.toml`:
 
 ```toml
-[providers.zhipu]
+[providers.zai]
 api_key = "your-api-key"
 ```
 
+> Pre-rename configs using `[providers.zhipu]` (and `zhipu` anywhere a provider
+> name is taken) keep working — everything normalizes to `zai` on load.
+
 Enable and choose endpoint type in `config.toml`:
 ```toml
-[providers.zhipu]
+[providers.zai]
 enabled = true
 default_model = "glm-4.7"
 endpoint_type = "api"  # "api" (General API) or "coding" (Coding API)
@@ -1112,7 +1115,7 @@ Both use the same API key and model names. The endpoint type can be toggled in t
 The default host is `api.z.ai`, which closes an idle streaming connection after about 30 seconds; the mainland host `open.bigmodel.cn` serves the same API without that cut. To use it, or any other z.ai-compatible host, set `base_url` and it wins over `endpoint_type`:
 
 ```toml
-[providers.zhipu]
+[providers.zai]
 enabled = true
 base_url = "https://open.bigmodel.cn/api/paas/v4"   # optional; the /models list follows it too
 ```
@@ -1120,7 +1123,7 @@ base_url = "https://open.bigmodel.cn/api/paas/v4"   # optional; the /models list
 **Thinking and effort (GLM-5.x):**
 
 ```toml
-[providers.zhipu]
+[providers.zai]
 enabled = true
 default_model = "glm-5.3"
 reasoning_effort = "high"   # GLM-5.3+: "low", "high" or "max" only
@@ -2045,8 +2048,8 @@ api_key = "sk-or-YOUR_KEY"
 [providers.minimax]
 api_key = "your-minimax-key"
 
-[providers.zhipu]
-api_key = "your-zhipu-key"               # Get from open.bigmodel.cn
+[providers.zai]
+api_key = "your-zai-key"                # Get from open.bigmodel.cn
 
 [providers.gemini]
 api_key = "AIza..."                  # Get from aistudio.google.com
@@ -2469,7 +2472,7 @@ enabled = false
 enabled = false
 default_model = "gpt-5-nano"
 
-[providers.zhipu]
+[providers.zai]
 enabled = false
 default_model = "glm-4.7"
 endpoint_type = "coding"                 # "api" (General) or "coding" (Coding API)
@@ -3223,13 +3226,14 @@ self_improvement_model    = "<model-id-on-that-provider>"   # paired model
 ```
 
 **The provider name is the config section name, nothing more.** For a built-in
-provider it is the section: `[providers.zhipu]` is `"zhipu"`. For a custom
+provider it is the section: `[providers.zai]` is `"zai"` (a legacy
+`[providers.zhipu]` section still loads and resolves as `"zai"`). For a custom
 provider it is the last segment of the table path: `[providers.custom.moonshotai]`
 is `"moonshotai"`, not `"custom:moonshotai"` and not `"custom.moonshotai"`. The
 `custom` in the path says where the section lives, it is not part of the name,
 and every custom provider in `/models` is listed by that bare name. The provider
-key takes a provider only: `"zhipu/glm-5.3"` or `"zhipu:glm-5.3"` belongs across
-the two keys, `self_improvement_provider = "zhipu"` and
+key takes a provider only: `"zai/glm-5.3"` or `"zai:glm-5.3"` belongs across
+the two keys, `self_improvement_provider = "zai"` and
 `self_improvement_model = "glm-5.3"`. The same rule applies to
 `subagent_provider`, `plan_provider` and `execute_provider`.
 
@@ -3347,18 +3351,18 @@ subagent_model    = "<model-id-on-that-provider>"
 
 ```jsonc
 // Skill-driven workflow that uses different models per step
-spawn_agent({ prompt: "Plan the refactor",      provider: "zhipu",    model: "glm-5" })
+spawn_agent({ prompt: "Plan the refactor",      provider: "zai",      model: "glm-5" })
 spawn_agent({ prompt: "Implement the plan",     provider: "deepseek", model: "deepseek-coder" })
-spawn_agent({ prompt: "Review the diff",        provider: "zhipu",    model: "glm-5" })
+spawn_agent({ prompt: "Review the diff",        provider: "zai",      model: "glm-5" })
 spawn_agent({ prompt: "Fix the review issues",  provider: "minimax",  model: "MiniMax-M3" })
 
 // Or all four members spawned together as one team
 team_create({
   team_name: "build-review-fix",
   agents: [
-    { prompt: "Plan",   provider: "zhipu",    model: "glm-5" },
+    { prompt: "Plan",   provider: "zai",      model: "glm-5" },
     { prompt: "Code",   provider: "deepseek", model: "deepseek-coder" },
-    { prompt: "Review", provider: "zhipu",    model: "glm-5" },
+    { prompt: "Review", provider: "zai",      model: "glm-5" },
     { prompt: "Fix",    provider: "minimax",  model: "MiniMax-M3" },
   ],
 })
@@ -4613,7 +4617,7 @@ Scoring uses **BinEval-style decomposition** (arXiv 2506.27226): instead of one 
 ```toml
 [agent]
 # Ordered chain of provider names; each judge uses that provider's own default_model.
-eval_providers = ["anthropic", "openrouter", "zhipu"]
+eval_providers = ["anthropic", "openrouter", "zai"]
 ```
 
 The chain becomes a **majority-vote judge panel** (variance reduction + cross-model debiasing; a failing provider falls through to the next). A live run produces a real artifact (e.g. an actual compaction summary), the panel grades it, and the run is repeated K times to report mean/variance and baseline drift. Live evals hit real endpoints and cost money, so they run only on demand when `eval_providers` is set — they are never part of the CI gate.

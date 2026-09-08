@@ -1528,10 +1528,10 @@ impl App {
                 .map(|_| "minimax"),
             config
                 .providers
-                .zhipu
+                .zai
                 .as_ref()
                 .filter(|p| p.enabled)
-                .map(|_| "zhipu"),
+                .map(|_| "zai"),
             config
                 .providers
                 .moonshot

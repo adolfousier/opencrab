@@ -14,7 +14,7 @@ const BIGMODEL: &str = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
 const OPENROUTER: &str = "https://openrouter.ai/api/v1";
 
 fn provider(base_url: &str) -> OpenAIProvider {
-    OpenAIProvider::with_base_url("test-key".to_string(), base_url.to_string()).with_name("zhipu")
+    OpenAIProvider::with_base_url("test-key".to_string(), base_url.to_string()).with_name("zai")
 }
 
 fn body(base_url: &str, model: &str, stream: bool) -> serde_json::Value {

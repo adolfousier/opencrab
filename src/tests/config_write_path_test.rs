@@ -104,3 +104,48 @@ fn test_case_is_ignored_like_the_reader_does() {
     assert!(validate_write_path("Providers.OpenCode").is_ok());
     assert!(validate_write_path("CHANNELS.telegram").is_ok());
 }
+
+// ── pre-write convergence: legacy provider spelling must not deny writes ──
+
+use crate::config::profile::with_home_override;
+
+fn in_temp_home(f: impl FnOnce()) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let opencrabs = dir.path().join(".opencrabs");
+    std::fs::create_dir_all(&opencrabs).expect("create .opencrabs");
+    with_home_override(opencrabs, f);
+}
+
+#[test]
+fn test_write_to_renamed_provider_section_succeeds_on_a_legacy_file() {
+    // The zai rename shipped with config.toml.example still spelling the
+    // section [providers.zhipu]. A wizard apply then wrote providers.zai.*
+    // next to it, serde read the alias as a duplicate field, and the write
+    // guard denied it — every onboarding ProviderAuth apply failed with
+    // "providers.zai.enabled could not be saved". The writer must converge
+    // the legacy spelling before inserting, exactly like the load path.
+    in_temp_home(|| {
+        let home = crate::config::opencrabs_home();
+        std::fs::create_dir_all(&home).expect("home dir");
+        let cfg = home.join("config.toml");
+        std::fs::write(
+            &cfg,
+            "# my notes\n[providers.zhipu]\nenabled = false\ndefault_model = \"glm-5.1\"\n",
+        )
+        .expect("seed legacy config");
+
+        crate::config::Config::write_key("providers.zai", "enabled", "true")
+            .expect("write must converge the legacy section, not be denied");
+
+        let after = std::fs::read_to_string(&cfg).unwrap();
+        assert!(
+            after.contains("[providers.zai]"),
+            "canonical section present"
+        );
+        assert!(!after.contains("zhipu"), "legacy spelling converged away");
+        assert!(after.contains("true"), "the written value landed");
+        assert!(after.contains("# my notes"), "comments survive");
+        // And the file still loads.
+        crate::config::Config::load().expect("converged config parses");
+    });
+}

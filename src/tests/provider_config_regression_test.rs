@@ -55,9 +55,43 @@ fn known_provider_minimax_section() {
 }
 
 #[test]
-fn known_provider_zhipu_section() {
-    let meta = find_provider_meta("zhipu").expect("zhipu must exist");
-    assert_eq!(meta.config_section, "providers.zhipu");
+fn known_provider_zai_section() {
+    // Canonical id resolves directly...
+    let meta = find_provider_meta("zai").expect("zai must exist");
+    assert_eq!(meta.id, "zai");
+    assert_eq!(meta.config_section, "providers.zai");
+}
+
+#[test]
+fn known_provider_legacy_zhipu_still_resolves() {
+    // ...and the legacy `zhipu` spelling resolves through the alias (#1448).
+    let meta = find_provider_meta("zhipu").expect("legacy zhipu must resolve");
+    assert_eq!(meta.id, "zai");
+    assert_eq!(meta.config_section, "providers.zai");
+}
+
+#[test]
+fn zai_rename_normalizes_every_spelling_to_zai() {
+    assert_eq!(normalize_provider_name("zhipu"), "zai");
+    assert_eq!(normalize_provider_name("z.ai"), "zai");
+    assert_eq!(normalize_provider_name("z.ai GLM"), "zai");
+    assert_eq!(normalize_provider_name("z.ai glm"), "zai");
+    assert_eq!(normalize_provider_name("zai"), "zai");
+}
+
+#[test]
+fn zai_rename_serde_alias_loads_legacy_zhipu_section() {
+    // A pre-rename config.toml `[providers.zhipu]` table must land in the
+    // renamed `zai` field untouched.
+    let cfg: crate::config::types::ProviderConfigs =
+        toml::from_str("[zhipu]\nenabled = true\napi_key = \"k\"\n")
+            .expect("legacy [providers.zhipu] table must load");
+    assert!(cfg.zai.as_ref().is_some_and(|p| p.enabled));
+    let back = toml::to_string(&cfg).expect("serialize renamed config");
+    assert!(
+        back.contains("[zai]"),
+        "legacy [zhipu] table must round-trip as canonical [zai], got: {back}"
+    );
 }
 
 #[test]
@@ -306,7 +340,7 @@ fn save_provider_section_routing_covers_all_providers() {
         "gemini",
         "openrouter",
         "minimax",
-        "zhipu",
+        "zai",
         "claude-cli",
         "opencode-cli",
         "codex-cli",
@@ -348,7 +382,7 @@ fn save_provider_disables_all_known_sections() {
         "providers.gemini",
         "providers.openrouter",
         "providers.minimax",
-        "providers.zhipu",
+        "providers.zai",
         "providers.claude_cli",
         "providers.opencode_cli",
         "providers.codex_cli",

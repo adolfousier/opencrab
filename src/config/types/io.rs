@@ -466,11 +466,11 @@ pub(crate) fn merge_provider_keys(
         let entry = base.github.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
-    // Merge zhipu
-    if let Some(k) = keys.zhipu
+    // Merge zai (a legacy keys.toml `zhipu` section loads via the serde alias)
+    if let Some(k) = keys.zai
         && let Some(key) = k.api_key.and_then(real_key)
     {
-        let entry = base.zhipu.get_or_insert_with(ProviderConfig::default);
+        let entry = base.zai.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
     // Merge qwen (DashScope API key). Auto-enable + create the entry if

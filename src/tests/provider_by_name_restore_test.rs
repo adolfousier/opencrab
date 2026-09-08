@@ -54,17 +54,17 @@ fn absent_keyed_section_stays_uncreatable() {
 #[test]
 fn disabled_keyed_section_is_enabled() {
     let mut cfg = Config::default();
-    cfg.providers.zhipu = Some(ProviderConfig {
+    cfg.providers.zai = Some(ProviderConfig {
         enabled: false,
         api_key: Some("test-key".into()),
         ..ProviderConfig::default()
     });
 
-    assert!(force_enable_section(&mut cfg, "zhipu"));
-    assert!(cfg.providers.zhipu.as_ref().unwrap().enabled);
+    assert!(force_enable_section(&mut cfg, "zai"));
+    assert!(cfg.providers.zai.as_ref().unwrap().enabled);
     // The rest of the section is untouched.
     assert_eq!(
-        cfg.providers.zhipu.as_ref().unwrap().api_key.as_deref(),
+        cfg.providers.zai.as_ref().unwrap().api_key.as_deref(),
         Some("test-key")
     );
 }

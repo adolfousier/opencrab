@@ -639,7 +639,7 @@ fn try_create_yourprovider(config: &Config) -> Result<Option<Arc<dyn Provider>>>
 10. Google Gemini (gemini)
 11. OpenRouter (openrouter)
 12. Minimax (minimax)
-13. z.ai GLM (zhipu)
+13. z.ai (zai, legacy zhipu)
 14. Ollama (ollama)
 15. Custom (custom)
 
@@ -650,7 +650,7 @@ fn try_create_yourprovider(config: &Config) -> Result<Option<Arc<dyn Provider>>>
 4. Google Gemini (gemini)
 5. OpenRouter (openrouter)
 6. Minimax (minimax)
-7. z.ai GLM (zhipu)
+7. z.ai (zai, legacy zhipu)
 8. Claude CLI (claude-cli)
 9. OpenCode CLI (opencode-cli)
 10. Codex CLI (codex-cli)

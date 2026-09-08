@@ -534,14 +534,14 @@ pub async fn fetch_provider_models(
             }
             req.send().await
         }
-        "zhipu" => {
-            // z.ai GLM: list from the same host and channel the chat URL
+        "zai" => {
+            // z.ai: list from the same host and channel the chat URL
             // resolves to (#1350). Wizard state wins, then the saved
-            // [providers.zhipu] (its base_url override included), then the
+            // [providers.zai] (its base_url override included), then the
             // "api" default.
             let saved = crate::config::Config::load()
                 .ok()
-                .and_then(|c| c.providers.zhipu.clone());
+                .and_then(|c| c.providers.zai.clone());
             let endpoint_type = zhipu_endpoint_type
                 .map(|s| s.to_string())
                 .or_else(|| saved.as_ref().and_then(|p| p.endpoint_type.clone()))
@@ -601,7 +601,7 @@ pub async fn fetch_provider_models(
             };
             let user_models = crate::config::Config::load()
                 .ok()
-                .and_then(|c| c.providers.zhipu.clone())
+                .and_then(|c| c.providers.zai.clone())
                 .map(|p| p.models)
                 .unwrap_or_default();
             return merge_minimax_baseline(api_models, user_models);

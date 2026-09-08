@@ -988,7 +988,7 @@ mod vision_fallback_chain {
         // NEVER pointed at api.openai.com (#430).
         let config = Config {
             providers: ProviderConfigs {
-                zhipu: Some(ProviderConfig {
+                zai: Some(ProviderConfig {
                     enabled: true,
                     api_key: Some("zhipu-key".into()),
                     base_url: None,

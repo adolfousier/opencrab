@@ -506,7 +506,7 @@ impl OnboardingWizard {
                         "https://api.minimax.io/v1"
                     );
                 }
-                "zhipu" => {
+                "zai" => {
                     let endpoint_type = if self.ps.zhipu_endpoint_type == 1 {
                         "coding"
                     } else {
@@ -603,7 +603,7 @@ impl OnboardingWizard {
             if !models_to_write.is_empty()
                 && (matches!(
                     self.ps.provider_id(),
-                    "github" | "minimax" | "zhipu" | "moonshot" | ""
+                    "github" | "minimax" | "zai" | "moonshot" | ""
                 ) || self.ps.selected_provider >= CUSTOM_PROVIDER_IDX)
             {
                 try_write_array!(write_errors, section, "models", &models_to_write);

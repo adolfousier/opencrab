@@ -506,7 +506,7 @@ fn test_supports_model_fetch() {
         ("gemini", true),
         ("openrouter", true),
         ("minimax", true), // api.minimax.io/v1/models is live
-        ("zhipu", true),
+        ("zai", true),
         ("claude-cli", true),
         ("opencode-cli", true),
         ("codex-cli", true),
@@ -1034,7 +1034,7 @@ fn test_provider_display_order_no_customs() {
         index_of_provider("openrouter").unwrap(),
         index_of_provider("qwen").unwrap(),
         index_of_provider("xiaomi").unwrap(),
-        index_of_provider("zhipu").unwrap(),
+        index_of_provider("zai").unwrap(),
         CUSTOM_PROVIDER_IDX,
     ];
     assert_eq!(order, expected);
@@ -1065,7 +1065,7 @@ fn test_provider_display_order_with_customs() {
         index_of_provider("openrouter").unwrap(),
         index_of_provider("qwen").unwrap(),
         index_of_provider("xiaomi").unwrap(),
-        index_of_provider("zhipu").unwrap(),
+        index_of_provider("zai").unwrap(),
         CUSTOM_INSTANCES_START,
         CUSTOM_INSTANCES_START + 1,
         CUSTOM_INSTANCES_START + 2,
@@ -1081,13 +1081,13 @@ fn test_provider_nav_down_from_last_static_goes_to_first_custom() {
     wizard.step = OnboardingStep::ProviderAuth;
     wizard.auth_field = AuthField::Provider;
     wizard.ps.custom_names = vec!["nvidia".into(), "opus".into()];
-    // z.ai GLM is the last named provider alphabetically.
-    wizard.ps.selected_provider = index_of_provider("zhipu").expect("zhipu in PROVIDERS");
+    // z.ai is the last named provider alphabetically.
+    wizard.ps.selected_provider = index_of_provider("zai").expect("zai in PROVIDERS");
 
     wizard.handle_key(key(KeyCode::Down));
     assert_eq!(
         wizard.ps.selected_provider, CUSTOM_INSTANCES_START,
-        "Down from z.ai GLM should go to first custom provider, not +New Custom"
+        "Down from z.ai should go to first custom provider, not +New Custom"
     );
 }
 
@@ -1137,8 +1137,8 @@ fn test_provider_nav_up_from_first_custom_goes_to_last_static() {
     wizard.handle_key(key(KeyCode::Up));
     assert_eq!(
         wizard.ps.selected_provider,
-        index_of_provider("zhipu").expect("zhipu in PROVIDERS"),
-        "Up from first custom should go to z.ai GLM (last named alphabetically)"
+        index_of_provider("zai").expect("zai in PROVIDERS"),
+        "Up from first custom should go to z.ai (last named alphabetically)"
     );
 }
 

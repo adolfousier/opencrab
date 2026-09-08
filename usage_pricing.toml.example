@@ -144,7 +144,7 @@ entries = [
   { prefix = "qwen-plus",          input_per_m = 0.50,  output_per_m = 3.00,  cache_write_per_m = 0.625, cache_read_per_m = 0.05 },
 ]
 
-[providers.zhipu]
+[providers.zai]
 entries = [
   # GLM-5.3-Flash — list prices; a 50% launch promo ($0.075 in / $0.015 cache / $0.25 out)
   # runs until 24:00 2026-09-09 UTC+8. Rows carry list so bills stay right after it expires.
@@ -157,6 +157,9 @@ entries = [
   # GLM-5 Turbo — Zhipu AI
   { prefix = "glm-5-turbo",        input_per_m = 0.95,  output_per_m = 3.15  },
   { prefix = "glm-5",              input_per_m = 0.95,  output_per_m = 3.15  },
+  # Prefix rows: "zai" is the current attribution prefix; "zhipu" kept for
+  # usage rows recorded before the provider rename.
+  { prefix = "zai",                input_per_m = 0.95,  output_per_m = 3.15  },
   { prefix = "zhipu",              input_per_m = 0.95,  output_per_m = 3.15  },
 ]
 

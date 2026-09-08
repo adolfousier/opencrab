@@ -402,7 +402,7 @@ fn cfg_with(provider: &str) -> Config {
     let p = &mut config.providers;
     match provider {
         "anthropic" => p.anthropic = pc,
-        "zhipu" => p.zhipu = pc,
+        "zai" => p.zai = pc,
         "github" => p.github = pc,
         _ => panic!("unknown provider in test helper"),
     }
@@ -416,7 +416,7 @@ fn provider_verification_uses_configured_table() {
     let config = cfg_with("anthropic");
     assert_eq!(verify_provider("anthropic", &config), Verdict::Ok);
     // Aliases normalize to the configured id.
-    assert_eq!(verify_provider("kimi", &cfg_with("zhipu")), Verdict::Stale);
+    assert_eq!(verify_provider("kimi", &cfg_with("zai")), Verdict::Stale);
     // The RFC's motivating example: a retired provider stays stale.
     assert_eq!(verify_provider("tencent/Hy3", &config), Verdict::Stale);
     // Known-but-unconfigured is stale guidance for THIS install.

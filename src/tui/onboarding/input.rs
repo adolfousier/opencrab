@@ -548,7 +548,7 @@ impl OnboardingWizard {
                         self.ps.config_models = crate::tui::provider_selector::load_default_models(
                             self.ps.provider_id(),
                         );
-                    } else if self.ps.provider_id() == "zhipu" {
+                    } else if self.ps.provider_id() == "zai" {
                         // z.ai GLM: endpoint type first, then API key
                         self.auth_field = AuthField::ZhipuEndpointType;
                     } else if self.ps.provider_id() == "xiaomi" {
@@ -611,7 +611,7 @@ impl OnboardingWizard {
                     }
                 }
                 KeyCode::BackTab | KeyCode::Up => {
-                    if self.ps.provider_id() == "zhipu" {
+                    if self.ps.provider_id() == "zai" {
                         self.auth_field = AuthField::ZhipuEndpointType;
                     } else if self.ps.provider_id() == "xiaomi" {
                         self.auth_field = AuthField::XiaomiEndpointType;

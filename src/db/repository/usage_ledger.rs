@@ -73,7 +73,7 @@ pub(crate) fn normalize_model_name(model: &str) -> String {
         "kimi-k2.5" | "kimi-k2-5" => "kimi-k2.5".to_string(),
         // GLM / ZhiPu — keep 5.1 and turbo separate
         "glm-5.1" | "glm-5-1" | "glm-5" => "glm-5.1".to_string(),
-        "glm-5-turbo" | "zhipu" => "glm-5-turbo".to_string(),
+        "glm-5-turbo" | "zhipu" | "zai" => "glm-5-turbo".to_string(),
         // No match — return lowercased as-is
         _ => lower.to_string(),
     }

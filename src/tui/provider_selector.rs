@@ -118,8 +118,9 @@ impl ProviderSelectorState {
         self.is_cli() || (!self.is_custom() && self.current_provider().key_label.is_empty())
     }
 
+    /// z.ai provider (canonical id `zai`, legacy `zhipu`).
     pub fn is_zhipu(&self) -> bool {
-        self.provider_id() == "zhipu"
+        self.provider_id() == "zai"
     }
 
     pub fn is_moonshot(&self) -> bool {
@@ -162,7 +163,7 @@ impl ProviderSelectorState {
                 | "gemini"
                 | "openrouter"
                 | "xiaomi"
-                | "zhipu"
+                | "zai"
                 | "moonshot"
                 | "minimax"
                 | "opencode-cli"
@@ -353,9 +354,9 @@ impl ProviderSelectorState {
     pub fn load_custom_fields(&mut self) {
         if self.is_zhipu()
             && let Ok(config) = crate::config::Config::load()
-            && let Some(zhipu) = &config.providers.zhipu
+            && let Some(zai_cfg) = &config.providers.zai
         {
-            self.zhipu_endpoint_type = match zhipu.endpoint_type.as_deref() {
+            self.zhipu_endpoint_type = match zai_cfg.endpoint_type.as_deref() {
                 Some("coding") => 1,
                 _ => 0,
             };

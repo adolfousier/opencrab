@@ -36,7 +36,7 @@ fn config_with_provider(name: &str) -> Config {
         "gemini" => providers.gemini = Some(cfg),
         "openrouter" => providers.openrouter = Some(cfg),
         "minimax" => providers.minimax = Some(cfg),
-        "zhipu" => providers.zhipu = Some(cfg),
+        "zai" => providers.zai = Some(cfg),
         "xiaomi" => providers.xiaomi = Some(cfg),
         "ollama" => providers.ollama = Some(cfg),
         _ => {}
@@ -94,10 +94,18 @@ async fn by_name_minimax() {
 }
 
 #[tokio::test]
-async fn by_name_zhipu() {
-    let config = config_with_provider("zhipu");
-    let result = create_provider_by_name(&config, "zhipu").await;
+async fn by_name_zai_and_legacy_zhipu() {
+    // Canonical id creates...
+    let config = config_with_provider("zai");
+    let result = create_provider_by_name(&config, "zai").await;
     assert!(result.is_ok());
+
+    // ...and the legacy spelling still resolves through the registry
+    // alias (#1448) as the zai-named provider.
+    let config = config_with_provider("zai");
+    let legacy = create_provider_by_name(&config, "zhipu").await;
+    assert!(legacy.is_ok());
+    assert_eq!(legacy.unwrap().name(), "zai");
 }
 
 #[tokio::test]
@@ -338,7 +346,7 @@ async fn priority_minimax_over_zhipu() {
                 base_url: Some("https://api.minimax.io/v1".to_string()),
                 ..Default::default()
             }),
-            zhipu: Some(ProviderConfig {
+            zai: Some(ProviderConfig {
                 enabled: true,
                 api_key: Some("zhipu-key".to_string()),
                 ..Default::default()

@@ -190,12 +190,14 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
             config_field: |c| c.providers.minimax.as_ref(),
         },
         ProviderRegistration {
-            display_name: "z.ai GLM",
-            session_id: "zhipu",
-            aliases: &[],
-            is_enabled: |c| c.providers.zhipu.as_ref().is_some_and(|p| p.enabled),
+            display_name: "z.ai",
+            session_id: "zai",
+            // Legacy spelling: by-name lookups ("zhipu/glm-5.3", fallback
+            // chains, subagent_provider) keep resolving after the #1448 rename.
+            aliases: &["zhipu"],
+            is_enabled: |c| c.providers.zai.as_ref().is_some_and(|p| p.enabled),
             factory: sync_factory(try_create_zhipu),
-            config_field: |c| c.providers.zhipu.as_ref(),
+            config_field: |c| c.providers.zai.as_ref(),
         },
         ProviderRegistration {
             display_name: "Moonshot AI",
@@ -270,7 +272,7 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "Google Gemini",
     "OpenRouter",
     "Minimax",
-    "z.ai GLM",
+    "z.ai",
     "Moonshot AI",
     "Ollama",
     "Custom",
@@ -617,7 +619,7 @@ pub(crate) fn force_enable_section(config: &mut Config, session_id: &str) -> boo
         "gemini" => Some(&mut p.gemini),
         "openrouter" => Some(&mut p.openrouter),
         "minimax" => Some(&mut p.minimax),
-        "zhipu" => Some(&mut p.zhipu),
+        "zai" => Some(&mut p.zai),
         "moonshot" => Some(&mut p.moonshot),
         "ollama" => Some(&mut p.ollama),
         _ => None,
@@ -1534,16 +1536,16 @@ fn try_create_minimax(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     Ok(Some(Arc::new(provider)))
 }
 
-/// Try to create z.ai GLM provider if configured
+/// Try to create the z.ai provider if configured
 /// Supports two endpoint types: "api" (general) or "coding" (coding-specific)
 fn try_create_zhipu(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
-    let zhipu_config = match &config.providers.zhipu {
+    let zhipu_config = match &config.providers.zai {
         Some(cfg) => cfg,
         None => return Ok(None),
     };
 
     let Some(api_key) = &zhipu_config.api_key else {
-        tracing::warn!("z.ai GLM enabled but API key missing — check keys.toml");
+        tracing::warn!("z.ai enabled but API key missing — check keys.toml");
         return Ok(None);
     };
 
@@ -1555,13 +1557,13 @@ fn try_create_zhipu(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     );
 
     tracing::info!(
-        "Using z.ai GLM at: {} (endpoint_type: {:?}, base_url configured: {})",
+        "Using z.ai at: {} (endpoint_type: {:?}, base_url configured: {})",
         base_url,
         zhipu_config.endpoint_type,
         zhipu_config.base_url.is_some()
     );
     let provider = configure_openai_compatible(
-        OpenAIProvider::with_base_url(api_key.clone(), base_url).with_name("zhipu"),
+        OpenAIProvider::with_base_url(api_key.clone(), base_url).with_name("zai"),
         zhipu_config,
     );
     Ok(Some(Arc::new(provider)))

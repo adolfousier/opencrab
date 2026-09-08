@@ -191,8 +191,8 @@ pub const PROVIDERS: &[ProviderInfo] = &[
         help_lines: &["Get key from platform.minimax.io"],
     },
     ProviderInfo {
-        id: "zhipu",
-        name: "z.ai GLM",
+        id: "zai",
+        name: "z.ai",
         models: &[], // Fetched from API
         key_label: "API Key",
         help_lines: &["Get key from open.bigmodel.cn"],

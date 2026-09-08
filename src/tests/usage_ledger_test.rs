@@ -146,6 +146,7 @@ fn test_normalize_model_name() {
     assert_eq!(normalize_model_name("glm-5.1"), "glm-5.1");
     assert_eq!(normalize_model_name("glm-5-turbo"), "glm-5-turbo");
     assert_eq!(normalize_model_name("zhipu"), "glm-5-turbo");
+    assert_eq!(normalize_model_name("zai"), "glm-5-turbo");
     assert_eq!(normalize_model_name("mimo-v2-omni-free"), "mimo-v2-omni");
     assert_eq!(normalize_model_name("mimo-v2-pro-free"), "mimo-v2-pro");
     assert_eq!(normalize_model_name("kimi-k2.5"), "kimi-k2.5");

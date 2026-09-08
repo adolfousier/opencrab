@@ -1867,9 +1867,10 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub minimax: Option<ProviderConfig>,
 
-    /// z.ai GLM configuration (supports API and Coding endpoints)
-    #[serde(default)]
-    pub zhipu: Option<ProviderConfig>,
+    /// z.ai (GLM) configuration (supports API and Coding endpoints).
+    /// Legacy section name `zhipu` still loads via the serde alias (#1448).
+    #[serde(default, alias = "zhipu")]
+    pub zai: Option<ProviderConfig>,
 
     /// Moonshot AI (Kimi) configuration. Supports the API plan and the Coding
     /// (token) plan via `endpoint_type`:
@@ -2047,7 +2048,7 @@ impl ProviderConfigs {
             // API providers — require api_key in addition to enabled
             ("qwen", "Qwen", true, self.qwen.as_ref()),
             ("minimax", "Minimax", true, self.minimax.as_ref()),
-            ("zhipu", "z.ai GLM", true, self.zhipu.as_ref()),
+            ("zai", "z.ai", true, self.zai.as_ref()),
             ("moonshot", "Moonshot AI", true, self.moonshot.as_ref()),
             ("openrouter", "OpenRouter", true, self.openrouter.as_ref()),
             ("anthropic", "Anthropic", true, self.anthropic.as_ref()),
