@@ -220,6 +220,7 @@ async fn push_turn_is_tracked_with_system_origin() {
         None,
         "tui",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -269,6 +270,7 @@ async fn push_turn_row_deleted_at_exit() {
         None,
         None,
         "tui",
+        None,
         None,
     )
     .await

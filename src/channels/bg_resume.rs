@@ -65,6 +65,7 @@ pub(crate) async fn run_resume_turn(
             None,
             channel,
             Some(target),
+            None,
         )
         .await
     {

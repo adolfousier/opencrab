@@ -38,9 +38,17 @@ async fn thirty_minute_old_turn_is_still_resumed() {
 
     let id = uuid::Uuid::new_v4();
     let session_id = uuid::Uuid::new_v4();
-    repo.insert(id, session_id, "long agentic turn", "tui", None, "user")
-        .await
-        .unwrap();
+    repo.insert(
+        id,
+        session_id,
+        "long agentic turn",
+        "tui",
+        None,
+        None,
+        "user",
+    )
+    .await
+    .unwrap();
     // 30 minutes into the turn: well past the old 10-minute cutoff.
     backdate(&db, id, 1800, 1800).await;
 
@@ -65,6 +73,7 @@ async fn day_old_debris_is_purged() {
         uuid::Uuid::new_v4(),
         "crash debris",
         "tui",
+        None,
         None,
         "user",
     )
@@ -92,6 +101,7 @@ async fn touch_keeps_a_very_long_turn_alive() {
         uuid::Uuid::new_v4(),
         "multi-hour turn",
         "tui",
+        None,
         None,
         "user",
     )
@@ -122,6 +132,7 @@ async fn channel_scoped_query_has_same_age_semantics() {
         "old telegram turn",
         "telegram",
         Some("123"),
+        None,
         "user",
     )
     .await
@@ -135,6 +146,7 @@ async fn channel_scoped_query_has_same_age_semantics() {
         "telegram debris",
         "telegram",
         Some("123"),
+        None,
         "user",
     )
     .await

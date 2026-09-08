@@ -218,6 +218,7 @@ pub async fn process_comment(
             None,
             "trello",
             Some(&card_id),
+            None,
         )
         .await
     {

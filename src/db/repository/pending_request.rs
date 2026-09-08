@@ -19,6 +19,11 @@ pub struct PendingRequest {
     pub user_message: String,
     pub channel: String,
     pub channel_chat_id: Option<String>,
+    /// Origin forum topic (Telegram `message_thread_id`), when the turn
+    /// arrived inside one. Lets rebuild/one-shot jobs report back into the
+    /// topic that asked instead of the chat's default (#1457). NULL for
+    /// legacy rows and non-topic channels.
+    pub channel_thread_id: Option<String>,
     /// Who started the turn this row tracks: `"user"` or `"system"` (a push
     /// — session_notify / background-task completion). Boot recovery treats
     /// them differently (#12): user rows replay with the continuation prompt;
@@ -40,6 +45,7 @@ impl PendingRequestRepository {
     }
 
     /// Insert a new in-flight request
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert(
         &self,
         id: Uuid,
@@ -47,6 +53,7 @@ impl PendingRequestRepository {
         user_message: &str,
         channel: &str,
         channel_chat_id: Option<&str>,
+        channel_thread_id: Option<&str>,
         origin: &str,
     ) -> Result<()> {
         let id_s = id.to_string();
@@ -54,6 +61,7 @@ impl PendingRequestRepository {
         let msg = user_message.to_string();
         let ch = channel.to_string();
         let cid = channel_chat_id.map(|s| s.to_string());
+        let tid = channel_thread_id.map(|s| s.to_string());
         let orig = origin.to_string();
         self.pool
             .get()
@@ -61,9 +69,9 @@ impl PendingRequestRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.execute(
-                    "INSERT INTO pending_requests (id, session_id, user_message, channel, channel_chat_id, origin, status) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'PROCESSING')",
-                    params![id_s, sid, msg, ch, cid, orig],
+                    "INSERT INTO pending_requests (id, session_id, user_message, channel, channel_chat_id, channel_thread_id, origin, status) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'PROCESSING')",
+                    params![id_s, sid, msg, ch, cid, tid, orig],
                 )
             })
             .await
@@ -115,7 +123,7 @@ impl PendingRequestRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.prepare(
-                    "SELECT id, session_id, user_message, channel, channel_chat_id, origin \
+                    "SELECT id, session_id, user_message, channel, channel_chat_id, channel_thread_id, origin \
                      FROM pending_requests WHERE session_id = ?1 \
                      ORDER BY created_at DESC LIMIT 1",
                 )?
@@ -126,6 +134,7 @@ impl PendingRequestRepository {
                         user_message: row.get("user_message")?,
                         channel: row.get("channel")?,
                         channel_chat_id: row.get("channel_chat_id")?,
+                        channel_thread_id: row.get("channel_thread_id")?,
                         origin: row.get("origin")?,
                     })
                 })
@@ -222,7 +231,7 @@ impl PendingRequestRepository {
                     [],
                 );
                 let mut stmt = conn.prepare(
-                    "SELECT id, session_id, user_message, channel, channel_chat_id, origin \
+                    "SELECT id, session_id, user_message, channel, channel_chat_id, channel_thread_id, origin \
                      FROM pending_requests \
                      ORDER BY created_at ASC",
                 )?;
@@ -233,6 +242,7 @@ impl PendingRequestRepository {
                         user_message: row.get("user_message")?,
                         channel: row.get("channel")?,
                         channel_chat_id: row.get("channel_chat_id")?,
+                        channel_thread_id: row.get("channel_thread_id")?,
                         origin: row.get("origin")?,
                     })
                 })?;
@@ -260,7 +270,7 @@ impl PendingRequestRepository {
                     params![ch],
                 );
                 let mut stmt = conn.prepare(
-                    "SELECT id, session_id, user_message, channel, channel_chat_id, origin \
+                    "SELECT id, session_id, user_message, channel, channel_chat_id, channel_thread_id, origin \
                      FROM pending_requests WHERE channel = ?1 \
                      ORDER BY created_at ASC",
                 )?;
@@ -271,6 +281,7 @@ impl PendingRequestRepository {
                         user_message: row.get("user_message")?,
                         channel: row.get("channel")?,
                         channel_chat_id: row.get("channel_chat_id")?,
+                        channel_thread_id: row.get("channel_thread_id")?,
                         origin: row.get("origin")?,
                     })
                 })?;

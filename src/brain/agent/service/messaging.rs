@@ -193,6 +193,7 @@ impl AgentService {
             None,
             "tui",
             None,
+            None,
             Some(PendingOrigin::User),
         )
         .await
@@ -220,6 +221,7 @@ impl AgentService {
         override_progress_callback: Option<ProgressCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
+        channel_thread_id: Option<&str>,
     ) -> Result<AgentResponse> {
         self.run_tool_loop(
             session_id,
@@ -231,6 +233,7 @@ impl AgentService {
             override_progress_callback,
             channel,
             channel_chat_id,
+            channel_thread_id,
             Some(PendingOrigin::User),
         )
         .await
@@ -266,6 +269,7 @@ impl AgentService {
             channel,
             channel_chat_id,
             None,
+            None,
         )
         .await
     }
@@ -292,6 +296,7 @@ impl AgentService {
         override_progress_callback: Option<ProgressCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
+        channel_thread_id: Option<&str>,
     ) -> Result<AgentResponse> {
         self.run_tool_loop(
             session_id,
@@ -303,6 +308,7 @@ impl AgentService {
             override_progress_callback,
             channel,
             channel_chat_id,
+            channel_thread_id,
             Some(PendingOrigin::System),
         )
         .await
@@ -331,6 +337,7 @@ impl AgentService {
         override_progress_callback: Option<ProgressCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
+        channel_thread_id: Option<&str>,
     ) -> Result<AgentResponse> {
         self.run_tool_loop(
             session_id,
@@ -342,6 +349,7 @@ impl AgentService {
             override_progress_callback,
             channel,
             channel_chat_id,
+            channel_thread_id,
             Some(PendingOrigin::User),
         )
         .await

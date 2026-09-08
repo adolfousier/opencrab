@@ -1919,6 +1919,7 @@ async fn handle_message(
             Some(progress_cb),
             "slack",
             Some(&channel_id),
+            None,
         )
         .await;
 

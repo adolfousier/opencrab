@@ -498,6 +498,7 @@ impl AgentService {
         override_progress_callback: Option<ProgressCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
+        channel_thread_id: Option<&str>,
         track_origin: Option<PendingOrigin>,
     ) -> Result<AgentResponse> {
         // #1008: one-shot proactive fallback-chain setup suggestion. Rides
@@ -533,6 +534,7 @@ impl AgentService {
                     &user_message,
                     channel,
                     channel_chat_id,
+                    channel_thread_id,
                     origin.as_db_str(),
                 )
                 .await

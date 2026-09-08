@@ -84,6 +84,7 @@ pub(crate) const MIGRATION_SQL: &[&str] = &[
     include_str!("../migrations/20260828000001_pending_requests_origin.sql"),
     include_str!("../migrations/20260902000001_add_pending_followups.sql"),
     include_str!("../migrations/20260904000000_add_pending_followups_host_markdown.sql"),
+    include_str!("../migrations/20260908000001_pending_requests_thread_id.sql"),
 ];
 
 pub(crate) fn build_migrations() -> Migrations<'static> {

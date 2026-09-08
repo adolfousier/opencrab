@@ -11,17 +11,35 @@ use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// Map an originating channel + chat id to a cron `deliver_to` target so the
-/// background rebuild can report completion/failure into the chat that asked
-/// (#305). Only channels with a scheduler delivery arm map; the TUI has its
-/// own notifier (#304) and everything else returns None.
-pub(crate) fn rebuild_deliver_target(channel: &str, chat_id: Option<&str>) -> Option<String> {
+/// Map an originating channel + chat id (+ optional forum topic) to a cron
+/// `deliver_to` target so the background rebuild can report completion and
+/// failure into the chat that asked (#305). Only channels with a scheduler
+/// delivery arm map; the TUI has its own notifier (#304) and everything else
+/// returns None.
+///
+/// Telegram forum topics ride the #1451 grammar (`telegram:chat:thread`,
+/// parsed by the scheduler's `parse_telegram_target`): when the pending
+/// request carries an origin topic the report lands IN that topic (#1457),
+/// otherwise the plain `telegram:chat` form keeps the historical default
+/// topic delivery. Discord/Slack have no thread component here.
+pub(crate) fn rebuild_deliver_target(
+    channel: &str,
+    chat_id: Option<&str>,
+    thread_id: Option<&str>,
+) -> Option<String> {
     let chat_id = chat_id?.trim();
     if chat_id.is_empty() {
         return None;
     }
     match channel {
-        "telegram" | "discord" | "slack" => Some(format!("{channel}:{chat_id}")),
+        "telegram" => {
+            let thread = thread_id.map(str::trim).filter(|t| !t.is_empty());
+            match thread {
+                Some(t) => Some(format!("telegram:{chat_id}:{t}")),
+                None => Some(format!("telegram:{chat_id}")),
+            }
+        }
+        "discord" | "slack" => Some(format!("{channel}:{chat_id}")),
         _ => None,
     }
 }
@@ -94,7 +112,11 @@ impl Tool for RebuildTool {
             .await
         {
             Ok(Some(req)) => {
-                let target = rebuild_deliver_target(&req.channel, req.channel_chat_id.as_deref());
+                let target = rebuild_deliver_target(
+                    &req.channel,
+                    req.channel_chat_id.as_deref(),
+                    req.channel_thread_id.as_deref(),
+                );
                 match &target {
                     Some(t) => tracing::info!("rebuild: status will be delivered to {t}"),
                     None => tracing::debug!(

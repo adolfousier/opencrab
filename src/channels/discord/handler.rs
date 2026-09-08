@@ -1033,6 +1033,7 @@ pub(crate) async fn handle_message(
             Some(progress_cb),
             "discord",
             Some(&discord_chat_id),
+            None, // Discord threads: not tracked yet
         )
         .await;
 

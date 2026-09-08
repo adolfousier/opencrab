@@ -677,6 +677,7 @@ pub(crate) async fn resume_session_inner(
                 Some(progress_cb),
                 "telegram",
                 Some(&chat_id_str),
+                None, // boot re-delivery routing stays chat-level (#12)
             )
             .await
     } else {

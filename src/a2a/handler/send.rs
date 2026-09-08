@@ -185,6 +185,7 @@ async fn process_task(
             None,
             "a2a",
             None,
+            None,
         )
         .await;
 

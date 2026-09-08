@@ -2494,6 +2494,10 @@ pub(crate) async fn handle_message(
     // this agent call. `turn_guard` is held until the drop below.
 
     let chat_id_str = msg.chat.id.0.to_string();
+    // Origin forum topic for pending-request tracking (#1457): the
+    // rebuild tool reads it back to report completion into the topic
+    // that asked, not the chat default.
+    let origin_thread = msg.thread_id.map(|t| t.0.to_string());
     let result = agent
         .send_message_with_tools_and_display(
             session_id,
@@ -2505,6 +2509,7 @@ pub(crate) async fn handle_message(
             Some(progress_cb.clone()),
             "telegram",
             Some(&chat_id_str),
+            origin_thread.as_deref(),
         )
         .await;
 
@@ -2551,6 +2556,7 @@ pub(crate) async fn handle_message(
                             Some(progress_cb),
                             "telegram",
                             Some(&chat_id_str),
+                            origin_thread.as_deref(),
                         )
                         .await;
                     telegram_state.remove_cancel_token(new_id).await;

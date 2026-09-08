@@ -2919,6 +2919,7 @@ impl App {
                     None,
                     "tui",
                     None,
+                    None,
                 )
                 .await;
             match result {

@@ -771,6 +771,7 @@ pub(crate) async fn cmd_run(
             Some(crate::cli::headless_callbacks::cli_progress_callback()),
             "cli",
             None,
+            None,
         )
         .await?;
 
@@ -1075,6 +1076,7 @@ pub(crate) async fn cmd_agent_interactive(
                 approval,
                 Some(crate::cli::headless_callbacks::cli_progress_callback()),
                 "cli",
+                None,
                 None,
             )
             .await

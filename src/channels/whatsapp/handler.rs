@@ -1324,6 +1324,7 @@ pub(crate) async fn handle_message(
             Some(progress_cb),
             "whatsapp",
             Some(&wa_chat_id),
+            None,
         )
         .await;
 
@@ -1652,6 +1653,7 @@ pub(crate) async fn send_connection_greeting(
             None,
             "whatsapp",
             Some(&jid_str),
+            None,
         )
         .await;
 
