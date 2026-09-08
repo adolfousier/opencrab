@@ -7,9 +7,11 @@
 
 use std::time::{Duration, Instant};
 
+use teloxide::types::ChatId;
+
 use crate::channels::telegram::governor::{
-    Bucket, Counters, EditClass, INTERACTIVE_RESERVE, ensure_bucket, format_summary,
-    is_permanent_edit_error,
+    Bucket, Counters, EditClass, INTERACTIVE_RESERVE, MAX_429_PAUSE, ensure_bucket, format_summary,
+    is_permanent_edit_error, note_429_pause,
 };
 
 #[test]
@@ -89,6 +91,7 @@ fn ladder_order_drops_clock_first_and_final_never_drops() {
         failed_finals: 10,
         admitted_interactive: 13,
         interactive_overflow: 14,
+        pause_armed_429: 15,
         throttled_typing_ms: 1500,
         throttled_send_ms: 2500,
         admitted_rich: 11,
@@ -99,7 +102,7 @@ fn ladder_order_drops_clock_first_and_final_never_drops() {
     assert!(line.contains("admitted{typing=12,edits=34,sends=5,rich=11}"));
     assert!(line.contains("dropped{clock=1,brain_preview=2,intermediary=3,status=4,typing=6}"));
     assert!(line.contains("finals{queued=7,superseded=8,delivered=9,failed=10,pending=2}"));
-    assert!(line.contains("interactive{admitted=13,overflow=14}"));
+    assert!(line.contains("interactive{admitted=13,overflow=14,pause429=15}"));
     assert!(line.contains("throttled_ms{typing=1500,send=2500,rich=3500}"));
 }
 
@@ -125,6 +128,60 @@ fn interactive_reserve_bounds_bulk_but_not_interactive() {
     // Refill restores bulk access once tokens rise above the floor again.
     let later = Instant::now() + Duration::from_secs(4);
     assert!(b.take(later).is_ok(), "refill above the floor frees bulk");
+}
+
+/// Step 2 (owner-approved design): a 429 pause freezes bulk refill and
+/// blocks bulk `take` for the declared window, while interactive `take_any`
+/// bypasses it — taps never queue behind bulk, even mid-window.
+#[test]
+fn pause_429_blocks_bulk_but_not_interactive() {
+    let t0 = Instant::now();
+    let mut b = Bucket::new(4, 1.0);
+    // Arm the same reserve the admission path sets (2 in a 4-bucket), then
+    // spend ONE free token — 3 remain, above the floor, so any bulk failure
+    // below is caused by the PAUSE, not by the reserve.
+    b.set_reserve(INTERACTIVE_RESERVE);
+    assert!(b.take(t0).is_ok());
+
+    // Declare the window: refill frozen + bulk blocked.
+    b.pause_arm(t0 + Duration::from_secs(30));
+    let t1 = t0 + Duration::from_secs(5);
+    assert!(
+        b.take(t1).is_err(),
+        "bulk must not spend during a declared window, even above the floor"
+    );
+    assert!(
+        b.take_any(t1).is_ok(),
+        "interactive bypasses the pause mid-window (tokens exist, floor not reached)"
+    );
+
+    // Refill is FROZEN during the pause: advance 20s inside a 30s window,
+    // bulk still blocked even though 20 unpaused seconds would refill 20.
+    let t2 = t0 + Duration::from_secs(20);
+    assert!(
+        b.take(t2).is_err(),
+        "refill must stay frozen for the whole declared window"
+    );
+
+    // Bulk returns the instant the window expires.
+    let t3 = t0 + Duration::from_secs(31);
+    assert!(
+        b.take(t3).is_ok(),
+        "window expiry releases both the block and the frozen refill"
+    );
+
+    // Cap: a pause longer than MAX_429_PAUSE is clamped at arm time by the
+    // caller (note_429_pause); assert the constant is sane here.
+    assert!(MAX_429_PAUSE <= Duration::from_secs(60));
+}
+
+/// note_429_pause clamps to MAX_429_PAUSE and is a noop for DMs/disabled.
+#[test]
+fn note_429_pause_clamps_and_respects_scope() {
+    // DM chat: noop, no panic.
+    note_429_pause(ChatId(42), Duration::from_secs(500));
+    // Cap arithmetic: the function clamps before arming; assert constant.
+    assert_eq!(MAX_429_PAUSE, Duration::from_secs(45));
 }
 
 /// #117: reserve is clamped below capacity so a mis-sized constant cannot

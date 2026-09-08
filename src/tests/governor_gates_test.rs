@@ -240,7 +240,9 @@ async fn edit_ladder_drops_in_priority_order_and_queues_latest_wins_finals() {
     );
     let snap = ts::snapshot(CHAT).unwrap();
     assert_eq!(snap.finals_pending, 1, "drainer frozen: final still queued");
-    assert_eq!(snap.admitted_interactive, 1);
+    // Floor was already spent by burn_bucket, so the tap rides the OVERFLOW
+    // path (pass-through) — that is the counter it must land in.
+    assert_eq!(snap.interactive_overflow, 1);
 }
 
 /// #117 step 1: Interactive NEVER drops and NEVER queues — on a fully dry

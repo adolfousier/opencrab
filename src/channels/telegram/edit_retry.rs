@@ -74,7 +74,7 @@ pub fn classify_str(e: &str) -> EditErr {
 /// (capped) server-instructed wait the SAME payload is re-fired once; on
 /// exhaustion the caller's fallback finally runs, now safely outside the
 /// 429 window that killed both the edit and the old immediate fallback.
-pub fn spawn_deferred<E, F, Fut, G, Fut2>(wait: Duration, retry: F, exhausted: G)
+pub fn spawn_deferred<E, F, Fut, G, Fut2>(chat: ChatId, wait: Duration, retry: F, exhausted: G)
 where
     E: std::fmt::Display + Send + 'static,
     F: FnOnce() -> Fut + Send + 'static,
@@ -83,6 +83,9 @@ where
     Fut2: Future<Output = ()> + Send + 'static,
 {
     let wait = wait.min(MAX_DEFERRED_WAIT);
+    // Step-2 feedback: the server declared a window — pause BULK refill on
+    // this chat's governed buckets for it (capped; Interactive bypasses).
+    super::governor::note_429_pause(chat, wait);
     tokio::spawn(async move {
         tokio::time::sleep(wait).await;
         match retry().await {
@@ -132,11 +135,13 @@ pub fn edit_text_ui(
         match fire().await {
             Ok(()) => {}
             Err(e) => match classify(&e) {
-                EditErr::RetryAfter(wait) => spawn_deferred(wait, fire, move || async move {
-                    tracing::warn!(
-                        "Telegram: {label} deferred retry exhausted (still rate-limited)"
-                    );
-                }),
+                EditErr::RetryAfter(wait) => {
+                    spawn_deferred(chat_id, wait, fire, move || async move {
+                        tracing::warn!(
+                            "Telegram: {label} deferred retry exhausted (still rate-limited)"
+                        );
+                    });
+                }
                 EditErr::Fatal(msg) => {
                     tracing::warn!("Telegram: {label} failed: {msg}");
                 }

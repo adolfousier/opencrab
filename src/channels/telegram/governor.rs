@@ -170,6 +170,11 @@ pub(crate) struct Bucket {
     /// `take_any` consumes through it to zero. 0.0 = unreserved (typing,
     /// sends, rich buckets keep plain semantics).
     reserve: f64,
+    /// Step-2 pause (owner-approved design): while set, bulk `take` is
+    /// blocked and refill is frozen — the server declared a window, so
+    /// spending retries into it wastes quota. Interactive `take_any`
+    /// bypasses the pause by construction (taps never queue behind bulk).
+    pause_until: Option<Instant>,
 }
 
 impl Bucket {
@@ -180,6 +185,7 @@ impl Bucket {
             refill_per_sec,
             last_refill: Instant::now(),
             reserve: 0.0,
+            pause_until: None,
         }
     }
 
@@ -200,7 +206,20 @@ impl Bucket {
         self.reserve
     }
 
+    /// Test-only: arm the step-2 pause directly without going through
+    /// `note_429_pause` (keeps the internals test clock-pure).
+    #[cfg(test)]
+    pub(crate) fn pause_arm(&mut self, until: Instant) {
+        self.pause_until = Some(until);
+    }
+
     fn refill(&mut self, now: Instant) {
+        // Frozen refill inside a declared 429 window (step 2): tokens do not
+        // accrue while the pause holds, so bulk cannot bank quota it would
+        // then spend into the window. Interactive bypasses via take_any.
+        if self.pause_until.is_some_and(|until| until > now) {
+            return;
+        }
         let elapsed = now.saturating_duration_since(self.last_refill);
         self.last_refill = now;
         let gained = elapsed.as_secs_f64() * self.refill_per_sec;
@@ -208,8 +227,12 @@ impl Bucket {
     }
 
     /// Consume one token, or report how long until the next refills.
-    /// Bulk surface: may not dip below the interactive reserve (#117).
+    /// Bulk surface: may not dip below the interactive reserve (#117), and
+    /// is blocked while a declared 429 window holds (step 2).
     pub(crate) fn take(&mut self, now: Instant) -> Result<(), Duration> {
+        if let Some(until) = self.pause_until.filter(|until| *until > now) {
+            return Err((until - now).max(self.next_token_in_for(now, self.reserve)));
+        }
         let wait = self.next_token_in_for(now, self.reserve);
         if wait.is_zero() {
             self.tokens -= 1.0;
@@ -303,6 +326,9 @@ pub(crate) struct Counters {
     /// Interactive tap edits sent with even the reserve dry (#117) —
     /// pass-through by contract; the reactive floor owns the outcome.
     pub(crate) interactive_overflow: u64,
+    /// Step-2: how many times a 429 pause was armed on this peer (per
+    /// arming event, not per blocked attempt).
+    pub(crate) pause_armed_429: u64,
     pub(crate) throttled_typing_ms: u64,
     pub(crate) throttled_send_ms: u64,
     pub(crate) throttled_rich_ms: u64,
@@ -342,6 +368,7 @@ impl Counters {
             && self.failed_finals == 0
             && self.admitted_interactive == 0
             && self.interactive_overflow == 0
+            && self.pause_armed_429 == 0
             && self.throttled_typing_ms == 0
             && self.throttled_send_ms == 0
     }
@@ -382,7 +409,7 @@ pub(crate) fn format_summary(chat_id: i64, c: &Counters, finals_pending: usize) 
          admitted{{typing={},edits={},sends={},rich={}}} \
          dropped{{clock={},brain_preview={},intermediary={},status={},typing={}}} \
          finals{{queued={},superseded={},delivered={},failed={},pending={}}} \
-         interactive{{admitted={},overflow={}}} \
+         interactive{{admitted={},overflow={},pause429={}}} \
          throttled_ms{{typing={},send={},rich={}}}",
         c.admitted_typing,
         c.admitted_edits,
@@ -400,6 +427,7 @@ pub(crate) fn format_summary(chat_id: i64, c: &Counters, finals_pending: usize) 
         finals_pending,
         c.admitted_interactive,
         c.interactive_overflow,
+        c.pause_armed_429,
         c.throttled_typing_ms,
         c.throttled_send_ms,
         c.throttled_rich_ms,
@@ -562,6 +590,11 @@ fn fold_throttle_ms(chat_id: i64, waited: Duration) {
 /// telemetry showing a tap waiting behind bulk (the No-Go trigger stays).
 pub(crate) const INTERACTIVE_RESERVE: f64 = 2.0;
 
+/// Step-2 cap on the server-declared pause (owner-approved design): a retry
+/// window longer than this is treated as this cap for refill purposes — the
+/// pause must never become a multi-hour outage of the bulk lane.
+pub(crate) const MAX_429_PAUSE: Duration = Duration::from_secs(45);
+
 /// Which flow-surface edit is asking to go out. Discriminant order IS the
 /// drop ladder from #1211: on an empty edit bucket, lower ranks drop first
 /// because they self-heal on the next full-state refresh; finals queue.
@@ -612,6 +645,50 @@ enum Admission {
     Queued,
 }
 
+/// Step-2 feedback (owner-approved design): a classified 429 with a
+/// server-declared window pauses BULK refill on the named bucket class for
+/// that window (+margin, capped at [`MAX_429_PAUSE`]) — bulk stops spending
+/// retries into a window the server already declared. Interactive
+/// `take_any` bypasses the pause by construction, so a tap during a
+/// declared window still goes out immediately (the #68 floor owns its 429).
+/// Fire-and-forget safe: best-effort estimate of which bucket felt the 429.
+pub(crate) fn note_429_pause(chat: ChatId, wait: Duration) {
+    let chat_id = chat.0;
+    if chat_id >= 0 {
+        return; // DMs ungoverned, matching every other gate
+    }
+    let lim = Limits::from_config();
+    if !lim.enabled {
+        return;
+    }
+    let pause = wait.min(MAX_429_PAUSE);
+    let now = gate_now();
+    let mut map = peers().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(peer) = map.get_mut(&chat_id) {
+        let mut armed = 0usize;
+        // Owner ruling 2026-09-08 (research-backed): pause ONLY the
+        // offending arm. Telegram's per-chat flood limits are enforced
+        // per surface — 1 msg/s per chat, 20 msg/min per group, ~20
+        // edits/min per group (grammY/PTB FloodLimit, Bot FAQ) — so a
+        // window declared on the rich arm does not throttle the send
+        // arm's separate budget. Pausing everything over-punishes
+        // unrelated traffic; the offending arm is the evidence.
+        for slot in [peer.rich.as_mut(), peer.edits.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            slot.pause_until = Some(now + pause);
+            armed += 1;
+        }
+        if armed > 0 {
+            peer.counters.pause_armed_429 += 1;
+            tracing::info!(
+                "Governor: 429 pause {pause:?} armed on rich+edits for chat={chat_id} (step 2, per-chat scope)"
+            );
+        }
+    }
+}
+
 /// G2 gate for `editMessageText`. Returns true when the caller must perform
 /// its edit now; false when the governor handled it (dropped chrome, or the
 /// payload was queued as a final). `html`/`rich` describe the payload so a
@@ -651,13 +728,7 @@ pub(crate) async fn edit_admission(
         // Falls through to bulk take only when even the floor is dry.
         let is_interactive = class == EditClass::Interactive;
         let interactive_direct = is_interactive && bucket.take_any(now).is_ok();
-        if interactive_direct || (!is_interactive && bucket.take(now).is_ok()) {
-            // A direct send of message M invalidates any queued final for M:
-            // the drainer must never paint older content over newer (owner
-            // law 2026-09-07: only the last edit of a message goes out).
-            if peer.finals.remove(&msg_id.0).is_some() {
-                peer.counters.superseded_finals += 1;
-            }
+        let verdict = if interactive_direct || (!is_interactive && bucket.take(now).is_ok()) {
             if is_interactive {
                 peer.counters.admitted_interactive += 1;
             } else {
@@ -692,7 +763,14 @@ pub(crate) async fn edit_admission(
         } else {
             peer.counters.note_drop(class);
             Admission::Dropped(class)
+        };
+        // Owner law 2026-09-07 ("only the last edit of a message goes out"):
+        // EVERY direct-send path — bucket-spend AND interactive floor-dry
+        // overflow — invalidates any queued final for that message id.
+        if matches!(verdict, Admission::Now) && peer.finals.remove(&msg_id.0).is_some() {
+            peer.counters.superseded_finals += 1;
         }
+        verdict
     };
     match admission {
         Admission::Now => true,
@@ -1229,6 +1307,7 @@ pub(crate) mod test_support {
         pub failed_finals: u64,
         pub admitted_interactive: u64,
         pub interactive_overflow: u64,
+        pub pause_armed_429: u64,
         pub throttled_typing_ms: u64,
         pub admitted_rich: u64,
         pub throttled_rich_ms: u64,
@@ -1255,6 +1334,7 @@ pub(crate) mod test_support {
             failed_finals: p.counters.failed_finals,
             admitted_interactive: p.counters.admitted_interactive,
             interactive_overflow: p.counters.interactive_overflow,
+            pause_armed_429: p.counters.pause_armed_429,
             throttled_typing_ms: p.counters.throttled_typing_ms,
             admitted_rich: p.counters.admitted_rich,
             throttled_rich_ms: p.counters.throttled_rich_ms,

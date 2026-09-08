@@ -308,6 +308,7 @@ pub async fn best_effort_note<C>(
                 let detail2 = origin_detail.to_string();
                 let why2 = why.to_string();
                 super::edit_retry::spawn_deferred(
+                    chat,
                     wait,
                     move || async move {
                         let request = message_in_thread(&bot2, chat2, thread2, &text2);

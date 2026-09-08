@@ -622,6 +622,7 @@ impl TelegramAgent {
                                                             let echo_text = text.clone();
                                                             let echo_chooser = chooser.clone();
                                                             super::edit_retry::spawn_deferred(
+                                                                chat_id,
                                                                 wait,
                                                                 move || async move {
                                                                     refire_pick_edit(&bot_r, retry)
@@ -1013,6 +1014,7 @@ impl TelegramAgent {
                                                 // window that killed the old immediate
                                                 // fallback.
                                                 super::edit_retry::spawn_deferred(
+                                                    chat,
                                                     wait,
                                                     {
                                                         let bot = bot.clone();
@@ -1827,6 +1829,7 @@ impl TelegramAgent {
                                                 Err(e) => match super::edit_retry::classify(&e) {
                                                     super::edit_retry::EditErr::RetryAfter(wait) => {
                                                         super::edit_retry::spawn_deferred(
+                                                            chat_id,
                                                             wait,
                                                             move || {
                                                                 let bot = bot2.clone();
