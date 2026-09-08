@@ -61,11 +61,9 @@ impl SessionSkillsRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 let mut stmt = conn.prepare("SELECT session_id, slug FROM session_seen_skills")?;
-                let mapped = stmt
-                    .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                    .filter_map(Result::ok)
-                    .collect::<Vec<(String, String)>>();
-                Ok(mapped)
+                let mapped =
+                    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                mapped.collect::<std::result::Result<Vec<(String, String)>, _>>()
             })
             .await
             .map_err(interact_err)?

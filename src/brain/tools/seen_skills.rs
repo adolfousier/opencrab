@@ -117,12 +117,15 @@ pub fn hydrate_from_db() {
         let repo = crate::db::repository::SessionSkillsRepository::new(pool);
         match repo.all().await {
             Ok(rows) => {
-                let mut reg = registry().lock().expect("seen_skills registry poisoned");
-                for (sid, slug) in rows {
-                    reg.insert((sid, slug));
-                }
-                let n = reg.len();
-                drop(reg);
+                let n = {
+                    // Guard strictly scoped: a MutexGuard is not Send, so it
+                    // must not be alive across the prune await below.
+                    let mut reg = registry().lock().expect("seen_skills registry poisoned");
+                    for (sid, slug) in rows {
+                        reg.insert((sid, slug));
+                    }
+                    reg.len()
+                };
                 tracing::info!("seen_skills: hydrated registry from DB ({n} total rows)");
                 match repo.prune_missing_sessions().await {
                     Ok(0) => {}
