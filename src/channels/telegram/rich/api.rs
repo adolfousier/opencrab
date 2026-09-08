@@ -204,10 +204,11 @@ pub(crate) async fn send_rich_markdown_target_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    // #95: Telegram's rich parser refuses a table that abuts a text line —
-    // insert the missing blank line before any detected table block. The pass
-    // is idempotent, fence-safe, and reuses the AST table parser for detection.
-    let markdown = super::table::ensure_blank_line_before_tables(markdown);
+    // #95/#132: Telegram's rich parser refuses a table that abuts a text line
+    // and can't see a table collapsed onto one line at all. normalize_tables
+    // is the single canonical entry — reflow + blank line — so every rich
+    // send inherits both fixes. The pass is idempotent and fence-safe.
+    let markdown = super::normalize_tables(markdown);
     let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let result = post_rich(
         &url,
@@ -504,10 +505,10 @@ pub(crate) async fn send_rich_markdown_media_target_id(
     origin: &str,
     origin_detail: &str,
 ) -> anyhow::Result<i32> {
-    // #95: same normalization as the plain markdown dialect — the media path
-    // renders pipe tables natively too, so an abutting table needs the blank
-    // line here as well.
-    let markdown = super::table::ensure_blank_line_before_tables(markdown);
+    // #95/#132: same normalization as the plain markdown dialect — the media
+    // path renders pipe tables natively too, so it gets the single canonical
+    // entry (reflow collapsed tables + blank line) as well.
+    let markdown = super::normalize_tables(markdown);
     let url = format!("{}/bot{token}/sendRichMessage", api_base(api_url));
     let body = build_body_markdown_media_target(chat_id, thread_id, reply_to, &markdown, media);
 

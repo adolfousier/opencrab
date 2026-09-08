@@ -198,3 +198,15 @@ fn parse_alignment(sep: &str, cols: usize) -> Vec<Align> {
     align.resize(cols, Align::None);
     align
 }
+
+/// Single canonical table-normalization entry for the rich plane (#132):
+/// expand collapsed one-line tables first (so [`try_parse`] can see them),
+/// then insert the blank line Telegram's rich parser demands before a table
+/// block (#95). Every rich-build entry point and the structure-detection gate
+/// call THIS — never the two passes individually — so gate and renderer always
+/// agree on the same text and a new send path inherits both fixes (#690,
+/// #980, #1085 whack-a-mole retired). Both passes are idempotent and
+/// fence-safe; pipe-free input returns unchanged.
+pub(crate) fn normalize_tables(text: &str) -> String {
+    ensure_blank_line_before_tables(&reflow_collapsed_tables(text))
+}
