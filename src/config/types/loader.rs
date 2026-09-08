@@ -1496,7 +1496,18 @@ impl Config {
         // removed the config section but the old keys.toml section
         // survived, and the next /models open re-materialised the
         // ghost via merge_provider_keys.
-        let config_names: std::collections::HashSet<String> = raw_config_custom_provider_names();
+        // If config.toml cannot be read or parsed, provider presence is
+        // UNKNOWN. Removing keys based on unknown state is exactly how
+        // #1458 happened: a duplicate-key parse error made every keys.toml
+        // entry look like a ghost and the cleanup wiped all 21 custom
+        // providers at startup. Fail open — keep everything.
+        let Some(config_names) = raw_config_custom_provider_names() else {
+            tracing::warn!(
+                "config.toml unreadable or unparseable — skipping ghost-key cleanup; \
+                 keys.toml left untouched"
+            );
+            return;
+        };
 
         let remove: Vec<String> = custom_table
             .iter()

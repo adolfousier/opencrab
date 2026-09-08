@@ -204,25 +204,26 @@ pub fn keys_path() -> PathBuf {
 /// missing config entries from keys.toml itself, which then made the
 /// "orphan in keys.toml" check pass and skip removal.
 ///
-/// Returns an empty set on any read / parse failure — the cleanup path
-/// treats "can't read config" as "nothing in config", which means it
-/// won't remove anything destructively from keys.toml.
-pub(crate) fn raw_config_custom_provider_names() -> std::collections::HashSet<String> {
+/// Returns `None` when config.toml cannot be read or parsed. `None` means
+/// "provider presence UNKNOWN" and callers MUST NOT remove anything — an
+/// unreadable config is not an empty config. (#1458: a duplicate-key parse
+/// error made the old empty-set fallback classify every keys.toml custom
+/// provider as a ghost and wiped all 21 of them at startup. The empty set
+/// is now reserved for a readable config with genuinely no custom table.)
+pub(crate) fn raw_config_custom_provider_names() -> Option<std::collections::HashSet<String>> {
     use toml_edit::DocumentMut;
     let path = Config::system_config_path().unwrap_or_else(|| opencrabs_home().join("config.toml"));
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return std::collections::HashSet::new();
-    };
-    let Ok(doc) = content.parse::<DocumentMut>() else {
-        return std::collections::HashSet::new();
-    };
-    doc.as_table()
-        .get("providers")
-        .and_then(|t| t.as_table())
-        .and_then(|t| t.get("custom"))
-        .and_then(|t| t.as_table())
-        .map(|t| t.iter().map(|(k, _)| k.to_string()).collect())
-        .unwrap_or_default()
+    let content = std::fs::read_to_string(&path).ok()?;
+    let doc = content.parse::<DocumentMut>().ok()?;
+    Some(
+        doc.as_table()
+            .get("providers")
+            .and_then(|t| t.as_table())
+            .and_then(|t| t.get("custom"))
+            .and_then(|t| t.as_table())
+            .map(|t| t.iter().map(|(k, _)| k.to_string()).collect())
+            .unwrap_or_default(),
+    )
 }
 
 /// Save API keys to keys.toml using merge (preserves existing keys).
