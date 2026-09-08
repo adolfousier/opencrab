@@ -44,7 +44,10 @@ fn same_day_changed_content_rotates_to_timestamped_sibling() {
     // First snapshot of the day.
     fs::write(&file, "v1").expect("write v1");
     daily_backup(&file, 7);
-    assert!(tmp.path().join(&today_bak).exists(), "today's snapshot missing");
+    assert!(
+        tmp.path().join(&today_bak).exists(),
+        "today's snapshot missing"
+    );
     assert_eq!(read(tmp.path(), &today_bak), "v1", "first snapshot wrong");
 
     // Caller writes v2, then calls daily_backup again pre-next-write:
@@ -54,16 +57,30 @@ fn same_day_changed_content_rotates_to_timestamped_sibling() {
 
     let names = bak_names(tmp.path());
     assert_eq!(names.len(), 2, "expected exactly 2 backups, got {names:?}");
-    assert!(names.contains(&today_bak), "day's first snapshot must survive");
-    let rotated = names.iter().find(|n| **n != today_bak).expect("rotated sibling");
+    assert!(
+        names.contains(&today_bak),
+        "day's first snapshot must survive"
+    );
+    let rotated = names
+        .iter()
+        .find(|n| **n != today_bak)
+        .expect("rotated sibling");
     assert!(
         rotated.starts_with(&format!("f.toml.{today}T")),
         "rotated name must be timestamped, got {rotated}"
     );
-    assert_eq!(read(tmp.path(), rotated), "v2", "rotated copy must hold the newer pre-write state");
+    assert_eq!(
+        read(tmp.path(), rotated),
+        "v2",
+        "rotated copy must hold the newer pre-write state"
+    );
 
     // Both same-day states are recoverable — the #1459 gap is closed.
-    assert_eq!(read(tmp.path(), &today_bak), "v1", "first snapshot was clobbered");
+    assert_eq!(
+        read(tmp.path(), &today_bak),
+        "v1",
+        "first snapshot was clobbered"
+    );
 }
 
 #[test]
@@ -77,7 +94,11 @@ fn same_day_identical_content_is_no_op() {
     daily_backup(&file, 7);
 
     let names = bak_names(tmp.path());
-    assert_eq!(names.len(), 1, "identical re-runs must not spawn backups: {names:?}");
+    assert_eq!(
+        names.len(),
+        1,
+        "identical re-runs must not spawn backups: {names:?}"
+    );
     assert_eq!(fs::read_to_string(&file).expect("read file"), "v1");
 }
 
@@ -108,7 +129,10 @@ fn prune_counts_rotated_siblings_under_max_days() {
     // The rotated sibling must rank NEWER than its day's plain snapshot
     // ('T' > '.' lexicographically) and the oldest file must be pruned.
     assert!(
-        names.contains(&today_bak) && names.iter().any(|n| n.starts_with(&format!("f.toml.{today}T"))),
+        names.contains(&today_bak)
+            && names
+                .iter()
+                .any(|n| n.starts_with(&format!("f.toml.{today}T"))),
         "today's plain + rotated snapshots must both survive: {names:?}"
     );
     assert!(
