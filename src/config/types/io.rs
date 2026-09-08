@@ -26,12 +26,16 @@ pub fn opencrabs_home() -> PathBuf {
     p
 }
 
-/// Daily backup of a config file. One copy per day, keeps `max_days` days.
+/// Daily backup of a config file. One snapshot per day, keeps `max_days` files.
 ///
-/// Names backups `file.YYYY-MM-DD.bak`. If today's backup already exists,
-/// skips (avoids overwriting a clean daily snapshot with mid-day edits).
-/// Prunes backups older than `max_days`. Silently ignores errors — backup
-/// failure must never block a config write.
+/// Names backups `file.YYYY-MM-DD.bak`. If today's backup exists with identical
+/// content, skips (no spam). If content differs, rotates the current file to a
+/// timestamped sibling `file.YYYY-MM-DDTHH-MM-SS.bak` first, so a same-day write
+/// can never destroy the day's only pre-write copy (2026-09-07 keys wipe: the
+/// dedup skip left zero safety net for post-snapshot states). Prunes backups
+/// beyond `max_days` files — rotated siblings count, so heavy-rotation days
+/// consume more slots; bounded history stays bounded. Silently ignores errors —
+/// backup failure must never block a config write.
 pub fn daily_backup(path: &Path, max_days: usize) {
     if !path.exists() {
         return;
@@ -49,17 +53,38 @@ pub fn daily_backup(path: &Path, max_days: usize) {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let today_backup = parent.join(format!("{stem}.{today}.bak"));
 
-    // Skip if today's backup already exists (preserve the day's first snapshot)
+    // Today's backup exists: skip only when content is identical. On a real
+    // change, rotate the current file to a timestamped sibling first — the
+    // day's first snapshot stays intact AND every later pre-write state gets
+    // its own copy. On read error, do nothing (never destroy on uncertainty).
     if today_backup.exists() {
-        return;
+        let identical = match (fs::read(path), fs::read(&today_backup)) {
+            (Ok(cur), Ok(bak)) => cur == bak,
+            _ => true,
+        };
+        if identical {
+            return;
+        }
+        let stamp = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
+        let mut rotated = parent.join(format!("{stem}.{stamp}.bak"));
+        let mut n = 1u32;
+        while rotated.exists() {
+            rotated = parent.join(format!("{stem}.{stamp}-{n}.bak"));
+            n += 1;
+        }
+        if let Err(e) = fs::copy(path, &rotated) {
+            tracing::warn!("Failed to rotate {} before write: {e}", path.display());
+            return;
+        }
+        tracing::debug!("Rotated same-day backup: {}", rotated.display());
+    } else {
+        // Create today's first snapshot
+        if let Err(e) = fs::copy(path, &today_backup) {
+            tracing::warn!("Failed to back up {} before write: {e}", path.display());
+            return;
+        }
+        tracing::debug!("Daily backup: {}", today_backup.display());
     }
-
-    // Create today's backup
-    if let Err(e) = fs::copy(path, &today_backup) {
-        tracing::warn!("Failed to back up {} before write: {e}", path.display());
-        return;
-    }
-    tracing::debug!("Daily backup: {}", today_backup.display());
 
     // Prune old backups beyond max_days
     let prefix = format!("{stem}.");
