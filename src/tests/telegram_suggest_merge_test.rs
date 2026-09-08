@@ -12,6 +12,8 @@ use crate::channels::telegram::suggest_options::{
     BUTTON_LABEL_MAX_UNITS, FOLLOWUP_PREFIX, MAX_NUMBERS_PER_ROW, SHARED_ROW_MAX_CHARS,
     SINGLE_BUTTON_MAX_UNITS, SuggestLayout, append_rows_and_trailer_md, enforce_button_fit,
     folded_list_html, pick_layout, row_fits, suggestion_rows_rich_html,
+    SuggestLayout, append_rows_and_trailer_md, enforce_button_fit, folded_list_html, pick_layout,
+    suggestion_rows_rich_html,
 };
 
 fn opts(v: &[&str]) -> Vec<String> {

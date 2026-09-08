@@ -8,6 +8,7 @@ pub mod file;
 pub mod force_default;
 pub mod message;
 pub mod project;
+pub mod project_match;
 pub mod session;
 
 pub use context::{ServiceContext, ServiceManager};

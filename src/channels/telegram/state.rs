@@ -1431,10 +1431,13 @@ impl TelegramState {
     }
 
     /// #61 fold-dedupe cap: max fingerprints retained per session.
-    const NOTIFY_FOLD_DEDUP_CAP: usize = 64;
+    /// `pub(crate)` so the tests under `src/tests/` can pin the window against
+    /// the real constants instead of restating their values.
+    pub(crate) const NOTIFY_FOLD_DEDUP_CAP: usize = 64;
     /// #61 fold-dedupe TTL: fingerprints expire after this window, so a
     /// genuine re-send hours later still folds.
-    const NOTIFY_FOLD_DEDUP_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+    pub(crate) const NOTIFY_FOLD_DEDUP_TTL: std::time::Duration =
+        std::time::Duration::from_secs(30 * 60);
 
     /// #61 fold-dedupe (Alexey 2026-09-06): atomically check-and-record a
     /// folded notify fingerprint for the session. Returns `true` when the

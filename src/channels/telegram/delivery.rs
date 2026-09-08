@@ -915,9 +915,7 @@ pub(crate) async fn deliver_final_response(
                                         sent_reply_id = Some(mid.0);
                                         final_bubble = Some(super::state::MergeBubble {
                                             message_id: mid,
-                                            body: super::state::BubbleBody::Html(
-                                                chunks[0].clone(),
-                                            ),
+                                            body: super::state::BubbleBody::Html(chunks[0].clone()),
                                         });
                                     }
                                     Err(e) => {
@@ -969,9 +967,7 @@ pub(crate) async fn deliver_final_response(
                                     sent_reply_id = Some(sent.0);
                                     final_bubble = Some(super::state::MergeBubble {
                                         message_id: sent,
-                                        body: super::state::BubbleBody::Html(
-                                            chunks[0].clone(),
-                                        ),
+                                        body: super::state::BubbleBody::Html(chunks[0].clone()),
                                     });
                                 }
                             }
@@ -1007,9 +1003,7 @@ pub(crate) async fn deliver_final_response(
             // Hand the merge candidate to the turn state (#tg-suggest-merge):
             // handler.rs reads it immediately after this returns and passes it
             // into render_suggestions. None (rich / voice / suppressed paths)
-            // means suggestions fall to the #91 cross-turn glue rung — the
-            // conversation's last rich-md answer wears the controls — or the
-            // standalone block when no legal glue target exists.
+            // means suggestions fall back to their standalone block as before.
             if final_bubble.is_some() {
                 streaming
                     .lock()

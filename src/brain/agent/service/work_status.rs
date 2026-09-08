@@ -426,19 +426,22 @@ impl WorkStatus {
         Ok(ids)
     }
 
-    /// Find a non-terminal sub-agent status whose **child** session is
-    /// `session_id` (#110).
+    /// Find a sub-agent status whose **child** session is `session_id` and
+    /// whose outcome is not yet decided (#110).
     ///
     /// The boot-resume path uses this to recognize a revived sub-agent
     /// session: its result must go to the spawning session, not to the
-    /// surface-less default. `None` for unknown, terminal, or non-agent
-    /// work — those keep the existing resume behavior.
+    /// recorded channel. `Interrupted` files qualify on purpose — upstream
+    /// reconciliation marks the file at boot, before the resumed session
+    /// finishes — as do `Running`/`Pending`/`AwaitingInput`. `None` for
+    /// unknown, outcome-terminal (`Completed`/`Failed`), or non-agent work —
+    /// those keep the existing resume behavior.
     pub fn find_agent_by_session(session_id: &str) -> Option<WorkStatus> {
         let ids = Self::list_all().ok()?;
         ids.into_iter().filter_map(|id| Self::read(&id)).find(|s| {
             matches!(s.kind, WorkKind::Agent)
                 && s.session_id == session_id
-                && !s.state.is_terminal()
+                && !matches!(s.state, WorkState::Completed | WorkState::Failed)
         })
     }
 }

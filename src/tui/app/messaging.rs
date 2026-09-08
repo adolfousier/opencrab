@@ -173,6 +173,16 @@ impl App {
         // and the next focus-switch back.
         let old_session_id = self.current_session.as_ref().map(|s| s.id);
         if let Some(old_sid) = old_session_id {
+            // Persist before demoting, so leaving a live turn is as safe as
+            // cancelling one. The sidecar is memory: when that session later
+            // finishes while it is not focused, `ResponseComplete` drops the
+            // entry on the grounds that the DB has the content, which is only
+            // true if something wrote it. Abort and /stop already flush here;
+            // the switch did not, so the same output was durable if you
+            // cancelled and lost if you merely looked elsewhere (#1421).
+            if self.is_session_processing(old_sid) {
+                self.persist_streaming_state(old_sid).await;
+            }
             self.demote_to_background(old_sid);
         }
 
@@ -873,11 +883,13 @@ impl App {
                             theme::set(t);
                             // Persist to config.toml; ConfigWatcher reload
                             // re-applies on next boot / config change.
-                            if let Err(e) = crate::config::Config::write_key_string(
-                                "tui",
-                                "theme",
-                                &format!("\"{}\"", t.name),
-                            ) {
+                            // The bare name: `write_key_string` produces the
+                            // TOML string itself, so quoting here stored the
+                            // quote characters inside the value and the boot
+                            // lookup could never match it (#1428).
+                            if let Err(e) =
+                                crate::config::Config::write_key_string("tui", "theme", t.name)
+                            {
                                 self.push_system_message(format!(
                                     "Applied '{}' (live). Persist failed: {e}",
                                     t.name
@@ -898,8 +910,7 @@ impl App {
                     "reset" => {
                         theme::reset();
                         // Remove the key so boot falls through to CRAB_DARK.
-                        if let Err(e) =
-                            crate::config::Config::write_key_string("tui", "theme", "\"\"")
+                        if let Err(e) = crate::config::Config::write_key_string("tui", "theme", "")
                         {
                             self.push_system_message(format!(
                                 "Reset to default. Persist failed: {e}"

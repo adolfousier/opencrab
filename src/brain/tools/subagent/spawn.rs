@@ -497,17 +497,17 @@ impl Tool for SpawnAgentTool {
 
         // Create the status file in Pending state before spawning. new()
         // writes the file; we don't need the returned handle, but we do
-        // propagate any write error. The parent is captured FIRST so the
-        // status file carries it: if a restart kills this agent mid-turn
-        // and boot-resume revives its session, the revived result must
-        // reach this session (#110).
-        let parent_session_id = context.session_id;
+        // propagate any write error. The parent session is captured before
+        // the first write so the file is born with the binding (#110): if
+        // the daemon restarts mid-run, boot-resume can route the revived
+        // result back to the session that is waiting on it.
+        let parent_session_for_status = context.session_id.to_string();
         let _ = WorkStatus::new_agent(
             &agent_id,
             &label,
             &child_session_id.to_string(),
             &full_prompt,
-            Some(&parent_session_id.to_string()),
+            Some(&parent_session_for_status),
         )
         .map_err(|e| ToolError::Execution(format!("Failed to create status file: {e}")))?;
 
@@ -531,7 +531,7 @@ impl Tool for SpawnAgentTool {
                     &label_clone,
                     &child_session_id.to_string(),
                     &prompt_clone,
-                    Some(&parent_session_id.to_string()),
+                    Some(&parent_session_for_status),
                 )
                 .expect("status file")
             });

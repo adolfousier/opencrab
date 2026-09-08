@@ -829,6 +829,32 @@ impl Config {
 
     /// Insert `bot_owner = [<first allow-list entry>]` for `channel` when it is
     /// missing, preserving the entry's TOML type (string id or numeric id).
+    /// Documentation values from `config.toml.example`, which must never become
+    /// an owner (#1440).
+    ///
+    /// The template ships an example id in each channel's allow-list to show
+    /// the shape of the field. Seeded verbatim into a real config, the
+    /// migration below used to promote the first one to `bot_owner`, and an
+    /// explicit `bot_owner` IS the owner set, so the positional fallback that
+    /// makes the first real user the owner could never fire. The operator was
+    /// silently not the owner of their own bot, and anyone holding the account
+    /// that happens to match the placeholder was.
+    ///
+    /// Compared as text so one list covers the numeric ids and the string ones.
+    /// `template_placeholders_are_all_listed` pins this against the template
+    /// itself, so an id added there cannot drift past this list unnoticed.
+    pub(crate) const OWNER_SEED_PLACEHOLDERS: &[&str] = &[
+        "+15551234567",
+        "123456789012345",
+        "123456789",
+        "U12345678",
+        // The per-group allow-list example. Commented in the template
+        // today, listed anyway so uncommenting it cannot make a
+        // placeholder an owner.
+        "222333444",
+        "555666777",
+    ];
+
     fn seed_bot_owner_edit(doc: &mut toml_edit::DocumentMut, channel: &str, list_key: &str) {
         let Some(t) = doc
             .get_mut("channels")
@@ -838,6 +864,11 @@ impl Config {
         else {
             return;
         };
+        // A channel nobody has turned on has no operator to pin yet (#1440).
+        // Seeding one now only records whatever the template happened to carry.
+        if !t.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+            return;
+        }
         let has_owner = t
             .get("bot_owner")
             .and_then(|v| v.as_array())
@@ -853,13 +884,32 @@ impl Config {
             return;
         };
         let mut owner = toml_edit::Array::new();
+        let shown: String;
         if let Some(s) = first.as_str() {
+            shown = s.to_string();
             owner.push(s);
         } else if let Some(i) = first.as_integer() {
+            shown = i.to_string();
             owner.push(i);
         } else {
             return;
         }
+        if Self::OWNER_SEED_PLACEHOLDERS.contains(&shown.as_str()) {
+            tracing::warn!(
+                "channels.{channel}: not seeding bot_owner from {shown}, that is a \
+                 documentation placeholder from config.toml.example. Set \
+                 channels.{channel}.bot_owner yourself, or clear {list_key} and let \
+                 the first user to talk become the owner."
+            );
+            return;
+        }
+        // Silent before (#1440): an owner appeared on disk with nothing saying
+        // where it came from, so the operator had no way to tell a seeded value
+        // from one they set.
+        tracing::info!(
+            "channels.{channel}: seeded bot_owner = [{shown}] from the first \
+             {list_key} entry (no bot_owner was set)"
+        );
         t.insert("bot_owner", toml_edit::value(owner));
     }
 
@@ -1046,6 +1096,13 @@ impl Config {
         let path =
             Self::system_config_path().unwrap_or_else(|| opencrabs_home().join("config.toml"));
 
+        // A config.toml that does not exist yet is seeded from the shipped
+        // example rather than conjured empty (#1437). The example is where
+        // every provider section a user might want to edit comes from, and
+        // seeding only ever fires while the file is absent, so writing one
+        // bare key into an empty document used to lock it out for good.
+        crate::config::seed::ensure_config_seeded();
+
         // Format-preserving parse — only the targeted key is modified
         let mut doc: DocumentMut = if path.exists() {
             fs::read_to_string(&path)?.parse()?
@@ -1144,6 +1201,11 @@ impl Config {
         let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let path = opencrabs_home().join("keys.toml");
+
+        // Seeded for the same reason config.toml is: the example carries a
+        // slot per provider, and a file created around one written key has
+        // none of them (#1437).
+        crate::config::seed::ensure_keys_seeded();
 
         let mut doc: DocumentMut = if path.exists() {
             fs::read_to_string(&path)?.parse()?

@@ -512,10 +512,22 @@ pub async fn run() -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        if let Err(e) = config.save(path) {
-            tracing::warn!("Failed to auto-generate config.toml: {}", e);
+        // Seed the documented example, then enable what there are keys for
+        // (#1437). This used to serialise the whole in-memory config over the
+        // path instead, and because TOML cannot represent a None, that wrote a
+        // file holding only the handful of providers that happened to be set:
+        // no sections for the rest, no comments, nothing to hand-edit later.
+        crate::config::seed::ensure_config_seeded();
+        let enabled = crate::config::seed::enable_providers_with_keys(&config);
+        if enabled.is_empty() {
+            tracing::warn!(
+                "Auto-generating config.toml found keys but enabled no provider section"
+            );
         } else {
-            tracing::info!("Auto-generated config.toml from environment");
+            tracing::info!(
+                "Auto-generated config.toml, enabled: {}",
+                enabled.join(", ")
+            );
         }
     }
 

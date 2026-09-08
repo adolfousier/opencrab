@@ -462,23 +462,21 @@ impl SlashCommandTool {
                         .await;
 
                     // Auto-assign session to project if WD matches a known project dir (#220).
-                    // Match by directory name against project slugs, so
-                    // `/cd ~/redevest-ai/` matches project "redevest-ai".
-                    if let Ok(projects) = project_svc.list_projects().await {
-                        for project in &projects {
-                            let slug = crate::services::file::slugify_project_name(&project.name);
-                            if slug.eq_ignore_ascii_case(&dir_name) {
-                                if let Err(e) = project_svc.assign_session(sid, project.id).await {
-                                tracing::warn!(error = %e, "failed to assign session to project");
-                            }
-                                tracing::info!(
-                                    "Auto-assigned session {} to project '{}'",
-                                    sid,
-                                    project.name
-                                );
-                                return Some(project.name.clone());
-                            }
+                    // Through the shared matcher so this and the first-turn
+                    // link (#1445) cannot answer the same question differently.
+                    if let Ok(projects) = project_svc.list_projects().await
+                        && let Some(project) =
+                            crate::services::project_match::match_by_directory(&dir_name, &projects)
+                    {
+                        if let Err(e) = project_svc.assign_session(sid, project.id).await {
+                            tracing::warn!(error = %e, "failed to assign session to project");
                         }
+                        tracing::info!(
+                            "Auto-assigned session {} to project '{}'",
+                            sid,
+                            project.name
+                        );
+                        return Some(project.name.clone());
                     }
                     None
                 })
