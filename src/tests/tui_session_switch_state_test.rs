@@ -10,9 +10,11 @@ use uuid::Uuid;
 use crate::brain::agent::service::AgentService;
 use crate::brain::provider::Provider;
 use crate::db::Database;
+use crate::db::Session;
 use crate::services::ServiceContext;
 use crate::tests::agent_service_mocks::MockProvider;
 use crate::tui::app::App;
+use crate::tui::events::AppMode;
 
 async fn app() -> App {
     let db = Database::connect_in_memory().await.unwrap();
@@ -119,5 +121,118 @@ async fn an_idle_session_leaves_no_sidecar_entry() {
     assert!(
         !app.promote_to_foreground(sid),
         "nothing live means nothing to promote"
+    );
+}
+
+// ── Picker cursor follows the session, not the slot (#1465) ──────────
+
+/// The reported sequence: pick a session sitting low in the list, use it,
+/// reopen the picker. Using it bumps `updated_at`, so `load_sessions`
+/// re-sorts it upward; the cursor used to keep its old index and point at an
+/// unrelated row, and Enter switched into that row instead. In the report the
+/// stale slot held a dormant twin bound to the same Slack channel.
+///
+/// Asserted by identity rather than a hardcoded index, so the test says
+/// nothing about tie-breaking between same-second timestamps.
+#[tokio::test]
+async fn reopening_the_picker_puts_the_cursor_on_the_current_session() {
+    let mut app = app().await;
+
+    let a = app
+        .session_service
+        .create_session(Some("alpha".into()))
+        .await
+        .unwrap();
+    let _b = app
+        .session_service
+        .create_session(Some("beta".into()))
+        .await
+        .unwrap();
+    let _c = app
+        .session_service
+        .create_session(Some("gamma".into()))
+        .await
+        .unwrap();
+
+    app.current_session = Some(a.clone());
+
+    // "Use" alpha: an ordinary update bumps updated_at exactly the way a
+    // message append does, which is what re-sorts the list.
+    app.session_service.update_session(&a).await.unwrap();
+
+    // A stale cursor left over from the previous visit, pointing nowhere near
+    // alpha's new position.
+    app.selected_session_index = 99;
+
+    app.switch_mode(AppMode::Sessions).await.unwrap();
+
+    let landed = app
+        .sessions
+        .get(app.selected_session_index)
+        .expect("cursor must land inside the loaded list");
+    assert_eq!(
+        landed.id, a.id,
+        "the cursor must follow the current session after the list re-sorts; \
+         keeping the old index is what put Enter on a same-channel twin (#1465)"
+    );
+}
+
+/// No current session (fresh start): the cursor has nothing to anchor to and
+/// must sit at the top rather than keep a stale index.
+#[tokio::test]
+async fn picker_falls_back_to_the_top_when_there_is_no_current_session() {
+    let mut app = app().await;
+    app.session_service
+        .create_session(Some("alpha".into()))
+        .await
+        .unwrap();
+    app.current_session = None;
+    app.selected_session_index = 42;
+
+    app.switch_mode(AppMode::Sessions).await.unwrap();
+
+    assert_eq!(app.selected_session_index, 0);
+}
+
+/// The index is relative to the *filtered* view, so with a search active the
+/// cursor must be the current session's position among the matches, not its
+/// position in the full list.
+#[tokio::test]
+async fn cursor_is_resolved_against_the_filtered_view() {
+    let mut app = app().await;
+
+    let keep = app
+        .session_service
+        .create_session(Some("keep me".into()))
+        .await
+        .unwrap();
+    app.sessions = vec![
+        Session {
+            title: Some("noise one".into()),
+            ..keep.clone()
+        },
+        Session {
+            id: uuid::Uuid::new_v4(),
+            title: Some("noise two".into()),
+            ..keep.clone()
+        },
+        keep.clone(),
+    ];
+    // Give the decoys distinct ids so only the real one can match.
+    app.sessions[0].id = uuid::Uuid::new_v4();
+
+    app.current_session = Some(keep.clone());
+    app.session_search = "keep".to_string();
+
+    app.focus_current_session();
+
+    let visible = app.visible_session_indices();
+    let idx = visible
+        .get(app.selected_session_index)
+        .and_then(|&i| app.sessions.get(i))
+        .expect("cursor must land inside the filtered view");
+    assert_eq!(
+        idx.id, keep.id,
+        "with a search active the cursor indexes the matches, not the full list"
     );
 }

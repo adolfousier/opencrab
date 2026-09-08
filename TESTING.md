@@ -764,7 +764,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — TUI Render Clear | 4 | `src/tests/tui_render_clear_test.rs` |
 | Tests — TUI Render Presets | 15 | `src/tui/render/presets_test.rs` |
 | Tests — TUI Render Utils | 12 | `src/tests/tui_render_utils_test.rs` |
-| Tests — TUI Session Switch State | 4 | `src/tests/tui_session_switch_state_test.rs` |
+| Tests — TUI Session Switch State | 7 | `src/tests/tui_session_switch_state_test.rs` |
 | Tests — TUI Tool Stack | 10 | `src/tests/tui_tool_stack_test.rs` |
 | Tests — Turn Duration | 6 | `src/tests/turn_duration_test.rs` |
 | Tests — Turn Ranges | 40 | `src/tests/turn_ranges_test.rs` |

@@ -1094,6 +1094,31 @@ impl App {
         }
     }
 
+    /// Put the picker cursor on the session the user is currently in.
+    ///
+    /// `selected_session_index` is an index, never an identity, and
+    /// `load_sessions` re-queries `ORDER BY updated_at DESC`. Using a session
+    /// bumps its `updated_at`, so by the next open it has moved and the stale
+    /// index points at whatever slid into that slot — Enter then switches into
+    /// the wrong session, which in the reported case was a dormant twin bound
+    /// to the same Slack channel (#1465). Anchoring on the session id makes the
+    /// cursor follow the session rather than the slot.
+    ///
+    /// The index is relative to the filtered view, so the position is resolved
+    /// through `visible_session_indices()`; a current session that is filtered
+    /// out (or absent entirely) falls back to the top of the list.
+    pub(crate) fn focus_current_session(&mut self) {
+        let Some(current_id) = self.current_session.as_ref().map(|s| s.id) else {
+            self.selected_session_index = 0;
+            return;
+        };
+        self.selected_session_index = self
+            .visible_session_indices()
+            .iter()
+            .position(|&i| self.sessions.get(i).is_some_and(|s| s.id == current_id))
+            .unwrap_or(0);
+    }
+
     /// Route a per-session mutator to either the foreground
     /// `AppState` fields or the matching background-session sidecar.
     /// Used by the `TuiEvent` handlers in this file so each one is a
@@ -3771,6 +3796,10 @@ impl App {
 
         if mode == AppMode::Sessions {
             self.load_sessions().await?;
+            // Only on the open path: `load_sessions` also runs on rename and
+            // delete while the picker is open, where moving the cursor would
+            // yank it out from under a browsing user (#1465).
+            self.focus_current_session();
         }
 
         Ok(())
