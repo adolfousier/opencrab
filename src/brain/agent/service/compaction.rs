@@ -445,6 +445,10 @@ impl AgentService {
     /// it: clear the #909 pressure throttle so the ctx footer drops its
     /// marker, remember how long this took so the next compaction can quote a
     /// real ETA instead of a guess, and hand channels the receipt (#29).
+    /// 8 args: the receipt itself carries 6 fields — allow rather than
+    /// bundle into a struct the single caller would immediately unpack
+    /// (same shape as the #134 continuation helper).
+    #[allow(clippy::too_many_arguments)]
     fn note_compaction_success(
         &self,
         session_id: Uuid,
