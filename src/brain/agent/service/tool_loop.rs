@@ -502,6 +502,7 @@ impl AgentService {
     /// A site adopting this helper cannot skip the continuation or its
     /// #125/#131 skill stamp. Errors are returned so each site keeps its
     /// own handling (Manual propagates; budget sites log and continue).
+    #[allow(clippy::too_many_arguments)] // 8 args = outcome + kind + suffix + persist
     async fn apply_compaction_continuation(
         &self,
         session_id: Uuid,
