@@ -74,6 +74,9 @@ pub(crate) struct PendingCompaction {
     /// Fill level at spawn time, reported as the "before" on the receipt so
     /// the number reflects the context that was actually summarised.
     snapshot_usage_pct: f64,
+    /// Token count at spawn time (#135) — absolute "before" for the
+    /// receipt, same boundary as `snapshot_usage_pct`.
+    snapshot_tokens: usize,
     started: std::time::Instant,
 }
 
@@ -316,6 +319,9 @@ impl AgentService {
         // CompactionSummary emit below.
         let compact_started = std::time::Instant::now();
         let before_pct = usage_pct;
+        // Absolute context size the summariser was invoked on (#135) —
+        // the "from" half of the receipt, same boundary as `before_pct`.
+        let before_tokens = context.token_count;
         // E2 (#29): the ETA hint rides the event — the duration this
         // session's LAST successful compaction actually took. `None` on the
         // first compaction: no history, no prediction (a static guess is
@@ -404,6 +410,7 @@ impl AgentService {
                 context,
                 summary,
                 before_pct,
+                before_tokens,
                 compact_started.elapsed(),
                 progress_callback,
             );
@@ -444,6 +451,7 @@ impl AgentService {
         context: &AgentContext,
         summary: &str,
         before_pct: f64,
+        before_tokens: usize,
         elapsed: std::time::Duration,
         progress_callback: &Option<ProgressCallback>,
     ) {
@@ -465,6 +473,8 @@ impl AgentService {
                     summary: summary.to_string(),
                     before_pct,
                     after_pct,
+                    before_tokens,
+                    after_tokens: context.token_count,
                     elapsed,
                 },
             );
@@ -558,6 +568,7 @@ impl AgentService {
             handle,
             snapshot_len,
             snapshot_usage_pct,
+            snapshot_tokens,
             started,
         } = pending;
 
@@ -569,6 +580,7 @@ impl AgentService {
                     context,
                     &summary,
                     snapshot_usage_pct,
+                    snapshot_tokens,
                     started.elapsed(),
                     progress_callback,
                 );
@@ -651,6 +663,7 @@ impl AgentService {
                     handle,
                     snapshot_len,
                     snapshot_usage_pct: usage_pct,
+                    snapshot_tokens: token_count,
                     started: std::time::Instant::now(),
                 },
             );

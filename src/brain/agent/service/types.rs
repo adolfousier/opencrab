@@ -76,11 +76,17 @@ pub enum ProgressEvent {
     },
     /// Compaction finished — carry the summary so the TUI can display it,
     /// plus before/after fill levels and the wall-clock duration of the
-    /// silent window so channels can render a completion line (#29).
+    /// silent window so channels can render a completion line (#29). The
+    /// token counts are ABSOLUTE context sizes taken at the same boundaries
+    /// as the percentages (#135): `before_tokens` is the size the
+    /// summariser was invoked on, `after_tokens` the size the next request
+    /// starts with.
     CompactionSummary {
         summary: String,
         before_pct: f64,
         after_pct: f64,
+        before_tokens: usize,
+        after_tokens: usize,
         elapsed: std::time::Duration,
     },
     /// A single build-output line (e.g. "Compiling foo v1.0"). The TUI keeps a
