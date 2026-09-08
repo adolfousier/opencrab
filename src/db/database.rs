@@ -84,13 +84,12 @@ pub(crate) const MIGRATION_SQL: &[&str] = &[
     include_str!("../migrations/20260828000001_pending_requests_origin.sql"),
     include_str!("../migrations/20260902000001_add_pending_followups.sql"),
     include_str!("../migrations/20260904000000_add_pending_followups_host_markdown.sql"),
-    include_str!("../migrations/20260908000001_pending_requests_thread_id.sql"),
     // #111: durable notify queue — parked session_notify / background-task
-    // pushes survive restarts and re-offer at boot. Appended AFTER the
-    // thread_id migration despite its earlier filename date: rusqlite_migration
-    // applies by list INDEX, so a database already stamped past this position
-    // would skip it and never create the table (#1401).
+    // pushes survive restarts and re-offer at boot. Kept in filename order per
+    // the list invariant; databases already stamped past this index are
+    // repaired by `heal_notify_queue` after `to_latest` (#1401).
     include_str!("../migrations/20260906000001_add_notify_queue.sql"),
+    include_str!("../migrations/20260908000001_pending_requests_thread_id.sql"),
 ];
 
 pub(crate) fn build_migrations() -> Migrations<'static> {
@@ -355,6 +354,7 @@ impl Database {
                     // be skipped with the stamp already past it (#1401), and only
                     // the schema itself can say so.
                     crate::db::migration_heal::heal_pending_requests_origin(conn)?;
+                    crate::db::migration_heal::heal_notify_queue(conn)?;
                     Ok(())
                 },
             )

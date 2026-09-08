@@ -36,6 +36,38 @@ fn has_table(conn: &rusqlite::Connection, table: &str) -> rusqlite::Result<bool>
     .map(|n| n > 0)
 }
 
+/// Create `notify_queue` when its migration was skipped.
+///
+/// The #111 migration carries an earlier filename date than
+/// `20260908000001_pending_requests_thread_id.sql`, so merging it in name
+/// order places it at an index that databases stamped by the newer build have
+/// already passed — `to_latest` never looks at it and the durable notify queue
+/// silently does not exist. Mirrors
+/// `src/migrations/20260906000001_add_notify_queue.sql`, which stays the source
+/// of truth. Returns `true` when it changed the schema.
+pub(crate) fn heal_notify_queue(conn: &rusqlite::Connection) -> rusqlite::Result<bool> {
+    if has_table(conn, "notify_queue")? {
+        return Ok(false);
+    }
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS notify_queue (
+            id           TEXT PRIMARY KEY NOT NULL,
+            session_id   TEXT NOT NULL,
+            context_text TEXT NOT NULL,
+            display_text TEXT NOT NULL,
+            origin       TEXT NOT NULL,
+            bg_meta      TEXT,
+            created_at   INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_notify_queue_session ON notify_queue(session_id);",
+    )?;
+    tracing::warn!(
+        "Healed notify_queue: the #111 table was missing although the schema was stamped past \
+         its migration index (#1401). Parked pushes could not survive a restart until now."
+    );
+    Ok(true)
+}
+
 /// Add `pending_requests.origin` when migration 37 was skipped.
 ///
 /// Mirrors `src/migrations/20260828000001_pending_requests_origin.sql`, which
