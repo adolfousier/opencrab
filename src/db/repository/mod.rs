@@ -39,6 +39,7 @@ pub use project::ProjectRepository;
 pub use recent_paths::RecentPathsRepository;
 pub use session::{SessionListOptions, SessionRepository};
 pub use session_binding::SessionBindingRepository;
+pub use session_skills::SessionSkillsRepository;
 pub use tool_execution::ToolExecutionRepository;
 pub use traits::Repository;
 pub use usage_ledger::UsageLedgerRepository;
