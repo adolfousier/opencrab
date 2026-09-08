@@ -146,3 +146,153 @@ fn stamp_union_dedupes_active_and_seen() {
 // Verified by code inspection of continuation_prompt (tracing::debug! with
 // the full inventory list); zero-skill silence is covered by the existing
 // skill_stamp_is_silent_when_no_skills_active test on append_skill_stamp.
+
+// ── issue #138 gap 2: filename form registers the skill ────────────────────
+
+#[tokio::test]
+async fn filename_form_marks_skill_seen() {
+    let c = ctx();
+    let session = c.session_id;
+    assert!(!seen_skills::was_seen(session, "cost-estimate"));
+    let result = tool()
+        .execute(serde_json::json!({"name": "cost-estimate.md"}), &c)
+        .await
+        .unwrap();
+    assert!(
+        result.success,
+        "filename form of a built-in skill must succeed"
+    );
+    assert!(
+        result.output.contains("--- skill: cost-estimate ---"),
+        "filename form must render as skill content, got: {}",
+        &result.output[..result.output.len().min(200)]
+    );
+    assert!(
+        seen_skills::was_seen(session, "cost-estimate"),
+        "filename-form load must mark the skill seen (#138 gap 2)"
+    );
+}
+
+#[tokio::test]
+async fn filename_form_with_query_marks_skill_seen_and_filters() {
+    let c = ctx();
+    let session = c.session_id;
+    let result = tool()
+        .execute(
+            serde_json::json!({"name": "cost-estimate.md", "query": "usage"}),
+            &c,
+        )
+        .await
+        .unwrap();
+    assert!(result.success, "filename+query form must succeed");
+    assert!(
+        seen_skills::was_seen(session, "cost-estimate"),
+        "query-filtered filename-form load is consumption too (#138 gap 2)"
+    );
+}
+
+#[tokio::test]
+async fn filename_form_of_brain_file_still_reads_flat_file() {
+    // A real brain file must NOT be intercepted by the skill branch — only
+    // names that resolve through the skill registry take the skill path.
+    let result = tool()
+        .execute(
+            serde_json::json!({"name": "nonexistent-brain-file.md"}),
+            &ctx(),
+        )
+        .await
+        .unwrap();
+    // Missing brain file is a SOFT success carrying not-found text.
+    assert!(result.output.contains("not found") || result.output.contains("exists but is empty"));
+}
+
+#[tokio::test]
+async fn filename_form_traversal_still_refused() {
+    let fresh = uuid::Uuid::new_v4();
+    for bad in ["../skills/cost-estimate/SKILL.md", "sub/cost-estimate.md"] {
+        let result = tool()
+            .execute(serde_json::json!({"name": bad}), &ctx())
+            .await
+            .unwrap();
+        assert!(!result.success, "traversal input {bad} must fail");
+        assert!(!seen_skills::was_seen(fresh, "cost-estimate"));
+    }
+}
+
+// ── issue #138 gap 1: DB persistence + hydrate ─────────────────────────────
+
+mod persistence {
+    use crate::brain::tools::seen_skills;
+    use crate::db::Database;
+    use crate::db::repository::SessionSkillsRepository;
+    use uuid::Uuid;
+
+    async fn repo() -> (Database, SessionSkillsRepository) {
+        let db = Database::connect_in_memory().await.expect("in-memory db");
+        db.run_migrations().await.expect("migrations");
+        let r = SessionSkillsRepository::new(db.pool().clone());
+        (db, r)
+    }
+
+    #[tokio::test]
+    async fn record_upserts_and_all_reads_back() {
+        let (_db, r) = repo().await;
+        let sid = Uuid::new_v4();
+        r.record(sid, "opencrabs-dev").await.expect("record");
+        r.record(sid, "opencrabs-dev")
+            .await
+            .expect("re-record (upsert)");
+        r.record(sid, "grafana").await.expect("record 2");
+        let rows = r.all().await.expect("all");
+        assert_eq!(rows.len(), 2, "upsert must not duplicate rows");
+        assert!(rows.contains(&(sid, "opencrabs-dev".to_string())));
+        assert!(rows.contains(&(sid, "grafana".to_string())));
+    }
+
+    #[tokio::test]
+    async fn prune_drops_rows_for_missing_sessions_only() {
+        let (_db, r) = repo().await;
+        let live = Uuid::new_v4();
+        let dead = Uuid::new_v4();
+        r.record(live, "grafana").await.expect("live row");
+        r.record(dead, "grafana").await.expect("dead row");
+        // The live session must exist in `sessions` for the prune-keep leg.
+        let pool = _db.pool().clone();
+        pool.get()
+            .await
+            .expect("conn")
+            .interact(move |conn| {
+                conn.execute(
+                    "INSERT INTO sessions (id, title, model, provider, created_at, updated_at) \
+                     VALUES (?1, 't', 'm', 'p', strftime('%s','now'), strftime('%s','now'))",
+                    rusqlite::params![live.to_string()],
+                )
+            })
+            .await
+            .expect("interact")
+            .expect("insert session");
+        let pruned = r.prune_missing_sessions().await.expect("prune");
+        assert_eq!(pruned, 1, "exactly the dead session's row goes");
+        let rows = r.all().await.expect("all after prune");
+        assert_eq!(rows, vec![(live, "grafana".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn hydrate_loads_rows_into_registry() {
+        let (_db, r) = repo().await;
+        let sid = Uuid::new_v4();
+        r.record(sid, "repo-audit").await.expect("record");
+        assert!(!seen_skills::was_seen(sid, "repo-audit"));
+        // hydrate_from_db reads the GLOBAL pool (process-wide OnceLock, not
+        // settable in tests) — so we test the hydrate DATA path via the repo
+        // + registry contract it feeds, not the global-pool plumbing.
+        let rows = r.all().await.expect("all");
+        for (s, slug) in rows {
+            seen_skills::mark_seen(s, &slug);
+        }
+        assert!(
+            seen_skills::was_seen(sid, "repo-audit"),
+            "applying hydrate rows must mark skills seen"
+        );
+    }
+}

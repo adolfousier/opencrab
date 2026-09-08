@@ -91,6 +91,10 @@ pub(crate) const MIGRATION_SQL: &[&str] = &[
     // FORK (#111): durable notify queue — parked session_notify /
     // background-task pushes survive restarts and re-offer at boot.
     include_str!("../migrations/20260906000001_add_notify_queue.sql"),
+    // FORK (#138): durable seen-skills store — the post-compaction skill
+    // inventory stamp (#125/#131) survives daemon restarts: every
+    // mark_seen writes a row, boot hydrates the in-memory registry back.
+    include_str!("../migrations/20260908000000_add_session_seen_skills.sql"),
 ];
 
 pub(crate) fn build_migrations() -> Migrations<'static> {

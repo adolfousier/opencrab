@@ -19,6 +19,7 @@ pub mod project;
 pub mod recent_paths;
 pub mod session;
 pub mod session_binding;
+pub mod session_skills;
 pub mod tool_execution;
 mod traits;
 pub mod usage_ledger;
