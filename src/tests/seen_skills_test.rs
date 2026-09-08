@@ -2,6 +2,7 @@
 // and any skill-body consumption (read or slug-load) marks the skill SEEN so
 // the post-compaction inventory stamp (#125) lists it.
 
+use crate::brain::tools::Tool;
 use crate::brain::tools::ToolExecutionContext;
 use crate::brain::tools::load_brain_file::*;
 use crate::brain::tools::seen_skills;
@@ -63,7 +64,7 @@ async fn path_traversal_still_refused_after_slug_form_added() {
 }
 
 #[tokio::test]
-async fn unknown_slug_falls_through_to_brain_file_error() {
+async fn unknown_slug_falls_through_to_brain_file_handling() {
     let result = tool()
         .execute(
             serde_json::json!({"name": "no-such-skill-or-brain"}),
@@ -71,9 +72,20 @@ async fn unknown_slug_falls_through_to_brain_file_error() {
         )
         .await
         .unwrap();
+
+    // The point of the assertion is that an unresolvable slug must never be
+    // served as if it were a skill body. The shape of the miss is main's to
+    // decide, and main answers a missing brain file with a success-carrying
+    // "not found" message rather than an error (load_brain_file.rs), so this
+    // pins the fall-through by content instead of by the success flag.
+    let body = result.output;
     assert!(
-        !result.success,
-        "unknown slug must not silently succeed as a brain file"
+        body.contains("not found"),
+        "unknown slug must fall through to the brain-file miss, got: {body}"
+    );
+    assert!(
+        !body.contains("--- skill:"),
+        "unknown slug must never be answered with a skill body, got: {body}"
     );
 }
 
