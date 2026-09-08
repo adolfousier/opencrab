@@ -1390,7 +1390,7 @@ impl AgentService {
                 false,
             )
             .await
-            .unwrap_or_else(|e| tracing::error!("compaction marker persist failed: {}"));
+            .unwrap_or_else(|e| tracing::error!("compaction marker persist failed: {e}"));
         }
 
         // Restore the directory `/cd` persisted for this session before the
@@ -1867,9 +1867,7 @@ impl AgentService {
                     false,
                 )
                 .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("mid-loop compaction marker persist failed: {}")
-                });
+                .unwrap_or_else(|e| tracing::error!("mid-loop persist failed: {e}"));
             }
 
             // Build LLM request with tools if available
@@ -2136,9 +2134,7 @@ impl AgentService {
                                 false,
                             )
                             .await
-                            .unwrap_or_else(|e| {
-                                tracing::error!("emergency compaction marker persist failed: {}")
-                            });
+                            .unwrap_or_else(|e| tracing::error!("emergency persist failed: {e}"));
 
                             // Notify user about emergency compaction
                             if let Some(ref cb) = progress_callback {
@@ -3969,9 +3965,7 @@ impl AgentService {
                     false,
                 )
                 .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("post-calibration compaction marker persist failed: {}")
-                });
+                .unwrap_or_else(|e| tracing::error!("post-calibration persist failed: {e}"));
             }
 
             // --- CANCEL CHECK BEFORE STREAM DROP RETRY ---
@@ -7332,9 +7326,7 @@ impl AgentService {
                     false,
                 )
                 .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("post-tool compaction marker persist failed: {}")
-                });
+                .unwrap_or_else(|e| tracing::error!("post-tool persist failed: {e}"));
             }
 
             // Check for queued user messages to inject between tool iterations.
