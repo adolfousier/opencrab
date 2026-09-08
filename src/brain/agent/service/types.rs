@@ -233,7 +233,10 @@ pub enum PushOrigin {
 /// receipt card from these fields instead of parsing `context_text` — the
 /// `[System: ...]` shape belongs to the LLM and must stay free to evolve
 /// without breaking the bubble.
-#[derive(Debug, Clone)]
+/// Receipt payload for BackgroundTask-origin pushes (#111). Derives serde so
+/// the durable notify queue (#111) can round-trip it through its JSON
+/// column.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BgTaskMeta {
     /// Exit 0 — the sole outcome signal the receipt card shows (the exit
     /// code itself stays in the context text, for the model only).
