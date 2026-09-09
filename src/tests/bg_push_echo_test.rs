@@ -234,9 +234,15 @@ fn bg_receipt_card_matches_the_locked_p3f_shape() {
         "body is ONE pre block with the tail verbatim: {rich}"
     );
     assert!(rich.ends_with("</details>"));
-    assert!(!rich.contains("exit"), "no exit code / wording in the bubble");
+    assert!(
+        !rich.contains("exit"),
+        "no exit code / wording in the bubble"
+    );
     // Collapsed by default — never emit <details open> (#85 locked rule).
-    assert!(!rich.contains("<details open"), "collapsible ships collapsed");
+    assert!(
+        !rich.contains("<details open"),
+        "collapsible ships collapsed"
+    );
     // Degraded path stays a classic blockquote carrying the same content.
     assert!(classic.starts_with("<blockquote expandable>"));
     assert!(classic.contains("gh run watch 33117665576"));
@@ -250,9 +256,7 @@ fn bg_receipt_card_failure_uses_the_cross_icon() {
         panic!("chrome card rides the HTML rich wire (#85)");
     };
     assert!(
-        rich.starts_with(
-            "<details><summary><sub>❌ <code>cargo test</code> 🕒 3s</sub></summary>"
-        )
+        rich.starts_with("<details><summary><sub>❌ <code>cargo test</code> 🕒 3s</sub></summary>")
     );
 }
 
@@ -284,7 +288,9 @@ fn bg_receipt_card_fence_outgrows_backtick_runs_in_the_tail() {
         "pre containment ships the tail verbatim, fence-free: {rich}"
     );
     assert!(
-        classic.contains("<pre><code>look:</code></pre>\n\nnested fence\n\n<pre><code>done</code></pre>"),
+        classic.contains(
+            "<pre><code>look:</code></pre>\n\nnested fence\n\n<pre><code>done</code></pre>"
+        ),
         "classic leg: the compose-time arms-race fence does not survive markdown_to_html \
          (parser has no fence length-matching, #94) — inner runs shatter the block; \
          the rich leg's tag-based <pre> above is the real containment: {classic}"
@@ -380,7 +386,10 @@ async fn notify_receipt_card_matches_the_locked_n4_shape() {
     assert!(!rich.contains("```"), "notify body is never fenced");
     assert!(rich.ends_with("</details>"));
     // Collapsed by default — never emit <details open> (#85 locked rule).
-    assert!(!rich.contains("<details open"), "collapsible ships collapsed");
+    assert!(
+        !rich.contains("<details open"),
+        "collapsible ships collapsed"
+    );
     assert!(classic.starts_with("<blockquote expandable>"));
     assert!(classic.contains("Compiler"));
 }
@@ -448,7 +457,10 @@ async fn notify_receipt_card_keeps_tables_native_inside_the_fold() {
     let BubbleWire::Html(rich) = wire else {
         panic!("notify card rides the HTML rich wire (#85)");
     };
-    assert!(rich.contains("<details><summary>"), "wrapper intact: {rich}");
+    assert!(
+        rich.contains("<details><summary>"),
+        "wrapper intact: {rich}"
+    );
     assert!(
         rich.contains("<pre>a | b</pre>") || rich.contains("a | b"),
         "body keeps the rendered table grid: {rich}"

@@ -318,8 +318,7 @@ async fn receipt_cards_route_the_html_wire_issue_85() {
     // empty-body guards must drop the wrapper entirely onto the flat
     // markdown wire (the RICH_MESSAGE_EMPTY class, 3 events that day).
     let (notify_wire, _) =
-        crate::channels::telegram::resume::build_notify_receipt_card("Compiler", "body text")
-            .await;
+        crate::channels::telegram::resume::build_notify_receipt_card("Compiler", "body text").await;
     let BubbleWire::Html(_) = notify_wire else {
         panic!("notify card must ride the HTML rich wire (#85)");
     };
