@@ -200,7 +200,13 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         let prefix = if is_selected { "  > " } else { "    " };
 
         let name = session.title.as_deref().unwrap_or("New Chat");
-        let created = session.created_at.format("%Y-%m-%d %H:%M");
+        // Show LAST ACTIVITY, not creation. The list is ordered by
+        // `updated_at DESC` (`list_sessions`), so printing `created_at` made
+        // the rows look mis-sorted: a session last used minutes ago but opened
+        // in March rendered "2026-03-26" above one created yesterday, and the
+        // order looked arbitrary even though it was correct. The column now
+        // shows the same field the sort uses, so position and timestamp agree.
+        let created = session.updated_at.format("%Y-%m-%d %H:%M");
 
         // Format session total usage (cumulative billing tokens)
         let history_label = format_token_count_with_label(session.token_count, "total");
