@@ -180,6 +180,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — CLI | 28 | `src/tests/cli_test.rs` |
 | Tests — CLIck To Expand | 7 | `src/tests/click_to_expand_test.rs` |
 | Tests — CLIpboard Image Paste | 2 | `src/tests/clipboard_image_paste_test.rs` |
+| Tests — Cli Silent Failure | 5 | `src/tests/cli_silent_failure_test.rs` |
 | Tests — Codex CLI | 10 | `src/tests/codex_cli_test.rs` |
 | Tests — Collapse Build Output | 9 | `src/tests/collapse_build_output_test.rs` |
 | Tests — Collapse Home | 8 | `src/tests/collapse_home_test.rs` |

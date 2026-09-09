@@ -836,6 +836,11 @@ impl Provider for ClaudeCliProvider {
             let mut cache_creation_tokens_billing: u32 = 0;
             let mut cache_read_tokens_billing: u32 = 0;
             let mut result_received = false;
+            // Set when the CLI reports a usage/rate limit. The stream is kept
+            // alive through the pause, but if the process then dies without an
+            // answer the turn must fail as RateLimitExceeded so the fallback
+            // chain runs instead of the turn ending in silence (#1441).
+            let mut rate_limited = false;
             let mut line_count = 0u32;
             // Track block index offset across tool rounds — each CLI turn
             // restarts content block indices at 0, so we offset them to prevent
@@ -1438,12 +1443,40 @@ impl Provider for ClaudeCliProvider {
 
                     CliMessage::RateLimitEvent {} => {
                         tracing::warn!("CLI → rate_limit_event");
-                        // Keep the stream alive during rate-limit pauses
+                        rate_limited = true;
+                        // Keep the stream alive during rate-limit pauses: the
+                        // CLI resumes on its own when the window rolls over.
+                        // The flag only matters if it never comes back.
                         if tx.send(Ok(StreamEvent::Ping)).await.is_err() {
                             break;
                         }
                     }
                 }
+            }
+
+            // A turn that ends with no Result AND no content delivered nothing.
+            // Synthesising EndTurn here (below) marked it a success, and CLI
+            // providers are deliberately exempt from the empty-answer guard in
+            // helpers.rs because they run their own inner loop — so nothing
+            // downstream caught it and the channel got silence (#1441). Failing
+            // the turn is what runs the retry/fallback ladder and puts a line
+            // in front of the user.
+            let produced_content = completed_blocks > 0 || current_block_chars > 0;
+            let mut failure_reported = false;
+            if !result_received && !produced_content {
+                let detail = if rate_limited {
+                    "claude CLI hit its usage limit and exited without producing an answer"
+                } else {
+                    "claude CLI stream ended without a result and without any content"
+                };
+                tracing::warn!("{detail} — surfacing as a provider error (#1441)");
+                let err = if rate_limited {
+                    ProviderError::RateLimitExceeded(detail.to_string())
+                } else {
+                    ProviderError::Internal(detail.to_string())
+                };
+                let _ = tx.send(Err(err)).await;
+                failure_reported = true;
             }
 
             // If the loop ended without a Result message (EOF/error) but we
@@ -1480,7 +1513,7 @@ impl Provider for ClaudeCliProvider {
             match &exit_status {
                 Ok(status) if !status.success() => {
                     tracing::warn!("claude CLI exited with status: {}", status);
-                    if !started {
+                    if !started && !failure_reported {
                         let _ = tx
                             .send(Err(ProviderError::Internal(format!(
                                 "claude CLI exited with {} before producing any output",
@@ -1493,10 +1526,17 @@ impl Provider for ClaudeCliProvider {
                     tracing::error!("Failed to wait on claude CLI: {}", e);
                 }
                 Ok(_) => {
-                    if !started {
+                    if !started && !failure_reported {
+                        // Clean exit, zero events: previously logged and
+                        // nothing else, so the turn ended silently (#1441).
                         tracing::warn!(
                             "claude CLI exited successfully but produced no stream events"
                         );
+                        let _ = tx
+                            .send(Err(ProviderError::Internal(
+                                "claude CLI exited without producing any output".to_string(),
+                            )))
+                            .await;
                     }
                 }
             }
