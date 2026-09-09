@@ -5,7 +5,7 @@
 //! exactly the blocks `rich/table::try_parse` accepts, never mutates code
 //! fences, and is idempotent.
 
-use crate::channels::telegram::rich::ensure_blank_line_before_tables;
+use crate::channels::telegram::rich::table::ensure_blank_line_before_tables;
 
 #[test]
 fn abutting_table_gets_blank_line_inserted() {
