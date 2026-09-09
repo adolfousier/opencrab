@@ -26,7 +26,7 @@ pub(crate) mod mermaid;
 pub(crate) mod parse;
 mod render_html;
 pub(crate) mod render_json;
-mod table;
+pub(crate) mod table;
 
 // One import path per name for every caller (`rich::markdown_to_html`,
 // `rich::should_send_native_rich`, ...). The re-exports are the module's
