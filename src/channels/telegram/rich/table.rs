@@ -30,9 +30,19 @@ pub(crate) fn reflow_collapsed_tables(text: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     for line in text.lines() {
         if is_collapsed_table_line(line) {
+            // #132: a prose label before the first pipe (e.g. "Состояние
+            // данных: | Что | Статус |...") would stay glued to the split
+            // header row — unparseable as a table AND rendered inside the
+            // header cell. Detach everything before the first '|' onto its
+            // own line so the table block starts clean.
+            let pipe = line.find('|').unwrap_or(0);
+            let (prefix, rest) = line.split_at(pipe);
+            if !prefix.trim().is_empty() {
+                out.push(prefix.trim_end().to_string());
+            }
             out.push(
                 COLLAPSED_ROW_BOUNDARY
-                    .replace_all(line, "|\n|")
+                    .replace_all(rest, "|\n|")
                     .into_owned(),
             );
         } else {

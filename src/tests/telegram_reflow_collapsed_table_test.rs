@@ -86,6 +86,24 @@ fn non_table_lines_around_a_collapsed_table_survive() {
     assert!(contains_table(&out));
 }
 
+// #132: a prose label GLUED to a collapsed table (no newline before the first
+// pipe) must be detached onto its own line — otherwise it stays inside the
+// header row, the block never parses as a table, and the label renders as a
+// table cell. Exact shape of the MIIDAS cron card.
+#[test]
+fn glued_label_is_detached_from_collapsed_table() {
+    let input = "Состояние данных: | Что | Статус | |---|---| | Последний свежий фид | 02.09 |";
+    let out = reflow_collapsed_tables(input);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Состояние данных:", "label on its own line: {out:?}");
+    assert_eq!(lines[1], "| Что | Статус |", "header clean: {out:?}");
+    assert!(contains_table(&out), "detached block must parse as a table: {out:?}");
+    // Pure-table collapsed line (no label) must NOT grow an empty first line.
+    let no_label = "| A | B | |---|---| | 1 | 2 |";
+    let out2 = reflow_collapsed_tables(no_label);
+    assert!(out2.starts_with("| A | B |"), "no phantom leading line: {out2:?}");
+}
+
 // #132: normalize_tables is the single canonical entry for the rich plane —
 // gate (detect.rs) and renderer (rich/api.rs) both call it, so a collapsed
 // table is detected AND rendered. Regression: the MIIDAS cron-card shape
