@@ -562,30 +562,37 @@ impl ChannelMessageRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 let mut stmt = conn.prepare_cached(
-                    "SELECT m.thread_id, \
-                            m.topic_name, \
-                            c.message_count, \
-                            c.last_message_at \
-                     FROM channel_messages m \
-                     JOIN (\
+                    // Every topic row: thread stats from the aggregate,
+                    // name from a LEFT JOIN pick so threads whose rows
+                    // carry NO name at all still surface (with name NULL)
+                    // — a thread_id is sendable even when never named (#143).
+                    "SELECT t.thread_id, \
+                            np.topic_name, \
+                            t.message_count, \
+                            t.last_message_at \
+                     FROM (\
                          SELECT thread_id, COUNT(*) as message_count, \
                                 MAX(created_at) as last_message_at \
                          FROM channel_messages \
                          WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id IS NOT NULL \
                          GROUP BY thread_id\
-                     ) c ON m.thread_id = c.thread_id \
-                     WHERE m.channel = ?1 AND m.channel_chat_id = ?2 \
-                       AND m.topic_name IS NOT NULL AND m.topic_name != '' \
-                       AND m.id = (\
-                           SELECT m2.id FROM channel_messages m2 \
-                           WHERE m2.channel = ?1 AND m2.channel_chat_id = ?2 \
-                             AND m2.thread_id = m.thread_id \
-                             AND m2.topic_name IS NOT NULL AND m2.topic_name != ''\
-                             ORDER BY (m2.message_type = 'topic_edited') DESC, \
-                                      m2.created_at DESC, m2.id DESC \
-                             LIMIT 1\
-                       ) \
-                     ORDER BY c.last_message_at DESC",
+                     ) t \
+                     LEFT JOIN (\
+                         SELECT m.thread_id, m.topic_name \
+                         FROM channel_messages m \
+                         WHERE m.channel = ?1 AND m.channel_chat_id = ?2 \
+                           AND m.topic_name IS NOT NULL AND m.topic_name != '' \
+                           AND m.id = (\
+                               SELECT m2.id FROM channel_messages m2 \
+                               WHERE m2.channel = ?1 AND m2.channel_chat_id = ?2 \
+                                 AND m2.thread_id = m.thread_id \
+                                 AND m2.topic_name IS NOT NULL AND m2.topic_name != ''\
+                                 ORDER BY (m2.message_type = 'topic_edited') DESC, \
+                                          m2.created_at DESC, m2.id DESC \
+                                 LIMIT 1\
+                           ) \
+                     ) np ON np.thread_id = t.thread_id \
+                     ORDER BY t.last_message_at DESC",
                 )?;
                 let rows = stmt.query_map(params![ch, cid], |row| {
                     Ok(TopicSummary {

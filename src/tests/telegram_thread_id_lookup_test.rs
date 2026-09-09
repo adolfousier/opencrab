@@ -227,10 +227,10 @@ async fn latest_thread_id_returns_none_for_missing_chat_or_uninit_pool() {
 }
 
 /// Minimal row builder for the #143 rename-precedence pins: 4 args =
-/// (chat_id, platform_message_id, thread_id, topic_name). message_type
-/// is always "text"; the row kind under test is carried by the id
-/// prefix (m* = regular message re-teaching a creation name,
-/// e* = topic_edited rename row).
+/// (chat_id, platform_message_id, thread_id, topic_name). Rows with an
+/// e* id prefix carry message_type "topic_edited" (what the rename
+/// handler persists); all others are plain "text" messages re-teaching
+/// a creation name via their reply target.
 #[allow(dead_code)]
 fn msg(
     chat_id: &str,
@@ -238,7 +238,7 @@ fn msg(
     thread: Option<&str>,
     topic: Option<&str>,
 ) -> ChannelMessage {
-    ChannelMessage::new(
+    let mut row = ChannelMessage::new(
         "telegram".into(),
         chat_id.into(),
         Some("Test Group".into()),
@@ -248,7 +248,11 @@ fn msg(
         "text".into(),
         Some(platform_id.into()),
     )
-    .with_thread(thread.map(str::to_string), topic.map(str::to_string))
+    .with_thread(thread.map(str::to_string), topic.map(str::to_string));
+    if platform_id.starts_with('e') {
+        row.message_type = "topic_edited".into();
+    }
+    row
 }
 
 #[tokio::test]
