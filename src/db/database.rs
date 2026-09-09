@@ -347,6 +347,15 @@ impl Database {
                         conn.pragma_update(None, "user_version", 33i64)?;
                     }
 
+                    // A migration that ALREADY ran under an older list order
+                    // must be stamped past BEFORE to_latest, not healed after:
+                    // replaying its ALTER fails the whole startup, so there is
+                    // no "after" (#1401).
+                    crate::db::migration_heal::skip_applied_thread_id_migration(
+                        conn,
+                        user_version,
+                    )?;
+
                     migrations.to_latest(conn)?;
 
                     // Schema-checked heals run AFTER the stamp-driven pass: a

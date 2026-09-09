@@ -5,7 +5,7 @@ mod dialogs;
 pub(crate) mod dropped_path;
 pub(crate) mod duplicate_submit;
 pub(crate) mod input;
-mod messaging;
+pub(crate) mod messaging;
 pub mod mission_control;
 pub mod profiles_dialog;
 pub(crate) mod reasoning_split;

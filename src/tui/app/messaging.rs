@@ -3282,16 +3282,17 @@ impl App {
     /// Finds the last assistant message (created by tool_loop at start) and appends
     /// any streaming text + tool call markers that are currently displayed on screen.
     pub(crate) async fn persist_streaming_state(&self, session_id: Uuid) {
-        // Build content from what's currently visible
+        // Reconstruct the current turn's assistant text that lives only in
+        // `self.messages`. For HTTP/streaming providers the real-time live
+        // persister (#269) is CLI-only, so text promoted out of
+        // `streaming_response` into the message list is never written to the
+        // DB until turn-end; a cancel would lose it entirely (#1468).
+        let memory_turn_text = collect_turn_assistant_text(&self.messages);
+
+        // Build the live tail: in-flight tool group + not-yet-promoted text.
         let mut content = String::new();
 
-        // 1. Collect any intermediate text messages that were already added to self.messages
-        //    during this response cycle (IntermediateText events create DisplayMessages).
-        //    These may not have been persisted if the tool loop was aborted before it could.
-        //    However, the tool loop does persist text per-iteration, so these are likely
-        //    already in DB. We focus on what's NOT yet persisted:
-
-        // 2. Active tool group (tool calls shown on screen but not yet flushed to a message)
+        // Active tool group (tool calls shown on screen but not yet flushed to a message)
         if let Some(ref group) = self.active_tool_group {
             let entries: Vec<serde_json::Value> = group
                 .calls
@@ -3312,7 +3313,7 @@ impl App {
             }
         }
 
-        // 3. Streaming response text (currently being typed out, not yet committed)
+        // Streaming response text (currently being typed out, not yet committed)
         if let Some(ref text) = self.streaming_response
             && !text.trim().is_empty()
         {
@@ -3320,32 +3321,65 @@ impl App {
             content.push_str("\n\n");
         }
 
-        if content.is_empty() {
+        // Nothing visible at all: no in-memory turn text and no live tail.
+        if memory_turn_text.trim().is_empty() && content.trim().is_empty() {
             return;
         }
 
-        // Find the last assistant message in this session and append
+        // Find the last assistant message in this session and persist what's missing.
         match self.message_service.get_last_message(session_id).await {
             Ok(Some(msg)) if msg.role == "assistant" => {
-                if let Err(e) = self.message_service.append_content(msg.id, &content).await {
-                    tracing::error!("Failed to persist streaming state on cancel: {}", e);
+                // If the DB row is still empty (the non-CLI placeholder the live
+                // persister never filled), write the FULL visible turn so the
+                // completion survives the cancel. If the row already has content
+                // (CLI live-persister wrote it as it streamed), append only the
+                // live tail, exactly as before, to avoid duplicating what is
+                // already durable.
+                let db_empty = msg.content.trim().is_empty();
+                let to_write = if db_empty && !memory_turn_text.trim().is_empty() {
+                    let mut full = memory_turn_text.clone();
+                    if !content.trim().is_empty() {
+                        full.push_str("\n\n");
+                        full.push_str(&content);
+                    }
+                    full
+                } else {
+                    content.clone()
+                };
+                if to_write.trim().is_empty() {
+                    return;
                 }
-                tracing::info!(
-                    "Persisted {} chars of streaming state to DB on cancel",
-                    content.len()
-                );
+                if let Err(e) = self.message_service.append_content(msg.id, &to_write).await {
+                    tracing::error!("Failed to persist streaming state on cancel: {}", e);
+                } else {
+                    tracing::info!(
+                        "Persisted {} chars of streaming state to DB on cancel (db_empty={})",
+                        to_write.len(),
+                        db_empty
+                    );
+                }
             }
             Ok(_) => {
-                // Last message isn't assistant — create one to hold the partial content
+                // Last message isn't assistant — create one to hold the visible turn.
+                let mut full = memory_turn_text.clone();
+                if !content.trim().is_empty() {
+                    if !full.is_empty() {
+                        full.push_str("\n\n");
+                    }
+                    full.push_str(&content);
+                }
+                if full.trim().is_empty() {
+                    return;
+                }
                 match self
                     .message_service
-                    .create_message(session_id, "assistant".to_string(), content.clone())
+                    .create_message(session_id, "assistant".to_string(), full.clone())
                     .await
                 {
                     Ok(_) => {
                         tracing::info!(
                             "Created new assistant message with {} chars of streaming state on cancel",
-                            content.len()
+                            full.len()
                         );
                     }
                     Err(e) => {
@@ -3361,6 +3395,34 @@ impl App {
             }
         }
     }
+}
+
+/// Reconstruct the assistant text of the in-flight turn from the in-memory
+/// message list: every `assistant` DisplayMessage after the last `user`
+/// message, joined in order. For HTTP/streaming providers the real-time live
+/// persister (#269) is CLI-only, so completion text promoted out of
+/// `streaming_response` into `self.messages` is never written to the DB until
+/// turn-end. On cancel that text would be lost entirely (the placeholder row
+/// stays empty, then `load_session` rebuilds the view from it and wipes the
+/// in-memory copy), so `persist_streaming_state` reconstructs it from here and
+/// writes it before the task is killed (#1468). Pure over the slice so it is
+/// unit-testable without a live terminal.
+pub(crate) fn collect_turn_assistant_text(messages: &[DisplayMessage]) -> String {
+    let start = messages
+        .iter()
+        .rposition(|m| m.role == "user")
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let mut out = String::new();
+    for m in &messages[start..] {
+        if m.role == "assistant" && !m.content.trim().is_empty() {
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(&m.content);
+        }
+    }
+    out
 }
 
 /// Run the evolve tool directly (no LLM involvement) and pipe progress
