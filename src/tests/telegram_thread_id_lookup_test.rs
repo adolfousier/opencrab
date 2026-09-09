@@ -226,6 +226,31 @@ async fn latest_thread_id_returns_none_for_missing_chat_or_uninit_pool() {
     assert_eq!(result, None);
 }
 
+/// Minimal row builder for the #143 rename-precedence pins: 4 args =
+/// (chat_id, platform_message_id, thread_id, topic_name). message_type
+/// is always "text"; the row kind under test is carried by the id
+/// prefix (m* = regular message re-teaching a creation name,
+/// e* = topic_edited rename row).
+#[allow(dead_code)]
+fn msg(
+    chat_id: &str,
+    platform_id: &str,
+    thread: Option<&str>,
+    topic: Option<&str>,
+) -> ChannelMessage {
+    ChannelMessage::new(
+        "telegram".into(),
+        chat_id.into(),
+        Some("Test Group".into()),
+        "u1".into(),
+        "tester".into(),
+        format!("content {platform_id}"),
+        "text".into(),
+        Some(platform_id.into()),
+    )
+    .with_thread(thread.map(str::to_string), topic.map(str::to_string))
+}
+
 #[tokio::test]
 async fn latest_topic_name_rename_outranks_creation_name() {
     let db = Database::connect_in_memory().await.unwrap();
