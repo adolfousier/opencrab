@@ -15,7 +15,7 @@ fn msg(
     thread_id: Option<&str>,
     topic_name: Option<&str>,
 ) -> ChannelMessage {
-    ChannelMessage::new(
+    let mut row = ChannelMessage::new(
         "telegram".into(),
         chat_id.into(),
         Some("Test Group".into()),
@@ -28,7 +28,13 @@ fn msg(
     .with_thread(
         thread_id.map(str::to_string),
         topic_name.map(str::to_string),
-    )
+    );
+    // e* ids are rename rows — the handler persists message_type
+    // "topic_edited" (forum_topic_edited), so the pin mirrors production.
+    if msg_id.starts_with('e') {
+        row.message_type = "topic_edited".into();
+    }
+    row
 }
 
 #[tokio::test]
