@@ -72,7 +72,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Bash Retry Loop | 11 | `src/tests/bash_retry_loop_test.rs` |
 | Tests — Bash Ssh Detection | 10 | `src/tests/bash_ssh_detection_test.rs` |
 | Tests — Bash Toml Blocklist | 11 | `src/tests/bash_toml_blocklist_test.rs` |
-| Tests — Bg Push Echo | 29 | `src/tests/bg_push_echo_test.rs` |
+| Tests — Bg Push Echo | 30 | `src/tests/bg_push_echo_test.rs` |
 | Tests — Bg Resume | 3 | `src/tests/bg_resume_test.rs` |
 | Tests — Boot Report | 5 | `src/tests/boot_report_test.rs` |
 | Tests — Bot Owner Placeholder Seed | 3 | `src/tests/bot_owner_placeholder_seed_test.rs` |
@@ -665,7 +665,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Folded Reclaim Suppression | 6 | `src/tests/telegram_folded_reclaim_suppression_test.rs` |
 | Tests — Telegram Followup Pick | 25 | `src/tests/telegram_followup_pick_test.rs` |
 | Tests — Telegram General Topic Delivery | 11 | `src/tests/telegram_general_topic_delivery_test.rs` |
-| Tests — Telegram Group History Capture | 3 | `src/tests/telegram_group_history_capture_test.rs` |
+| Tests — Telegram Group History Capture | 5 | `src/tests/telegram_group_history_capture_test.rs` |
 | Tests — Telegram Group Migration | 6 | `src/tests/telegram_group_migration_test.rs` |
 | Tests — Telegram Group Name | 12 | `src/tests/telegram_group_name_test.rs` |
 | Tests — Telegram Group Sender Label | 3 | `src/tests/telegram_group_sender_label_test.rs` |
@@ -696,7 +696,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Reaction Prompt | 11 | `src/tests/telegram_reaction_prompt_test.rs` |
 | Tests — Telegram Reaction Queue | 7 | `src/tests/telegram_reaction_queue_test.rs` |
 | Tests — Telegram Reaction Routing | 7 | `src/tests/telegram_reaction_routing_test.rs` |
-| Tests — Telegram Reflow Collapsed Table | 6 | `src/tests/telegram_reflow_collapsed_table_test.rs` |
+| Tests — Telegram Reflow Collapsed Table | 9 | `src/tests/telegram_reflow_collapsed_table_test.rs` |
 | Tests — Telegram Reply Context Recovery | 8 | `src/tests/telegram_reply_context_recovery_test.rs` |
 | Tests — Telegram Resume Labels | 13 | `src/tests/telegram_resume_labels_test.rs` |
 | Tests — Telegram Resume | 65 | `src/tests/telegram_resume_test.rs` |
@@ -724,13 +724,14 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Telegram Stream Loop Resume | 1 | `src/tests/telegram_stream_loop_resume_test.rs` |
 | Tests — Telegram Suggest Merge | 12 | `src/tests/telegram_suggest_merge_test.rs` |
 | Tests — Telegram System Chrome Reclaim | 7 | `src/tests/telegram_system_chrome_reclaim_test.rs` |
+| Tests — Telegram Table Blank Line | 6 | `src/tests/telegram_table_blank_line_test.rs` |
 | Tests — Telegram Table Render | 2 | `src/tests/telegram_table_render_test.rs` |
 | Tests — Telegram Target Resolver | 9 | `src/tests/telegram_target_resolver_test.rs` |
 | Tests — Telegram Telemetry | 3 | `src/tests/telegram_telemetry_test.rs` |
-| Tests — Telegram Thread Id Lookup | 8 | `src/tests/telegram_thread_id_lookup_test.rs` |
+| Tests — Telegram Thread Id Lookup | 10 | `src/tests/telegram_thread_id_lookup_test.rs` |
 | Tests — Telegram Token Redaction | 6 | `src/tests/telegram_token_redaction_test.rs` |
 | Tests — Telegram Tool Group | 65 | `src/tests/telegram_tool_group_test.rs` |
-| Tests — Telegram Topic Listing | 6 | `src/tests/telegram_topic_listing_test.rs` |
+| Tests — Telegram Topic Listing | 8 | `src/tests/telegram_topic_listing_test.rs` |
 | Tests — Telegram Topic Routing | 3 | `src/tests/telegram_topic_routing_test.rs` |
 | Tests — Telegram Userbot Boundary | 2 | `src/tests/telegram_userbot_boundary_test.rs` |
 | Tests — Telegram Userbot Config | 6 | `src/tests/telegram_userbot_config_test.rs` |
