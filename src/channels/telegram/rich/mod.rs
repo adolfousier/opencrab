@@ -26,7 +26,7 @@ pub(crate) mod mermaid;
 pub(crate) mod parse;
 mod render_html;
 pub(crate) mod render_json;
-mod table;
+pub(crate) mod table;
 
 // One import path per name for every caller (`rich::markdown_to_html`,
 // `rich::should_send_native_rich`, ...). The re-exports are the module's
@@ -44,4 +44,4 @@ pub(crate) use detect::{
 pub(crate) use render_html::{
     markdown_to_html, markdown_to_html_mermaid, markdown_to_html_mermaid_p, markdown_to_html_p,
 };
-pub(crate) use table::reflow_collapsed_tables;
+pub(crate) use table::{normalize_tables, reflow_collapsed_tables};

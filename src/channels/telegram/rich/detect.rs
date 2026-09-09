@@ -22,8 +22,16 @@ pub(crate) fn prefers_rich_render(text: &str) -> bool {
 }
 
 /// Whether `text` contains a GitHub-flavored pipe table.
+///
+/// #132: the scan runs on the NORMALIZED text — collapsed one-line tables are
+/// reflowed first, exactly what the rich renderer receives (rich/api.rs calls
+/// the same `normalize_tables` entry). Before this, the gate read raw text
+/// while the renderer read normalized text: a collapsed table was invisible
+/// here (still rich, via other structure) and then rendered as raw pipes —
+/// the MIIDAS cron-card defect. Gate and renderer can no longer disagree.
 pub(crate) fn contains_table(text: &str) -> bool {
-    let lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let normalized = super::normalize_tables(text);
+    let lines: Vec<String> = normalized.lines().map(str::to_string).collect();
     (0..lines.len()).any(|i| table::try_parse(&lines, i).is_some())
 }
 
