@@ -127,6 +127,9 @@ pub(crate) fn render_inline(inline: &Inline) -> Value {
         Inline::Text(text) => json!({ "type": "text", "text": text }),
         Inline::Bold(content) => json!({ "type": "bold", "content": render_inlines(content) }),
         Inline::Italic(content) => json!({ "type": "italic", "content": render_inlines(content) }),
+        Inline::Underline(content) => {
+            json!({ "type": "underline", "content": render_inlines(content) })
+        }
         Inline::Strike(content) => json!({
             "type": "strikethrough",
             "content": render_inlines(content),

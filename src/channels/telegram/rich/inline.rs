@@ -8,6 +8,22 @@
 
 use super::ast::Inline;
 
+/// Factory producing the [`Inline`] styling node for a matched HTML tag.
+type StyleNodeFactory = fn(Vec<Inline>) -> Inline;
+
+/// Standard HTML styling tags mapped onto [`Inline`] variants by
+/// [`parse_inlines`] (#106). Order matters only for overlaps — none exist
+/// between these tags, so table order is read order.
+const HTML_STYLE_TAGS: &[(&str, StyleNodeFactory)] = &[
+    ("b", Inline::Bold),
+    ("strong", Inline::Bold),
+    ("i", Inline::Italic),
+    ("em", Inline::Italic),
+    ("u", Inline::Underline),
+    ("s", Inline::Strike),
+    ("del", Inline::Strike),
+];
+
 /// Parse a single line / cell of markdown into inline spans.
 pub(super) fn parse_inlines(input: &str) -> Vec<Inline> {
     let mut out = Vec::new();
@@ -57,6 +73,18 @@ pub(super) fn parse_inlines(input: &str) -> Vec<Inline> {
         // `<sub>` small text, emitted by the flow and result cards for their
         // summary lines. Recognised here so the HTML renderer can drop the
         // tag instead of escaping it into visible `&lt;sub&gt;`.
+        // Standard HTML styling tags — `<b>/<strong>`, `<i>/<em>`, `<u>`,
+        // `<s>/<del>` — mapped onto the markdown-styling variants so any
+        // producer of classic Telegram HTML (card builders, degrade paths,
+        // relayed markup) renders real styling instead of escaping into
+        // visible `&lt;b&gt;` text (#106). Well-formed pairs only; an
+        // unmatched opener stays literal, same law as `<sub>` above.
+        if let Some((used, node)) = try_html_style_tag(rest) {
+            flush(&mut text, &mut out);
+            out.push(node);
+            i += used;
+            continue;
+        }
         if let Some(span) = tag_paired(rest, "sub") {
             flush(&mut text, &mut out);
             out.push(Inline::Sub(parse_inlines(span)));
@@ -161,6 +189,19 @@ fn tag_paired<'a>(rest: &'a str, tag: &str) -> Option<&'a str> {
     Some(&after[..close])
 }
 
+/// Try each standard HTML styling tag (see [`HTML_STYLE_TAGS`]) at the start
+/// of `rest`. Returns `(bytes_consumed, parsed_node)` on the first
+/// well-formed pair, `None` otherwise (#106).
+fn try_html_style_tag(rest: &str) -> Option<(usize, Inline)> {
+    for (tag, make) in HTML_STYLE_TAGS {
+        if let Some(span) = tag_paired(rest, tag) {
+            let used = span.len() + tag.len() * 2 + 5; // <t>SPAN</t>
+            return Some((used, make(parse_inlines(span))));
+        }
+    }
+    None
+}
+
 /// Parse `[text](url)` at the start of `rest`. Returns the link text, the url,
 /// and the total bytes consumed.
 fn parse_link(rest: &str) -> Option<(&str, &str, usize)> {
@@ -172,4 +213,80 @@ fn parse_link(rest: &str) -> Option<(&str, &str, usize)> {
         return None;
     }
     Some((text, url, mid + 2 + end + 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kinds(input: &str) -> Vec<String> {
+        parse_inlines(input)
+            .iter()
+            .map(|i| match i {
+                Inline::Text(_) => "text".into(),
+                Inline::Bold(_) => "bold".into(),
+                Inline::Italic(_) => "italic".into(),
+                Inline::Underline(_) => "underline".into(),
+                Inline::Strike(_) => "strike".into(),
+                Inline::Sub(_) => "sub".into(),
+                Inline::Code(_) => "code".into(),
+                Inline::Math(_) => "math".into(),
+                Inline::Link { .. } => "link".into(),
+            })
+            .collect()
+    }
+
+    fn text_of(input: &str) -> String {
+        fn flatten(inlines: &[Inline], out: &mut String) {
+            for i in inlines {
+                match i {
+                    Inline::Text(t) | Inline::Code(t) | Inline::Math(t) => out.push_str(t),
+                    Inline::Bold(c)
+                    | Inline::Italic(c)
+                    | Inline::Underline(c)
+                    | Inline::Strike(c)
+                    | Inline::Sub(c) => flatten(c, out),
+                    Inline::Link { content, .. } => flatten(content, out),
+                }
+            }
+        }
+        let mut out = String::new();
+        flatten(&parse_inlines(input), &mut out);
+        out
+    }
+
+    #[test]
+    fn html_style_tags_map_to_inline_variants() {
+        assert_eq!(kinds("<b>hi</b>"), vec!["bold"]);
+        assert_eq!(kinds("<strong>hi</strong>"), vec!["bold"]);
+        assert_eq!(kinds("<i>hi</i>"), vec!["italic"]);
+        assert_eq!(kinds("<em>hi</em>"), vec!["italic"]);
+        assert_eq!(kinds("<u>hi</u>"), vec!["underline"]);
+        assert_eq!(kinds("<s>hi</s>"), vec!["strike"]);
+        assert_eq!(kinds("<del>hi</del>"), vec!["strike"]);
+    }
+
+    #[test]
+    fn html_tags_recurse_and_mix_with_markdown() {
+        assert_eq!(kinds("<b>a *b* c</b>"), vec!["bold"]);
+        assert_eq!(kinds("x<b>y</b>z"), vec!["text", "bold", "text"]);
+        assert_eq!(kinds("**a** <i>b</i>"), vec!["bold", "text", "italic"]);
+    }
+
+    #[test]
+    fn unmatched_openers_stay_literal() {
+        // No closer → whole thing is literal text, escaped downstream.
+        assert_eq!(kinds("<b>unclosed"), vec!["text"]);
+        assert_eq!(text_of("<b>unclosed"), "<b>unclosed");
+        // Empty body → tag_paired returns None → whole string falls through
+        // to the text accumulator as ONE literal span (same law as `**` pairs).
+        assert_eq!(kinds("<b></b>"), vec!["text"]);
+    }
+
+    #[test]
+    fn summary_b_renders_as_bold_not_escape() {
+        // The #106 live shape: `<b>▸ summary</b>` from a degraded Details.
+        assert_eq!(kinds("<b>Summary text</b>"), vec!["bold"]);
+        assert_eq!(text_of("<b>Summary text</b>"), "Summary text");
+    }
 }

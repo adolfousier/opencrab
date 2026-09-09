@@ -311,6 +311,7 @@ fn render_inline(inline: &Inline, s: &mut String, wrap_p: bool) {
         }
         Inline::Bold(c) => wrap(s, "<b>", c, "</b>", wrap_p),
         Inline::Italic(c) => wrap(s, "<i>", c, "</i>", wrap_p),
+        Inline::Underline(c) => wrap(s, "<u>", c, "</u>", wrap_p),
         Inline::Strike(c) => wrap(s, "<s>", c, "</s>", wrap_p),
         // Classic Telegram HTML has no <sub>; keep the content and drop the
         // tag so a downgraded rich message never shows its own markup.
@@ -359,7 +360,8 @@ fn plain(inlines: &[Inline]) -> String {
 fn plain_one(inline: &Inline, s: &mut String) {
     match inline {
         Inline::Text(t) | Inline::Code(t) | Inline::Math(t) => s.push_str(t),
-        Inline::Bold(c) | Inline::Italic(c) | Inline::Strike(c) | Inline::Sub(c) => {
+        Inline::Bold(c) | Inline::Italic(c) | Inline::Underline(c) | Inline::Strike(c)
+        | Inline::Sub(c) => {
             for x in c {
                 plain_one(x, s);
             }
