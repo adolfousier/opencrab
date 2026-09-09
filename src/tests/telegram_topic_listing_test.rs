@@ -190,3 +190,60 @@ async fn message_count_per_topic_is_correct() {
     assert_eq!(by_id.get("17"), Some(&3));
     assert_eq!(by_id.get("22"), Some(&1));
 }
+
+#[tokio::test]
+async fn topics_for_chat_serves_renamed_topic_not_creation_name() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let repo = ChannelMessageRepository::new(db.pool().clone());
+
+    // Topic 17 created as "announcements"; later renamed to "general".
+    // Regular messages keep re-teaching the CREATION name via their
+    // reply-target, so the newest NON-EDIT row still says the old name.
+    // topics_for_chat must serve "general" — the rename is the freshest
+    // user intent, not MAX() (alphabetical) nor the newest learned name.
+    repo.insert(&msg("rc", "m1", Some("17"), Some("announcements")))
+        .await
+        .unwrap();
+    repo.insert(&msg("rc", "m2", Some("17"), Some("announcements")))
+        .await
+        .unwrap();
+    repo.insert(&msg("rc", "e1", Some("17"), Some("general")))
+        .await
+        .unwrap();
+    // Post-rename regular message: reply-target re-teaches the old name.
+    repo.insert(&msg("rc", "m3", Some("17"), Some("announcements")))
+        .await
+        .unwrap();
+
+    let topics = repo.topics_for_chat("telegram", "rc").await.unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        topics[0].topic_name.as_deref(),
+        Some("general"),
+        "rename must outrank the re-taught creation name"
+    );
+}
+
+#[tokio::test]
+async fn topics_for_chat_message_count_includes_all_rows_after_rename() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let repo = ChannelMessageRepository::new(db.pool().clone());
+
+    for i in 1..=2 {
+        repo.insert(&msg("rc2", &format!("m{i}"), Some("9"), Some("old")))
+            .await
+            .unwrap();
+    }
+    repo.insert(&msg("rc2", "e1", Some("9"), Some("new")))
+        .await
+        .unwrap();
+
+    let topics = repo.topics_for_chat("telegram", "rc2").await.unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        topics[0].message_count, 3,
+        "JOIN must not drop rows from the count"
+    );
+}

@@ -325,11 +325,19 @@ impl ChannelMessageRepository {
             .await
             .context("Failed to get connection")?
             .interact(move |conn| {
+                // Rename rows (`topic_edited`, #143) outrank creation-name
+                // rows: regular messages re-teach the ORIGINAL creation name
+                // via their reply target forever, so "newest non-null name"
+                // alone re-stales after every rename. A rename is the
+                // freshest user intent — if one exists for the thread, its
+                // newest instance wins outright; only nameless-of-edit
+                // threads fall back to the newest created/learned name.
                 conn.query_row(
                     "SELECT topic_name FROM channel_messages \
                          WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id = ?3 \
                          AND topic_name IS NOT NULL AND topic_name != '' \
-                         ORDER BY created_at DESC LIMIT 1",
+                         ORDER BY (message_type = 'topic_edited') DESC, created_at DESC \
+                         LIMIT 1",
                     params![ch, cid, tid],
                     |row| row.get::<_, String>(0),
                 )
@@ -527,14 +535,18 @@ impl ChannelMessageRepository {
     /// Return all distinct forum topics seen in a chat — the
     /// (thread_id, topic_name) pairs captured from incoming messages.
     ///
-    /// The bot only learns topic names from two sources:
+    /// The bot learns topic names from three sources:
     ///
     /// - `forum_topic_created` service messages it witnesses
     /// - the `reply_to_message().forum_topic_created()` chain that
     ///   Telegram includes on every regular topic message
+    /// - `forum_topic_edited` renames, persisted as `topic_edited`
+    ///   rows by the handler (#143)
     ///
-    /// So this list only contains topics the bot has seen activity
-    /// in. Telegram's Bot API exposes no `listForumTopics` endpoint
+    /// The name reported per topic is the one from the NEWEST row that
+    /// carries a non-null name — not an alphabetical `MAX()`, which
+    /// could serve a stale or arbitrarily-ordered name after a rename.
+    /// Telegram's Bot API exposes no `listForumTopics` endpoint
     /// — there is no way to enumerate all topics in a supergroup,
     /// only learn them passively as messages arrive.
     ///
@@ -550,14 +562,27 @@ impl ChannelMessageRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 let mut stmt = conn.prepare_cached(
-                    "SELECT thread_id, \
-                            MAX(topic_name) as topic_name, \
-                            COUNT(*) as message_count, \
-                            MAX(created_at) as last_message_at \
-                     FROM channel_messages \
-                     WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id IS NOT NULL \
-                     GROUP BY thread_id \
-                     ORDER BY last_message_at DESC",
+                    "SELECT m.thread_id, \
+                            m.topic_name, \
+                            c.message_count, \
+                            c.last_message_at \
+                     FROM channel_messages m \
+                     JOIN (\
+                         SELECT thread_id, COUNT(*) as message_count, \
+                                MAX(created_at) as last_message_at \
+                         FROM channel_messages \
+                         WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id IS NOT NULL \
+                         GROUP BY thread_id\
+                     ) c ON m.thread_id = c.thread_id \
+                     WHERE m.channel = ?1 AND m.channel_chat_id = ?2 \
+                       AND m.topic_name IS NOT NULL AND m.topic_name != '' \
+                       AND m.created_at = (\
+                           SELECT MAX(m2.created_at) FROM channel_messages m2 \
+                           WHERE m2.channel = ?1 AND m2.channel_chat_id = ?2 \
+                             AND m2.thread_id = m.thread_id \
+                             AND m2.topic_name IS NOT NULL AND m2.topic_name != ''\
+                       ) \
+                     ORDER BY c.last_message_at DESC",
                 )?;
                 let rows = stmt.query_map(params![ch, cid], |row| {
                     Ok(TopicSummary {
