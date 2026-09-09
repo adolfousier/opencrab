@@ -245,3 +245,104 @@ fn the_link_runs_outside_the_auto_title_future() {
         "the project link must not sit inside the spawned auto-title future"
     );
 }
+
+// ── linking must never restamp recency (#1460) ──────────────────────────────
+//
+// The first boot after the backfill shipped linked every session whose
+// working directory named a project — and `assign_session` stamped
+// `updated_at = now` on each row, so 60 sessions, including months-dead
+// cron tombstones and zero-message "recovered" rows, all carried the same
+// boot-second stamp and floated above genuinely recent sessions in
+// `/sessions`. Project membership is derived metadata, not conversation
+// activity: these tests pin that neither assign, unassign, nor the
+// startup sweep touch `updated_at`. Same lesson the scope-all model
+// writes learned in #1367.
+
+/// Backdate `updated_at` to deterministic, staggered values via direct SQL,
+/// so a shared bulk restamp cannot pass by accident. The connection handle
+/// is scoped per iteration — the in-memory pool is single-conn, and holding
+/// it across service calls deadlocks (see Database::connect_in_memory).
+async fn backdate_updated_at(svc: &SessionService, stamps: &[(uuid::Uuid, i64)]) {
+    use rusqlite::params;
+    for (id, stamp) in stamps {
+        let id = id.to_string();
+        let stamp = *stamp;
+        let conn = svc.pool().get().await.expect("conn");
+        conn.interact(move |c| {
+            c.execute(
+                "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+                params![stamp, id],
+            )
+        })
+        .await
+        .expect("interact")
+        .expect("backdate updated_at");
+    }
+}
+
+#[tokio::test]
+async fn assign_and_unassign_never_stamp_updated_at() {
+    let (project_svc, session_svc) = services().await;
+    let project = project_svc
+        .create_project("Alpha".to_string(), None)
+        .await
+        .unwrap();
+    let session = session_svc.create_session(None).await.unwrap();
+    let stamp = 1_700_000_000i64;
+    backdate_updated_at(&session_svc, &[(session.id, stamp)]).await;
+
+    project_svc
+        .assign_session(session.id, project.id)
+        .await
+        .unwrap();
+    let row = session_svc.get_session(session.id).await.unwrap().unwrap();
+    assert_eq!(row.project_id, Some(project.id), "assignment must land");
+    assert_eq!(
+        row.updated_at.timestamp(),
+        stamp,
+        "assign_session is a metadata write: updated_at must survive byte-identical (#1460)"
+    );
+
+    project_svc.unassign_session(session.id).await.unwrap();
+    let row = session_svc.get_session(session.id).await.unwrap().unwrap();
+    assert_eq!(row.project_id, None, "unassignment must land");
+    assert_eq!(
+        row.updated_at.timestamp(),
+        stamp,
+        "unassign_session must not restamp updated_at either (#1460)"
+    );
+}
+
+#[tokio::test]
+async fn the_backfill_links_without_restamping_recency() {
+    let (project_svc, session_svc) = services().await;
+    let project = project_svc
+        .create_project("Alpha".to_string(), None)
+        .await
+        .unwrap();
+    let a = session_svc.create_session(None).await.unwrap();
+    let b = session_svc.create_session(None).await.unwrap();
+    for id in [a.id, b.id] {
+        session_svc
+            .update_session_working_directory(id, Some("/home/u/src/alpha".to_string()))
+            .await
+            .unwrap();
+    }
+    // Staggered so any per-row "now" stamp fails the assertion, not just a
+    // single shared timestamp.
+    let stamps = [(a.id, 1_700_000_001i64), (b.id, 1_700_000_002i64)];
+    backdate_updated_at(&session_svc, &stamps).await;
+
+    let linked = project_svc.backfill_unassigned_sessions().await.unwrap();
+    assert_eq!(linked, 2, "both sessions match the project by directory");
+
+    for (id, expected) in &stamps {
+        let row = session_svc.get_session(*id).await.unwrap().unwrap();
+        assert_eq!(row.project_id, Some(project.id), "session must be linked");
+        assert_eq!(
+            row.updated_at.timestamp(),
+            *expected,
+            "the sweep set project_id but must not restamp updated_at (#1460)"
+        );
+    }
+}

@@ -145,7 +145,13 @@ impl ProjectRepository {
         Ok(())
     }
 
-    /// Assign a session to a project
+    /// Assign a session to a project.
+    ///
+    /// Membership is derived metadata, not conversation activity: the write
+    /// deliberately leaves `updated_at` alone. Stamping here restamped every
+    /// session the startup backfill linked, floating months-dead tombstones
+    /// above genuinely recent sessions in `/sessions` (#1460) — the same
+    /// lesson the scope-all model writes learned in #1367.
     pub async fn assign_session(&self, session_id: Uuid, project_id: Uuid) -> Result<()> {
         let sid = session_id.to_string();
         let pid = project_id.to_string();
@@ -155,7 +161,7 @@ impl ProjectRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.execute(
-                    "UPDATE sessions SET project_id = ?1, updated_at = strftime('%s', 'now')
+                    "UPDATE sessions SET project_id = ?1
                      WHERE id = ?2",
                     params![pid, sid],
                 )
@@ -168,7 +174,9 @@ impl ProjectRepository {
         Ok(())
     }
 
-    /// Remove a session from its project (set project_id to NULL)
+    /// Remove a session from its project (set project_id to NULL).
+    /// Unassignment is metadata bookkeeping, not activity — `updated_at`
+    /// is never stamped, mirroring `assign_session` (#1460).
     pub async fn unassign_session(&self, session_id: Uuid) -> Result<()> {
         let sid = session_id.to_string();
         self.pool
@@ -177,7 +185,7 @@ impl ProjectRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.execute(
-                    "UPDATE sessions SET project_id = NULL, updated_at = strftime('%s', 'now')
+                    "UPDATE sessions SET project_id = NULL
                      WHERE id = ?1",
                     params![sid],
                 )

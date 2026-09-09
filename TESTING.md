@@ -600,7 +600,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Session Enqueue Callback | 2 | `src/tests/session_enqueue_callback_test.rs` |
 | Tests — Session List Shows Last Activity | 4 | `src/tests/session_list_shows_last_activity_test.rs` |
 | Tests — Session Notify | 20 | `src/tests/session_notify_test.rs` |
-| Tests — Session Project Autolink | 9 | `src/tests/session_project_autolink_test.rs` |
+| Tests — Session Project Autolink | 11 | `src/tests/session_project_autolink_test.rs` |
 | Tests — Session Provider Restore | 3 | `src/tests/session_provider_restore_test.rs` |
 | Tests — Session Provider Wrap | 9 | `src/tests/session_provider_wrap_test.rs` |
 | Tests — Session Search Query | 5 | `src/tests/session_search_query_test.rs` |
