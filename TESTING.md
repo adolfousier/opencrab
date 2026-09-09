@@ -150,6 +150,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Browser Stealth | 6 | `src/tests/browser_stealth_test.rs` |
 | Tests — Build User Message Image | 3 | `src/tests/build_user_message_image_test.rs` |
 | Tests — Bundled Plans | 20 | `src/tests/bundled_plans_test.rs` |
+| Tests — Cancel Persists Completion | 8 | `src/tests/cancel_persists_completion_test.rs` |
 | Tests — Cancel Restore Query | 2 | `src/tests/cancel_restore_query_test.rs` |
 | Tests — Candle Whisper | 6 | `src/tests/candle_whisper_test.rs` |
 | Tests — Channel Action | 4 | `src/tests/channel_action_test.rs` |

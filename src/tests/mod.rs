@@ -139,6 +139,7 @@ pub mod browser_session_test;
 pub mod browser_stealth_test;
 pub mod build_user_message_image_test;
 pub mod bundled_plans_test;
+pub mod cancel_persists_completion_test;
 pub mod cancel_restore_query_test;
 pub mod candle_whisper_test;
 pub mod channel_action_test;
