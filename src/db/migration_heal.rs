@@ -68,6 +68,49 @@ pub(crate) fn heal_notify_queue(conn: &rusqlite::Connection) -> rusqlite::Result
     Ok(true)
 }
 
+/// Index of the `pending_requests_thread_id` migration in the current list.
+///
+/// Kept next to the guard that uses it so the two cannot drift: if the list is
+/// re-sorted again this constant is what has to move.
+const THREAD_ID_MIGRATION_INDEX: i64 = 41;
+
+/// Stamp past the `channel_thread_id` migration when its column is already
+/// there, so `to_latest` does not re-run an ALTER that has already happened.
+///
+/// The mirror image of the misses this module was written for. A database that
+/// ran that migration while it sat at index 40 was stamped 40. Merging
+/// `20260906000001_add_notify_queue.sql` re-sorted the list by filename date
+/// and pushed the thread-id migration to 41, so `to_latest` on a database
+/// stamped 40 now replays it and SQLite rejects the duplicate column, which
+/// fails the whole startup rather than any one migration.
+///
+/// The other heals in this module repair a migration that was skipped and can
+/// run afterwards. This one has to run BEFORE `to_latest`, because the crash it
+/// prevents happens inside it.
+///
+/// Only fires when the stamp is exactly one behind and the column is genuinely
+/// present, so it can never skip an unapplied migration. `notify_queue`, the
+/// migration this database really is missing, is created by
+/// [`heal_notify_queue`] on the pass that follows.
+pub(crate) fn skip_applied_thread_id_migration(
+    conn: &rusqlite::Connection,
+    user_version: i64,
+) -> rusqlite::Result<bool> {
+    if user_version != THREAD_ID_MIGRATION_INDEX - 1 {
+        return Ok(false);
+    }
+    if !has_column(conn, "pending_requests", "channel_thread_id")? {
+        return Ok(false);
+    }
+    conn.pragma_update(None, "user_version", THREAD_ID_MIGRATION_INDEX)?;
+    tracing::warn!(
+        "Stamped past the pending_requests.channel_thread_id migration: the column was already \
+         present at version {user_version}, so replaying it would have failed startup on a \
+         duplicate column (#1401)."
+    );
+    Ok(true)
+}
+
 /// Add `pending_requests.origin` when migration 37 was skipped.
 ///
 /// Mirrors `src/migrations/20260828000001_pending_requests_origin.sql`, which
