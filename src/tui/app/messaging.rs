@@ -1073,6 +1073,7 @@ impl App {
             "/exit" | "/quit" => {
                 // Same shutdown the runner already drives for Ctrl+C twice,
                 // just reachable by typing it (#923).
+                crate::brain::agent::service::shutdown::mark_shutting_down();
                 self.should_quit = true;
                 true
             }

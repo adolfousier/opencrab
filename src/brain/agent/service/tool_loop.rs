@@ -664,7 +664,25 @@ impl AgentService {
         // Request finished — delete the tracking row. Only PROCESSING rows
         // survive (meaning the process crashed/restarted mid-request).
         // Untracked (resume) turns never inserted a row, so nothing to clean up.
+        //
+        // Exception: a turn cancelled *because the process is shutting down*
+        // keeps its row, so the next boot resumes it (#1462). Quitting with
+        // Ctrl+C twice cancels the in-flight token before exiting, and the
+        // cancelled turn then unwound through here and deleted its own
+        // recovery ticket — the work was gone with nothing left to resume.
+        // A turn the user deliberately stopped (Esc twice, /stop, /discard)
+        // is still deleted: they abandoned it and must not have it replayed.
+        // Both arrive as AgentError::Cancelled, so the shutdown flag is the
+        // only thing that tells them apart.
+        let cancelled_by_shutdown = super::shutdown::keeps_recovery_row(&result);
+        if cancelled_by_shutdown {
+            tracing::info!(
+                "Turn cancelled by shutdown — keeping the recovery row so the next boot \
+                 resumes it (#1462)"
+            );
+        }
         if track_origin.is_some()
+            && !cancelled_by_shutdown
             && let Err(e) = pending_repo.delete(request_id).await
         {
             tracing::warn!("Failed to clean up pending request: {}", e);

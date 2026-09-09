@@ -2158,6 +2158,7 @@ impl App {
                 self.create_new_session().await?;
             }
             TuiEvent::Quit => {
+                crate::brain::agent::service::shutdown::mark_shutting_down();
                 self.pane_manager.save_layout();
                 self.should_quit = true;
             }
@@ -3361,6 +3362,11 @@ impl App {
                 && pending_at.elapsed() < std::time::Duration::from_secs(3)
             {
                 // Second Ctrl+C within window — quit
+                // Raise the shutdown flag BEFORE cancelling: the turn is being
+                // cancelled because the process is going down, not because the
+                // user abandoned it, and only that distinction keeps its
+                // recovery ticket alive for the next boot (#1462).
+                crate::brain::agent::service::shutdown::mark_shutting_down();
                 // Cancel any running agent task
                 if let Some(token) = &self.cancel_token {
                     token.cancel();

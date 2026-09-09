@@ -607,6 +607,7 @@ Born from two real incidents (#646, #1178): hard-coded fixture constants broke o
 | Tests — Session Working Dir Isolation | 3 | `src/tests/session_working_dir_isolation_test.rs` |
 | Tests — Session Working Dir | 19 | `src/tests/session_working_dir_test.rs` |
 | Tests — Shell Scan | 7 | `src/tests/shell_scan_test.rs` |
+| Tests — Shutdown Recovery Row | 7 | `src/tests/shutdown_recovery_row_test.rs` |
 | Tests — Skill Slash Dispatch | 8 | `src/tests/skill_slash_dispatch_test.rs` |
 | Tests — Skills Dialog | 18 | `src/tests/skills_dialog_test.rs` |
 | Tests — Skills | 18 | `src/tests/skills_test.rs` |
