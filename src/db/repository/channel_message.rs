@@ -566,6 +566,7 @@ impl ChannelMessageRepository {
                             m.topic_name, \
                             c.message_count, \
                             c.last_message_at \
+                     FROM channel_messages m \
                      JOIN (\
                          SELECT thread_id, COUNT(*) as message_count, \
                                 MAX(created_at) as last_message_at \
@@ -584,7 +585,6 @@ impl ChannelMessageRepository {
                                       m2.created_at DESC, m2.id DESC \
                              LIMIT 1\
                        ) \
-                     ORDER BY c.last_message_at DESC
                      ORDER BY c.last_message_at DESC",
                 )?;
                 let rows = stmt.query_map(params![ch, cid], |row| {
