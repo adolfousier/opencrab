@@ -1334,9 +1334,23 @@ pub(crate) async fn handle_message(
     )
     .await?
     {
-        inbound_media::Ingested::Handled => return Ok(()),
+        inbound_media::Ingested::Handled => {
+            tracing::info!(
+                "Telegram: ingest_message_text returned Handled for chat={} text={:?}",
+                msg.chat.id.0,
+                msg.text()
+            );
+            return Ok(());
+        }
         inbound_media::Ingested::Text { text, is_voice } => (text, is_voice),
     };
+
+    tracing::info!(
+        "Telegram: extracted text={:?} is_voice={} for chat={}",
+        text,
+        is_voice,
+        msg.chat.id.0
+    );
 
     // Forwarded messages with readable content: tag the provenance so the
     // agent KNOWS this is forwarded material (and from whom), not something
@@ -1429,6 +1443,12 @@ pub(crate) async fn handle_message(
     }
 
     // ── Cowork command handling ───────────────────────────────────────
+    tracing::info!(
+        "Telegram: checking /cowork — text={:?} is_dm={} chat={}",
+        text,
+        is_dm,
+        msg.chat.id.0
+    );
     if text == "/cowork" {
         if is_dm {
             super::cowork::handle_cowork_command(
