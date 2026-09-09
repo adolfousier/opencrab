@@ -1001,7 +1001,7 @@ Use your Claude Code CLI. OpenCrabs spawns the local `claude` CLI for completion
 enabled = true
 ```
 
-OpenCrabs handles all tools, memory, and context locally — the CLI is just the LLM backend.
+OpenCrabs handles all tools, memory, and context locally — the CLI is just the LLM backend. Each turn OpenCrabs builds a plain-text prompt from the full conversation (already trimmed by its own auto-compaction) and writes it to the CLI's stdin as a one-shot request under a freshly generated `--session-id`, so the CLI keeps no cross-turn state of its own. Context sizing is therefore governed entirely by the per-provider `context_window` setting and the 65%/90% auto-compaction described above, exactly as for native API providers. The CLI's own context window, its `~/.claude/` session history, and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` are deliberately not used: this provider reports `cli_manages_context() = false`, the contract that makes OpenCrabs send full history every spawn and run its own compaction to stay within the window. The CLI's transparent prompt caching still applies, but that is a cost concern, not a context-sizing one.
 
 Running OpenCrabs as root (a VPS, a container)? The CLI refuses its headless mode for root until `~/.claude/settings.json` marks it: see [Claude Code CLI Refuses to Run as Root](#claude-code-cli-refuses-to-run-as-root-vps-docker) under Troubleshooting.
 
