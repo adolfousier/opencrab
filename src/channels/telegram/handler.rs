@@ -438,6 +438,41 @@ pub(crate) async fn handle_message(
         .note_thread_evidence(msg.chat.id.0, raw_thread)
         .await;
 
+    // Forum-topic rename capture (#143). A rename fires `forum_topic_edited`
+    // as a service message; it carries `from` (the renaming admin), so it
+    // survives the `from` extraction above but falls through every text
+    // branch — without this block the rename is never persisted and every
+    // later regular message re-teaches the OLD creation name via its
+    // reply-target (the store is overwritten backwards). Persist the new
+    // name as a normal history row: `latest_topic_name` reads the newest
+    // non-null name, so the rename becomes current everywhere
+    // (sender_label, list_topics, session labels). Runs before the ACL
+    // early returns: a rename by a non-allowlisted admin is still truth
+    // about the topic, and #1043-style gating below must not erase it.
+    // Icon-only edits arrive with `name: None` — nothing to learn, skip.
+    if let (Some(tid), Some(edited)) = (thread_id, msg.forum_topic_edited())
+        && let Some(new_name) = edited
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+    {
+        let row = DbChannelMessage::new(
+            "telegram".into(),
+            msg.chat.id.0.to_string(),
+            None,
+            user_id.to_string(),
+            user.first_name.clone(),
+            format!("topic renamed to \"{new_name}\""),
+            "topic_edited".into(),
+            Some(msg.id.0.to_string()),
+        )
+        .with_thread(Some(tid.0.to_string()), Some(new_name.to_string()));
+        if let Err(e) = channel_msg_repo.insert(&row).await {
+            tracing::warn!("Failed to persist forum topic rename: {e}");
+        }
+    }
+
     // Forum-topic session isolation (#215). #130 fixed the reply ADDRESS
     // (replies land in the right topic); this scopes the CONVERSATION so each
     // topic gets its own session instead of every topic sharing one. Gated on
@@ -452,19 +487,26 @@ pub(crate) async fn handle_message(
     );
 
     // Topic NAME for the session label, so a forum topic reads as "Devops"
-    // rather than the numeric "topic:2". Prefer the name carried on THIS
-    // message (regular topic messages include the topic-creation reply as
-    // their reply target); fall back to the last name we persisted for this
-    // thread so an in-topic reply — which omits it — doesn't drop the label
-    // back to the id. None for DMs/non-forum groups.
+    // rather than the numeric "topic:2". Priority order (#143):
+    //   1. `forum_topic_edited` on THIS message — a rename is the freshest
+    //      truth and must beat everything below.
+    //   2. the name carried on THIS message (regular topic messages include
+    //      the topic-creation reply as their reply target).
+    //   3. the last name we persisted for this thread, so an in-topic reply
+    //      — which omits the name — doesn't drop the label back to the id.
+    //   None for DMs/non-forum groups.
     let topic_name: Option<String> = if topic_id.is_some() {
         let live = msg
-            .forum_topic_created()
-            .map(|t| t.name.clone())
+            .forum_topic_edited()
+            .and_then(|e| e.name.clone())
             .or_else(|| {
-                msg.reply_to_message()
-                    .and_then(|r| r.forum_topic_created())
+                msg.forum_topic_created()
                     .map(|t| t.name.clone())
+                    .or_else(|| {
+                        msg.reply_to_message()
+                            .and_then(|r| r.forum_topic_created())
+                            .map(|t| t.name.clone())
+                    })
             });
         match (live, thread_id) {
             (Some(name), _) => Some(name),

@@ -225,3 +225,82 @@ async fn latest_thread_id_returns_none_for_missing_chat_or_uninit_pool() {
     let result = latest_thread_id_for_chat(99_999_999_999).await;
     assert_eq!(result, None);
 }
+
+/// Minimal row builder for the #143 rename-precedence pins: 4 args =
+/// (chat_id, platform_message_id, thread_id, topic_name). Rows with an
+/// e* id prefix carry message_type "topic_edited" (what the rename
+/// handler persists); all others are plain "text" messages re-teaching
+/// a creation name via their reply target.
+#[allow(dead_code)]
+fn msg(
+    chat_id: &str,
+    platform_id: &str,
+    thread: Option<&str>,
+    topic: Option<&str>,
+) -> ChannelMessage {
+    let mut row = ChannelMessage::new(
+        "telegram".into(),
+        chat_id.into(),
+        Some("Test Group".into()),
+        "u1".into(),
+        "tester".into(),
+        format!("content {platform_id}"),
+        "text".into(),
+        Some(platform_id.into()),
+    )
+    .with_thread(thread.map(str::to_string), topic.map(str::to_string));
+    if platform_id.starts_with('e') {
+        row.message_type = "topic_edited".into();
+    }
+    row
+}
+
+#[tokio::test]
+async fn latest_topic_name_rename_outranks_creation_name() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let repo = ChannelMessageRepository::new(db.pool().clone());
+
+    // Creation name, then a rename row, then a post-rename regular
+    // message re-teaching the CREATION name (reply-target behavior).
+    // Newest-non-null alone would serve the re-taught old name —
+    // the rename row must win outright (#143).
+    repo.insert(&msg("rr", "m1", Some("5"), Some("alpha")))
+        .await
+        .unwrap();
+    repo.insert(&msg("rr", "e1", Some("5"), Some("beta")))
+        .await
+        .unwrap();
+    repo.insert(&msg("rr", "m2", Some("5"), Some("alpha")))
+        .await
+        .unwrap();
+
+    let name = repo.latest_topic_name("telegram", "rr", "5").await.unwrap();
+    assert_eq!(
+        name.as_deref(),
+        Some("beta"),
+        "renamed name must beat re-taught creation name"
+    );
+}
+
+#[tokio::test]
+async fn latest_topic_name_falls_back_without_rename_rows() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let repo = ChannelMessageRepository::new(db.pool().clone());
+
+    // No rename present: newest non-null name still serves (pre-#143
+    // behavior preserved for threads never renamed).
+    repo.insert(&msg("rr2", "m1", Some("7"), Some("first")))
+        .await
+        .unwrap();
+    repo.insert(&msg("rr2", "m2", Some("7"), Some("first")))
+        .await
+        .unwrap();
+
+    let name = repo
+        .latest_topic_name("telegram", "rr2", "7")
+        .await
+        .unwrap();
+    assert_eq!(name.as_deref(), Some("first"));
+}

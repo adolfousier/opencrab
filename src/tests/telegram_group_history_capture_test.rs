@@ -90,3 +90,50 @@ fn empty_message_yields_no_record() {
         "an empty message must not create a history row"
     );
 }
+
+#[test]
+fn forum_topic_edited_deserializes_with_name() {
+    // #143: a rename arrives as a `forum_topic_edited` service message.
+    // The handler's capture block keys on `msg.forum_topic_edited()` —
+    // this pin proves the teloxide deserializer surfaces it (name + thread).
+    let json = serde_json::json!({
+        "update_id": 900,
+        "message": {
+            "message_id": 500,
+            "date": 1_756_740_000u64,
+            "chat": {"id": -1001234567i64, "type": "supergroup", "title": "Ops"},
+            "from": {"id": 133526395i64, "is_bot": false, "first_name": "Alexey"},
+            "forum_topic_edited": {"name": "General Ops", "edit_date": 1_756_740_100u64},
+            "message_thread_id": 42
+        }
+    })
+    .to_string();
+    let msg = extract_message(&json);
+
+    let edited = msg.forum_topic_edited().expect("edited topic present");
+    assert_eq!(edited.name.as_deref(), Some("General Ops"));
+    let tid = msg.thread_id.expect("thread id present");
+    assert_eq!(tid.0.0, 42);
+}
+
+#[test]
+fn icon_only_topic_edit_carries_no_name() {
+    // Icon-only edits arrive with `name: None` — the capture block must
+    // treat them as nothing-to-learn (no row, no name change).
+    let json = serde_json::json!({
+        "update_id": 901,
+        "message": {
+            "message_id": 501,
+            "date": 1_756_740_000u64,
+            "chat": {"id": -1001234567i64, "type": "supergroup", "title": "Ops"},
+            "from": {"id": 133526395i64, "is_bot": false, "first_name": "Alexey"},
+            "forum_topic_edited": {"name": null, "edit_date": 1_756_740_100u64},
+            "message_thread_id": 42
+        }
+    })
+    .to_string();
+    let msg = extract_message(&json);
+
+    let edited = msg.forum_topic_edited().expect("edited topic present");
+    assert!(edited.name.is_none(), "icon-only edit has no name");
+}
