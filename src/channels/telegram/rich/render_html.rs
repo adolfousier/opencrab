@@ -360,7 +360,10 @@ fn plain(inlines: &[Inline]) -> String {
 fn plain_one(inline: &Inline, s: &mut String) {
     match inline {
         Inline::Text(t) | Inline::Code(t) | Inline::Math(t) => s.push_str(t),
-        Inline::Bold(c) | Inline::Italic(c) | Inline::Underline(c) | Inline::Strike(c)
+        Inline::Bold(c)
+        | Inline::Italic(c)
+        | Inline::Underline(c)
+        | Inline::Strike(c)
         | Inline::Sub(c) => {
             for x in c {
                 plain_one(x, s);

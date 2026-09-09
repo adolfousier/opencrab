@@ -95,13 +95,22 @@ fn glued_label_is_detached_from_collapsed_table() {
     let input = "Состояние данных: | Что | Статус | |---|---| | Последний свежий фид | 02.09 |";
     let out = reflow_collapsed_tables(input);
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[0], "Состояние данных:", "label on its own line: {out:?}");
+    assert_eq!(
+        lines[0], "Состояние данных:",
+        "label on its own line: {out:?}"
+    );
     assert_eq!(lines[1], "| Что | Статус |", "header clean: {out:?}");
-    assert!(contains_table(&out), "detached block must parse as a table: {out:?}");
+    assert!(
+        contains_table(&out),
+        "detached block must parse as a table: {out:?}"
+    );
     // Pure-table collapsed line (no label) must NOT grow an empty first line.
     let no_label = "| A | B | |---|---| | 1 | 2 |";
     let out2 = reflow_collapsed_tables(no_label);
-    assert!(out2.starts_with("| A | B |"), "no phantom leading line: {out2:?}");
+    assert!(
+        out2.starts_with("| A | B |"),
+        "no phantom leading line: {out2:?}"
+    );
 }
 
 // #132: normalize_tables is the single canonical entry for the rich plane —
